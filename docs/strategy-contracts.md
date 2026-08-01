@@ -1,0 +1,242 @@
+# Indicator and strategy contracts
+
+QF-4 defines reusable research contracts through the point where a strategy
+expresses position-sizing intent. It does not simulate orders, fills, prices,
+cash, commissions, slippage, positions, or profit and loss.
+
+```text
+QF-3 canonical market data
+        |
+        v
+aligned causal indicators
+        |
+        v
+strategy target-state decisions
+        |
+        v
+normalized target-weight intent
+        |
+        v
+future execution and portfolio components
+```
+
+## Indicator contract
+
+`quantforge.indicators.Indicator` is a structural protocol. An implementation
+exposes a stable name, immutable typed parameters, required `MarketField`
+values, observations required for warm-up, named outputs, missing-value policy,
+a stable primitive configuration and its SHA-256 identity, and `calculate()`.
+It consumes QF-3 `MarketDataset` objects, not provider responses or SDK models.
+
+`IndicatorOutput` stores the input session dates unchanged and one or more
+immutable `IndicatorFieldOutput` series of exactly the same length. `None` is
+the explicit unavailable value. Outputs never omit warm-up rows. The reference
+simple moving average requires `N` observations; therefore its first `N - 1`
+rows are `None`, and its first available result uses exactly the first `N`
+source observations. A non-finite/missing source observation makes every full
+window containing it unavailable. Values are never filled or backfilled.
+
+`SimpleMovingAverage` uses `Decimal`, the current observation, and only the
+prior `N - 1` observations. Its primitive configuration records the component
+and contract versions, parameters, required fields, warm-up observations,
+output fields, and missing representation.
+
+```python
+from quantforge.indicators import (
+    MarketField,
+    SimpleMovingAverage,
+    SimpleMovingAverageParameters,
+)
+
+indicator = SimpleMovingAverage(
+    SimpleMovingAverageParameters(window=20, source_field=MarketField.CLOSE)
+)
+output = indicator.calculate(dataset)
+rows = output.to_rows()  # one row for every input session
+```
+
+## Strategy contract
+
+`quantforge.strategies.Strategy` is a structural protocol. A strategy declares:
+
+- its stable identifier and immutable parameters;
+- required market fields and owned indicator definitions;
+- the maximum observations required by its indicators;
+- asset assumptions and a timing convention;
+- a position-sizing policy;
+- primitive configuration metadata and a stable configuration identity; and
+- a method that returns `StrategyOutput`.
+
+The public contract deliberately makes the strategy responsible for coordinating
+its indicators. `run_strategy(strategy, dataset)` only checks input fields and
+chronology, invokes the contract, and validates identity, ordering, uniqueness,
+provenance, and timing. It has no moving-average branches and is not a backtest
+engine.
+
+Immutable parameter objects expose `to_primitive()`. Decimal weights are encoded
+as canonical decimal strings, enums as their stable string values, and optional
+values as JSON `null`. A component configuration is canonical-JSON encoded and
+SHA-256 hashed, so equivalent values such as `Decimal("0.50")` and
+`Decimal("0.5")` receive the same identity.
+
+## Decision schema
+
+Every `StrategyDecision` contains:
+
+| Field | Meaning |
+| --- | --- |
+| `canonical_symbol` | QF-3 normalized symbol |
+| `signal_session` | completed daily session whose close made the signal known |
+| `earliest_executable_session` | first later exchange session resolved from the QF-3 calendar, or `None` |
+| `execution_timing` | `next_session_after_close` |
+| `execution_session_status` | `pending` or `unresolved`; never a claim that a fill occurred |
+| `target_position` | long-only `long` or `flat` desired state |
+| `target_weight` | normalized requested allocation in `[0, 1]` |
+| `strategy_id` / `strategy_configuration_id` | reproducible strategy identity |
+| `strategy_parameters` | stable primitive parameter snapshot |
+| `reason` | optional originating rule |
+| `indicator_values` | finite values retained for decision auditability |
+
+`StrategyOutput` also retains the input dataset ID, schema version, adjustment
+mode, and exchange calendar. `to_rows()` supports tabular/vectorized consumers;
+iteration over the output supports a future chronological event-driven consumer.
+Both see the same immutable decisions. There are no callbacks, engine objects,
+provider types, fill prices, or quantities in the schema.
+
+## Daily timing and causality
+
+A daily bar is complete after its exchange session closes. Indicators for
+session `t` may use that completed bar. A decision has `signal_session=t` and
+cannot execute at that close. The reference timing rule resolves the first
+exchange session after `t` from the QF-3 calendar, skipping weekends and market
+holidays. A signal on the dataset's final bar remains `pending`; a resolved
+calendar date is eligibility metadata, not evidence of an order or fill. If a
+calendar cannot resolve the next session safely, calculation raises a domain
+error rather than inventing a date.
+
+Rolling windows are trailing and never centered. Indicator rows are never
+backfilled. A crossover requires valid fast and slow averages on both the
+current and immediately prior session. Tests calculate through a cutoff, append
+sentinel future bars, recalculate, and require all historical indicator values
+and decisions to remain identical.
+
+QF-3 adjustment metadata is retained by reference and never reinterpreted.
+Strategies request exactly their declared source field; they do not substitute
+adjusted close or another column.
+
+## Position-sizing boundary
+
+`PositionSizingPolicy` converts `PositionIntent` plus an optional `SizingContext`
+into `TargetWeightIntent`. Future policies may declare a need for available
+equity, current position, reference price, or risk budget. The reference
+`TargetWeightSizingPolicy` needs none: `long` requests the configured weight and
+`flat` requests zero. It never calculates shares, reserves cash, applies
+leverage, rounds lots, or assumes a fill.
+
+## Moving-average crossover reference
+
+`MovingAverageCrossoverParameters` declares:
+
+- positive integer `fast_window` and `slow_window`, with fast strictly smaller;
+- `source_field`, defaulting exactly to normalized `close`; and
+- `target_long_weight` in `(0, 1]`, defaulting to full allocation (`1`).
+
+The strategy begins conceptually flat. It emits `long` once when the fast SMA
+moves from less-than-or-equal to strictly above the slow SMA. It emits `flat`
+once when the fast SMA moves from greater-than-or-equal to strictly below while
+the current target is long. An equality row itself never emits a decision;
+leaving equality for a strict relation may confirm a crossover. Remaining above
+or below does not repeat a decision. A first valid pair cannot signal without a
+valid prior pair. Total warm-up is the slow window's observation requirement.
+
+```python
+from decimal import Decimal
+
+from quantforge.strategies import (
+    MovingAverageCrossoverParameters,
+    MovingAverageCrossoverStrategy,
+    run_strategy,
+)
+
+strategy = MovingAverageCrossoverStrategy(
+    MovingAverageCrossoverParameters(
+        fast_window=20,
+        slow_window=50,
+        target_long_weight=Decimal("0.75"),
+    )
+)
+decisions = run_strategy(strategy, dataset)
+```
+
+## Adding an indicator
+
+Create an immutable parameter record with `to_primitive()`, then implement the
+`Indicator` protocol. Reuse input and alignment validation, preserve every
+session, and make unavailable values explicit. For example, the calculation
+shape of a one-period close difference is:
+
+```python
+from dataclasses import dataclass
+from decimal import Decimal
+
+from quantforge.configuration import PrimitiveMapping
+from quantforge.indicators import IndicatorFieldOutput, IndicatorOutput, MarketField
+from quantforge.indicators.base import (
+    validate_indicator_alignment,
+    validate_market_input,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CloseDifferenceParameters:
+    source_field: MarketField = MarketField.CLOSE
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {"source_field": self.source_field.value}
+
+
+# Inside CloseDifference.calculate(dataset):
+validate_market_input(dataset, frozenset((MarketField.CLOSE,)))
+closes = tuple(bar.close for bar in dataset.bars)
+values = (None,) + tuple(
+    current - previous for previous, current in zip(closes, closes[1:])
+)
+result = IndicatorOutput(
+    "close_difference",
+    configuration_id,
+    tuple(bar.session_date for bar in dataset.bars),
+    (IndicatorFieldOutput("close_difference", values),),
+)
+validate_indicator_alignment(dataset, result)
+```
+
+The implementation must also supply the protocol's metadata properties and a
+stable configuration identity, following `SimpleMovingAverage`.
+
+## Adding a strategy
+
+Create a frozen parameter record, define owned indicators, and structurally
+implement `Strategy`. `generate()` calculates those indicators and emits only
+engine-neutral state changes:
+
+```python
+class CloseAboveAverageStrategy:
+    name = "close_above_average"
+    timing = ExecutionTiming.NEXT_SESSION_AFTER_CLOSE
+
+    # Expose parameters, required_fields, required_indicators,
+    # warm_up_observations, sizing_policy, asset_assumptions,
+    # configuration(), and configuration_id as required by Strategy.
+
+    def generate(self, dataset: MarketDataset) -> StrategyOutput:
+        average = self.required_indicators[0].calculate(dataset)
+        # Compare only values at the current/prior session, emit target-state
+        # changes, resolve next-session eligibility, and retain audit values.
+        return StrategyOutput(...)
+
+
+output = run_strategy(CloseAboveAverageStrategy(...), dataset)
+```
+
+New strategy code belongs in `quantforge.strategies`; it must not change the
+generic runner, execution, portfolio, provider, or reporting components.

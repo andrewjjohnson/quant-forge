@@ -26,13 +26,16 @@ Normalization and validation
         v
 Canonical market dataset
         |
-        +----------------------+
-        |                      |
-        v                      v
-Indicators/features      Dataset fingerprint
+        +----------------------------+
+        |                            |
+        v                            v
+Aligned indicators             Dataset fingerprint
         |
         v
-Strategy signals
+Strategy target-state decisions
+        |
+        v
+Position-sizing intent
         |
         v
 Execution simulation
@@ -91,6 +94,11 @@ Must not:
 
 ### Indicators and features
 
+QF-4 implements the reusable indicator boundary in `quantforge.indicators`.
+Indicators consume QF-3 `MarketDataset` values and return immutable, session-
+aligned fields with explicit unavailable values. See
+`docs/strategy-contracts.md`.
+
 Responsibilities:
 
 - compute reusable contemporaneous values;
@@ -107,6 +115,12 @@ Must not:
 
 ### Strategy
 
+QF-4 implements this boundary in `quantforge.strategies`: immutable parameters,
+owned indicator declarations, target-position decisions, next-session timing,
+normalized sizing intent, and a minimal generic runner. Strategy output retains
+QF-3 dataset provenance but never claims execution. See
+`docs/strategy-contracts.md`.
+
 Responsibilities:
 
 - declare parameters and required fields;
@@ -120,6 +134,21 @@ Must not:
 - modify cash or positions;
 - render reports;
 - inspect validation or holdout results during signal generation.
+
+### Position-sizing intent
+
+Responsibilities:
+
+- convert a desired position state into a normalized target request;
+- declare any context a future policy needs;
+- validate the requested target range.
+
+Must not:
+
+- calculate final share quantity;
+- reserve cash, apply leverage, or round lots;
+- decide prices, orders, or fills;
+- own portfolio accounting.
 
 ### Execution simulation
 
