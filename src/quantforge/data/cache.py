@@ -103,7 +103,7 @@ class MarketDataCache:
         data_bytes = csv_text.encode()
         data_hash = _sha256(data_bytes)
         identity = {
-            **metadata_values,
+            **_serialize_metadata_values(metadata_values),
             "raw_sha256": raw_hash,
             "data_sha256": data_hash,
             "schema_version": SCHEMA_VERSION,
@@ -199,17 +199,28 @@ class MarketDataCache:
 
 
 def _metadata_to_dict(metadata: DatasetMetadata) -> dict[str, object]:
-    value = asdict(metadata)
+    return _serialize_metadata_values(asdict(metadata))
+
+
+def _serialize_metadata_values(
+    metadata_values: dict[str, object],
+) -> dict[str, object]:
+    """Return metadata in the canonical JSON-compatible representation."""
+    value = metadata_values.copy()
     for field in (
         "requested_start",
         "requested_end",
         "actual_first_session",
         "actual_last_session",
     ):
-        value[field] = value[field].isoformat()
-    value["retrieved_at"] = metadata.retrieved_at.astimezone(UTC).isoformat()
-    value["adjustment_mode"] = metadata.adjustment_mode.value
-    value["missing_sessions"] = [item.isoformat() for item in metadata.missing_sessions]
+        value[field] = cast(date, value[field]).isoformat()
+    value["retrieved_at"] = (
+        cast(datetime, value["retrieved_at"]).astimezone(UTC).isoformat()
+    )
+    value["adjustment_mode"] = cast(AdjustmentMode, value["adjustment_mode"]).value
+    value["missing_sessions"] = [
+        item.isoformat() for item in cast(tuple[date, ...], value["missing_sessions"])
+    ]
     return value
 
 
