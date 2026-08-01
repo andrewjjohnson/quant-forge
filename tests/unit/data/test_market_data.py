@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -161,7 +162,9 @@ def test_calendar_ignores_weekend_and_holiday_but_detects_missing_session() -> N
     assert caught.value.missing_sessions == ("2024-07-02",)
 
 
-def test_service_persists_metadata_and_reuses_cache_across_instances(tmp_path) -> None:
+def test_service_persists_metadata_and_reuses_cache_across_instances(
+    tmp_path: Path,
+) -> None:
     provider = FakeProvider(VALID)
     cache = MarketDataCache(tmp_path)
     first = MarketDataService(provider, cache).get_daily_bars(
@@ -178,7 +181,7 @@ def test_service_persists_metadata_and_reuses_cache_across_instances(tmp_path) -
     assert first.metadata.raw_location.startswith("raw/")
 
 
-def test_cache_detects_corrupted_data_and_never_overwrites(tmp_path) -> None:
+def test_cache_detects_corrupted_data_and_never_overwrites(tmp_path: Path) -> None:
     provider = FakeProvider(VALID)
     cache = MarketDataCache(tmp_path)
     dataset = MarketDataService(provider, cache).get_daily_bars(
@@ -190,7 +193,7 @@ def test_cache_detects_corrupted_data_and_never_overwrites(tmp_path) -> None:
         cache.load(dataset.metadata.dataset_id)
 
 
-def test_provider_exception_is_translated(tmp_path) -> None:
+def test_provider_exception_is_translated(tmp_path: Path) -> None:
     class BrokenProvider(FakeProvider):
         def fetch_daily_bars(
             self, symbol: str, start: date, end: date, adjustment: AdjustmentMode
@@ -203,7 +206,7 @@ def test_provider_exception_is_translated(tmp_path) -> None:
         ).get_daily_bars("SPY", date(2024, 7, 1), date(2024, 7, 3))
 
 
-def test_rejects_provider_adjustment_mismatch(tmp_path) -> None:
+def test_rejects_provider_adjustment_mismatch(tmp_path: Path) -> None:
     class WrongProvider(FakeProvider):
         def fetch_daily_bars(
             self, symbol: str, start: date, end: date, adjustment: AdjustmentMode

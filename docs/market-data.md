@@ -18,7 +18,9 @@ service = MarketDataService(
     MarketDataCache(Path("data/market-data")),
 )
 dataset = service.get_daily_bars(
-    "SPY", date(2020, 1, 1), date(2020, 12, 31),
+    "SPY",
+    date(2020, 1, 1),
+    date(2020, 12, 31),
     AdjustmentMode.SPLIT_ADJUSTED,
 )
 ```

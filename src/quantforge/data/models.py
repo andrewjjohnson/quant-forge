@@ -1,5 +1,6 @@
 """Typed canonical daily-market-data records."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -8,7 +9,7 @@ from enum import StrEnum
 SCHEMA_VERSION = "1"
 type JsonPrimitive = str | int | float | bool | None
 type JsonValue = JsonPrimitive | list[JsonValue] | dict[str, JsonValue]
-type ProviderRecord = dict[str, JsonValue]
+type ProviderRecord = Mapping[str, JsonValue]
 
 
 class AdjustmentMode(StrEnum):
