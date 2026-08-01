@@ -15,6 +15,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/source/d/distlib/distlib-0.4.0.tar.gz" }
 
 [[package]]
+name = "exchange-calendars"
+version = "4.11.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "korean-lunar-calendar" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyluach" },
+    { name = "toolz" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/source/e/exchange_calendars/exchange_calendars-4.11.1.tar.gz" }
+
+[[package]]
 name = "filelock"
 version = "3.20.3"
 source = { registry = "https://pypi.org/simple" }
@@ -39,10 +53,33 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/source/n/nodeenv/nodeenv-1.10.0.tar.gz" }
 
 [[package]]
+name = "korean-lunar-calendar"
+version = "0.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/source/k/korean_lunar_calendar/korean_lunar_calendar-0.3.1.tar.gz" }
+
+[[package]]
+name = "numpy"
+version = "2.3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/source/n/numpy/numpy-2.3.5.tar.gz" }
+
+[[package]]
 name = "packaging"
 version = "25.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/source/p/packaging/packaging-25.0.tar.gz" }
+
+[[package]]
+name = "pandas"
+version = "2.3.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "python-dateutil" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/source/p/pandas/pandas-2.3.3.tar.gz" }
 
 [[package]]
 name = "platformdirs"
@@ -86,6 +123,12 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/source/p/pyright/pyright-1.1.409.tar.gz" }
 
 [[package]]
+name = "pyluach"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/source/p/pyluach/pyluach-2.3.0.tar.gz" }
+
+[[package]]
 name = "pytest"
 version = "9.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -104,9 +147,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/source/p/pyyaml/pyyaml-6.0.3.tar.gz" }
 
 [[package]]
+name = "python-dateutil"
+version = "2.9.0.post0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/source/p/python_dateutil/python_dateutil-2.9.0.post0.tar.gz" }
+
+[[package]]
 name = "quantforge"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "exchange-calendars" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -124,6 +179,9 @@ dev = [
     { name = "ruff", specifier = ">=0.15.12,<1" },
 ]
 
+[package.metadata]
+requires-dist = [{ name = "exchange-calendars", specifier = ">=4.11,<5" }]
+
 [[package]]
 name = "ruff"
 version = "0.15.12"
@@ -131,10 +189,28 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/source/r/ruff/ruff-0.15.12.tar.gz" }
 
 [[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/source/s/six/six-1.17.0.tar.gz" }
+
+[[package]]
+name = "toolz"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/source/t/toolz/toolz-1.1.0.tar.gz" }
+
+[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/source/t/typing_extensions/typing_extensions-4.15.0.tar.gz" }
+
+[[package]]
+name = "tzdata"
+version = "2025.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/source/t/tzdata/tzdata-2025.2.tar.gz" }
 
 [[package]]
 name = "virtualenv"
