@@ -55,6 +55,10 @@ Optimization orchestrates repeated strategy runs but must not alter the semantic
 
 ### Data acquisition
 
+QF-3 implements this boundary in `quantforge.data`: an injected provider feeds
+pure normalization and XNYS-aware validation, followed by content-addressed raw
+JSON, canonical decimal CSV, and a stable manifest. See `docs/market-data.md`.
+
 Responsibilities:
 
 - communicate with a provider;
