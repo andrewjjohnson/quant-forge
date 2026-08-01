@@ -1,0 +1,40 @@
+# Environment variables and local overrides
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Editors, operating systems, and notebooks
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.ipynb
+.ipynb_checkpoints/
+
+# Downloaded data and generated reports (retain directory placeholders)
+data/*
+!data/.gitkeep
+reports/*
+!reports/.gitkeep

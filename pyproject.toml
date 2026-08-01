@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quantforge"
+version = "0.1.0"
+description = "A quantitative research and systematic-trading platform."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = { text = "Proprietary" }
+authors = [{ name = "QuantForge contributors" }]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pre-commit>=4.5,<5",
+  "pyright>=1.1.409,<2",
+  "pytest>=9.0.3,<10",
+  "ruff>=0.15.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quantforge"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "F",    # Pyflakes correctness checks
+  "I",    # import ordering
+  "N",    # naming conventions
+  "PT",   # pytest best practices
+  "RUF",  # Ruff-specific correctness checks
+  "UP",   # modern Python syntax
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -ra -q"
+testpaths = ["tests"]
+markers = [
+  "integration: optional component-boundary tests selected with '-m integration'",
+]
