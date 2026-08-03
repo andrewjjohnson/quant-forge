@@ -1,5 +1,5 @@
 import json
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 from typing import cast
 
 import pytest
@@ -63,6 +63,36 @@ def test_semantically_equal_parameters_have_same_configuration_identity() -> Non
 
     assert first.configuration_id == same.configuration_id
     assert first.configuration_id != different.configuration_id
+
+
+def test_weights_and_configuration_identity_ignore_ambient_decimal_context() -> None:
+    weight = Decimal("0.123456789012345678901234567890")
+
+    with localcontext() as low_precision:
+        low_precision.prec = 8
+        low_precision.rounding = ROUND_DOWN
+        low_parameters = MovingAverageCrossoverParameters(
+            2, 3, target_long_weight=weight
+        )
+        low_policy = TargetWeightSizingPolicy(weight)
+        low_identity = MovingAverageCrossoverStrategy(low_parameters).configuration_id
+    with localcontext() as high_precision:
+        high_precision.prec = 50
+        high_precision.rounding = ROUND_UP
+        high_parameters = MovingAverageCrossoverParameters(
+            2, 3, target_long_weight=weight
+        )
+        high_policy = TargetWeightSizingPolicy(weight)
+        high_identity = MovingAverageCrossoverStrategy(high_parameters).configuration_id
+
+    expected = "0.12345678901234567890123456789"
+    assert low_parameters.target_long_weight == weight
+    assert high_parameters.target_long_weight == weight
+    assert low_policy.target_long_weight == weight
+    assert high_policy.target_long_weight == weight
+    assert low_parameters.to_primitive()["target_long_weight"] == expected
+    assert high_parameters.to_primitive()["target_long_weight"] == expected
+    assert low_identity == high_identity
 
 
 def test_reference_sizing_policy_emits_only_normalized_target_intent() -> None:

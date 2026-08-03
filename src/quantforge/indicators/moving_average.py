@@ -1,7 +1,13 @@
 """Full-window, causal simple moving average."""
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DecimalException,
+    localcontext,
+)
 from typing import cast
 
 from quantforge.configuration import (
@@ -27,6 +33,8 @@ from quantforge.indicators.models import (
 )
 
 SIMPLE_MOVING_AVERAGE_OUTPUT = "simple_moving_average"
+_DECIMAL_PRECISION = 34
+_DECIMAL_ROUNDING = ROUND_HALF_EVEN
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +90,10 @@ class SimpleMovingAverage:
             "warm_up_observations": self.warm_up_observations,
             "output_fields": list(self.output_fields),
             "missing_value": None,
+            "arithmetic": {
+                "decimal_precision": _DECIMAL_PRECISION,
+                "rounding": _DECIMAL_ROUNDING,
+            },
         }
 
     @property
@@ -89,7 +101,7 @@ class SimpleMovingAverage:
         return configuration_identity(self.configuration())
 
     def calculate(self, dataset: MarketDataset) -> IndicatorOutput:
-        """Return exact aligned means without filling partial or missing windows."""
+        """Return aligned deterministic means without partial or filled windows."""
         validate_market_input(dataset, self.required_fields)
         source: list[Decimal | None] = []
         for bar in dataset.bars:
@@ -109,16 +121,30 @@ class SimpleMovingAverage:
         window = self._parameters.window
         divisor = Decimal(window)
         values: list[IndicatorValue] = []
-        for index in range(len(source)):
-            if index + 1 < window:
-                values.append(None)
-                continue
-            observations = source[index + 1 - window : index + 1]
-            if any(observation is None for observation in observations):
-                values.append(None)
-                continue
-            total = sum(cast(Decimal, value) for value in observations)
-            values.append(total / divisor)
+        arithmetic_context = Context(
+            prec=_DECIMAL_PRECISION,
+            rounding=_DECIMAL_ROUNDING,
+        )
+        with localcontext(arithmetic_context):
+            for index in range(len(source)):
+                if index + 1 < window:
+                    values.append(None)
+                    continue
+                observations = source[index + 1 - window : index + 1]
+                if any(observation is None for observation in observations):
+                    values.append(None)
+                    continue
+                try:
+                    total = sum(
+                        (cast(Decimal, value) for value in observations),
+                        start=Decimal(0),
+                    )
+                    values.append(total / divisor)
+                except DecimalException as error:
+                    raise IndicatorCalculationError(
+                        "simple moving average arithmetic failed under its "
+                        "configured decimal policy"
+                    ) from error
 
         output = IndicatorOutput(
             self.name,

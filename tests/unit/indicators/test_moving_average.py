@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 from typing import cast
 
 import pytest
@@ -37,7 +37,7 @@ def test_window_one_and_exact_full_window_values_preserve_alignment() -> None:
         None,
         None,
         Decimal(2),
-        Decimal("11") / Decimal(3),
+        Decimal("3.666666666666666666666666666666667"),
     )
 
 
@@ -87,7 +87,29 @@ def test_indicator_configuration_is_stable_and_inspectable() -> None:
     assert first.configuration_id != different.configuration_id
     assert first.configuration()["required_fields"] == ["close"]
     assert first.configuration()["warm_up_observations"] == 3
+    assert first.configuration()["arithmetic"] == {
+        "decimal_precision": 34,
+        "rounding": "ROUND_HALF_EVEN",
+    }
     assert first.missing_value is None
+
+
+def test_moving_average_ignores_ambient_decimal_context() -> None:
+    indicator = SimpleMovingAverage(SimpleMovingAverageParameters(3))
+    dataset = make_dataset(("1", "2", "8"))
+
+    with localcontext() as low_precision:
+        low_precision.prec = 8
+        low_precision.rounding = ROUND_DOWN
+        low_result = indicator.calculate(dataset)
+    with localcontext() as high_precision:
+        high_precision.prec = 50
+        high_precision.rounding = ROUND_UP
+        high_result = indicator.calculate(dataset)
+
+    expected = Decimal("3.666666666666666666666666666666667")
+    assert low_result.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == expected
+    assert high_result.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == expected
 
 
 def test_appended_future_bars_do_not_change_historical_values() -> None:

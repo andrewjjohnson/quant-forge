@@ -37,9 +37,13 @@ source observations. A non-finite/missing source observation makes every full
 window containing it unavailable. Values are never filled or backfilled.
 
 `SimpleMovingAverage` uses `Decimal`, the current observation, and only the
-prior `N - 1` observations. Its primitive configuration records the component
-and contract versions, parameters, required fields, warm-up observations,
-output fields, and missing representation.
+prior `N - 1` observations. Sums and division run in a private local decimal
+context with 34 significant digits and `ROUND_HALF_EVEN`; an exact result that
+exceeds that precision is rounded by this fixed policy. The caller's ambient
+decimal context is never mutated and cannot affect indicator or strategy
+results. The primitive indicator configuration records this arithmetic policy
+alongside the component and contract versions, parameters, required fields,
+warm-up observations, output fields, and missing representation.
 
 ```python
 from quantforge.indicators import (
@@ -74,10 +78,12 @@ provenance, and timing. It has no moving-average branches and is not a backtest
 engine.
 
 Immutable parameter objects expose `to_primitive()`. Decimal weights are encoded
-as canonical decimal strings, enums as their stable string values, and optional
-values as JSON `null`. A component configuration is canonical-JSON encoded and
-SHA-256 hashed, so equivalent values such as `Decimal("0.50")` and
-`Decimal("0.5")` receive the same identity.
+exactly as context-independent canonical decimal strings, enums as their stable
+string values, and optional values as JSON `null`. Canonicalization removes
+representation-only fractional zeros without performing decimal arithmetic or
+rounding. A component configuration is canonical-JSON encoded and SHA-256
+hashed, so equivalent values such as `Decimal("0.50")` and `Decimal("0.5")`
+receive the same identity regardless of the caller's active decimal context.
 
 ## Decision schema
 

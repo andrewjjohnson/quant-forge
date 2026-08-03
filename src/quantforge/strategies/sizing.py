@@ -85,7 +85,7 @@ class TargetWeightSizingPolicy:
             raise InvalidTargetWeightError(
                 "target long weight must be greater than 0 and at most 1"
             )
-        object.__setattr__(self, "target_long_weight", weight.normalize())
+        object.__setattr__(self, "target_long_weight", weight)
 
     def configuration(self) -> PrimitiveMapping:
         return {

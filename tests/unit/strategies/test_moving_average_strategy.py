@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 
 from quantforge.strategies import (
     ExecutionSessionStatus,
@@ -152,3 +152,18 @@ def test_future_bars_do_not_change_historical_signals() -> None:
         if decision.signal_session <= date(2024, 7, 8)
     )
     assert historical == through_cutoff.decisions
+
+
+def test_strategy_decisions_ignore_ambient_decimal_context() -> None:
+    strategy = MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3))
+
+    with localcontext() as low_precision:
+        low_precision.prec = 8
+        low_precision.rounding = ROUND_DOWN
+        low_decisions = run_through_contract(strategy, PRICES).decisions
+    with localcontext() as high_precision:
+        high_precision.prec = 50
+        high_precision.rounding = ROUND_UP
+        high_decisions = run_through_contract(strategy, PRICES).decisions
+
+    assert low_decisions == high_decisions
