@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import date
 from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 
@@ -104,6 +105,21 @@ def test_final_session_signal_is_calendar_resolved_but_remains_pending() -> None
     assert decision.earliest_executable_session == date(2024, 7, 9)
     assert decision.execution_session_status is ExecutionSessionStatus.PENDING
     assert "price" not in decision.to_primitive()
+
+
+def test_signal_is_preserved_when_next_session_cannot_be_resolved() -> None:
+    dataset = make_dataset(("3", "2", "1", "2", "3"))
+    dataset = replace(
+        dataset,
+        metadata=replace(dataset.metadata, calendar="NOT_A_CALENDAR"),
+    )
+    strategy = MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3))
+
+    decision = run_strategy(strategy, dataset).decisions[0]
+
+    assert decision.signal_session == dataset.bars[-1].session_date
+    assert decision.earliest_executable_session is None
+    assert decision.execution_session_status is ExecutionSessionStatus.UNRESOLVED
 
 
 def test_next_session_timing_skips_a_weekend() -> None:

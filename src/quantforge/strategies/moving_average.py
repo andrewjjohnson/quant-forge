@@ -12,7 +12,10 @@ from quantforge.indicators.moving_average import (
     SimpleMovingAverageParameters,
 )
 from quantforge.strategies.base import next_exchange_session
-from quantforge.strategies.exceptions import InvalidStrategyOutputError
+from quantforge.strategies.exceptions import (
+    InvalidStrategyOutputError,
+    UnsupportedTimingConventionError,
+)
 from quantforge.strategies.models import (
     ExecutionSessionStatus,
     ExecutionTiming,
@@ -152,15 +155,22 @@ class MovingAverageCrossoverStrategy:
             current_target = target
             sizing_intent = self._sizing_policy.size(target)
             signal_session = dataset.bars[index].session_date
+            try:
+                earliest_executable_session = next_exchange_session(
+                    signal_session, dataset.metadata.calendar
+                )
+            except UnsupportedTimingConventionError:
+                earliest_executable_session = None
+                execution_session_status = ExecutionSessionStatus.UNRESOLVED
+            else:
+                execution_session_status = ExecutionSessionStatus.PENDING
             decisions.append(
                 StrategyDecision(
                     canonical_symbol=dataset.metadata.canonical_symbol,
                     signal_session=signal_session,
-                    earliest_executable_session=next_exchange_session(
-                        signal_session, dataset.metadata.calendar
-                    ),
+                    earliest_executable_session=earliest_executable_session,
                     execution_timing=self.timing,
-                    execution_session_status=ExecutionSessionStatus.PENDING,
+                    execution_session_status=execution_session_status,
                     target_position=target,
                     target_weight=sizing_intent.target_weight,
                     strategy_id=self.name,
