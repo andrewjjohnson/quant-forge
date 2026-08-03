@@ -120,13 +120,14 @@ A daily bar is complete after its exchange session closes. Indicators for
 session `t` may use that completed bar. A decision has `signal_session=t` and
 cannot execute at that close. The reference timing rule resolves the first
 exchange session after `t` from the QF-3 calendar, skipping weekends and market
-holidays. A signal on the dataset's final bar remains `pending`; a resolved
-calendar date is eligibility metadata, not evidence of an order or fill. If a
-calendar cannot resolve the next session safely, the reference strategy records
-the signal as `unresolved` rather than inventing a date or discarding the signal.
-The generic runner verifies calendar resolution independently: it requires the
-resolved date and `pending` status whenever resolution succeeds and permits
-`unresolved` only when it fails.
+holidays. Resolution uses the calendar's direct successor operation, so it does
+not query past the calendar's supported range. A signal on the dataset's final
+bar remains `pending`; a resolved calendar date is eligibility metadata, not
+evidence of an order or fill. If a calendar cannot resolve the next session
+safely, the reference strategy records the signal as `unresolved` rather than
+inventing a date or discarding the signal. The generic runner verifies calendar
+resolution independently: it requires the resolved date and `pending` status
+whenever resolution succeeds and permits `unresolved` only when it fails.
 
 Rolling windows are trailing and never centered. Indicator rows are never
 backfilled. A crossover requires valid fast and slow averages on both the

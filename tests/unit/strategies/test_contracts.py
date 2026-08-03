@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, datetime
 from typing import cast
 
 import pytest
@@ -31,6 +31,33 @@ from ..helpers import make_dataset
 @dataclass(frozen=True, slots=True)
 class SessionOnlyBar:
     session_date: date
+
+
+class BoundaryExchangeCalendar:
+    """Synthetic calendar whose final session rejects an overlong range query."""
+
+    _penultimate_session = datetime(2024, 1, 30)
+    _last_session = datetime(2024, 1, 31)
+
+    def sessions_in_range(self, start: date, end: date) -> tuple[datetime, ...]:
+        raise ValueError(f"range {start} through {end} exceeds calendar bounds")
+
+    def date_to_session(self, session_date: date) -> datetime:
+        if session_date != self._penultimate_session.date():
+            raise ValueError(f"unsupported session: {session_date}")
+        return self._penultimate_session
+
+    def next_session(self, session: datetime) -> datetime:
+        if session != self._penultimate_session:
+            raise ValueError(f"no next session after: {session}")
+        return self._last_session
+
+
+class BoundaryExchangeCalendars:
+    def get_calendar(self, calendar: str) -> BoundaryExchangeCalendar:
+        if calendar != "BOUNDARY":
+            raise ValueError(f"unsupported calendar: {calendar}")
+        return BoundaryExchangeCalendar()
 
 
 class OutputTransformingStrategy:
@@ -246,3 +273,19 @@ def test_strategy_contract_exposes_owned_components_and_configuration() -> None:
 def test_unknown_calendar_raises_timing_domain_error() -> None:
     with pytest.raises(UnsupportedTimingConventionError, match="calendar"):
         next_exchange_session(date(2024, 7, 3), "NOT_A_CALENDAR")
+
+
+def test_next_session_lookup_does_not_overrun_calendar_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def load_boundary_calendars(module_name: str) -> BoundaryExchangeCalendars:
+        if module_name != "exchange_calendars":
+            raise ValueError(f"unsupported module: {module_name}")
+        return BoundaryExchangeCalendars()
+
+    monkeypatch.setattr(
+        "quantforge.data.calendar.import_module",
+        load_boundary_calendars,
+    )
+
+    assert next_exchange_session(date(2024, 1, 30), "BOUNDARY") == date(2024, 1, 31)
