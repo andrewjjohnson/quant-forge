@@ -81,9 +81,11 @@ Immutable parameter objects expose `to_primitive()`. Decimal weights are encoded
 exactly as context-independent canonical decimal strings, enums as their stable
 string values, and optional values as JSON `null`. Canonicalization removes
 representation-only fractional zeros without performing decimal arithmetic or
-rounding. A component configuration is canonical-JSON encoded and SHA-256
-hashed, so equivalent values such as `Decimal("0.50")` and `Decimal("0.5")`
-receive the same identity regardless of the caller's active decimal context.
+rounding. Decision snapshots must match parameter names, primitive types, and
+values exactly; for example, JSON `true` is not interchangeable with integer
+`1`. A component configuration is canonical-JSON encoded and SHA-256 hashed, so
+equivalent values such as `Decimal("0.50")` and `Decimal("0.5")` receive the same
+identity regardless of the caller's active decimal context.
 
 ## Decision schema
 

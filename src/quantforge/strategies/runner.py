@@ -2,6 +2,7 @@
 
 from itertools import pairwise
 
+from quantforge.configuration import PrimitiveMapping, PrimitiveScalar
 from quantforge.data.models import MarketDataset
 from quantforge.strategies.base import Strategy, next_exchange_session
 from quantforge.strategies.exceptions import (
@@ -97,7 +98,7 @@ def _validate_output(
             parameter.name: parameter.value
             for parameter in decision.strategy_parameters
         }
-        if parameter_snapshot != expected_parameters:
+        if not _parameter_snapshots_match(parameter_snapshot, expected_parameters):
             raise InvalidStrategyOutputError(
                 "decision parameter snapshot does not match the invoked strategy"
             )
@@ -124,3 +125,13 @@ def _validate_output(
                 raise InvalidStrategyOutputError(
                     "decision does not use the next exchange-session convention"
                 )
+
+
+def _parameter_snapshots_match(
+    actual: dict[str, PrimitiveScalar], expected: PrimitiveMapping
+) -> bool:
+    """Compare parameter names, primitive types, and values exactly."""
+    return actual.keys() == expected.keys() and all(
+        type(actual[name]) is type(expected[name]) and actual[name] == expected[name]
+        for name in expected
+    )

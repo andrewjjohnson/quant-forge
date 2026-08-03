@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, PrimitiveScalar
 from quantforge.data.models import DailyBar, MarketDataset
 from quantforge.indicators import Indicator, MarketField
 from quantforge.strategies import (
@@ -106,6 +106,21 @@ def clear_first_decision_parameters(output: StrategyOutput) -> StrategyOutput:
     return replace(output, decisions=(decision,))
 
 
+def replace_first_decision_parameter(
+    output: StrategyOutput, parameter_name: str, parameter_value: PrimitiveScalar
+) -> StrategyOutput:
+    decision = output.decisions[0]
+    parameters = tuple(
+        replace(parameter, value=parameter_value)
+        if parameter.name == parameter_name
+        else parameter
+        for parameter in decision.strategy_parameters
+    )
+    return replace(
+        output, decisions=(replace(decision, strategy_parameters=parameters),)
+    )
+
+
 def test_generic_runner_enforces_required_market_fields() -> None:
     dataset = make_dataset(("1",))
     incomplete = replace(
@@ -177,6 +192,27 @@ def test_generic_runner_rejects_incorrect_parameter_snapshot() -> None:
     strategy = OutputTransformingStrategy(
         MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
         clear_first_decision_parameters,
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="parameter snapshot"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
+
+
+@pytest.mark.parametrize(
+    ("fast_window", "snapshot_value"),
+    [(1, True), (2, 2.0)],
+)
+def test_generic_runner_compares_parameter_snapshot_types_strictly(
+    fast_window: int, snapshot_value: PrimitiveScalar
+) -> None:
+    def change_fast_window_type(output: StrategyOutput) -> StrategyOutput:
+        return replace_first_decision_parameter(output, "fast_window", snapshot_value)
+
+    strategy = OutputTransformingStrategy(
+        MovingAverageCrossoverStrategy(
+            MovingAverageCrossoverParameters(fast_window, 3)
+        ),
+        change_fast_window_type,
     )
 
     with pytest.raises(InvalidStrategyOutputError, match="parameter snapshot"):
