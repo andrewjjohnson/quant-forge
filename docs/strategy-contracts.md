@@ -42,11 +42,14 @@ backfilled.
 `SimpleMovingAverage` uses `Decimal`, the current observation, and only the
 prior `N - 1` observations. Sums and division run in a private local decimal
 context with 34 significant digits and `ROUND_HALF_EVEN`; an exact result that
-exceeds that precision is rounded by this fixed policy. The caller's ambient
-decimal context is never mutated and cannot affect indicator or strategy
-results. The primitive indicator configuration records this arithmetic policy
-alongside the component and contract versions, parameters, required fields,
-warm-up observations, output fields, and missing representation.
+exceeds that precision is rounded by this fixed policy. The complete context
+also fixes `Emin=-999999`, `Emax=999999`, `capitals=1`, `clamp=0`, empty initial
+flags, and traps only `InvalidOperation`, `DivisionByZero`, and `Overflow`.
+Neither the caller's ambient context nor mutable `decimal.DefaultContext` is
+used or modified. The primitive indicator configuration records the complete
+arithmetic policy alongside the component and contract versions, parameters,
+required fields, warm-up observations, output fields, and missing
+representation.
 
 ```python
 from quantforge.indicators import (

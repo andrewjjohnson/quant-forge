@@ -1,4 +1,15 @@
-from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
+from decimal import (
+    ROUND_DOWN,
+    ROUND_UP,
+    Clamped,
+    Decimal,
+    DefaultContext,
+    Inexact,
+    Rounded,
+    Subnormal,
+    Underflow,
+    localcontext,
+)
 from typing import cast
 
 import pytest
@@ -90,6 +101,12 @@ def test_indicator_configuration_is_stable_and_inspectable() -> None:
     assert first.configuration()["arithmetic"] == {
         "decimal_precision": 34,
         "rounding": "ROUND_HALF_EVEN",
+        "decimal_emin": -999999,
+        "decimal_emax": 999999,
+        "capitals": 1,
+        "clamp": 0,
+        "initial_flags": [],
+        "traps": ["DivisionByZero", "InvalidOperation", "Overflow"],
     }
     assert first.missing_value is None
 
@@ -110,6 +127,37 @@ def test_moving_average_ignores_ambient_decimal_context() -> None:
     expected = Decimal("3.666666666666666666666666666666667")
     assert low_result.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == expected
     assert high_result.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == expected
+
+
+def test_moving_average_ignores_mutable_default_decimal_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    indicator = SimpleMovingAverage(SimpleMovingAverageParameters(3))
+    inexact_dataset = make_dataset(("1", "1", "9"))
+    large_dataset = make_dataset(("100", "100", "100"))
+    tiny_dataset = make_dataset(("0.01", "0.01", "0.01"))
+    configuration_id = indicator.configuration_id
+
+    monkeypatch.setattr(DefaultContext, "prec", 2)
+    monkeypatch.setattr(DefaultContext, "rounding", ROUND_DOWN)
+    monkeypatch.setattr(DefaultContext, "Emin", -1)
+    monkeypatch.setattr(DefaultContext, "Emax", 1)
+    monkeypatch.setattr(DefaultContext, "capitals", 0)
+    monkeypatch.setattr(DefaultContext, "clamp", 1)
+    for signal in (Clamped, Inexact, Rounded, Subnormal, Underflow):
+        monkeypatch.setitem(DefaultContext.traps, signal, True)
+    monkeypatch.setitem(DefaultContext.flags, Inexact, True)
+
+    inexact_result = indicator.calculate(inexact_dataset)
+    large_result = indicator.calculate(large_dataset)
+    tiny_result = indicator.calculate(tiny_dataset)
+
+    assert inexact_result.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == Decimal(
+        "3.666666666666666666666666666666667"
+    )
+    assert large_result.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == Decimal(100)
+    assert tiny_result.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == Decimal("0.01")
+    assert indicator.configuration_id == configuration_id
 
 
 def test_appended_future_bars_do_not_change_historical_values() -> None:

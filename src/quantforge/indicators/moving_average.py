@@ -6,6 +6,9 @@ from decimal import (
     Context,
     Decimal,
     DecimalException,
+    DivisionByZero,
+    InvalidOperation,
+    Overflow,
     localcontext,
 )
 from typing import cast
@@ -35,6 +38,16 @@ from quantforge.indicators.models import (
 SIMPLE_MOVING_AVERAGE_OUTPUT = "simple_moving_average"
 _DECIMAL_PRECISION = 34
 _DECIMAL_ROUNDING = ROUND_HALF_EVEN
+_DECIMAL_EMIN = -999_999
+_DECIMAL_EMAX = 999_999
+_DECIMAL_CAPITALS = 1
+_DECIMAL_CLAMP = 0
+_DECIMAL_TRAPS: tuple[type[DecimalException], ...] = (
+    DivisionByZero,
+    InvalidOperation,
+    Overflow,
+)
+_DECIMAL_TRAP_NAMES = tuple(signal.__name__ for signal in _DECIMAL_TRAPS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +106,12 @@ class SimpleMovingAverage:
             "arithmetic": {
                 "decimal_precision": _DECIMAL_PRECISION,
                 "rounding": _DECIMAL_ROUNDING,
+                "decimal_emin": _DECIMAL_EMIN,
+                "decimal_emax": _DECIMAL_EMAX,
+                "capitals": _DECIMAL_CAPITALS,
+                "clamp": _DECIMAL_CLAMP,
+                "initial_flags": [],
+                "traps": list(_DECIMAL_TRAP_NAMES),
             },
         }
 
@@ -121,10 +140,7 @@ class SimpleMovingAverage:
         window = self._parameters.window
         divisor = Decimal(window)
         values: list[IndicatorValue] = []
-        arithmetic_context = Context(
-            prec=_DECIMAL_PRECISION,
-            rounding=_DECIMAL_ROUNDING,
-        )
+        arithmetic_context = _arithmetic_context()
         with localcontext(arithmetic_context):
             for index in range(len(source)):
                 if index + 1 < window:
@@ -154,6 +170,20 @@ class SimpleMovingAverage:
         )
         validate_indicator_alignment(dataset, output)
         return output
+
+
+def _arithmetic_context() -> Context:
+    """Build the complete deterministic Decimal policy for SMA arithmetic."""
+    return Context(
+        prec=_DECIMAL_PRECISION,
+        rounding=_DECIMAL_ROUNDING,
+        Emin=_DECIMAL_EMIN,
+        Emax=_DECIMAL_EMAX,
+        capitals=_DECIMAL_CAPITALS,
+        clamp=_DECIMAL_CLAMP,
+        flags=[],
+        traps=list(_DECIMAL_TRAPS),
+    )
 
 
 def _validate_window_type(value: object) -> None:
