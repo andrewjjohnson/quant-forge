@@ -9,6 +9,7 @@ from quantforge.strategies.exceptions import (
     InvalidStrategyOutputError,
     MissingRequiredMarketFieldError,
     UnorderedStrategyInputError,
+    UnsupportedTimingConventionError,
 )
 from quantforge.strategies.models import (
     ExecutionSessionStatus,
@@ -80,6 +81,7 @@ def _validate_output(
             "duplicate strategy, symbol, and session decision"
         )
     available_sessions = {bar.session_date for bar in dataset.bars}
+    expected_parameters = strategy.parameters.to_primitive()
     for decision in output.decisions:
         if (
             decision.strategy_id != strategy.name
@@ -91,10 +93,29 @@ def _validate_output(
             raise InvalidStrategyOutputError(
                 "decision identity or signal session does not match strategy input"
             )
-        if decision.earliest_executable_session is not None:
+        parameter_snapshot = {
+            parameter.name: parameter.value
+            for parameter in decision.strategy_parameters
+        }
+        if parameter_snapshot != expected_parameters:
+            raise InvalidStrategyOutputError(
+                "decision parameter snapshot does not match the invoked strategy"
+            )
+        try:
             expected_session = next_exchange_session(
                 decision.signal_session, dataset.metadata.calendar
             )
+        except UnsupportedTimingConventionError:
+            if (
+                decision.earliest_executable_session is not None
+                or decision.execution_session_status
+                is not ExecutionSessionStatus.UNRESOLVED
+            ):
+                raise InvalidStrategyOutputError(
+                    "decision must be unresolved when its next exchange session "
+                    "cannot be resolved"
+                ) from None
+        else:
             if (
                 decision.earliest_executable_session != expected_session
                 or decision.execution_session_status

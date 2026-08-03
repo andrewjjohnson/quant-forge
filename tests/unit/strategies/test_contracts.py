@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date
 from typing import cast
@@ -32,11 +33,16 @@ class SessionOnlyBar:
     session_date: date
 
 
-class DuplicatingStrategy:
-    """Contract implementation that deliberately violates decision uniqueness."""
+class OutputTransformingStrategy:
+    """Contract implementation that transforms a delegate's output for validation."""
 
-    def __init__(self, delegate: MovingAverageCrossoverStrategy) -> None:
+    def __init__(
+        self,
+        delegate: MovingAverageCrossoverStrategy,
+        transform: Callable[[StrategyOutput], StrategyOutput],
+    ) -> None:
         self._delegate = delegate
+        self._transform = transform
 
     @property
     def name(self) -> str:
@@ -78,9 +84,26 @@ class DuplicatingStrategy:
         return self._delegate.configuration()
 
     def generate(self, dataset: MarketDataset) -> StrategyOutput:
-        output = self._delegate.generate(dataset)
-        decision = output.decisions[0]
-        return replace(output, decisions=(decision, decision))
+        return self._transform(self._delegate.generate(dataset))
+
+
+def duplicate_first_decision(output: StrategyOutput) -> StrategyOutput:
+    decision = output.decisions[0]
+    return replace(output, decisions=(decision, decision))
+
+
+def mark_first_decision_unresolved(output: StrategyOutput) -> StrategyOutput:
+    decision = replace(
+        output.decisions[0],
+        earliest_executable_session=None,
+        execution_session_status=ExecutionSessionStatus.UNRESOLVED,
+    )
+    return replace(output, decisions=(decision,))
+
+
+def clear_first_decision_parameters(output: StrategyOutput) -> StrategyOutput:
+    decision = replace(output.decisions[0], strategy_parameters=())
+    return replace(output, decisions=(decision,))
 
 
 def test_generic_runner_enforces_required_market_fields() -> None:
@@ -105,11 +128,58 @@ def test_generic_runner_rejects_unordered_input() -> None:
 
 
 def test_generic_runner_rejects_duplicate_decisions() -> None:
-    strategy = DuplicatingStrategy(
-        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3))
+    strategy = OutputTransformingStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        duplicate_first_decision,
     )
 
     with pytest.raises(DuplicateStrategyDecisionError, match="duplicate"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
+
+
+def test_generic_runner_rejects_falsely_unresolved_execution_session() -> None:
+    strategy = OutputTransformingStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        mark_first_decision_unresolved,
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="next exchange-session"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
+
+
+def test_generic_runner_accepts_unresolved_session_when_resolution_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strategy = OutputTransformingStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        mark_first_decision_unresolved,
+    )
+
+    def fail_to_resolve_next_session(signal_session: date, calendar: str) -> date:
+        raise UnsupportedTimingConventionError(
+            f"cannot resolve {calendar} after {signal_session}"
+        )
+
+    monkeypatch.setattr(
+        "quantforge.strategies.runner.next_exchange_session",
+        fail_to_resolve_next_session,
+    )
+
+    decision = run_strategy(
+        strategy, make_dataset(("3", "2", "1", "2", "3"))
+    ).decisions[0]
+
+    assert decision.earliest_executable_session is None
+    assert decision.execution_session_status is ExecutionSessionStatus.UNRESOLVED
+
+
+def test_generic_runner_rejects_incorrect_parameter_snapshot() -> None:
+    strategy = OutputTransformingStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        clear_first_decision_parameters,
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="parameter snapshot"):
         run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
 
 

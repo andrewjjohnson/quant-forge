@@ -73,9 +73,9 @@ rows = output.to_rows()  # one row for every input session
 
 The public contract deliberately makes the strategy responsible for coordinating
 its indicators. `run_strategy(strategy, dataset)` only checks input fields and
-chronology, invokes the contract, and validates identity, ordering, uniqueness,
-provenance, and timing. It has no moving-average branches and is not a backtest
-engine.
+chronology, invokes the contract, and validates identity, parameter snapshots,
+ordering, uniqueness, provenance, and timing. It has no moving-average branches
+and is not a backtest engine.
 
 Immutable parameter objects expose `to_primitive()`. Decimal weights are encoded
 exactly as context-independent canonical decimal strings, enums as their stable
@@ -117,8 +117,10 @@ cannot execute at that close. The reference timing rule resolves the first
 exchange session after `t` from the QF-3 calendar, skipping weekends and market
 holidays. A signal on the dataset's final bar remains `pending`; a resolved
 calendar date is eligibility metadata, not evidence of an order or fill. If a
-calendar cannot resolve the next session safely, calculation raises a domain
-error rather than inventing a date.
+calendar cannot resolve the next session safely, a strategy may record the
+session as `unresolved` rather than inventing a date. The generic runner verifies
+calendar resolution independently: it requires the resolved date and `pending`
+status whenever resolution succeeds and permits `unresolved` only when it fails.
 
 Rolling windows are trailing and never centered. Indicator rows are never
 backfilled. A crossover requires valid fast and slow averages on both the
