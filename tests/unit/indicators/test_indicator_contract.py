@@ -1,5 +1,6 @@
 from dataclasses import dataclass, replace
 from datetime import date
+from decimal import Decimal
 from typing import cast
 
 import pytest
@@ -56,3 +57,29 @@ def test_alignment_validator_rejects_changed_session_index() -> None:
 
     with pytest.raises(MisalignedIndicatorOutputError, match="sessions"):
         validate_indicator_alignment(dataset, output)
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    [Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")],
+)
+def test_indicator_output_rejects_non_finite_values(
+    invalid_value: Decimal,
+) -> None:
+    with pytest.raises(MisalignedIndicatorOutputError, match="finite decimals or None"):
+        IndicatorOutput(
+            "test",
+            "configuration-id",
+            (date(2024, 7, 1),),
+            (IndicatorFieldOutput("result", (invalid_value,)),),
+        )
+
+
+def test_indicator_output_rejects_reserved_session_date_field() -> None:
+    with pytest.raises(MisalignedIndicatorOutputError, match="reserved: session_date"):
+        IndicatorOutput(
+            "test",
+            "configuration-id",
+            (date(2024, 7, 1),),
+            (IndicatorFieldOutput("session_date", (Decimal(1),)),),
+        )

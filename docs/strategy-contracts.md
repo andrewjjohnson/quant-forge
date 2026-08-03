@@ -30,11 +30,14 @@ It consumes QF-3 `MarketDataset` objects, not provider responses or SDK models.
 
 `IndicatorOutput` stores the input session dates unchanged and one or more
 immutable `IndicatorFieldOutput` series of exactly the same length. `None` is
-the explicit unavailable value. Outputs never omit warm-up rows. The reference
-simple moving average requires `N` observations; therefore its first `N - 1`
-rows are `None`, and its first available result uses exactly the first `N`
-source observations. A non-finite/missing source observation makes every full
-window containing it unavailable. Values are never filled or backfilled.
+the explicit unavailable value; every available output must be a finite
+`Decimal`. The name `session_date` is reserved for the tabular alignment key and
+cannot be used as an indicator output field. Outputs never omit warm-up rows.
+The reference simple moving average requires `N` observations; therefore its
+first `N - 1` rows are `None`, and its first available result uses exactly the
+first `N` source observations. A non-finite/missing source observation makes
+every full window containing it unavailable. Values are never filled or
+backfilled.
 
 `SimpleMovingAverage` uses `Decimal`, the current observation, and only the
 prior `N - 1` observations. Sums and division run in a private local decimal

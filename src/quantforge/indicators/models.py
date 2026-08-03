@@ -9,6 +9,7 @@ from quantforge.configuration import PrimitiveMapping, decimal_to_primitive
 from quantforge.indicators.exceptions import MisalignedIndicatorOutputError
 
 type IndicatorValue = Decimal | None
+_SESSION_DATE_FIELD = "session_date"
 
 
 class MarketField(StrEnum):
@@ -56,9 +57,21 @@ class IndicatorOutput:
             raise MisalignedIndicatorOutputError(
                 "indicator output field names must be non-empty and unique"
             )
+        if _SESSION_DATE_FIELD in names:
+            raise MisalignedIndicatorOutputError(
+                f"indicator output field name is reserved: {_SESSION_DATE_FIELD}"
+            )
         if any(len(field.values) != len(self.session_dates) for field in self.fields):
             raise MisalignedIndicatorOutputError(
                 "every indicator field must align with every input session"
+            )
+        if any(
+            value is not None and not value.is_finite()
+            for field in self.fields
+            for value in field.values
+        ):
+            raise MisalignedIndicatorOutputError(
+                "indicator output values must be finite decimals or None"
             )
 
     def values_for(self, field_name: str) -> tuple[IndicatorValue, ...]:
@@ -74,7 +87,7 @@ class IndicatorOutput:
         """Return a deterministic JSON-compatible row representation."""
         rows: list[PrimitiveMapping] = []
         for index, session_date in enumerate(self.session_dates):
-            row: PrimitiveMapping = {"session_date": session_date.isoformat()}
+            row: PrimitiveMapping = {_SESSION_DATE_FIELD: session_date.isoformat()}
             for field in self.fields:
                 value = field.values[index]
                 row[field.name] = None if value is None else decimal_to_primitive(value)
