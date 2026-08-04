@@ -51,15 +51,18 @@ Commission, fee, and slippage model versions also participate in run identity,
 and configuration provenance is deeply snapshotted before execution. A
 separately persisted fingerprint of the actual validated OHLCV bars also
 participates in run identity, preventing reused or stale QF-3 metadata from
-aliasing different market inputs. Commission and fee models are accepted only
-when they explicitly guarantee nondecreasing buy-side costs by quantity, which
-makes whole-share affordability search sound.
+aliasing different market inputs. QF-4's adjustment-mode and trading-calendar
+reference participates as well because it controls signal eligibility and
+execution timing. Commission and fee models are accepted only when they
+explicitly guarantee nondecreasing buy-side costs by quantity, which makes
+whole-share affordability search sound.
 QF-5 rejects QF-3 datasets with missing expected sessions inside the observed
 range so a multi-session equity change cannot be annualized as one daily return.
-QF-3 schema version 2 requires a provider coefficient for every bar and retains
-every non-unit effective session as immutable split provenance. QF-5 rejects
-legacy schemas, observed split-bearing ranges, and adjusted datasets because it
-does not yet receive the point-in-time factor needed for causal share and cost
+QF-3 schema version 3 requires a provider split coefficient and cash-dividend
+amount for every bar and retains every non-unit split and nonzero dividend
+session as immutable provenance. QF-5 rejects legacy schemas, observed split-
+or dividend-bearing ranges, and adjusted datasets because it does not yet
+receive or apply the event details needed for causal share, cost, and cash
 accounting. See `docs/backtesting.md` and ADR 0001.
 
 ## Survivorship bias
@@ -86,11 +89,12 @@ Record whether each field is:
 Do not mix conventions silently.
 
 Execution prices, cash dividends, position quantities, and benchmark returns
-must use a coherent policy. QF-5 verifies split-free unadjusted ranges from QF-3
-schema-version-2 provenance and rejects every range with an observed split until
-point-in-time factors and dividend cash-flow semantics are available. Tests
-should cover splits and dividends before broad equity-universe work is
-considered reliable.
+must use a coherent policy. QF-5 verifies split- and dividend-free unadjusted
+ranges from QF-3 schema-version-3 provenance and rejects every range with an
+observed corporate action until point-in-time factors and dividend cash-flow
+semantics are available. Tests cover both rejection boundaries; applying those
+events still requires dedicated accounting tests before broad equity-universe
+work is considered reliable.
 
 ## Timestamp and calendar integrity
 

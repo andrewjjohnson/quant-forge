@@ -52,6 +52,7 @@ class MarketDataMetadata:
     bar_count: int
     missing_sessions: tuple[date, ...]
     split_sessions: tuple[date, ...]
+    dividend_sessions: tuple[date, ...]
     adapter_version: str
 
     @classmethod
@@ -78,6 +79,7 @@ class MarketDataMetadata:
             bar_count=metadata.bar_count,
             missing_sessions=metadata.missing_sessions,
             split_sessions=metadata.split_sessions,
+            dividend_sessions=metadata.dividend_sessions,
             adapter_version=metadata.adapter_version,
         )
 
@@ -102,6 +104,7 @@ class MarketDataMetadata:
             "bar_count": self.bar_count,
             "missing_sessions": [item.isoformat() for item in self.missing_sessions],
             "split_sessions": [item.isoformat() for item in self.split_sessions],
+            "dividend_sessions": [item.isoformat() for item in self.dividend_sessions],
             "adapter_version": self.adapter_version,
         }
 

@@ -224,6 +224,9 @@ def _serialize_metadata_values(
     value["split_sessions"] = [
         item.isoformat() for item in cast(tuple[date, ...], value["split_sessions"])
     ]
+    value["dividend_sessions"] = [
+        item.isoformat() for item in cast(tuple[date, ...], value["dividend_sessions"])
+    ]
     return value
 
 
@@ -250,6 +253,9 @@ def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
         ),
         split_sessions=tuple(
             date.fromisoformat(item) for item in value["split_sessions"]
+        ),
+        dividend_sessions=tuple(
+            date.fromisoformat(item) for item in value["dividend_sessions"]
         ),
         adapter_version=str(value["adapter_version"]),
     )

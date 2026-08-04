@@ -44,6 +44,7 @@ from quantforge.data.models import (
 )
 from quantforge.strategies import (
     ExecutionTiming,
+    MarketDataReference,
     PositionIntent,
     Strategy,
     StrategyDecision,
@@ -56,7 +57,7 @@ LIMITATIONS = (
     "market orders with full whole-share fills only",
     "next-session open execution only",
     "no volume, liquidity, partial-fill, or intraday sequencing model",
-    "no split-bearing ranges or separately modeled corporate-action cash flows",
+    "no split- or dividend-bearing ranges or modeled corporate-action cash flows",
     "no forced end-of-data liquidation",
     "target weights are applied only on flat-to-long transitions",
 )
@@ -115,7 +116,7 @@ def _validate_dataset(dataset: MarketDataset) -> None:
     if metadata.schema_version != MARKET_DATA_SCHEMA_VERSION:
         raise InvalidMarketDataError(
             f"market data schema {MARKET_DATA_SCHEMA_VERSION} is required for "
-            "verified split-session provenance"
+            "verified corporate-action provenance"
         )
     if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
         raise InvalidMarketDataError(
@@ -158,6 +159,22 @@ def _validate_dataset(dataset: MarketDataset) -> None:
         raise InvalidMarketDataError(
             "unadjusted market data contains stock splits within its observed range: "
             f"{rendered}"
+        )
+    observed_dividend_sessions = tuple(
+        dividend_session
+        for dividend_session in metadata.dividend_sessions
+        if metadata.actual_first_session
+        <= dividend_session
+        <= metadata.actual_last_session
+    )
+    if observed_dividend_sessions:
+        rendered = ", ".join(
+            dividend_session.isoformat()
+            for dividend_session in observed_dividend_sessions
+        )
+        raise InvalidMarketDataError(
+            "unadjusted market data contains cash dividends within its observed "
+            f"range: {rendered}"
         )
     previous_session = None
     for typed_bar in dataset_value.bars:
@@ -406,6 +423,7 @@ def run_backtest(
     """Run QF-4 decisions through deterministic next-open execution and accounting."""
     _validate_dataset(dataset)
     bars_fingerprint = _bars_fingerprint(dataset.bars)
+    market_data_reference = MarketDataReference.from_dataset(dataset)
     if initiated_at is not None and initiated_at.utcoffset() is None:
         raise InvalidSignalError("initiated_at must include a defined UTC offset")
     strategy_configuration_snapshot = PrimitiveMappingSnapshot.capture(
@@ -424,9 +442,8 @@ def run_backtest(
             "engine_version": config.engine_version,
             "result_schema_version": config.result_schema_version,
             "market_data": {
-                "dataset_id": dataset.metadata.dataset_id,
+                **market_data_reference.to_primitive(),
                 "bars_fingerprint": bars_fingerprint,
-                "schema_version": dataset.metadata.schema_version,
             },
             "strategy": {
                 "strategy_id": strategy.name,

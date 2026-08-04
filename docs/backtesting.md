@@ -230,14 +230,16 @@ export.
 
 ## Deterministic identity and export
 
-The SHA-256 run ID is canonical-JSON-derived from the QF-3 dataset ID and schema,
-a separate SHA-256 fingerprint of the actual validated bars, QF-4 strategy name,
+The SHA-256 run ID is canonical-JSON-derived from the complete QF-4 market-data
+reference (QF-3 dataset ID, schema, adjustment mode, and trading calendar), a
+separate SHA-256 fingerprint of the actual validated bars, QF-4 strategy name,
 explicit implementation version, configuration identity, full configuration,
 complete backtest configuration (including each cost-model implementation
 version), and engine/result schema versions. The bar fingerprint canonicalizes
 the ordered symbol, session date, and every OHLCV value and is persisted in the
 manifest as `market_data.bars_fingerprint`. Consequently, copied or manually
-constructed datasets cannot share a run identity merely by reusing metadata.
+constructed datasets cannot share a run identity by reusing an identifier while
+changing either the bars or execution-relevant calendar/adjustment metadata.
 The strategy implementation version is also persisted directly on the result
 and every trade. The identity excludes object addresses, QF-3 retrieval time,
 optional initiation time, and export time.
@@ -278,10 +280,11 @@ directory and renames it into place only after every file is complete.
 
 QF-5 preserves QF-3 provider, symbol, requested and actual range, adjustment,
 calendar, timezone, adapter, dataset, schema, missing-session, and split-session
-metadata, and records its own fingerprint of the validated bars it consumed. It
-accepts only schema-version-2 `unadjusted` datasets with no verified split
-session between the first and last observed bars. Legacy schemas without split
-provenance and unadjusted split-bearing ranges are rejected before the strategy,
+and dividend-session metadata, and records its own fingerprint of the validated
+bars it consumed. It accepts only schema-version-3 `unadjusted` datasets with no
+verified split or cash-dividend session between the first and last observed
+bars. Legacy schemas without complete corporate-action provenance and
+unadjusted split- or dividend-bearing ranges are rejected before the strategy,
 benchmark, or metrics run.
 
 QF-3's `split_adjusted` mode divides earlier prices by later split coefficients
@@ -294,8 +297,10 @@ therefore also rejects both `split_adjusted` and
 
 Supporting a range containing a split requires preserving the point-in-time
 factor plus QF-5 quantity and cost-basis transformation at the effective
-session. Dividend-adjusted execution likewise requires an explicit cash-flow
-policy. The MVP does not infer either behavior from normalized prices.
+session. A cash dividend requires explicit ex-date entitlement, payment timing,
+withholding, and cash-credit semantics; dividend-adjusted execution likewise
+requires an explicit total-return policy. The MVP does not infer either behavior
+from normalized prices.
 
 This implementation is intentionally limited to one stock or ETF, long-only,
 unlevered whole shares, next-open market orders, full fills, and discrete state

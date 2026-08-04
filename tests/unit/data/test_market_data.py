@@ -2,6 +2,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -16,9 +17,11 @@ from quantforge.data.models import (
 )
 from quantforge.data.normalize import (
     normalize_response,
+    normalize_response_with_corporate_action_sessions,
     normalize_response_with_split_sessions,
     normalize_symbol,
 )
+from quantforge.data.providers import AlphaVantageProvider
 from quantforge.data.service import MarketDataService
 from quantforge.data.validate import validate_bars
 
@@ -54,6 +57,7 @@ def record(
     low: str = "99",
     close: str = "101",
     volume: str = "1000",
+    dividend: str = "0",
     split: str = "1",
 ) -> dict[str, str]:
     return {
@@ -63,6 +67,7 @@ def record(
         "low": low,
         "close": close,
         "volume": volume,
+        "dividend_amount": dividend,
         "split_coefficient": split,
     }
 
@@ -84,6 +89,42 @@ def response(
         {},
         "1",
     )
+
+
+def test_alpha_vantage_preserves_dividend_amount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "Meta Data": {"2. Symbol": "SPY"},
+        "Time Series (Daily)": {
+            "2024-07-01": {
+                "1. open": "100",
+                "2. high": "102",
+                "3. low": "99",
+                "4. close": "101",
+                "5. adjusted close": "100.25",
+                "6. volume": "1000",
+                "7. dividend amount": "0.75",
+                "8. split coefficient": "1",
+            }
+        },
+    }
+
+    def fake_urlopen(url: str, timeout: float) -> BytesIO:
+        del url, timeout
+        return BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr("quantforge.data.providers.alpha_vantage.urlopen", fake_urlopen)
+    provider = AlphaVantageProvider("test-api-key")
+    provider_response = provider.fetch_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 1),
+        AdjustmentMode.UNADJUSTED,
+    )
+
+    assert provider.adapter_version == "2"
+    assert provider_response.records[0]["dividend_amount"] == "0.75"
 
 
 def test_normalizes_symbol_and_stably_orders_rows() -> None:
@@ -126,6 +167,20 @@ def test_requires_split_coefficient_for_verified_provenance() -> None:
 
     with pytest.raises(ValidationError, match="split_coefficient"):
         normalize_response(response((incomplete,)), "SPY")
+
+
+def test_requires_dividend_amount_for_verified_provenance() -> None:
+    incomplete = record("2024-07-01")
+    del incomplete["dividend_amount"]
+
+    with pytest.raises(ValidationError, match="dividend_amount"):
+        normalize_response(response((incomplete,)), "SPY")
+
+
+@pytest.mark.parametrize("dividend", ["-0.01", "NaN", "Infinity"])
+def test_rejects_invalid_dividend_amount(dividend: str) -> None:
+    with pytest.raises(ValidationError, match="dividend amount"):
+        normalize_response(response((record("2024-07-01", dividend=dividend),)), "SPY")
 
 
 @pytest.mark.parametrize(
@@ -197,10 +252,11 @@ def test_service_persists_metadata_and_reuses_cache_across_instances(
     assert provider.calls == 1
     assert first == second
     assert first.metadata.dataset_id
-    assert first.metadata.schema_version == SCHEMA_VERSION == "2"
+    assert first.metadata.schema_version == SCHEMA_VERSION == "3"
     assert first.metadata.bar_count == 3
     assert first.metadata.adjustment_mode is AdjustmentMode.SPLIT_ADJUSTED
     assert first.metadata.split_sessions == ()
+    assert first.metadata.dividend_sessions == ()
     assert first.metadata.raw_location.startswith("raw/")
 
 
@@ -229,6 +285,32 @@ def test_service_persists_and_reloads_verified_split_sessions(tmp_path: Path) ->
     assert cache.load(dataset.metadata.dataset_id) == dataset
 
 
+def test_service_persists_and_reloads_verified_dividend_sessions(
+    tmp_path: Path,
+) -> None:
+    records = (
+        record("2024-07-01"),
+        record("2024-07-02", dividend="0.75"),
+    )
+    bars, split_sessions, dividend_sessions = (
+        normalize_response_with_corporate_action_sessions(response(records), "SPY")
+    )
+    assert len(bars) == 2
+    assert split_sessions == ()
+    assert dividend_sessions == (date(2024, 7, 2),)
+
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(FakeProvider(records), cache).get_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        AdjustmentMode.UNADJUSTED,
+    )
+
+    assert dataset.metadata.dividend_sessions == (date(2024, 7, 2),)
+    assert cache.load(dataset.metadata.dataset_id) == dataset
+
+
 def test_cache_rejects_legacy_manifest_without_split_provenance(
     tmp_path: Path,
 ) -> None:
@@ -242,6 +324,25 @@ def test_cache_rejects_legacy_manifest_without_split_provenance(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     del manifest["split_sessions"]
     manifest["schema_version"] = "1"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
+
+
+def test_cache_rejects_v2_manifest_without_dividend_provenance(
+    tmp_path: Path,
+) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(FakeProvider(VALID), cache).get_daily_bars(
+        "SPY", date(2024, 7, 1), date(2024, 7, 3)
+    )
+    manifest_path = (
+        tmp_path / "datasets" / dataset.metadata.dataset_id / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["dividend_sessions"]
+    manifest["schema_version"] = "2"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(CacheError, match="incomplete or corrupt"):

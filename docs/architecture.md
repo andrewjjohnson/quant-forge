@@ -84,7 +84,7 @@ Responsibilities:
 - normalize timezone and identifiers;
 - validate ordering, uniqueness, nulls, and numerical relationships;
 - record adjustment policies;
-- validate and retain provider-reported split-session provenance;
+- validate and retain provider-reported split and cash-dividend provenance;
 - generate deterministic fingerprints.
 
 Must not:
@@ -160,11 +160,12 @@ session eligibility, sizes whole shares, and applies separately configured
 commission, additional fees, and adverse slippage. See `docs/backtesting.md` and
 ADR 0001.
 
-The QF-5 execution boundary accepts only schema-version-2 unadjusted QF-3
-datasets with verified empty split provenance inside the observed range.
-Split-adjusted datasets are valid for indicator and strategy research, but
-execution rejects them until QF-3 carries point-in-time split factors needed to
-preserve historical share units.
+The QF-5 execution boundary accepts only schema-version-3 unadjusted QF-3
+datasets with verified empty split and cash-dividend provenance inside the
+observed range. Split-adjusted datasets are valid for indicator and strategy
+research, but execution rejects adjusted or corporate-action-bearing ranges
+until QF-3/QF-5 carry the event details and accounting policies needed to
+preserve historical share units and cash entitlement.
 
 The boundary also rejects QF-3 datasets with expected market sessions missing
 between their first and last observed bars. This preserves daily metric
@@ -242,13 +243,15 @@ Must not:
 
 QF-5 exports a stable manifest and ordered CSV ledgers into an immutable
 run-identity directory. The deterministic identity covers QF-3 dataset
-provenance, a canonical fingerprint of the actual validated OHLCV bars, QF-4
-strategy configuration and implementation version, all execution/cost/sizing
-assumptions and their implementation versions, and engine/result schema
-versions. The validated-bar fingerprint is also persisted in the manifest so a
-caller cannot reuse a dataset identifier with different bar contents under the
-same run identity. Canonical immutable snapshots prevent later caller-owned
-configuration mutation from changing the manifest under a fixed run identity.
+provenance, QF-4's execution-relevant adjustment and calendar reference, a
+canonical fingerprint of the actual validated OHLCV bars, QF-4 strategy
+configuration and implementation version, all execution/cost/sizing assumptions
+and their implementation versions, and engine/result schema versions. The
+validated-bar fingerprint is also persisted in the manifest so a caller cannot
+reuse a dataset identifier with different bar contents or execution metadata
+under the same run identity. Canonical immutable snapshots prevent later
+caller-owned configuration mutation from changing the manifest under a fixed
+run identity.
 
 Responsibilities:
 

@@ -68,6 +68,7 @@ def make_dataset(
         bar_count=len(bars),
         missing_sessions=(),
         split_sessions=(),
+        dividend_sessions=(),
         adapter_version="test-1",
     )
     return MarketDataset(tuple(bars), metadata)

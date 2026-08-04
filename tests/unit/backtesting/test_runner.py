@@ -161,8 +161,9 @@ def test_next_session_timing_costs_accounting_and_traceability() -> None:
     assert trade.strategy_configuration_id == result.strategy_configuration_id
     assert trade.strategy_implementation_version == "1"
     assert result.strategy_implementation_version == "1"
-    assert result.market_data.schema_version == "2"
+    assert result.market_data.schema_version == "3"
     assert result.market_data.split_sessions == ()
+    assert result.market_data.dividend_sessions == ()
     assert result.warnings == ()
 
 
@@ -208,6 +209,42 @@ def test_actual_bar_content_changes_run_identity_when_dataset_id_is_reused() -> 
     assert original.market_data.bars_fingerprint != (
         revised.market_data.bars_fingerprint
     )
+    assert original.run_id != revised.run_id
+
+
+def test_execution_calendar_changes_run_identity_when_dataset_id_is_reused() -> None:
+    sessions = (
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        date(2024, 7, 3),
+        date(2024, 7, 5),
+    )
+    original_dataset = make_dataset(
+        ("3", "2", "3", "4"),
+        sessions=sessions,
+        dataset_id="reused-dataset-id",
+    )
+    revised_dataset = replace(
+        original_dataset,
+        metadata=replace(original_dataset.metadata, calendar="24/7"),
+    )
+    strategy = MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(1, 2))
+    config = BacktestConfig(
+        Decimal(100),
+        FixedCommission(Decimal(1)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(100)),
+    )
+
+    original = run_backtest(original_dataset, strategy, config)
+    revised = run_backtest(revised_dataset, strategy, config)
+
+    assert original.market_data.dataset_id == revised.market_data.dataset_id
+    assert original.market_data.bars_fingerprint == (
+        revised.market_data.bars_fingerprint
+    )
+    assert original.signals[0].decision.earliest_executable_session == date(2024, 7, 5)
+    assert revised.signals[0].decision.earliest_executable_session == date(2024, 7, 4)
     assert original.run_id != revised.run_id
 
 
@@ -560,14 +597,14 @@ def test_adjusted_data_is_rejected_without_point_in_time_corporate_actions(
         )
 
 
-def test_market_data_schema_without_split_provenance_is_rejected() -> None:
+def test_market_data_schema_without_dividend_provenance_is_rejected() -> None:
     dataset = make_dataset(PRICES)
     legacy = replace(
         dataset,
-        metadata=replace(dataset.metadata, schema_version="1"),
+        metadata=replace(dataset.metadata, schema_version="2"),
     )
 
-    with pytest.raises(InvalidMarketDataError, match="split-session provenance"):
+    with pytest.raises(InvalidMarketDataError, match="corporate-action provenance"):
         run_backtest(
             legacy,
             MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
@@ -594,6 +631,30 @@ def test_unadjusted_data_with_stock_split_is_rejected() -> None:
     ):
         run_backtest(
             split_bearing,
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(100)),
+            ),
+        )
+
+
+def test_unadjusted_data_with_cash_dividend_is_rejected() -> None:
+    dataset = make_dataset(PRICES)
+    dividend_session = date(2024, 7, 9)
+    dividend_bearing = replace(
+        dataset,
+        metadata=replace(dataset.metadata, dividend_sessions=(dividend_session,)),
+    )
+
+    with pytest.raises(
+        InvalidMarketDataError,
+        match="cash dividends within its observed range: 2024-07-09",
+    ):
+        run_backtest(
+            dividend_bearing,
             MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
             BacktestConfig(
                 Decimal(100),
