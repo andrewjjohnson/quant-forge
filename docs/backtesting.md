@@ -273,20 +273,24 @@ directory and renames it into place only after every file is complete.
 ## Adjustment assumptions and MVP limitations
 
 QF-5 preserves QF-3 provider, symbol, requested and actual range, adjustment,
-calendar, timezone, adapter, dataset, and schema metadata. It currently accepts
-only `unadjusted` datasets and warns that the requested range must not contain a
-split. QF-3's `split_adjusted` mode divides earlier prices by later split
-coefficients but does not carry point-in-time factors into `MarketDataset`.
-Using those prices directly for whole-share fills or per-share costs would mix
-post-split-equivalent units with historical share units and allow a future split
-to revise earlier execution economics. QF-5 therefore rejects both
-`split_adjusted` and `split_and_dividend_adjusted` datasets.
+calendar, timezone, adapter, dataset, schema, missing-session, and split-session
+metadata. It accepts only schema-version-2 `unadjusted` datasets with no verified
+split session between the first and last observed bars. Legacy schemas without
+split provenance and unadjusted split-bearing ranges are rejected before the
+strategy, benchmark, or metrics run.
 
-Supporting a range containing a split requires a future QF-3 schema that
-preserves point-in-time split factors plus QF-5 quantity and cost-basis
-transformation at the effective session. Dividend-adjusted execution likewise
-requires an explicit cash-flow policy. The MVP does not infer either behavior
-from normalized prices.
+QF-3's `split_adjusted` mode divides earlier prices by later split coefficients
+but retains only their effective sessions, not the point-in-time factors needed
+for share conversion. Using those prices directly for whole-share fills or
+per-share costs would mix post-split-equivalent units with historical share
+units and allow a future split to revise earlier execution economics. QF-5
+therefore also rejects both `split_adjusted` and
+`split_and_dividend_adjusted` datasets.
+
+Supporting a range containing a split requires preserving the point-in-time
+factor plus QF-5 quantity and cost-basis transformation at the effective
+session. Dividend-adjusted execution likewise requires an explicit cash-flow
+policy. The MVP does not infer either behavior from normalized prices.
 
 This implementation is intentionally limited to one stock or ETF, long-only,
 unlevered whole shares, next-open market orders, full fills, and discrete state

@@ -53,8 +53,10 @@ and fee models are accepted only when they explicitly guarantee nondecreasing
 buy-side costs by quantity, which makes whole-share affordability search sound.
 QF-5 rejects QF-3 datasets with missing expected sessions inside the observed
 range so a multi-session equity change cannot be annualized as one daily return.
-QF-5 also rejects adjusted datasets because QF-3 does not yet expose the
-point-in-time corporate-action factors needed for causal share and cost
+QF-3 schema version 2 requires a provider coefficient for every bar and retains
+every non-unit effective session as immutable split provenance. QF-5 rejects
+legacy schemas, observed split-bearing ranges, and adjusted datasets because it
+does not yet receive the point-in-time factor needed for causal share and cost
 accounting. See `docs/backtesting.md` and ADR 0001.
 
 ## Survivorship bias
@@ -81,9 +83,10 @@ Record whether each field is:
 Do not mix conventions silently.
 
 Execution prices, cash dividends, position quantities, and benchmark returns
-must use a coherent policy. QF-5 accepts only unadjusted ranges without splits
-until point-in-time split factors and dividend cash-flow semantics are available.
-Tests should cover splits and dividends before broad equity-universe work is
+must use a coherent policy. QF-5 verifies split-free unadjusted ranges from QF-3
+schema-version-2 provenance and rejects every range with an observed split until
+point-in-time factors and dividend cash-flow semantics are available. Tests
+should cover splits and dividends before broad equity-universe work is
 considered reliable.
 
 ## Timestamp and calendar integrity

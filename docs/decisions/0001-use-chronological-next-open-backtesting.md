@@ -21,10 +21,12 @@ costs and accounting, then mark at close. A fixed explicit Decimal policy is
 used for calculations.
 
 The MVP uses one symbol, long-only whole shares, market orders, full fills, and
-no forced final liquidation. It accepts only unadjusted datasets restricted to
-ranges without splits. Adjusted execution is deferred until point-in-time split
-factors and corporate-action accounting exist. Later execution models must
-preserve the signal eligibility boundary and produce equally auditable records.
+no forced final liquidation. It accepts only QF-3 schema-version-2 unadjusted
+datasets whose verified split-session provenance is empty inside the observed
+range. Split-bearing and adjusted execution are deferred until point-in-time
+split factors and corporate-action accounting exist. Later execution models
+must preserve the signal eligibility boundary and produce equally auditable
+records.
 
 ## Consequences
 
@@ -61,3 +63,6 @@ nonexecution, future-bar causality, accounting invariants, generic strategy
 compatibility, strategy-version provenance, complete-equity-depletion returns,
 cost-model-version identity, deeply immutable configuration provenance, stable
 serialization, adjusted-dataset rejection, and repeated equivalent runs.
+QF-3 cache tests verify required split coefficients, schema-versioned immutable
+split-session provenance, reload stability, and safe rejection of legacy
+manifests; QF-5 regressions reject both legacy and split-bearing inputs.

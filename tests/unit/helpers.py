@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from quantforge.data.models import (
+    SCHEMA_VERSION,
     AdjustmentMode,
     DailyBar,
     DatasetMetadata,
@@ -63,9 +64,10 @@ def make_dataset(
         raw_location="raw/synthetic.json",
         normalized_location="datasets/synthetic/bars.csv",
         dataset_id=dataset_id,
-        schema_version="1",
+        schema_version=SCHEMA_VERSION,
         bar_count=len(bars),
         missing_sessions=(),
+        split_sessions=(),
         adapter_version="test-1",
     )
     return MarketDataset(tuple(bars), metadata)

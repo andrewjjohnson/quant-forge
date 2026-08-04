@@ -84,6 +84,7 @@ Responsibilities:
 - normalize timezone and identifiers;
 - validate ordering, uniqueness, nulls, and numerical relationships;
 - record adjustment policies;
+- validate and retain provider-reported split-session provenance;
 - generate deterministic fingerprints.
 
 Must not:
@@ -159,10 +160,11 @@ session eligibility, sizes whole shares, and applies separately configured
 commission, additional fees, and adverse slippage. See `docs/backtesting.md` and
 ADR 0001.
 
-The QF-5 execution boundary accepts only unadjusted QF-3 datasets whose range
-does not contain a split. Split-adjusted datasets are valid for indicator and
-strategy research, but execution rejects them until QF-3 carries point-in-time
-split factors needed to preserve historical share units.
+The QF-5 execution boundary accepts only schema-version-2 unadjusted QF-3
+datasets with verified empty split provenance inside the observed range.
+Split-adjusted datasets are valid for indicator and strategy research, but
+execution rejects them until QF-3 carries point-in-time split factors needed to
+preserve historical share units.
 
 The boundary also rejects QF-3 datasets with expected market sessions missing
 between their first and last observed bars. This preserves daily metric

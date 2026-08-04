@@ -161,6 +161,9 @@ def test_next_session_timing_costs_accounting_and_traceability() -> None:
     assert trade.strategy_configuration_id == result.strategy_configuration_id
     assert trade.strategy_implementation_version == "1"
     assert result.strategy_implementation_version == "1"
+    assert result.market_data.schema_version == "2"
+    assert result.market_data.split_sessions == ()
+    assert result.warnings == ()
 
 
 def test_repeated_equivalent_inputs_replay_identically() -> None:
@@ -512,6 +515,50 @@ def test_adjusted_data_is_rejected_without_point_in_time_corporate_actions(
     with pytest.raises(InvalidMarketDataError, match="point-in-time"):
         run_backtest(
             dataset,
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(100)),
+            ),
+        )
+
+
+def test_market_data_schema_without_split_provenance_is_rejected() -> None:
+    dataset = make_dataset(PRICES)
+    legacy = replace(
+        dataset,
+        metadata=replace(dataset.metadata, schema_version="1"),
+    )
+
+    with pytest.raises(InvalidMarketDataError, match="split-session provenance"):
+        run_backtest(
+            legacy,
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(100)),
+            ),
+        )
+
+
+def test_unadjusted_data_with_stock_split_is_rejected() -> None:
+    dataset = make_dataset(PRICES)
+    split_session = date(2024, 7, 9)
+    split_bearing = replace(
+        dataset,
+        metadata=replace(dataset.metadata, split_sessions=(split_session,)),
+    )
+
+    with pytest.raises(
+        InvalidMarketDataError,
+        match="stock splits within its observed range: 2024-07-09",
+    ):
+        run_backtest(
+            split_bearing,
             MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
             BacktestConfig(
                 Decimal(100),

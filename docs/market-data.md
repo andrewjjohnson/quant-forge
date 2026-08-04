@@ -48,11 +48,17 @@ dividends, this adapter deliberately does not consume them:
 factor to volume would not define coherent OHLCV semantics. No dividend cash
 flows or corporate-action ledger are exposed in QF-3.
 
+Schema version 2 requires every provider record to include a finite positive
+`split_coefficient`. QF-3 records the effective session for every non-unit
+coefficient in immutable `DatasetMetadata.split_sessions`. An empty tuple is
+therefore verified provider provenance for the requested records, not a silent
+assumption that splits did not occur.
+
 `split_adjusted` is suitable for causal indicator and strategy research on a
-coherent price basis, but QF-5 does not execute shares against it. Because the
-current `MarketDataset` omits point-in-time split factors, QF-5 accepts only
-`unadjusted` requests whose range contains no split. Split-aware backtesting
-requires a future corporate-action schema and quantity transformation policy.
+coherent price basis, but QF-5 does not execute shares against it. QF-5 accepts
+only schema-version-2 `unadjusted` datasets whose `split_sessions` has no event
+inside the observed interval. Split-bearing execution still requires preserving
+the coefficient itself plus a quantity and cost-basis transformation policy.
 
 ## Calendar and validation
 
@@ -61,8 +67,10 @@ Weekends and exchange holidays are therefore not gaps. Stable ascending sort is
 the only automatic correction. Duplicate sessions, rows outside the request,
 empty input, inconsistent symbols or adjustment modes, null/non-numeric/nonfinite
 values, nonpositive OHLCV, impossible high/low relationships, and malformed
-dates are rejected. Strict ingestion (the default) also rejects missing exchange
-sessions and reports their dates. Non-strict mode records missing sessions in the
+dates are rejected. Missing, nonfinite, or nonpositive split coefficients are
+also rejected because their absence would make split-free provenance
+unverifiable. Strict ingestion (the default) rejects missing exchange sessions
+and reports their dates. Non-strict mode records missing sessions in the
 manifest. Values are never filled, interpolated, or otherwise invented.
 
 ## Immutable storage and metadata
@@ -86,7 +94,13 @@ symbol, inclusive dates, adjustment, calendar, and schema version.
 The stable manifest records canonical and provider symbols, provider and adapter
 versions, UTC retrieval time, requested and actual session bounds, XNYS calendar,
 provider timezone, adjustment mode, raw and normalized locations, immutable
-dataset ID, schema version, bar count, and missing expected sessions.
+dataset ID, schema version, bar count, missing expected sessions, and verified
+provider-reported split sessions.
+
+Schema version 2 changes request and dataset identities. Existing version-1
+artifacts remain immutable and are not silently upgraded; because their
+manifests do not prove split completeness, they must be re-ingested before use
+with QF-5.
 
 ## Optional live verification
 

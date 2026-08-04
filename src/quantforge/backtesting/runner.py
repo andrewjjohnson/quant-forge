@@ -32,7 +32,14 @@ from quantforge.configuration import (
     PrimitiveMappingSnapshot,
     configuration_identity,
 )
-from quantforge.data.models import AdjustmentMode, DailyBar, MarketDataset
+from quantforge.data.models import (
+    SCHEMA_VERSION as MARKET_DATA_SCHEMA_VERSION,
+)
+from quantforge.data.models import (
+    AdjustmentMode,
+    DailyBar,
+    MarketDataset,
+)
 from quantforge.strategies import (
     ExecutionTiming,
     PositionIntent,
@@ -47,7 +54,7 @@ LIMITATIONS = (
     "market orders with full whole-share fills only",
     "next-session open execution only",
     "no volume, liquidity, partial-fill, or intraday sequencing model",
-    "no separately modeled dividends or corporate-action cash flows",
+    "no split-bearing ranges or separately modeled corporate-action cash flows",
     "no forced end-of-data liquidation",
     "target weights are applied only on flat-to-long transitions",
 )
@@ -80,6 +87,11 @@ def _validate_dataset(dataset: MarketDataset) -> None:
     metadata = dataset_value.metadata
     if not metadata.dataset_id or not metadata.schema_version:
         raise InvalidMarketDataError("dataset identity and schema version are required")
+    if metadata.schema_version != MARKET_DATA_SCHEMA_VERSION:
+        raise InvalidMarketDataError(
+            f"market data schema {MARKET_DATA_SCHEMA_VERSION} is required for "
+            "verified split-session provenance"
+        )
     if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
         raise InvalidMarketDataError(
             "adjusted market data requires point-in-time corporate-action data "
@@ -105,6 +117,21 @@ def _validate_dataset(dataset: MarketDataset) -> None:
         )
         raise InvalidMarketDataError(
             "dataset has missing expected sessions within its observed range: "
+            f"{rendered}"
+        )
+    observed_split_sessions = tuple(
+        split_session
+        for split_session in metadata.split_sessions
+        if metadata.actual_first_session
+        <= split_session
+        <= metadata.actual_last_session
+    )
+    if observed_split_sessions:
+        rendered = ", ".join(
+            split_session.isoformat() for split_session in observed_split_sessions
+        )
+        raise InvalidMarketDataError(
+            "unadjusted market data contains stock splits within its observed range: "
             f"{rendered}"
         )
     previous_session = None
@@ -673,10 +700,6 @@ def run_backtest(
         annualization_factor=config.annualization_factor,
         benchmark_total_return=benchmark.performance.total_return,
     )
-    warnings = (
-        "unadjusted data does not model split quantity changes; restrict the "
-        "backtest to ranges without splits",
-    )
     return BacktestResult(
         run_id=run_id,
         engine_version=config.engine_version,
@@ -697,7 +720,7 @@ def run_backtest(
         daily_equity=tuple(daily_equity),
         performance=performance,
         benchmark=benchmark,
-        warnings=warnings,
+        warnings=(),
         limitations=LIMITATIONS,
         initiated_at=initiated_at,
     )

@@ -50,6 +50,7 @@ class MarketDataMetadata:
     normalized_location: str
     bar_count: int
     missing_sessions: tuple[date, ...]
+    split_sessions: tuple[date, ...]
     adapter_version: str
 
     @classmethod
@@ -72,6 +73,7 @@ class MarketDataMetadata:
             normalized_location=metadata.normalized_location,
             bar_count=metadata.bar_count,
             missing_sessions=metadata.missing_sessions,
+            split_sessions=metadata.split_sessions,
             adapter_version=metadata.adapter_version,
         )
 
@@ -94,6 +96,7 @@ class MarketDataMetadata:
             "normalized_location": self.normalized_location,
             "bar_count": self.bar_count,
             "missing_sessions": [item.isoformat() for item in self.missing_sessions],
+            "split_sessions": [item.isoformat() for item in self.split_sessions],
             "adapter_version": self.adapter_version,
         }
 

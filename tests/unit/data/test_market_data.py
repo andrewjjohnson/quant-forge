@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -7,8 +8,17 @@ import pytest
 
 from quantforge.data.cache import MarketDataCache
 from quantforge.data.exceptions import CacheError, ProviderError, ValidationError
-from quantforge.data.models import AdjustmentMode, DailyBar, ProviderResponse
-from quantforge.data.normalize import normalize_response, normalize_symbol
+from quantforge.data.models import (
+    SCHEMA_VERSION,
+    AdjustmentMode,
+    DailyBar,
+    ProviderResponse,
+)
+from quantforge.data.normalize import (
+    normalize_response,
+    normalize_response_with_split_sessions,
+    normalize_symbol,
+)
 from quantforge.data.service import MarketDataService
 from quantforge.data.validate import validate_bars
 
@@ -94,7 +104,9 @@ def test_synthetic_two_for_one_split_adjusts_all_ohlc_and_volume() -> None:
         ),
         record("2024-07-02", split="2"),
     )
-    bars = normalize_response(response(records, AdjustmentMode.SPLIT_ADJUSTED), "SPY")
+    bars, split_sessions = normalize_response_with_split_sessions(
+        response(records, AdjustmentMode.SPLIT_ADJUSTED), "SPY"
+    )
     assert bars[0] == DailyBar(
         "SPY",
         date(2024, 7, 1),
@@ -105,6 +117,15 @@ def test_synthetic_two_for_one_split_adjusts_all_ohlc_and_volume() -> None:
         Decimal("1000"),
     )
     assert bars[1].open == Decimal("100")
+    assert split_sessions == (date(2024, 7, 2),)
+
+
+def test_requires_split_coefficient_for_verified_provenance() -> None:
+    incomplete = record("2024-07-01")
+    del incomplete["split_coefficient"]
+
+    with pytest.raises(ValidationError, match="split_coefficient"):
+        normalize_response(response((incomplete,)), "SPY")
 
 
 @pytest.mark.parametrize(
@@ -176,9 +197,55 @@ def test_service_persists_metadata_and_reuses_cache_across_instances(
     assert provider.calls == 1
     assert first == second
     assert first.metadata.dataset_id
+    assert first.metadata.schema_version == SCHEMA_VERSION == "2"
     assert first.metadata.bar_count == 3
     assert first.metadata.adjustment_mode is AdjustmentMode.SPLIT_ADJUSTED
+    assert first.metadata.split_sessions == ()
     assert first.metadata.raw_location.startswith("raw/")
+
+
+def test_service_persists_and_reloads_verified_split_sessions(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        (
+            record(
+                "2024-07-01",
+                open_price="200",
+                high="204",
+                low="198",
+                close="202",
+            ),
+            record("2024-07-02", split="2"),
+        )
+    )
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(provider, cache).get_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        AdjustmentMode.UNADJUSTED,
+    )
+
+    assert dataset.metadata.split_sessions == (date(2024, 7, 2),)
+    assert cache.load(dataset.metadata.dataset_id) == dataset
+
+
+def test_cache_rejects_legacy_manifest_without_split_provenance(
+    tmp_path: Path,
+) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(FakeProvider(VALID), cache).get_daily_bars(
+        "SPY", date(2024, 7, 1), date(2024, 7, 3)
+    )
+    manifest_path = (
+        tmp_path / "datasets" / dataset.metadata.dataset_id / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["split_sessions"]
+    manifest["schema_version"] = "1"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
 
 
 def test_cache_detects_corrupted_data_and_never_overwrites(tmp_path: Path) -> None:
