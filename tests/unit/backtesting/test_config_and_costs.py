@@ -22,6 +22,17 @@ from quantforge.backtesting import (
 from quantforge.configuration import PrimitiveMapping
 
 
+class UnversionedCommission:
+    name = "legacy_commission"
+
+    def calculate(self, quantity: int, fill_price: Decimal) -> Decimal:
+        del quantity, fill_price
+        return Decimal(0)
+
+    def configuration(self) -> PrimitiveMapping:
+        return {"model": self.name, "parameters": {}}
+
+
 def test_config_requires_positive_finite_capital_and_explicit_cost_models() -> None:
     with pytest.raises(InvalidBacktestConfigurationError, match="positive"):
         BacktestConfig(
@@ -57,6 +68,13 @@ def test_config_requires_positive_finite_capital_and_explicit_cost_models() -> N
             FixedCommission(Decimal(1)),
             ExplicitZeroFees(),
             cast(SlippageModel, None),
+        )
+    with pytest.raises(InvalidBacktestConfigurationError, match="implementation"):
+        BacktestConfig(
+            Decimal(1),
+            cast(CommissionModel, UnversionedCommission()),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(1)),
         )
 
 
@@ -95,11 +113,18 @@ def test_zero_cost_models_are_explicit_and_serialize_stably() -> None:
     assert first.to_primitive() == second.to_primitive()
     assert first.to_primitive()["commission"] == {
         "model": "fixed_per_fill",
+        "implementation_version": "1",
         "parameters": {"amount": "0"},
     }
     assert first.to_primitive()["fees"] == {
         "model": "explicit_zero_fees",
+        "implementation_version": "1",
         "parameters": {},
+    }
+    assert first.to_primitive()["slippage"] == {
+        "model": "adverse_basis_points",
+        "implementation_version": "1",
+        "parameters": {"basis_points": "0"},
     }
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
     arithmetic = cast(PrimitiveMapping, first.to_primitive()["arithmetic"])

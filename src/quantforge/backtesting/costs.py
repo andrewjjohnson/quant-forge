@@ -23,6 +23,9 @@ class CommissionModel(Protocol):
     @property
     def name(self) -> str: ...
 
+    @property
+    def implementation_version(self) -> str: ...
+
     def calculate(self, quantity: int, fill_price: Decimal) -> Decimal: ...
 
     def configuration(self) -> PrimitiveMapping: ...
@@ -33,6 +36,9 @@ class FeeModel(Protocol):
 
     @property
     def name(self) -> str: ...
+
+    @property
+    def implementation_version(self) -> str: ...
 
     def calculate(
         self, side: OrderSide, quantity: int, fill_price: Decimal
@@ -46,6 +52,9 @@ class SlippageModel(Protocol):
 
     @property
     def name(self) -> str: ...
+
+    @property
+    def implementation_version(self) -> str: ...
 
     def apply(self, reference_price: Decimal, side: OrderSide) -> Decimal: ...
 
@@ -79,6 +88,7 @@ class FixedCommission:
 
     amount: Decimal
     name = "fixed_per_fill"
+    implementation_version = "1"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "amount", _nonnegative_decimal(self.amount, "amount"))
@@ -90,6 +100,7 @@ class FixedCommission:
     def configuration(self) -> PrimitiveMapping:
         return {
             "model": self.name,
+            "implementation_version": self.implementation_version,
             "parameters": {"amount": decimal_to_primitive(self.amount)},
         }
 
@@ -101,6 +112,7 @@ class PerShareCommission:
     amount_per_share: Decimal
     minimum: Decimal = Decimal(0)
     name = "per_share"
+    implementation_version = "1"
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -120,6 +132,7 @@ class PerShareCommission:
     def configuration(self) -> PrimitiveMapping:
         return {
             "model": self.name,
+            "implementation_version": self.implementation_version,
             "parameters": {
                 "amount_per_share": decimal_to_primitive(self.amount_per_share),
                 "minimum": decimal_to_primitive(self.minimum),
@@ -133,6 +146,7 @@ class BasisPointCommission:
 
     basis_points: Decimal
     name = "basis_points"
+    implementation_version = "1"
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -149,6 +163,7 @@ class BasisPointCommission:
     def configuration(self) -> PrimitiveMapping:
         return {
             "model": self.name,
+            "implementation_version": self.implementation_version,
             "parameters": {"basis_points": decimal_to_primitive(self.basis_points)},
         }
 
@@ -158,6 +173,7 @@ class ExplicitZeroFees:
     """Make the absence of additional transaction fees explicit and serializable."""
 
     name = "explicit_zero_fees"
+    implementation_version = "1"
 
     def calculate(self, side: OrderSide, quantity: int, fill_price: Decimal) -> Decimal:
         if not isinstance(cast(object, side), OrderSide):
@@ -166,7 +182,11 @@ class ExplicitZeroFees:
         return Decimal(0)
 
     def configuration(self) -> PrimitiveMapping:
-        return {"model": self.name, "parameters": {}}
+        return {
+            "model": self.name,
+            "implementation_version": self.implementation_version,
+            "parameters": {},
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +195,7 @@ class BasisPointFees:
 
     basis_points: Decimal
     name = "basis_point_fees"
+    implementation_version = "1"
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -193,6 +214,7 @@ class BasisPointFees:
     def configuration(self) -> PrimitiveMapping:
         return {
             "model": self.name,
+            "implementation_version": self.implementation_version,
             "parameters": {"basis_points": decimal_to_primitive(self.basis_points)},
         }
 
@@ -203,6 +225,7 @@ class BasisPointSlippage:
 
     basis_points: Decimal
     name = "adverse_basis_points"
+    implementation_version = "1"
 
     def __post_init__(self) -> None:
         basis_points = _nonnegative_decimal(self.basis_points, "basis_points")
@@ -236,5 +259,6 @@ class BasisPointSlippage:
     def configuration(self) -> PrimitiveMapping:
         return {
             "model": self.name,
+            "implementation_version": self.implementation_version,
             "parameters": {"basis_points": decimal_to_primitive(self.basis_points)},
         }

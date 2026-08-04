@@ -47,7 +47,9 @@ adverse slippage, commission, and additional transaction fees before
 cash/position updates, preserves final unexecuted signals, and verifies through
 golden and append-future tests that later bars cannot revise earlier execution.
 Run and trade provenance includes an explicit strategy implementation version.
-See `docs/backtesting.md` and ADR 0001.
+Commission, fee, and slippage model versions also participate in run identity,
+and configuration provenance is deeply snapshotted before execution. See
+`docs/backtesting.md` and ADR 0001.
 
 ## Survivorship bias
 

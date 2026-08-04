@@ -9,12 +9,44 @@ from quantforge.backtesting.costs import CommissionModel, FeeModel, SlippageMode
 from quantforge.backtesting.errors import InvalidBacktestConfigurationError
 from quantforge.configuration import (
     PrimitiveMapping,
+    PrimitiveMappingSnapshot,
     configuration_identity,
     decimal_to_primitive,
 )
 
 ENGINE_VERSION = "1"
 RESULT_SCHEMA_VERSION = "1"
+
+
+def _cost_model_configuration(model: object, model_label: str) -> PrimitiveMapping:
+    implementation_version = cast(
+        object, getattr(model, "implementation_version", None)
+    )
+    if (
+        not isinstance(implementation_version, str)
+        or not implementation_version.strip()
+    ):
+        raise InvalidBacktestConfigurationError(
+            f"{model_label} model implementation version must be explicit"
+        )
+    try:
+        configuration = getattr(model, "configuration")()
+        if not isinstance(configuration, dict):
+            raise TypeError("cost model configuration must be an object")
+        primitive_configuration = cast(PrimitiveMapping, configuration)
+        if (
+            primitive_configuration.get("implementation_version")
+            != implementation_version
+        ):
+            raise ValueError(
+                "cost model implementation version must match its configuration"
+            )
+        configuration_identity(primitive_configuration)
+        return PrimitiveMappingSnapshot.capture(primitive_configuration).to_primitive()
+    except (AttributeError, TypeError, ValueError) as error:
+        raise InvalidBacktestConfigurationError(
+            f"{model_label} model must expose stable versioned primitive configuration"
+        ) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,26 +173,17 @@ class BacktestConfig:
             raise InvalidBacktestConfigurationError("schema versions must not be empty")
         object.__setattr__(self, "initial_capital", initial_capital)
         object.__setattr__(self, "annual_risk_free_rate", risk_free_rate)
-        try:
-            configuration_identity(
-                {
-                    "commission": self.commission.configuration(),
-                    "fees": self.fees.configuration(),
-                    "slippage": self.slippage.configuration(),
-                }
-            )
-        except (AttributeError, TypeError, ValueError) as error:
-            raise InvalidBacktestConfigurationError(
-                "cost models must expose stable primitive configuration"
-            ) from error
+        _cost_model_configuration(self.commission, "commission")
+        _cost_model_configuration(self.fees, "transaction-fee")
+        _cost_model_configuration(self.slippage, "slippage")
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "initial_capital": decimal_to_primitive(self.initial_capital),
             "execution": self.execution.to_primitive(),
-            "commission": self.commission.configuration(),
-            "fees": self.fees.configuration(),
-            "slippage": self.slippage.configuration(),
+            "commission": _cost_model_configuration(self.commission, "commission"),
+            "fees": _cost_model_configuration(self.fees, "transaction-fee"),
+            "slippage": _cost_model_configuration(self.slippage, "slippage"),
             "sizing": self.sizing.to_primitive(),
             "annual_risk_free_rate": decimal_to_primitive(self.annual_risk_free_rate),
             "annualization_factor": self.annualization_factor,

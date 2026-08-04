@@ -6,9 +6,13 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import cast
 
-from quantforge.backtesting.config import BacktestConfig
 from quantforge.backtesting.costs import OrderSide
-from quantforge.configuration import Primitive, PrimitiveMapping, decimal_to_primitive
+from quantforge.configuration import (
+    Primitive,
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    decimal_to_primitive,
+)
 from quantforge.data.models import DatasetMetadata
 from quantforge.strategies.models import StrategyDecision
 
@@ -380,11 +384,16 @@ class BenchmarkResult:
     """Comparable full-period buy-and-hold output with no fabricated exit."""
 
     benchmark_id: str
-    configuration: PrimitiveMapping
+    configuration_snapshot: PrimitiveMappingSnapshot
     order: OrderRecord
     fill: FillRecord | None
     daily_equity: tuple[DailyPortfolioRecord, ...]
     performance: PerformanceSummary
+
+    @property
+    def configuration(self) -> PrimitiveMapping:
+        """Return a detached representation of the frozen benchmark assumptions."""
+        return self.configuration_snapshot.to_primitive()
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -410,9 +419,9 @@ class BacktestResult:
     strategy_id: str
     strategy_implementation_version: str
     strategy_configuration_id: str
-    strategy_configuration: PrimitiveMapping
+    strategy_configuration_snapshot: PrimitiveMappingSnapshot
     strategy_warm_up_observations: int
-    config: BacktestConfig
+    backtest_configuration_snapshot: PrimitiveMappingSnapshot
     signals: tuple[SignalRecord, ...]
     orders: tuple[OrderRecord, ...]
     fills: tuple[FillRecord, ...]
@@ -425,6 +434,16 @@ class BacktestResult:
     warnings: tuple[str, ...]
     limitations: tuple[str, ...]
     initiated_at: datetime | None = None
+
+    @property
+    def strategy_configuration(self) -> PrimitiveMapping:
+        """Return a detached representation of frozen strategy provenance."""
+        return self.strategy_configuration_snapshot.to_primitive()
+
+    @property
+    def backtest_configuration(self) -> PrimitiveMapping:
+        """Return a detached representation of frozen execution assumptions."""
+        return self.backtest_configuration_snapshot.to_primitive()
 
     def manifest_primitive(self) -> PrimitiveMapping:
         return {
@@ -444,7 +463,7 @@ class BacktestResult:
                 "configuration": self.strategy_configuration,
                 "warm_up_observations": self.strategy_warm_up_observations,
             },
-            "backtest_configuration": self.config.to_primitive(),
+            "backtest_configuration": self.backtest_configuration,
             "performance": self.performance.to_primitive(),
             "benchmark": {
                 "benchmark_id": self.benchmark.benchmark_id,

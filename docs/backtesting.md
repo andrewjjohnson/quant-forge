@@ -67,6 +67,12 @@ cost category has an implicit default. The configuration is frozen and includes
 the execution, sizing, risk-free-rate, annualization, long-only,
 forced-liquidation, engine, and result-schema assumptions.
 
+Every commission, fee, and slippage model declares a nonempty
+`implementation_version`, which is serialized beside its model name and
+parameters. Custom model authors must increment that version whenever a
+calculation change could alter fills or results, even when user-facing
+parameters are unchanged.
+
 ## Chronological convention
 
 QF-5 uses `NextSessionOpenExecution`, the only supported MVP convention:
@@ -211,13 +217,19 @@ export.
 
 The SHA-256 run ID is canonical-JSON-derived from the QF-3 dataset ID and schema,
 QF-4 strategy name, explicit implementation version, configuration identity,
-full configuration, complete backtest configuration, and engine/result schema
-versions. The implementation version is also persisted directly on the result
-and every trade. The identity excludes object addresses, QF-3 retrieval time,
-optional initiation time, and export time.
+full configuration, complete backtest configuration (including each cost-model
+implementation version), and engine/result schema versions. The strategy
+implementation version is also persisted directly on the result and every
+trade. The identity excludes object addresses, QF-3 retrieval time, optional
+initiation time, and export time.
 Equivalent decimal configuration values serialize identically. Record ordering
 and signal, order, fill, trade, and benchmark IDs are derived deterministically
 within the run.
+
+Strategy, backtest, and benchmark configurations are canonicalized into deeply
+immutable snapshots when the run is initialized. Result properties and manifest
+serialization return detached primitive copies, so later mutation of a custom
+strategy or cost model cannot rewrite provenance beneath an existing run ID.
 
 `export_backtest_result` creates, without overwriting, this directory beneath a
 caller-selected ignored reports root:

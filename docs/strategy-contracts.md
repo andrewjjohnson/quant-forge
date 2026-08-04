@@ -101,6 +101,11 @@ identity and QF-5 run identity even when parameters are unchanged. The reference
 moving-average crossover strategy currently declares implementation version
 `1`.
 
+QF-5 canonicalizes the complete strategy configuration into an immutable
+snapshot before calculating its run identity. A custom strategy may return an
+ordinary primitive dictionary, but mutating that dictionary after the run does
+not alter the result manifest or exported provenance.
+
 ## Decision schema
 
 Every `StrategyDecision` contains:

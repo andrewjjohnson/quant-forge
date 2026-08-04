@@ -18,6 +18,7 @@ from quantforge.backtesting.models import (
 )
 from quantforge.configuration import (
     PrimitiveMapping,
+    PrimitiveMappingSnapshot,
     configuration_identity,
     decimal_to_primitive,
 )
@@ -271,7 +272,7 @@ def run_buy_and_hold_benchmark(
     )
     return BenchmarkResult(
         benchmark_id=benchmark_id,
-        configuration=configuration,
+        configuration_snapshot=PrimitiveMappingSnapshot.capture(configuration),
         order=order,
         fill=fill,
         daily_equity=tuple(daily),

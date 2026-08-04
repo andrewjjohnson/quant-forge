@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -225,6 +226,7 @@ def test_additional_fees_are_separate_and_reduce_cash_and_trade_results() -> Non
     )
     assert result.benchmark.configuration["fees"] == {
         "model": "basis_point_fees",
+        "implementation_version": "1",
         "parameters": {"basis_points": "10"},
     }
     assert result.benchmark.fill is not None
@@ -367,13 +369,18 @@ def test_invalid_execution_price_fails_with_market_data_domain_error() -> None:
 
 class FavorableSlippage:
     name = "invalid_favorable_slippage"
+    implementation_version = "1"
 
     def apply(self, reference_price: Decimal, side: OrderSide) -> Decimal:
         del side
         return reference_price - Decimal(1)
 
     def configuration(self) -> PrimitiveMapping:
-        return {"model": self.name, "parameters": {}}
+        return {
+            "model": self.name,
+            "implementation_version": self.implementation_version,
+            "parameters": {},
+        }
 
 
 def test_custom_slippage_cannot_improve_a_buy_fill() -> None:
@@ -507,6 +514,18 @@ class RevisedManualTransitionStrategy(ManualTransitionStrategy):
     implementation_version = "2"
 
 
+class MutableConfigurationStrategy(ManualTransitionStrategy):
+    def __init__(self) -> None:
+        self.mutable_configuration = super().configuration()
+
+    def configuration(self) -> PrimitiveMapping:
+        return self.mutable_configuration
+
+
+class RevisedFixedCommission(FixedCommission):
+    implementation_version = "2"
+
+
 def test_another_generic_strategy_runs_without_backtester_changes() -> None:
     result = run_backtest(
         make_dataset(("10", "11", "12", "13")),
@@ -546,3 +565,92 @@ def test_strategy_implementation_version_changes_run_and_trade_provenance() -> N
     assert revised.strategy_implementation_version == "2"
     assert original.completed_trades[0].strategy_implementation_version == "1"
     assert revised.completed_trades[0].strategy_implementation_version == "2"
+
+
+def test_cost_model_implementation_version_changes_run_identity() -> None:
+    dataset = make_dataset(PRICES)
+    strategy = MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3))
+    original = run_backtest(
+        dataset,
+        strategy,
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(100)),
+        ),
+    )
+    revised = run_backtest(
+        dataset,
+        strategy,
+        BacktestConfig(
+            Decimal(100),
+            RevisedFixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(100)),
+        ),
+    )
+
+    assert original.run_id != revised.run_id
+    assert [
+        (
+            fill.side,
+            fill.quantity,
+            fill.execution_session,
+            fill.fill_price,
+            fill.commission,
+            fill.fees,
+            fill.net_cash_effect,
+        )
+        for fill in original.fills
+    ] == [
+        (
+            fill.side,
+            fill.quantity,
+            fill.execution_session,
+            fill.fill_price,
+            fill.commission,
+            fill.fees,
+            fill.net_cash_effect,
+        )
+        for fill in revised.fills
+    ]
+    assert (
+        cast(PrimitiveMapping, original.backtest_configuration["commission"])[
+            "implementation_version"
+        ]
+        == "1"
+    )
+    assert (
+        cast(PrimitiveMapping, revised.backtest_configuration["commission"])[
+            "implementation_version"
+        ]
+        == "2"
+    )
+
+
+def test_result_provenance_is_deeply_snapshotted_from_strategy_configuration() -> None:
+    strategy = MutableConfigurationStrategy()
+    result = run_backtest(
+        make_dataset(("10", "11", "12", "13")),
+        strategy,
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(10)),
+        ),
+    )
+    expected_manifest = result.manifest_primitive()
+
+    mutable_parameters = cast(
+        PrimitiveMapping, strategy.mutable_configuration["parameters"]
+    )
+    mutable_parameters["changed_after_run"] = True
+    detached_result_parameters = cast(
+        PrimitiveMapping, result.strategy_configuration["parameters"]
+    )
+    detached_result_parameters["changed_through_result"] = True
+
+    assert result.manifest_primitive() == expected_manifest
+    assert result.strategy_configuration["parameters"] == {}

@@ -29,6 +29,7 @@ from quantforge.backtesting.models import (
 )
 from quantforge.configuration import (
     PrimitiveMapping,
+    PrimitiveMappingSnapshot,
     configuration_identity,
 )
 from quantforge.data.models import AdjustmentMode, DailyBar, MarketDataset
@@ -338,8 +339,16 @@ def run_backtest(
     _validate_dataset(dataset)
     if initiated_at is not None and initiated_at.tzinfo is None:
         raise InvalidSignalError("initiated_at must include a timezone")
-    strategy_configuration = strategy.configuration()
+    strategy_configuration_snapshot = PrimitiveMappingSnapshot.capture(
+        strategy.configuration()
+    )
+    strategy_configuration = strategy_configuration_snapshot.to_primitive()
+    backtest_configuration_snapshot = PrimitiveMappingSnapshot.capture(
+        config.to_primitive()
+    )
+    backtest_configuration = backtest_configuration_snapshot.to_primitive()
     strategy_implementation_version = strategy.implementation_version
+    strategy_configuration_id = strategy.configuration_id
     run_id = _stable_id(
         {
             "component": "quantforge_backtest",
@@ -352,13 +361,17 @@ def run_backtest(
             "strategy": {
                 "strategy_id": strategy.name,
                 "strategy_implementation_version": strategy_implementation_version,
-                "strategy_configuration_id": strategy.configuration_id,
+                "strategy_configuration_id": strategy_configuration_id,
                 "configuration": strategy_configuration,
             },
-            "backtest_configuration": config.to_primitive(),
+            "backtest_configuration": backtest_configuration,
         }
     )
     strategy_output = run_strategy(strategy, dataset)
+    if strategy_output.strategy_configuration_id != strategy_configuration_id:
+        raise InvalidSignalError(
+            "strategy configuration changed during backtest initialization"
+        )
     signals = _signal_records(run_id, strategy_output.decisions)
     signals_by_execution: dict[date, list[SignalRecord]] = {}
     order_ids_by_signal_session: dict[date, list[str]] = {}
@@ -658,10 +671,10 @@ def run_backtest(
         market_data=MarketDataMetadata.from_qf3(dataset.metadata),
         strategy_id=strategy.name,
         strategy_implementation_version=strategy_implementation_version,
-        strategy_configuration_id=strategy.configuration_id,
-        strategy_configuration=strategy_configuration,
+        strategy_configuration_id=strategy_configuration_id,
+        strategy_configuration_snapshot=strategy_configuration_snapshot,
         strategy_warm_up_observations=strategy.warm_up_observations,
-        config=config,
+        backtest_configuration_snapshot=backtest_configuration_snapshot,
         signals=signals,
         orders=orders,
         fills=tuple(fills),

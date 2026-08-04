@@ -232,7 +232,10 @@ Must not:
 QF-5 exports a stable manifest and ordered CSV ledgers into an immutable
 run-identity directory. The deterministic identity covers QF-3 dataset
 provenance, QF-4 strategy configuration and implementation version, all
-execution/cost/sizing assumptions, and engine/result schema versions.
+execution/cost/sizing assumptions and their implementation versions, and
+engine/result schema versions. Canonical immutable snapshots prevent later
+caller-owned configuration mutation from changing the manifest under a fixed
+run identity.
 
 Responsibilities:
 
