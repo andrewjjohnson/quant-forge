@@ -164,6 +164,10 @@ does not contain a split. Split-adjusted datasets are valid for indicator and
 strategy research, but execution rejects them until QF-3 carries point-in-time
 split factors needed to preserve historical share units.
 
+The boundary also rejects QF-3 datasets with expected market sessions missing
+between their first and last observed bars. This preserves daily metric
+semantics; leading and trailing requested-range gaps remain explicit provenance.
+
 Responsibilities:
 
 - convert eligible signals into orders;

@@ -107,6 +107,13 @@ a missing execution bar is retained as a rejected order with a reason. No later
 bar is substituted. Invalid or nonpositive OHLCV is rejected before the
 strategy runs.
 
+QF-5 also rejects a dataset when QF-3's `missing_sessions` metadata identifies
+an expected exchange session between `actual_first_session` and
+`actual_last_session`. Otherwise an equity change across several exchange
+sessions would be recorded and annualized as one daily return. Missing sessions
+before the first observed bar or after the last observed bar remain preserved in
+provenance and do not invalidate the observed return series.
+
 ## Signals, orders, and fills
 
 `SignalRecord` adds a stable signal ID to the original immutable QF-4

@@ -92,6 +92,21 @@ def _validate_dataset(dataset: MarketDataset) -> None:
         or metadata.actual_last_session != dataset.bars[-1].session_date
     ):
         raise InvalidMarketDataError("dataset session bounds do not match metadata")
+    internal_missing_sessions = tuple(
+        missing_session
+        for missing_session in metadata.missing_sessions
+        if metadata.actual_first_session
+        <= missing_session
+        <= metadata.actual_last_session
+    )
+    if internal_missing_sessions:
+        rendered = ", ".join(
+            missing_session.isoformat() for missing_session in internal_missing_sessions
+        )
+        raise InvalidMarketDataError(
+            "dataset has missing expected sessions within its observed range: "
+            f"{rendered}"
+        )
     previous_session = None
     for typed_bar in dataset_value.bars:
         bar_value = cast(object, typed_bar)

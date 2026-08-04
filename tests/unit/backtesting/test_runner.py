@@ -424,6 +424,76 @@ def test_invalid_execution_price_fails_with_market_data_domain_error() -> None:
         )
 
 
+def test_internal_missing_market_session_is_rejected_before_daily_metrics() -> None:
+    sessions = (
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        date(2024, 7, 5),
+        date(2024, 7, 8),
+        date(2024, 7, 9),
+        date(2024, 7, 10),
+    )
+    dataset = make_dataset(("3", "2", "1", "2", "3", "4"), sessions=sessions)
+    dataset = replace(
+        dataset,
+        metadata=replace(
+            dataset.metadata,
+            missing_sessions=(date(2024, 7, 3),),
+        ),
+    )
+
+    with pytest.raises(
+        InvalidMarketDataError,
+        match="missing expected sessions within its observed range: 2024-07-03",
+    ):
+        run_backtest(
+            dataset,
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(1)),
+            ),
+        )
+
+
+def test_requested_range_gaps_outside_observed_bars_remain_provenance() -> None:
+    sessions = (
+        date(2024, 7, 2),
+        date(2024, 7, 3),
+        date(2024, 7, 5),
+        date(2024, 7, 8),
+        date(2024, 7, 9),
+        date(2024, 7, 10),
+    )
+    outside_gaps = (date(2024, 7, 1), date(2024, 7, 11))
+    dataset = make_dataset(("3", "2", "1", "2", "3", "4"), sessions=sessions)
+    dataset = replace(
+        dataset,
+        metadata=replace(
+            dataset.metadata,
+            requested_start=outside_gaps[0],
+            requested_end=outside_gaps[1],
+            missing_sessions=outside_gaps,
+        ),
+    )
+
+    result = run_backtest(
+        dataset,
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(1)),
+        ),
+    )
+
+    assert result.market_data.missing_sessions == outside_gaps
+    assert tuple(record.session for record in result.daily_equity) == sessions
+
+
 @pytest.mark.parametrize(
     "adjustment_mode",
     [
