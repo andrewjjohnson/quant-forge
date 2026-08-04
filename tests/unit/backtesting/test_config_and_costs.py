@@ -33,6 +33,42 @@ class UnversionedCommission:
         return {"model": self.name, "parameters": {}}
 
 
+class NonmonotonicCommission:
+    name = "nonmonotonic_tiered_commission"
+    implementation_version = "1"
+    buy_cost_is_non_decreasing_by_quantity = False
+
+    def calculate(self, quantity: int, fill_price: Decimal) -> Decimal:
+        del fill_price
+        return Decimal(100) if quantity < 10 else Decimal(0)
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "model": self.name,
+            "implementation_version": self.implementation_version,
+            "buy_cost_is_non_decreasing_by_quantity": (
+                self.buy_cost_is_non_decreasing_by_quantity
+            ),
+            "parameters": {"free_from_quantity": 10},
+        }
+
+
+class UnverifiedFeeSchedule:
+    name = "unverified_fee_schedule"
+    implementation_version = "1"
+
+    def calculate(self, side: OrderSide, quantity: int, fill_price: Decimal) -> Decimal:
+        del side, quantity, fill_price
+        return Decimal(0)
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "model": self.name,
+            "implementation_version": self.implementation_version,
+            "parameters": {},
+        }
+
+
 def test_config_requires_positive_finite_capital_and_explicit_cost_models() -> None:
     with pytest.raises(InvalidBacktestConfigurationError, match="positive"):
         BacktestConfig(
@@ -79,6 +115,38 @@ def test_config_requires_positive_finite_capital_and_explicit_cost_models() -> N
 
 
 @pytest.mark.parametrize(
+    ("commission", "fees", "model_label"),
+    [
+        (
+            cast(CommissionModel, NonmonotonicCommission()),
+            ExplicitZeroFees(),
+            "commission",
+        ),
+        (
+            FixedCommission(Decimal(0)),
+            cast(FeeModel, UnverifiedFeeSchedule()),
+            "transaction-fee",
+        ),
+    ],
+)
+def test_config_rejects_cost_models_without_non_decreasing_buy_cost_contract(
+    commission: CommissionModel,
+    fees: FeeModel,
+    model_label: str,
+) -> None:
+    with pytest.raises(
+        InvalidBacktestConfigurationError,
+        match=rf"{model_label} model must guarantee nondecreasing buy cost",
+    ):
+        BacktestConfig(
+            Decimal(100),
+            commission,
+            fees,
+            BasisPointSlippage(Decimal(0)),
+        )
+
+
+@pytest.mark.parametrize(
     "factory",
     [
         lambda: FixedCommission(Decimal("-0.01")),
@@ -114,11 +182,13 @@ def test_zero_cost_models_are_explicit_and_serialize_stably() -> None:
     assert first.to_primitive()["commission"] == {
         "model": "fixed_per_fill",
         "implementation_version": "1",
+        "buy_cost_is_non_decreasing_by_quantity": True,
         "parameters": {"amount": "0"},
     }
     assert first.to_primitive()["fees"] == {
         "model": "explicit_zero_fees",
         "implementation_version": "1",
+        "buy_cost_is_non_decreasing_by_quantity": True,
         "parameters": {},
     }
     assert first.to_primitive()["slippage"] == {

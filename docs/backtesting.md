@@ -73,6 +73,12 @@ parameters. Custom model authors must increment that version whenever a
 calculation change could alter fills or results, even when user-facing
 parameters are unchanged.
 
+Commission and fee models must also declare and serialize
+`buy_cost_is_non_decreasing_by_quantity=true`. This is a semantic contract that,
+for a fixed positive fill price, the model's buy-side cost never decreases as
+whole-share quantity increases. Custom schedules with rebates or discontinuous
+discounts that violate this guarantee are rejected during configuration.
+
 ## Chronological convention
 
 QF-5 uses `NextSessionOpenExecution`, the only supported MVP convention:
@@ -111,11 +117,13 @@ timing.
 On flat-to-long transitions, target weight defines the fraction of available
 cash used as the affordability budget. QF-5 finds the maximum whole-share
 quantity whose slipped notional plus commission and fees fits that budget. Cash
-may not become negative. On long-to-flat transitions, the engine requests and
-sells the entire current quantity. It does not rebalance an existing long
-position to its target weight. Repeated already-satisfied targets become
-rejected audit orders with an explicit no-op reason. An unaffordable entry
-requests zero shares and is rejected; fractional shares are never created.
+may not become negative. The engine and benchmark use binary search only because
+the required nondecreasing buy-cost contracts make affordability monotonic. On
+long-to-flat transitions, the engine requests and sells the entire current
+quantity. It does not rebalance an existing long position to its target weight.
+Repeated already-satisfied targets become rejected audit orders with an explicit
+no-op reason. An unaffordable entry requests zero shares and is rejected;
+fractional shares are never created.
 
 `OrderRecord` includes the run, signal, symbol, side, requested quantity,
 decision and eligibility sessions, target, strategy identities, final status,

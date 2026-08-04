@@ -48,8 +48,10 @@ cash/position updates, preserves final unexecuted signals, and verifies through
 golden and append-future tests that later bars cannot revise earlier execution.
 Run and trade provenance includes an explicit strategy implementation version.
 Commission, fee, and slippage model versions also participate in run identity,
-and configuration provenance is deeply snapshotted before execution. QF-5
-rejects adjusted datasets because QF-3 does not yet expose the point-in-time
+and configuration provenance is deeply snapshotted before execution. Commission
+and fee models are accepted only when they explicitly guarantee nondecreasing
+buy-side costs by quantity, which makes whole-share affordability search sound.
+QF-5 rejects adjusted datasets because QF-3 does not yet expose the point-in-time
 corporate-action factors needed for causal share and cost accounting. See
 `docs/backtesting.md` and ADR 0001.
 

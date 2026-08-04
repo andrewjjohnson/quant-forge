@@ -283,6 +283,7 @@ def test_additional_fees_are_separate_and_reduce_cash_and_trade_results() -> Non
     assert result.benchmark.configuration["fees"] == {
         "model": "basis_point_fees",
         "implementation_version": "1",
+        "buy_cost_is_non_decreasing_by_quantity": True,
         "parameters": {"basis_points": "10"},
     }
     assert result.benchmark.fill is not None

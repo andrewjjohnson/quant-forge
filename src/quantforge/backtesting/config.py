@@ -18,7 +18,12 @@ ENGINE_VERSION = "1"
 RESULT_SCHEMA_VERSION = "1"
 
 
-def _cost_model_configuration(model: object, model_label: str) -> PrimitiveMapping:
+def _cost_model_configuration(
+    model: object,
+    model_label: str,
+    *,
+    require_non_decreasing_buy_cost: bool = False,
+) -> PrimitiveMapping:
     implementation_version = cast(
         object, getattr(model, "implementation_version", None)
     )
@@ -28,6 +33,13 @@ def _cost_model_configuration(model: object, model_label: str) -> PrimitiveMappi
     ):
         raise InvalidBacktestConfigurationError(
             f"{model_label} model implementation version must be explicit"
+        )
+    if (
+        require_non_decreasing_buy_cost
+        and getattr(model, "buy_cost_is_non_decreasing_by_quantity", None) is not True
+    ):
+        raise InvalidBacktestConfigurationError(
+            f"{model_label} model must guarantee nondecreasing buy cost by quantity"
         )
     try:
         configuration = getattr(model, "configuration")()
@@ -40,6 +52,15 @@ def _cost_model_configuration(model: object, model_label: str) -> PrimitiveMappi
         ):
             raise ValueError(
                 "cost model implementation version must match its configuration"
+            )
+        if (
+            require_non_decreasing_buy_cost
+            and primitive_configuration.get("buy_cost_is_non_decreasing_by_quantity")
+            is not True
+        ):
+            raise ValueError(
+                "cost model configuration must record its nondecreasing buy-cost "
+                "guarantee"
             )
         configuration_identity(primitive_configuration)
         return PrimitiveMappingSnapshot.capture(primitive_configuration).to_primitive()
@@ -173,16 +194,32 @@ class BacktestConfig:
             raise InvalidBacktestConfigurationError("schema versions must not be empty")
         object.__setattr__(self, "initial_capital", initial_capital)
         object.__setattr__(self, "annual_risk_free_rate", risk_free_rate)
-        _cost_model_configuration(self.commission, "commission")
-        _cost_model_configuration(self.fees, "transaction-fee")
+        _cost_model_configuration(
+            self.commission,
+            "commission",
+            require_non_decreasing_buy_cost=True,
+        )
+        _cost_model_configuration(
+            self.fees,
+            "transaction-fee",
+            require_non_decreasing_buy_cost=True,
+        )
         _cost_model_configuration(self.slippage, "slippage")
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "initial_capital": decimal_to_primitive(self.initial_capital),
             "execution": self.execution.to_primitive(),
-            "commission": _cost_model_configuration(self.commission, "commission"),
-            "fees": _cost_model_configuration(self.fees, "transaction-fee"),
+            "commission": _cost_model_configuration(
+                self.commission,
+                "commission",
+                require_non_decreasing_buy_cost=True,
+            ),
+            "fees": _cost_model_configuration(
+                self.fees,
+                "transaction-fee",
+                require_non_decreasing_buy_cost=True,
+            ),
             "slippage": _cost_model_configuration(self.slippage, "slippage"),
             "sizing": self.sizing.to_primitive(),
             "annual_risk_free_rate": decimal_to_primitive(self.annual_risk_free_rate),

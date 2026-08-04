@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from quantforge.backtesting._arithmetic import arithmetic, decimal_from
 from quantforge.backtesting.errors import InvalidBacktestConfigurationError
@@ -26,6 +26,9 @@ class CommissionModel(Protocol):
     @property
     def implementation_version(self) -> str: ...
 
+    @property
+    def buy_cost_is_non_decreasing_by_quantity(self) -> Literal[True]: ...
+
     def calculate(self, quantity: int, fill_price: Decimal) -> Decimal: ...
 
     def configuration(self) -> PrimitiveMapping: ...
@@ -39,6 +42,9 @@ class FeeModel(Protocol):
 
     @property
     def implementation_version(self) -> str: ...
+
+    @property
+    def buy_cost_is_non_decreasing_by_quantity(self) -> Literal[True]: ...
 
     def calculate(
         self, side: OrderSide, quantity: int, fill_price: Decimal
@@ -89,6 +95,7 @@ class FixedCommission:
     amount: Decimal
     name = "fixed_per_fill"
     implementation_version = "1"
+    buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "amount", _nonnegative_decimal(self.amount, "amount"))
@@ -101,6 +108,9 @@ class FixedCommission:
         return {
             "model": self.name,
             "implementation_version": self.implementation_version,
+            "buy_cost_is_non_decreasing_by_quantity": (
+                self.buy_cost_is_non_decreasing_by_quantity
+            ),
             "parameters": {"amount": decimal_to_primitive(self.amount)},
         }
 
@@ -113,6 +123,7 @@ class PerShareCommission:
     minimum: Decimal = Decimal(0)
     name = "per_share"
     implementation_version = "1"
+    buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -133,6 +144,9 @@ class PerShareCommission:
         return {
             "model": self.name,
             "implementation_version": self.implementation_version,
+            "buy_cost_is_non_decreasing_by_quantity": (
+                self.buy_cost_is_non_decreasing_by_quantity
+            ),
             "parameters": {
                 "amount_per_share": decimal_to_primitive(self.amount_per_share),
                 "minimum": decimal_to_primitive(self.minimum),
@@ -147,6 +161,7 @@ class BasisPointCommission:
     basis_points: Decimal
     name = "basis_points"
     implementation_version = "1"
+    buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -164,6 +179,9 @@ class BasisPointCommission:
         return {
             "model": self.name,
             "implementation_version": self.implementation_version,
+            "buy_cost_is_non_decreasing_by_quantity": (
+                self.buy_cost_is_non_decreasing_by_quantity
+            ),
             "parameters": {"basis_points": decimal_to_primitive(self.basis_points)},
         }
 
@@ -174,6 +192,7 @@ class ExplicitZeroFees:
 
     name = "explicit_zero_fees"
     implementation_version = "1"
+    buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
 
     def calculate(self, side: OrderSide, quantity: int, fill_price: Decimal) -> Decimal:
         if not isinstance(cast(object, side), OrderSide):
@@ -185,6 +204,9 @@ class ExplicitZeroFees:
         return {
             "model": self.name,
             "implementation_version": self.implementation_version,
+            "buy_cost_is_non_decreasing_by_quantity": (
+                self.buy_cost_is_non_decreasing_by_quantity
+            ),
             "parameters": {},
         }
 
@@ -196,6 +218,7 @@ class BasisPointFees:
     basis_points: Decimal
     name = "basis_point_fees"
     implementation_version = "1"
+    buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -215,6 +238,9 @@ class BasisPointFees:
         return {
             "model": self.name,
             "implementation_version": self.implementation_version,
+            "buy_cost_is_non_decreasing_by_quantity": (
+                self.buy_cost_is_non_decreasing_by_quantity
+            ),
             "parameters": {"basis_points": decimal_to_primitive(self.basis_points)},
         }
 
