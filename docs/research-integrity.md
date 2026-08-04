@@ -57,20 +57,33 @@ execution timing. Commission and fee models are accepted only when they
 explicitly guarantee nondecreasing buy-side costs by quantity, which makes
 whole-share affordability search sound.
 
+Built-in and custom commission, fee, slippage, and cost-configuration callbacks
+execute under the same serialized 34-digit Decimal policy for both the strategy
+engine and benchmark. A caller's ambient Decimal precision therefore cannot
+change cost results while preserving the same run ID.
+
 Before execution, QF-5 additionally reserializes the current bars and verifies
 that their QF-3 normalized digest, the complete provenance metadata, raw digest,
 schema, and canonical artifact paths reproduce the declared QF-3 dataset ID.
 Removing a corporate-action session or replacing bars while retaining an old ID
 therefore fails closed before the strategy or benchmark runs.
 
-QF-5 rejects QF-3 datasets with missing expected sessions inside the observed
-range so a multi-session equity change cannot be annualized as one daily return.
+The QF-3 validator independently recomputes expected sessions from the declared
+calendar across the requested range and requires exact agreement with
+`missing_sessions`. QF-5 uses those recomputed facts—not the tuple alone—to
+reject gaps inside the observed range, so a multi-session equity change cannot
+be annualized as one daily return.
 QF-3 schema version 3 requires a provider split coefficient and cash-dividend
 amount for every bar and retains every non-unit split and nonzero dividend
 session as immutable provenance. QF-5 rejects legacy schemas, observed split-
 or dividend-bearing ranges, and adjusted datasets because it does not yet
 receive or apply the event details needed for causal share, cost, and cash
 accounting. See `docs/backtesting.md` and ADR 0001.
+
+Dataset hashes prove consistency, not provider authenticity. Raw-byte digest
+verification occurs when QF-3 loads the immutable cache, and corporate-action
+completeness remains dependent on schema-v3 provider ingestion because split and
+dividend events are not derivable from OHLCV alone.
 
 ## Survivorship bias
 

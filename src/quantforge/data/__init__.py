@@ -16,6 +16,7 @@ from quantforge.data.models import (
     MarketDataset,
 )
 from quantforge.data.service import MarketDataService
+from quantforge.data.validate import validate_market_dataset
 
 __all__ = [
     "AdjustmentMode",
@@ -30,4 +31,5 @@ __all__ = [
     "RequestError",
     "ValidationError",
     "dataset_identity_matches",
+    "validate_market_dataset",
 ]

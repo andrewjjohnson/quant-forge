@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import cast
 
-from quantforge.backtesting._arithmetic import arithmetic_configuration, decimal_from
+from quantforge.backtesting._arithmetic import (
+    arithmetic,
+    arithmetic_configuration,
+    decimal_from,
+)
 from quantforge.backtesting.costs import CommissionModel, FeeModel, SlippageModel
 from quantforge.backtesting.errors import InvalidBacktestConfigurationError
 from quantforge.configuration import (
@@ -42,7 +46,8 @@ def _cost_model_configuration(
             f"{model_label} model must guarantee nondecreasing buy cost by quantity"
         )
     try:
-        configuration = getattr(model, "configuration")()
+        with arithmetic():
+            configuration = getattr(model, "configuration")()
         if not isinstance(configuration, dict):
             raise TypeError("cost model configuration must be an object")
         primitive_configuration = cast(PrimitiveMapping, configuration)
@@ -64,7 +69,7 @@ def _cost_model_configuration(
             )
         configuration_identity(primitive_configuration)
         return PrimitiveMappingSnapshot.capture(primitive_configuration).to_primitive()
-    except (AttributeError, TypeError, ValueError) as error:
+    except (ArithmeticError, AttributeError, TypeError, ValueError) as error:
         raise InvalidBacktestConfigurationError(
             f"{model_label} model must expose stable versioned primitive configuration"
         ) from error

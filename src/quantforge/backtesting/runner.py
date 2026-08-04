@@ -6,6 +6,12 @@ from decimal import Decimal
 from typing import cast
 
 from quantforge.backtesting._arithmetic import arithmetic
+from quantforge.backtesting._execution_costs import (
+    affordable_quantity,
+    commission_amount,
+    fee_amount,
+    slipped_price,
+)
 from quantforge.backtesting.benchmark import run_buy_and_hold_benchmark
 from quantforge.backtesting.config import BacktestConfig
 from quantforge.backtesting.costs import OrderSide
@@ -34,7 +40,7 @@ from quantforge.configuration import (
     configuration_identity,
     decimal_to_primitive,
 )
-from quantforge.data.identity import dataset_identity_matches
+from quantforge.data.exceptions import ValidationError as MarketDataValidationError
 from quantforge.data.models import (
     SCHEMA_VERSION as MARKET_DATA_SCHEMA_VERSION,
 )
@@ -43,6 +49,7 @@ from quantforge.data.models import (
     DailyBar,
     MarketDataset,
 )
+from quantforge.data.validate import validate_market_dataset
 from quantforge.strategies import (
     ExecutionTiming,
     MarketDataReference,
@@ -108,9 +115,6 @@ def _validate_dataset(dataset: MarketDataset) -> None:
     dataset_value = cast(object, dataset)
     if not isinstance(dataset_value, MarketDataset) or not dataset_value.bars:
         raise InvalidMarketDataError("a nonempty QF-3 MarketDataset is required")
-    bars_value = cast(object, dataset_value.bars)
-    if not isinstance(bars_value, tuple):
-        raise InvalidMarketDataError("market bars must be immutable")
     metadata = dataset_value.metadata
     if not metadata.dataset_id or not metadata.schema_version:
         raise InvalidMarketDataError("dataset identity and schema version are required")
@@ -119,21 +123,18 @@ def _validate_dataset(dataset: MarketDataset) -> None:
             f"market data schema {MARKET_DATA_SCHEMA_VERSION} is required for "
             "verified corporate-action provenance"
         )
+    try:
+        recomputed_missing_sessions = validate_market_dataset(dataset_value)
+    except MarketDataValidationError as error:
+        raise InvalidMarketDataError(str(error)) from error
     if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
         raise InvalidMarketDataError(
             "adjusted market data requires point-in-time corporate-action data "
             "that QF-3/QF-5 do not provide"
         )
-    if metadata.bar_count != len(dataset.bars):
-        raise InvalidMarketDataError("dataset bar count does not match metadata")
-    if (
-        metadata.actual_first_session != dataset.bars[0].session_date
-        or metadata.actual_last_session != dataset.bars[-1].session_date
-    ):
-        raise InvalidMarketDataError("dataset session bounds do not match metadata")
     internal_missing_sessions = tuple(
         missing_session
-        for missing_session in metadata.missing_sessions
+        for missing_session in recomputed_missing_sessions
         if metadata.actual_first_session
         <= missing_session
         <= metadata.actual_last_session
@@ -177,100 +178,6 @@ def _validate_dataset(dataset: MarketDataset) -> None:
             "unadjusted market data contains cash dividends within its observed "
             f"range: {rendered}"
         )
-    previous_session = None
-    for typed_bar in dataset_value.bars:
-        bar_value = cast(object, typed_bar)
-        if not isinstance(bar_value, DailyBar):
-            raise InvalidMarketDataError("dataset contains a noncanonical daily bar")
-        bar = bar_value
-        if bar.symbol != metadata.canonical_symbol:
-            raise InvalidMarketDataError("dataset symbol does not match metadata")
-        if previous_session is not None and bar.session_date <= previous_session:
-            raise InvalidMarketDataError(
-                "market sessions must be unique and strictly chronological"
-            )
-        previous_session = bar.session_date
-        values = cast(
-            tuple[object, ...], (bar.open, bar.high, bar.low, bar.close, bar.volume)
-        )
-        if any(not isinstance(value, Decimal) for value in values):
-            raise InvalidMarketDataError("OHLCV values must be Decimal instances")
-        decimal_values = cast(tuple[Decimal, ...], values)
-        if any(not value.is_finite() or value <= 0 for value in decimal_values):
-            raise InvalidMarketDataError("OHLCV values must be positive and finite")
-        if bar.high < max(bar.open, bar.low, bar.close):
-            raise InvalidMarketDataError("high is below another OHLC price")
-        if bar.low > min(bar.open, bar.high, bar.close):
-            raise InvalidMarketDataError("low is above another OHLC price")
-    if not dataset_identity_matches(dataset_value):
-        raise InvalidMarketDataError(
-            "market bars or provenance do not match the QF-3 dataset identity"
-        )
-
-
-def _commission(config: BacktestConfig, quantity: int, price: Decimal) -> Decimal:
-    try:
-        value = config.commission.calculate(quantity, price)
-    except (ArithmeticError, ValueError) as error:
-        raise ExecutionError("commission calculation failed") from error
-    if not value.is_finite() or value < 0:
-        raise ExecutionError("commission model returned an invalid amount")
-    return value
-
-
-def _fees(
-    config: BacktestConfig, side: OrderSide, quantity: int, price: Decimal
-) -> Decimal:
-    try:
-        value = config.fees.calculate(side, quantity, price)
-    except (ArithmeticError, ValueError) as error:
-        raise ExecutionError("transaction-fee calculation failed") from error
-    if not value.is_finite() or value < 0:
-        raise ExecutionError("transaction-fee model returned an invalid amount")
-    return value
-
-
-def _slipped_price(
-    config: BacktestConfig, reference_price: Decimal, side: OrderSide
-) -> Decimal:
-    try:
-        value = config.slippage.apply(reference_price, side)
-    except (ArithmeticError, ValueError) as error:
-        raise ExecutionError("slippage calculation failed") from error
-    value_object = cast(object, value)
-    if (
-        not isinstance(value_object, Decimal)
-        or not value_object.is_finite()
-        or value_object <= 0
-    ):
-        raise ExecutionError("slippage model returned an invalid fill price")
-    if (side is OrderSide.BUY and value_object < reference_price) or (
-        side is OrderSide.SELL and value_object > reference_price
-    ):
-        raise ExecutionError("slippage must be adverse or zero")
-    return value_object
-
-
-def _affordable_quantity(
-    cash_budget: Decimal, fill_price: Decimal, config: BacktestConfig
-) -> int:
-    with arithmetic():
-        upper = int(cash_budget / fill_price)
-    low = 0
-    high = upper
-    while low < high:
-        candidate = (low + high + 1) // 2
-        commission = _commission(config, candidate, fill_price)
-        fees = _fees(config, OrderSide.BUY, candidate, fill_price)
-        with arithmetic():
-            affordable = (
-                Decimal(candidate) * fill_price + commission + fees <= cash_budget
-            )
-        if affordable:
-            low = candidate
-        else:
-            high = candidate - 1
-    return low
 
 
 def _order_id(run_id: str, signal_id: str) -> str:
@@ -509,10 +416,15 @@ def run_backtest(
                         reason="target_already_satisfied_no_rebalance",
                     )
                     continue
-                fill_price = _slipped_price(config, bar.open, OrderSide.BUY)
+                fill_price = slipped_price(config.slippage, bar.open, OrderSide.BUY)
                 with arithmetic():
                     cash_budget = min(cash, cash * decision.target_weight)
-                quantity = _affordable_quantity(cash_budget, fill_price, config)
+                quantity = affordable_quantity(
+                    cash_budget,
+                    fill_price,
+                    config.commission,
+                    config.fees,
+                )
                 if quantity == 0:
                     order_outcomes[signal.signal_id] = _base_order(
                         run_id,
@@ -522,8 +434,8 @@ def run_backtest(
                         reason="insufficient_cash_for_one_share",
                     )
                     continue
-                commission = _commission(config, quantity, fill_price)
-                fees = _fees(config, OrderSide.BUY, quantity, fill_price)
+                commission = commission_amount(config.commission, quantity, fill_price)
+                fees = fee_amount(config.fees, OrderSide.BUY, quantity, fill_price)
                 order = _base_order(
                     run_id,
                     signal,
@@ -559,9 +471,9 @@ def run_backtest(
                     )
                     continue
                 quantity = shares
-                fill_price = _slipped_price(config, bar.open, OrderSide.SELL)
-                commission = _commission(config, quantity, fill_price)
-                fees = _fees(config, OrderSide.SELL, quantity, fill_price)
+                fill_price = slipped_price(config.slippage, bar.open, OrderSide.SELL)
+                commission = commission_amount(config.commission, quantity, fill_price)
+                fees = fee_amount(config.fees, OrderSide.SELL, quantity, fill_price)
                 order = _base_order(
                     run_id,
                     signal,
@@ -739,7 +651,12 @@ def run_backtest(
         if open_trade is None
         else (_open_trade_record(run_id, open_trade, strategy_implementation_version),)
     )
-    benchmark = run_buy_and_hold_benchmark(dataset, config, run_id)
+    benchmark = run_buy_and_hold_benchmark(
+        dataset,
+        config,
+        run_id,
+        backtest_configuration,
+    )
     performance = calculate_performance(
         tuple(daily_equity),
         tuple(completed_trades),

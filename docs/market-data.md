@@ -96,11 +96,19 @@ artifacts are accepted only when byte-identical and are never overwritten.
 `DatasetMetadata` exposes the immutable `raw_sha256` and `data_sha256` digests.
 Loads verify the raw and normalized files against those digests, recompute the
 dataset identifier from the complete metadata and digests, verify canonical
-artifact paths, and check bar count; partial, corrupt, or identity-inconsistent
-entries fail. The same public identity verifier can validate an in-memory
-dataset by reserializing its bars, preventing a copied dataset from retaining an
-old identifier after its bars or provenance are changed. The request key covers
-provider, symbol, inclusive dates, adjustment, calendar, and schema version.
+artifact paths, and run the complete-dataset validator; partial, corrupt, or
+identity-inconsistent entries fail. `validate_market_dataset` reserializes bars
+and verifies types, OHLCV relationships, symbols, ordering, bounds, counts,
+calendar membership, the exact recomputed missing-session tuple,
+corporate-action-session structure, digests, canonical paths, and dataset
+identity. This prevents both retained-ID mutations and self-consistent metadata
+that contradicts derivable calendar facts. The request key covers provider,
+symbol, inclusive dates, adjustment, calendar, and schema version.
+
+Dataset identity is an integrity and consistency mechanism, not a signature of
+provider authenticity. Only cache loading has the raw provider bytes needed to
+verify `raw_sha256`; split and dividend completeness also depends on schema-v3
+provider ingestion because those events cannot be reconstructed from OHLCV.
 
 The stable manifest records canonical and provider symbols, provider and adapter
 versions, UTC retrieval time, requested and actual session bounds, XNYS calendar,

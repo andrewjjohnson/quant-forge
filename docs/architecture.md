@@ -86,8 +86,8 @@ Responsibilities:
 - record adjustment policies;
 - validate and retain provider-reported split and cash-dividend provenance;
 - generate deterministic fingerprints;
-- verify that current bars and complete metadata reproduce their QF-3 dataset
-  identity.
+- authoritatively validate complete datasets by recomputing all derivable bar,
+  calendar, gap, digest, path, and identity invariants.
 
 Must not:
 
@@ -170,11 +170,17 @@ until QF-3/QF-5 carry the event details and accounting policies needed to
 preserve historical share units and cash entitlement. Before trusting that
 provenance, QF-5 reserializes the current bars and verifies that their digest,
 the complete metadata, the raw digest, and canonical storage paths reproduce the
-QF-3 dataset ID. Copies that retain an old ID after mutation are rejected.
+QF-3 dataset ID. The shared QF-3 validator also recomputes exchange sessions and
+requires exact missing-session provenance, so an internally consistent ID cannot
+hide a derivable calendar gap. Raw-byte and provider-reported corporate-action
+authenticity remain QF-3 ingestion/cache responsibilities.
 
 The boundary also rejects QF-3 datasets with expected market sessions missing
 between their first and last observed bars. This preserves daily metric
 semantics; leading and trailing requested-range gaps remain explicit provenance.
+Strategy and benchmark execution share one cost-evaluation boundary that invokes
+custom slippage, commission, fee, and configuration callbacks under the
+serialized Decimal policy.
 
 Responsibilities:
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from quantforge.data import dataset_identity_matches
+from quantforge.data import dataset_identity_matches, validate_market_dataset
 from quantforge.data.cache import MarketDataCache
 from quantforge.data.exceptions import CacheError, ProviderError, ValidationError
 from quantforge.data.models import (
@@ -238,6 +238,17 @@ def test_calendar_ignores_weekend_and_holiday_but_detects_missing_session() -> N
         validate_bars(bars, "SPY", date(2024, 7, 2), date(2024, 7, 7), "XNYS")
     assert caught.value.missing_sessions == ("2024-07-02",)
 
+    holiday_bar = normalize_response(response((record("2024-07-04"),)), "SPY")
+    with pytest.raises(ValidationError, match=r"non-session dates.*2024-07-04"):
+        validate_bars(
+            holiday_bar,
+            "SPY",
+            date(2024, 7, 4),
+            date(2024, 7, 4),
+            "XNYS",
+            strict=False,
+        )
+
 
 def test_service_persists_metadata_and_reuses_cache_across_instances(
     tmp_path: Path,
@@ -261,6 +272,7 @@ def test_service_persists_metadata_and_reuses_cache_across_instances(
     assert len(first.metadata.raw_sha256) == 64
     assert len(first.metadata.data_sha256) == 64
     assert dataset_identity_matches(first)
+    assert validate_market_dataset(first) == ()
     assert first.metadata.raw_location.startswith("raw/")
 
 
@@ -371,8 +383,32 @@ def test_cache_rejects_manifest_metadata_identity_mismatch(tmp_path: Path) -> No
     manifest["calendar"] = "24/7"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(CacheError, match="dataset identity mismatch"):
+    with pytest.raises(CacheError, match="dataset identity"):
         cache.load(dataset.metadata.dataset_id)
+
+
+def test_dataset_validator_recomputes_missing_sessions_from_calendar(
+    tmp_path: Path,
+) -> None:
+    dataset = MarketDataService(
+        FakeProvider(
+            (
+                record("2024-07-01"),
+                record("2024-07-03"),
+                record("2024-07-05"),
+            )
+        ),
+        MarketDataCache(tmp_path),
+    ).get_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 5),
+        strict=False,
+    )
+
+    assert dataset_identity_matches(dataset)
+    assert dataset.metadata.missing_sessions == (date(2024, 7, 2),)
+    assert validate_market_dataset(dataset) == (date(2024, 7, 2),)
 
 
 def test_cache_detects_corrupted_data_and_never_overwrites(tmp_path: Path) -> None:

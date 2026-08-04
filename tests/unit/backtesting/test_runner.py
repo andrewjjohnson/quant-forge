@@ -1,9 +1,9 @@
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, tzinfo
-from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
+from decimal import ROUND_DOWN, ROUND_UP, Decimal, getcontext, localcontext
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -25,6 +25,7 @@ from quantforge.backtesting import (
     run_backtest,
 )
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.data import dataset_identity_matches
 from quantforge.data.models import AdjustmentMode, MarketDataset
 from quantforge.indicators import Indicator, MarketField
 from quantforge.strategies import (
@@ -201,10 +202,9 @@ def test_execution_calendar_is_verified_and_changes_valid_run_identity() -> None
         date(2024, 7, 1),
         date(2024, 7, 2),
         date(2024, 7, 3),
-        date(2024, 7, 5),
     )
     original_dataset = make_dataset(
-        ("3", "2", "3", "4"),
+        ("3", "2", "4"),
         sessions=sessions,
         dataset_id="reused-dataset-id",
     )
@@ -213,7 +213,7 @@ def test_execution_calendar_is_verified_and_changes_valid_run_identity() -> None
         metadata=replace(original_dataset.metadata, calendar="24/7"),
     )
     revised_dataset = make_dataset(
-        ("3", "2", "3", "4"),
+        ("3", "2", "4"),
         sessions=sessions,
         dataset_id="reused-dataset-id",
         calendar="24/7",
@@ -523,6 +523,37 @@ def test_internal_missing_market_session_is_rejected_before_daily_metrics() -> N
         )
 
 
+def test_internal_session_gaps_are_recomputed_instead_of_trusting_metadata() -> None:
+    dataset = make_dataset(
+        ("1", "2", "3"),
+        sessions=(
+            date(2024, 7, 1),
+            date(2024, 7, 3),
+            date(2024, 7, 5),
+        ),
+        missing_sessions=(),
+    )
+    assert dataset_identity_matches(dataset)
+
+    with pytest.raises(
+        InvalidMarketDataError,
+        match=(
+            "missing-session provenance does not match the calendar; "
+            "computed: 2024-07-02; declared: none"
+        ),
+    ):
+        run_backtest(
+            dataset,
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(1, 2)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(0)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(0)),
+            ),
+        )
+
+
 def test_requested_range_gaps_outside_observed_bars_remain_provenance() -> None:
     sessions = (
         date(2024, 7, 2),
@@ -687,6 +718,108 @@ class FavorableSlippage:
             "implementation_version": self.implementation_version,
             "parameters": {},
         }
+
+
+class AmbientContextCommission:
+    name = "ambient_context_commission"
+    implementation_version = "1"
+    buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
+
+    def __init__(self) -> None:
+        self.observed_precisions: set[int] = set()
+        self.observed_configuration_precisions: set[int] = set()
+
+    def calculate(self, quantity: int, fill_price: Decimal) -> Decimal:
+        del quantity
+        self.observed_precisions.add(getcontext().prec)
+        return fill_price / Decimal(7)
+
+    def configuration(self) -> PrimitiveMapping:
+        self.observed_configuration_precisions.add(getcontext().prec)
+        return {
+            "model": self.name,
+            "implementation_version": self.implementation_version,
+            "buy_cost_is_non_decreasing_by_quantity": True,
+            "parameters": {},
+        }
+
+
+class AmbientContextFees:
+    name = "ambient_context_fees"
+    implementation_version = "1"
+    buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
+
+    def __init__(self) -> None:
+        self.observed_precisions: set[int] = set()
+        self.observed_configuration_precisions: set[int] = set()
+
+    def calculate(
+        self,
+        side: OrderSide,
+        quantity: int,
+        fill_price: Decimal,
+    ) -> Decimal:
+        del side, quantity
+        self.observed_precisions.add(getcontext().prec)
+        return fill_price / Decimal(13)
+
+    def configuration(self) -> PrimitiveMapping:
+        self.observed_configuration_precisions.add(getcontext().prec)
+        return {
+            "model": self.name,
+            "implementation_version": self.implementation_version,
+            "buy_cost_is_non_decreasing_by_quantity": True,
+            "parameters": {},
+        }
+
+
+class AmbientContextSlippage:
+    name = "ambient_context_slippage"
+    implementation_version = "1"
+
+    def __init__(self) -> None:
+        self.observed_precisions: set[int] = set()
+        self.observed_configuration_precisions: set[int] = set()
+
+    def apply(self, reference_price: Decimal, side: OrderSide) -> Decimal:
+        self.observed_precisions.add(getcontext().prec)
+        rate = Decimal(1) / Decimal(97_000)
+        multiplier = Decimal(1) + rate if side is OrderSide.BUY else Decimal(1) - rate
+        return reference_price * multiplier
+
+    def configuration(self) -> PrimitiveMapping:
+        self.observed_configuration_precisions.add(getcontext().prec)
+        return {
+            "model": self.name,
+            "implementation_version": self.implementation_version,
+            "parameters": {},
+        }
+
+
+def test_custom_cost_callbacks_use_the_serialized_decimal_policy() -> None:
+    commission = AmbientContextCommission()
+    fees = AmbientContextFees()
+    slippage = AmbientContextSlippage()
+    dataset = make_dataset(PRICES)
+    strategy = MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3))
+    config = BacktestConfig(Decimal(100), commission, fees, slippage)
+
+    with localcontext() as low_precision:
+        low_precision.prec = 8
+        low_precision.rounding = ROUND_DOWN
+        low_result = run_backtest(dataset, strategy, config)
+    with localcontext() as high_precision:
+        high_precision.prec = 50
+        high_precision.rounding = ROUND_UP
+        high_result = run_backtest(dataset, strategy, config)
+
+    assert low_result == high_result
+    assert commission.observed_precisions == {34}
+    assert fees.observed_precisions == {34}
+    assert slippage.observed_precisions == {34}
+    assert commission.observed_configuration_precisions == {34}
+    assert fees.observed_configuration_precisions == {34}
+    assert slippage.observed_configuration_precisions == {34}
 
 
 def test_custom_slippage_cannot_improve_a_buy_fill() -> None:

@@ -71,7 +71,10 @@ Every commission, fee, and slippage model declares a nonempty
 `implementation_version`, which is serialized beside its model name and
 parameters. Custom model authors must increment that version whenever a
 calculation change could alter fills or results, even when user-facing
-parameters are unchanged.
+parameters are unchanged. QF-5 invokes custom configuration, commission, fee,
+and slippage callbacks only through its private 34-digit `ROUND_HALF_EVEN`
+arithmetic boundary. The strategy engine and benchmark share that evaluator, so
+the caller's ambient Decimal context cannot change costs under a fixed run ID.
 
 Commission and fee models must also declare and serialize
 `buy_cost_is_non_decreasing_by_quantity=true`. This is a semantic contract that,
@@ -111,12 +114,15 @@ a missing execution bar is retained as a rejected order with a reason. No later
 bar is substituted. Invalid or nonpositive OHLCV is rejected before the
 strategy runs.
 
-QF-5 also rejects a dataset when QF-3's `missing_sessions` metadata identifies
-an expected exchange session between `actual_first_session` and
-`actual_last_session`. Otherwise an equity change across several exchange
-sessions would be recorded and annualized as one daily return. Missing sessions
-before the first observed bar or after the last observed bar remain preserved in
-provenance and do not invalidate the observed return series.
+Before QF-5 applies its gap policy, QF-3's complete-dataset validator recomputes
+every expected session across the requested range from the declared calendar,
+rejects bars on non-session dates, and requires the recomputed gaps to equal the
+immutable `missing_sessions` tuple. QF-5 then rejects a recomputed gap between
+`actual_first_session` and `actual_last_session`. Otherwise an equity change
+across several exchange sessions would be recorded and annualized as one daily
+return. Missing sessions before the first observed bar or after the last
+observed bar remain preserved in provenance and do not invalidate the observed
+return series.
 
 ## Signals, orders, and fills
 
@@ -219,7 +225,9 @@ Supporting fields include starting/ending equity, aggregate positive and
 negative net completed-trade P&L (`gross_profit` and `gross_loss` in the
 performance schema), winning and losing counts, average trade return, and the
 benchmark total return. Decimal calculations use a private 34-significant-digit
-`ROUND_HALF_EVEN` policy rather than the caller's ambient Decimal context.
+`ROUND_HALF_EVEN` policy rather than the caller's ambient Decimal context. This
+includes all built-in and custom cost-model callbacks used for configuration,
+slippage, commissions, fees, affordability, and benchmark execution.
 
 ## Buy-and-hold benchmark
 
@@ -242,14 +250,24 @@ reference (QF-3 dataset ID, schema, adjustment mode, and trading calendar), a
 separate SHA-256 fingerprint of the actual validated bars, QF-4 strategy name,
 explicit implementation version, configuration identity, full configuration,
 complete backtest configuration (including each cost-model implementation
-version), and engine/result schema versions. Before execution, QF-5 also
-recomputes the QF-3 normalized-data digest and dataset ID from the current bars,
-complete QF-3 metadata, stored raw-data digest, schema version, and canonical
-artifact paths. A copied or manually changed dataset that retains its old ID is
-rejected before strategy, benchmark, or metric evaluation. The independent QF-5
-bar fingerprint canonicalizes the ordered symbol, session date, and every OHLCV
-value and is persisted in the manifest as `market_data.bars_fingerprint` along
-with the QF-3 raw and normalized SHA-256 digests.
+version), and engine/result schema versions. Before execution, QF-5 invokes the
+authoritative QF-3 complete-dataset validator. It checks bar types, values,
+symbols, ordering, requested and actual bounds, bar count, exchange sessions,
+the exact recomputed missing-session set, corporate-action-session structure,
+normalized-data digest, dataset ID, schema version, and canonical artifact
+paths. A copied or manually constructed dataset whose derivable metadata is
+incorrect is rejected before strategy, benchmark, or metric evaluation. The
+independent QF-5 bar fingerprint canonicalizes the ordered symbol, session date,
+and every OHLCV value and is persisted in the manifest as
+`market_data.bars_fingerprint` along with the QF-3 raw and normalized SHA-256
+digests.
+
+An in-memory `MarketDataset` does not contain the raw provider bytes, so its raw
+digest can be identity-bound but not independently re-read there. QF-3 cache
+loading verifies those bytes against `raw_sha256`; complete split and dividend
+provenance likewise remains a schema-v3 ingestion/cache guarantee rather than
+something inferable from OHLCV alone.
+
 The strategy implementation version is also persisted directly on the result
 and every trade. The identity excludes object addresses, QF-3 retrieval time,
 optional initiation time, and export time.

@@ -18,7 +18,7 @@ deterministic chronological state machine is the source of truth for orders,
 fills, cash, positions, and trades. Close-derived decisions may first execute at
 the next exchange session's open. The session order is execute at open, apply
 costs and accounting, then mark at close. A fixed explicit Decimal policy is
-used for calculations.
+used for calculations and for every built-in or custom cost-model callback.
 
 The MVP uses one symbol, long-only whole shares, market orders, full fills, and
 no forced final liquidation. It accepts only QF-3 schema-version-3 unadjusted
@@ -42,10 +42,11 @@ single-threaded and intentionally does not simulate order books or intraday
 events.
 
 QF-5 verifies that current QF-3 bars and complete provenance reproduce their
-declared dataset identity before execution. The buy-and-hold benchmark's first
-return measures initial capital to the first close because it enters at the
-first open; that invested observation participates in its volatility, Sharpe,
-and Sortino metrics.
+declared dataset identity before execution. The shared QF-3 validator also
+recomputes calendar membership and missing sessions rather than trusting the
+manifest tuple. The buy-and-hold benchmark's first return measures initial
+capital to the first close because it enters at the first open; that invested
+observation participates in its volatility, Sharpe, and Sortino metrics.
 
 Changing the source-of-truth execution ordering or same-bar eligibility is a
 research-semantics change requiring a new ADR, schema/version review, golden
@@ -74,4 +75,6 @@ schema-versioned immutable corporate-action provenance, reload stability, and
 safe rejection of legacy manifests; QF-5 regressions reject legacy, split-
 bearing, dividend-bearing, and identity-inconsistent copied inputs. Benchmark
 regressions verify that entry costs and the first session's movement participate
-in the risk-return series.
+in the risk-return series. Additional regressions verify ambient-context
+independence for custom cost callbacks and reject identity-valid datasets whose
+declared gaps disagree with the exchange calendar.

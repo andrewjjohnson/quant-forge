@@ -1,9 +1,14 @@
 """Comparable deterministic full-period buy-and-hold benchmark."""
 
 from decimal import Decimal
-from typing import cast
 
 from quantforge.backtesting._arithmetic import arithmetic
+from quantforge.backtesting._execution_costs import (
+    affordable_quantity,
+    commission_amount,
+    fee_amount,
+    slipped_price,
+)
 from quantforge.backtesting.config import BacktestConfig
 from quantforge.backtesting.costs import OrderSide
 from quantforge.backtesting.errors import ExecutionError
@@ -25,73 +30,11 @@ from quantforge.configuration import (
 from quantforge.data.models import MarketDataset
 
 
-def _commission(config: BacktestConfig, quantity: int, price: Decimal) -> Decimal:
-    try:
-        value = config.commission.calculate(quantity, price)
-    except (ArithmeticError, ValueError) as error:
-        raise ExecutionError("benchmark commission calculation failed") from error
-    if not value.is_finite() or value < 0:
-        raise ExecutionError("commission model returned an invalid amount")
-    return value
-
-
-def _fees(
-    config: BacktestConfig, side: OrderSide, quantity: int, price: Decimal
-) -> Decimal:
-    try:
-        value = config.fees.calculate(side, quantity, price)
-    except (ArithmeticError, ValueError) as error:
-        raise ExecutionError("benchmark transaction-fee calculation failed") from error
-    if not value.is_finite() or value < 0:
-        raise ExecutionError("transaction-fee model returned an invalid amount")
-    return value
-
-
-def _slipped_price(
-    config: BacktestConfig, reference_price: Decimal, side: OrderSide
-) -> Decimal:
-    try:
-        value = config.slippage.apply(reference_price, side)
-    except (ArithmeticError, ValueError) as error:
-        raise ExecutionError("benchmark slippage calculation failed") from error
-    value_object = cast(object, value)
-    if (
-        not isinstance(value_object, Decimal)
-        or not value_object.is_finite()
-        or value_object <= 0
-    ):
-        raise ExecutionError("slippage model returned an invalid fill price")
-    if (side is OrderSide.BUY and value_object < reference_price) or (
-        side is OrderSide.SELL and value_object > reference_price
-    ):
-        raise ExecutionError("slippage must be adverse or zero")
-    return value_object
-
-
-def _affordable_quantity(
-    cash_budget: Decimal, fill_price: Decimal, config: BacktestConfig
-) -> int:
-    with arithmetic():
-        upper = int(cash_budget / fill_price)
-    low = 0
-    high = upper
-    while low < high:
-        candidate = (low + high + 1) // 2
-        commission = _commission(config, candidate, fill_price)
-        fees = _fees(config, OrderSide.BUY, candidate, fill_price)
-        with arithmetic():
-            affordable = (
-                Decimal(candidate) * fill_price + commission + fees <= cash_budget
-            )
-        if affordable:
-            low = candidate
-        else:
-            high = candidate - 1
-    return low
-
-
 def run_buy_and_hold_benchmark(
-    dataset: MarketDataset, config: BacktestConfig, run_id: str
+    dataset: MarketDataset,
+    config: BacktestConfig,
+    run_id: str,
+    backtest_configuration: PrimitiveMapping,
 ) -> BenchmarkResult:
     """Buy whole shares at the first open and hold through the final close."""
     configuration: PrimitiveMapping = {
@@ -101,9 +44,9 @@ def run_buy_and_hold_benchmark(
         "return_series_start": "initial_capital_to_first_session_close",
         "forced_liquidation": False,
         "initial_capital": decimal_to_primitive(config.initial_capital),
-        "commission": config.commission.configuration(),
-        "fees": config.fees.configuration(),
-        "slippage": config.slippage.configuration(),
+        "commission": backtest_configuration["commission"],
+        "fees": backtest_configuration["fees"],
+        "slippage": backtest_configuration["slippage"],
     }
     benchmark_id = configuration_identity(
         {
@@ -119,8 +62,19 @@ def run_buy_and_hold_benchmark(
         {"benchmark_id": benchmark_id, "record_type": "order"}
     )
     first_bar = dataset.bars[0]
-    fill_price = _slipped_price(config, first_bar.open, OrderSide.BUY)
-    quantity = _affordable_quantity(config.initial_capital, fill_price, config)
+    fill_price = slipped_price(
+        config.slippage,
+        first_bar.open,
+        OrderSide.BUY,
+        context="benchmark",
+    )
+    quantity = affordable_quantity(
+        config.initial_capital,
+        fill_price,
+        config.commission,
+        config.fees,
+        context="benchmark",
+    )
     fill: FillRecord | None = None
     if quantity == 0:
         order = OrderRecord(
@@ -143,8 +97,19 @@ def run_buy_and_hold_benchmark(
         cash = config.initial_capital
         shares = 0
     else:
-        commission = _commission(config, quantity, fill_price)
-        fees = _fees(config, OrderSide.BUY, quantity, fill_price)
+        commission = commission_amount(
+            config.commission,
+            quantity,
+            fill_price,
+            context="benchmark",
+        )
+        fees = fee_amount(
+            config.fees,
+            OrderSide.BUY,
+            quantity,
+            fill_price,
+            context="benchmark",
+        )
         with arithmetic():
             gross_notional = Decimal(quantity) * fill_price
             cash_effect = -(gross_notional + commission + fees)

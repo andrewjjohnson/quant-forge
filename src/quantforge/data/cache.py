@@ -10,11 +10,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
-from quantforge.data.exceptions import CacheError
+from quantforge.data.exceptions import CacheError, ValidationError
 from quantforge.data.identity import (
     calculate_dataset_id,
     canonical_json_bytes,
-    dataset_identity_matches,
     serialize_bars_csv,
     serialize_metadata_values,
     sha256_hex,
@@ -27,6 +26,7 @@ from quantforge.data.models import (
     MarketDataset,
     ProviderResponse,
 )
+from quantforge.data.validate import validate_market_dataset
 
 
 def request_key(
@@ -112,6 +112,8 @@ class MarketDataCache:
             dataset_id=dataset_id,
             schema_version=SCHEMA_VERSION,
         )
+        dataset = MarketDataset(bars, metadata)
+        validate_market_dataset(dataset)
         manifest_value = _metadata_to_dict(metadata)
         self._write_once(self.root / relative_raw, raw_bytes)
         self._write_once(self.root / relative_data, data_bytes)
@@ -123,7 +125,7 @@ class MarketDataCache:
             self.root / "requests" / f"{key}.json",
             canonical_json_bytes({"dataset_id": dataset_id}),
         )
-        return MarketDataset(bars, metadata)
+        return dataset
 
     def load(self, dataset_id: str) -> MarketDataset:
         """Reload a complete entry and verify paths and content hashes."""
@@ -161,11 +163,11 @@ class MarketDataCache:
             raise CacheError(
                 f"incomplete or corrupt cache entry: {dataset_id}"
             ) from error
-        if len(bars) != metadata.bar_count:
-            raise CacheError("cached bar count differs from manifest")
         dataset = MarketDataset(bars, metadata)
-        if not dataset_identity_matches(dataset):
-            raise CacheError("cached dataset identity mismatch")
+        try:
+            validate_market_dataset(dataset)
+        except ValidationError as error:
+            raise CacheError(f"cached dataset validation failed: {error}") from error
         return dataset
 
     @staticmethod
