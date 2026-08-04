@@ -85,7 +85,9 @@ Responsibilities:
 - validate ordering, uniqueness, nulls, and numerical relationships;
 - record adjustment policies;
 - validate and retain provider-reported split and cash-dividend provenance;
-- generate deterministic fingerprints.
+- generate deterministic fingerprints;
+- verify that current bars and complete metadata reproduce their QF-3 dataset
+  identity.
 
 Must not:
 
@@ -165,7 +167,10 @@ datasets with verified empty split and cash-dividend provenance inside the
 observed range. Split-adjusted datasets are valid for indicator and strategy
 research, but execution rejects adjusted or corporate-action-bearing ranges
 until QF-3/QF-5 carry the event details and accounting policies needed to
-preserve historical share units and cash entitlement.
+preserve historical share units and cash entitlement. Before trusting that
+provenance, QF-5 reserializes the current bars and verifies that their digest,
+the complete metadata, the raw digest, and canonical storage paths reproduce the
+QF-3 dataset ID. Copies that retain an old ID after mutation are rejected.
 
 The boundary also rejects QF-3 datasets with expected market sessions missing
 between their first and last observed bars. This preserves daily metric
@@ -247,11 +252,12 @@ provenance, QF-4's execution-relevant adjustment and calendar reference, a
 canonical fingerprint of the actual validated OHLCV bars, QF-4 strategy
 configuration and implementation version, all execution/cost/sizing assumptions
 and their implementation versions, and engine/result schema versions. The
-validated-bar fingerprint is also persisted in the manifest so a caller cannot
-reuse a dataset identifier with different bar contents or execution metadata
-under the same run identity. Canonical immutable snapshots prevent later
-caller-owned configuration mutation from changing the manifest under a fixed
-run identity.
+validated-bar fingerprint and QF-3 raw and normalized content digests are also
+persisted in the manifest. QF-5 first rejects a dataset identifier that is
+inconsistent with the current bars or execution metadata, then independently
+binds the validated inputs into the run identity. Canonical immutable snapshots
+prevent later caller-owned configuration mutation from changing the manifest
+under a fixed run identity.
 
 Responsibilities:
 

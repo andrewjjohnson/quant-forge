@@ -56,6 +56,13 @@ reference participates as well because it controls signal eligibility and
 execution timing. Commission and fee models are accepted only when they
 explicitly guarantee nondecreasing buy-side costs by quantity, which makes
 whole-share affordability search sound.
+
+Before execution, QF-5 additionally reserializes the current bars and verifies
+that their QF-3 normalized digest, the complete provenance metadata, raw digest,
+schema, and canonical artifact paths reproduce the declared QF-3 dataset ID.
+Removing a corporate-action session or replacing bars while retaining an old ID
+therefore fails closed before the strategy or benchmark runs.
+
 QF-5 rejects QF-3 datasets with missing expected sessions inside the observed
 range so a multi-session equity change cannot be annualized as one daily return.
 QF-3 schema version 3 requires a provider split coefficient and cash-dividend
@@ -95,6 +102,11 @@ observed corporate action until point-in-time factors and dividend cash-flow
 semantics are available. Tests cover both rejection boundaries; applying those
 events still requires dedicated accounting tests before broad equity-universe
 work is considered reliable.
+
+Because the buy-and-hold benchmark enters at the first open, its risk-return
+series includes the initial-capital-to-first-close return, including entry costs
+and that session's price move. Treating that invested observation as a zero
+would understate benchmark volatility and distort Sharpe and Sortino.
 
 ## Timestamp and calendar integrity
 

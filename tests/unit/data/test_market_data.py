@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from quantforge.data import dataset_identity_matches
 from quantforge.data.cache import MarketDataCache
 from quantforge.data.exceptions import CacheError, ProviderError, ValidationError
 from quantforge.data.models import (
@@ -257,6 +258,9 @@ def test_service_persists_metadata_and_reuses_cache_across_instances(
     assert first.metadata.adjustment_mode is AdjustmentMode.SPLIT_ADJUSTED
     assert first.metadata.split_sessions == ()
     assert first.metadata.dividend_sessions == ()
+    assert len(first.metadata.raw_sha256) == 64
+    assert len(first.metadata.data_sha256) == 64
+    assert dataset_identity_matches(first)
     assert first.metadata.raw_location.startswith("raw/")
 
 
@@ -308,6 +312,12 @@ def test_service_persists_and_reloads_verified_dividend_sessions(
     )
 
     assert dataset.metadata.dividend_sessions == (date(2024, 7, 2),)
+    assert dataset_identity_matches(dataset)
+    stripped = replace(
+        dataset,
+        metadata=replace(dataset.metadata, dividend_sessions=()),
+    )
+    assert not dataset_identity_matches(stripped)
     assert cache.load(dataset.metadata.dataset_id) == dataset
 
 
@@ -346,6 +356,22 @@ def test_cache_rejects_v2_manifest_without_dividend_provenance(
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
+
+
+def test_cache_rejects_manifest_metadata_identity_mismatch(tmp_path: Path) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(FakeProvider(VALID), cache).get_daily_bars(
+        "SPY", date(2024, 7, 1), date(2024, 7, 3)
+    )
+    manifest_path = (
+        tmp_path / "datasets" / dataset.metadata.dataset_id / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["calendar"] = "24/7"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="dataset identity mismatch"):
         cache.load(dataset.metadata.dataset_id)
 
 

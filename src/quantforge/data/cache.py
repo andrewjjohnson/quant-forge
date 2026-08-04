@@ -1,7 +1,6 @@
 """Small immutable filesystem cache for daily datasets."""
 
 import csv
-import hashlib
 import json
 import os
 import tempfile
@@ -12,6 +11,14 @@ from pathlib import Path
 from typing import Any, cast
 
 from quantforge.data.exceptions import CacheError
+from quantforge.data.identity import (
+    calculate_dataset_id,
+    canonical_json_bytes,
+    dataset_identity_matches,
+    serialize_bars_csv,
+    serialize_metadata_values,
+    sha256_hex,
+)
 from quantforge.data.models import (
     SCHEMA_VERSION,
     AdjustmentMode,
@@ -20,16 +27,6 @@ from quantforge.data.models import (
     MarketDataset,
     ProviderResponse,
 )
-
-
-def _canonical_json(value: object) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode()
-
-
-def _sha256(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
 
 
 def request_key(
@@ -43,8 +40,8 @@ def request_key(
     strict: bool,
 ) -> str:
     """Hash every input that materially controls normalized output."""
-    return _sha256(
-        _canonical_json(
+    return sha256_hex(
+        canonical_json_bytes(
             {
                 "provider": provider,
                 "symbol": symbol,
@@ -94,43 +91,37 @@ class MarketDataCache:
             "metadata": response.metadata,
             "adapter_version": response.adapter_version,
         }
-        raw_bytes = _canonical_json(raw_value)
-        raw_hash = _sha256(raw_bytes)
-        csv_text = "symbol,session_date,open,high,low,close,volume\n" + "".join(
-            f"{bar.symbol},{bar.session_date.isoformat()},{bar.open},{bar.high},{bar.low},{bar.close},{bar.volume}\n"
-            for bar in bars
+        raw_bytes = canonical_json_bytes(raw_value)
+        raw_hash = sha256_hex(raw_bytes)
+        data_bytes = serialize_bars_csv(bars)
+        data_hash = sha256_hex(data_bytes)
+        dataset_id = calculate_dataset_id(
+            metadata_values,
+            raw_sha256=raw_hash,
+            data_sha256=data_hash,
+            schema_version=SCHEMA_VERSION,
         )
-        data_bytes = csv_text.encode()
-        data_hash = _sha256(data_bytes)
-        identity = {
-            **_serialize_metadata_values(metadata_values),
-            "raw_sha256": raw_hash,
-            "data_sha256": data_hash,
-            "schema_version": SCHEMA_VERSION,
-        }
-        dataset_id = _sha256(_canonical_json(identity))
         relative_raw = f"raw/{raw_hash}.json"
         relative_data = f"datasets/{dataset_id}/bars.csv"
         metadata = DatasetMetadata(
             **cast(Any, metadata_values),
             raw_location=relative_raw,
             normalized_location=relative_data,
+            raw_sha256=raw_hash,
+            data_sha256=data_hash,
             dataset_id=dataset_id,
             schema_version=SCHEMA_VERSION,
         )
-        manifest_value = _metadata_to_dict(metadata) | {
-            "raw_sha256": raw_hash,
-            "data_sha256": data_hash,
-        }
+        manifest_value = _metadata_to_dict(metadata)
         self._write_once(self.root / relative_raw, raw_bytes)
         self._write_once(self.root / relative_data, data_bytes)
         self._write_once(
             self.root / "datasets" / dataset_id / "manifest.json",
-            _canonical_json(manifest_value),
+            canonical_json_bytes(manifest_value),
         )
         self._write_once(
             self.root / "requests" / f"{key}.json",
-            _canonical_json({"dataset_id": dataset_id}),
+            canonical_json_bytes({"dataset_id": dataset_id}),
         )
         return MarketDataset(bars, metadata)
 
@@ -146,8 +137,8 @@ class MarketDataCache:
             raw_path = self.root / str(manifest["raw_location"])
             data_bytes, raw_bytes = data_path.read_bytes(), raw_path.read_bytes()
             if (
-                _sha256(data_bytes) != manifest["data_sha256"]
-                or _sha256(raw_bytes) != manifest["raw_sha256"]
+                sha256_hex(data_bytes) != manifest["data_sha256"]
+                or sha256_hex(raw_bytes) != manifest["raw_sha256"]
             ):
                 raise CacheError("cached artifact checksum mismatch")
             with data_path.open(newline="") as stream:
@@ -172,7 +163,10 @@ class MarketDataCache:
             ) from error
         if len(bars) != metadata.bar_count:
             raise CacheError("cached bar count differs from manifest")
-        return MarketDataset(bars, metadata)
+        dataset = MarketDataset(bars, metadata)
+        if not dataset_identity_matches(dataset):
+            raise CacheError("cached dataset identity mismatch")
+        return dataset
 
     @staticmethod
     def _write_once(path: Path, content: bytes) -> None:
@@ -199,35 +193,7 @@ class MarketDataCache:
 
 
 def _metadata_to_dict(metadata: DatasetMetadata) -> dict[str, object]:
-    return _serialize_metadata_values(asdict(metadata))
-
-
-def _serialize_metadata_values(
-    metadata_values: dict[str, object],
-) -> dict[str, object]:
-    """Return metadata in the canonical JSON-compatible representation."""
-    value = metadata_values.copy()
-    for field in (
-        "requested_start",
-        "requested_end",
-        "actual_first_session",
-        "actual_last_session",
-    ):
-        value[field] = cast(date, value[field]).isoformat()
-    value["retrieved_at"] = (
-        cast(datetime, value["retrieved_at"]).astimezone(UTC).isoformat()
-    )
-    value["adjustment_mode"] = cast(AdjustmentMode, value["adjustment_mode"]).value
-    value["missing_sessions"] = [
-        item.isoformat() for item in cast(tuple[date, ...], value["missing_sessions"])
-    ]
-    value["split_sessions"] = [
-        item.isoformat() for item in cast(tuple[date, ...], value["split_sessions"])
-    ]
-    value["dividend_sessions"] = [
-        item.isoformat() for item in cast(tuple[date, ...], value["dividend_sessions"])
-    ]
-    return value
+    return serialize_metadata_values(asdict(metadata))
 
 
 def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
@@ -245,6 +211,8 @@ def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
         adjustment_mode=AdjustmentMode(value["adjustment_mode"]),
         raw_location=str(value["raw_location"]),
         normalized_location=str(value["normalized_location"]),
+        raw_sha256=str(value["raw_sha256"]),
+        data_sha256=str(value["data_sha256"]),
         dataset_id=str(value["dataset_id"]),
         schema_version=str(value["schema_version"]),
         bar_count=int(value["bar_count"]),

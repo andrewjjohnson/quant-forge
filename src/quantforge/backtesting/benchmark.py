@@ -96,8 +96,9 @@ def run_buy_and_hold_benchmark(
     """Buy whole shares at the first open and hold through the final close."""
     configuration: PrimitiveMapping = {
         "model": "buy_and_hold",
-        "implementation_version": "1",
+        "implementation_version": "2",
         "start": "first_dataset_session_open",
+        "return_series_start": "initial_capital_to_first_session_close",
         "forced_liquidation": False,
         "initial_capital": decimal_to_primitive(config.initial_capital),
         "commission": config.commission.configuration(),
@@ -200,9 +201,7 @@ def run_buy_and_hold_benchmark(
         with arithmetic():
             market_value = Decimal(shares) * bar.close
             equity = cash + market_value
-            if index == 0:
-                daily_return = Decimal(0)
-            elif previous_equity == 0:
+            if previous_equity == 0:
                 daily_return = None
             else:
                 daily_return = equity / previous_equity - Decimal(1)
@@ -257,7 +256,7 @@ def run_buy_and_hold_benchmark(
                 return_percentage=None,
                 holding_period_sessions=None,
                 strategy_id=fill.strategy_id,
-                strategy_implementation_version="1",
+                strategy_implementation_version="2",
                 strategy_configuration_id=fill.strategy_configuration_id,
                 is_open=True,
             ),
@@ -269,6 +268,7 @@ def run_buy_and_hold_benchmark(
         initial_capital=config.initial_capital,
         annual_risk_free_rate=config.annual_risk_free_rate,
         annualization_factor=config.annualization_factor,
+        include_first_daily_return=True,
     )
     return BenchmarkResult(
         benchmark_id=benchmark_id,

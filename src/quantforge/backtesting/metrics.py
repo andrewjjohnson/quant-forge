@@ -25,8 +25,14 @@ def calculate_performance(
     annual_risk_free_rate: Decimal,
     annualization_factor: int,
     benchmark_total_return: Decimal | None = None,
+    include_first_daily_return: bool = False,
 ) -> PerformanceSummary:
-    """Calculate typed arithmetic-return metrics without NaN or infinity."""
+    """Calculate typed arithmetic-return metrics without NaN or infinity.
+
+    Most daily series use the first record as their initial close and therefore
+    start returns at index one. A first-open benchmark can opt into its invested
+    inception-to-first-close return explicitly.
+    """
     if not daily_equity:
         raise ValueError("daily equity records are required")
     ending_equity = daily_equity[-1].total_equity
@@ -45,9 +51,10 @@ def calculate_performance(
                 ratio, CALENDAR_DAYS_PER_YEAR / Decimal(elapsed_days)
             ) - Decimal(1)
 
+    return_start = 0 if include_first_daily_return else 1
     returns = tuple(
         record.daily_return
-        for record in daily_equity[1:]
+        for record in daily_equity[return_start:]
         if record.daily_return is not None
     )
     annualized_volatility: Decimal | None = None

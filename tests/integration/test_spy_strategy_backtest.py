@@ -35,7 +35,7 @@ def test_local_spy_dataset_runs_qf4_strategy_end_to_end() -> None:
         ),
     )
 
-    assert result.market_data.dataset_id == "immutable-local-spy-fixture"
+    assert result.market_data.dataset_id == dataset.metadata.dataset_id
     assert result.market_data.adjustment_mode == "unadjusted"
     assert result.strategy_id == "moving_average_crossover"
     assert len(result.signals) == len(result.orders) == 2

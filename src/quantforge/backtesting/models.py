@@ -49,6 +49,8 @@ class MarketDataMetadata:
     adjustment_mode: str
     raw_location: str
     normalized_location: str
+    raw_sha256: str
+    data_sha256: str
     bar_count: int
     missing_sessions: tuple[date, ...]
     split_sessions: tuple[date, ...]
@@ -76,6 +78,8 @@ class MarketDataMetadata:
             adjustment_mode=metadata.adjustment_mode.value,
             raw_location=metadata.raw_location,
             normalized_location=metadata.normalized_location,
+            raw_sha256=metadata.raw_sha256,
+            data_sha256=metadata.data_sha256,
             bar_count=metadata.bar_count,
             missing_sessions=metadata.missing_sessions,
             split_sessions=metadata.split_sessions,
@@ -101,6 +105,8 @@ class MarketDataMetadata:
             "adjustment_mode": self.adjustment_mode,
             "raw_location": self.raw_location,
             "normalized_location": self.normalized_location,
+            "raw_sha256": self.raw_sha256,
+            "data_sha256": self.data_sha256,
             "bar_count": self.bar_count,
             "missing_sessions": [item.isoformat() for item in self.missing_sessions],
             "split_sessions": [item.isoformat() for item in self.split_sessions],

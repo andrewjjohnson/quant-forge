@@ -34,6 +34,7 @@ from quantforge.configuration import (
     configuration_identity,
     decimal_to_primitive,
 )
+from quantforge.data.identity import dataset_identity_matches
 from quantforge.data.models import (
     SCHEMA_VERSION as MARKET_DATA_SCHEMA_VERSION,
 )
@@ -201,6 +202,10 @@ def _validate_dataset(dataset: MarketDataset) -> None:
             raise InvalidMarketDataError("high is below another OHLC price")
         if bar.low > min(bar.open, bar.high, bar.close):
             raise InvalidMarketDataError("low is above another OHLC price")
+    if not dataset_identity_matches(dataset_value):
+        raise InvalidMarketDataError(
+            "market bars or provenance do not match the QF-3 dataset identity"
+        )
 
 
 def _commission(config: BacktestConfig, quantity: int, price: Decimal) -> Decimal:

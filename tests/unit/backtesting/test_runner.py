@@ -177,42 +177,26 @@ def test_repeated_equivalent_inputs_replay_identically() -> None:
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
 
 
-def test_actual_bar_content_changes_run_identity_when_dataset_id_is_reused() -> None:
+def test_changed_bars_are_rejected_when_dataset_id_is_reused() -> None:
     original_dataset = make_dataset(PRICES, dataset_id="reused-dataset-id")
     revised_bars = list(original_dataset.bars)
     revised_bars[-1] = replace(revised_bars[-1], open=Decimal("1.5"))
     revised_dataset = replace(original_dataset, bars=tuple(revised_bars))
 
-    original = run_backtest(
-        original_dataset,
-        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
-        BacktestConfig(
-            Decimal(100),
-            FixedCommission(Decimal(1)),
-            ExplicitZeroFees(),
-            BasisPointSlippage(Decimal(100)),
-        ),
-    )
-    revised = run_backtest(
-        revised_dataset,
-        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
-        BacktestConfig(
-            Decimal(100),
-            FixedCommission(Decimal(1)),
-            ExplicitZeroFees(),
-            BasisPointSlippage(Decimal(100)),
-        ),
-    )
-
-    assert original.market_data.dataset_id == revised.market_data.dataset_id
-    assert original.fills[-1].reference_price != revised.fills[-1].reference_price
-    assert original.market_data.bars_fingerprint != (
-        revised.market_data.bars_fingerprint
-    )
-    assert original.run_id != revised.run_id
+    with pytest.raises(InvalidMarketDataError, match=r"do not match.*dataset identity"):
+        run_backtest(
+            revised_dataset,
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(100)),
+            ),
+        )
 
 
-def test_execution_calendar_changes_run_identity_when_dataset_id_is_reused() -> None:
+def test_execution_calendar_is_verified_and_changes_valid_run_identity() -> None:
     sessions = (
         date(2024, 7, 1),
         date(2024, 7, 2),
@@ -224,9 +208,15 @@ def test_execution_calendar_changes_run_identity_when_dataset_id_is_reused() -> 
         sessions=sessions,
         dataset_id="reused-dataset-id",
     )
-    revised_dataset = replace(
+    copied_dataset = replace(
         original_dataset,
         metadata=replace(original_dataset.metadata, calendar="24/7"),
+    )
+    revised_dataset = make_dataset(
+        ("3", "2", "3", "4"),
+        sessions=sessions,
+        dataset_id="reused-dataset-id",
+        calendar="24/7",
     )
     strategy = MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(1, 2))
     config = BacktestConfig(
@@ -236,10 +226,13 @@ def test_execution_calendar_changes_run_identity_when_dataset_id_is_reused() -> 
         BasisPointSlippage(Decimal(100)),
     )
 
+    with pytest.raises(InvalidMarketDataError, match=r"do not match.*dataset identity"):
+        run_backtest(copied_dataset, strategy, config)
+
     original = run_backtest(original_dataset, strategy, config)
     revised = run_backtest(revised_dataset, strategy, config)
 
-    assert original.market_data.dataset_id == revised.market_data.dataset_id
+    assert original.market_data.dataset_id != revised.market_data.dataset_id
     assert original.market_data.bars_fingerprint == (
         revised.market_data.bars_fingerprint
     )
@@ -508,13 +501,10 @@ def test_internal_missing_market_session_is_rejected_before_daily_metrics() -> N
         date(2024, 7, 9),
         date(2024, 7, 10),
     )
-    dataset = make_dataset(("3", "2", "1", "2", "3", "4"), sessions=sessions)
-    dataset = replace(
-        dataset,
-        metadata=replace(
-            dataset.metadata,
-            missing_sessions=(date(2024, 7, 3),),
-        ),
+    dataset = make_dataset(
+        ("3", "2", "1", "2", "3", "4"),
+        sessions=sessions,
+        missing_sessions=(date(2024, 7, 3),),
     )
 
     with pytest.raises(
@@ -543,15 +533,12 @@ def test_requested_range_gaps_outside_observed_bars_remain_provenance() -> None:
         date(2024, 7, 10),
     )
     outside_gaps = (date(2024, 7, 1), date(2024, 7, 11))
-    dataset = make_dataset(("3", "2", "1", "2", "3", "4"), sessions=sessions)
-    dataset = replace(
-        dataset,
-        metadata=replace(
-            dataset.metadata,
-            requested_start=outside_gaps[0],
-            requested_end=outside_gaps[1],
-            missing_sessions=outside_gaps,
-        ),
+    dataset = make_dataset(
+        ("3", "2", "1", "2", "3", "4"),
+        sessions=sessions,
+        requested_start=outside_gaps[0],
+        requested_end=outside_gaps[1],
+        missing_sessions=outside_gaps,
     )
 
     result = run_backtest(
@@ -618,11 +605,10 @@ def test_market_data_schema_without_dividend_provenance_is_rejected() -> None:
 
 
 def test_unadjusted_data_with_stock_split_is_rejected() -> None:
-    dataset = make_dataset(PRICES)
     split_session = date(2024, 7, 9)
-    split_bearing = replace(
-        dataset,
-        metadata=replace(dataset.metadata, split_sessions=(split_session,)),
+    split_bearing = make_dataset(
+        PRICES,
+        split_sessions=(split_session,),
     )
 
     with pytest.raises(
@@ -642,11 +628,10 @@ def test_unadjusted_data_with_stock_split_is_rejected() -> None:
 
 
 def test_unadjusted_data_with_cash_dividend_is_rejected() -> None:
-    dataset = make_dataset(PRICES)
     dividend_session = date(2024, 7, 9)
-    dividend_bearing = replace(
-        dataset,
-        metadata=replace(dataset.metadata, dividend_sessions=(dividend_session,)),
+    dividend_bearing = make_dataset(
+        PRICES,
+        dividend_sessions=(dividend_session,),
     )
 
     with pytest.raises(
@@ -655,6 +640,29 @@ def test_unadjusted_data_with_cash_dividend_is_rejected() -> None:
     ):
         run_backtest(
             dividend_bearing,
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(100)),
+            ),
+        )
+
+
+def test_removed_dividend_provenance_is_rejected_by_dataset_identity() -> None:
+    dividend_bearing = make_dataset(
+        PRICES,
+        dividend_sessions=(date(2024, 7, 9),),
+    )
+    stripped = replace(
+        dividend_bearing,
+        metadata=replace(dividend_bearing.metadata, dividend_sessions=()),
+    )
+
+    with pytest.raises(InvalidMarketDataError, match=r"do not match.*dataset identity"):
+        run_backtest(
+            stripped,
             MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
             BacktestConfig(
                 Decimal(100),
@@ -708,6 +716,35 @@ def test_metrics_and_benchmark_edge_cases_are_explicit() -> None:
     assert result.benchmark.daily_equity[-1].shares == result.benchmark.fill.quantity
     assert result.benchmark.performance.trade_count == 0
     assert result.benchmark.performance.open_trade_count == 1
+
+
+def test_benchmark_includes_first_invested_return_in_risk_metrics() -> None:
+    result = run_backtest(
+        make_dataset(("10", "11")),
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(1, 2)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(10)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(0)),
+            annualization_factor=1,
+        ),
+    )
+
+    assert result.daily_equity[0].daily_return == Decimal(0)
+    assert tuple(record.daily_return for record in result.benchmark.daily_equity) == (
+        Decimal("-0.1"),
+        Decimal("0.1"),
+    )
+    assert str(result.benchmark.performance.annualized_volatility).startswith(
+        "0.1414213562373095048801688724"
+    )
+    assert result.benchmark.performance.sharpe_ratio == Decimal(0)
+    assert result.benchmark.performance.sortino_ratio == Decimal(0)
+    assert result.benchmark.configuration["implementation_version"] == "2"
+    assert result.benchmark.configuration["return_series_start"] == (
+        "initial_capital_to_first_session_close"
+    )
 
 
 def test_structured_export_is_stable_reloadable_and_never_overwrites(

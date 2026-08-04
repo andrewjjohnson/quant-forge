@@ -62,6 +62,8 @@ class DatasetMetadata:
     adjustment_mode: AdjustmentMode
     raw_location: str
     normalized_location: str
+    raw_sha256: str
+    data_sha256: str
     dataset_id: str
     schema_version: str
     bar_count: int

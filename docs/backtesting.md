@@ -94,12 +94,16 @@ QF-5 uses `NextSessionOpenExecution`, the only supported MVP convention:
 7. The position is marked to the same session's `close`; end-of-session cash,
    holdings, equity, return, peak, drawdown, and exposure are recorded.
 
-The first daily return is exactly zero. Later daily returns are arithmetic
-end-of-session equity returns while prior equity is nonzero. After complete
-equity depletion, the next return is undefined and stored as `null`, not as an
-invented zero or infinity. Undefined observations are omitted from volatility,
-Sharpe, and Sortino inputs. The initial-capital value remains the first
-running-peak candidate, so entry costs can create an immediate drawdown.
+The strategy equity curve's first daily return is exactly zero because a
+first-session close decision cannot execute until a later session. Later daily
+returns are arithmetic end-of-session equity returns while prior equity is
+nonzero. The buy-and-hold benchmark is already invested during the first
+session, so its first return measures initial capital to the first close and is
+included in volatility, Sharpe, and Sortino inputs. After complete equity
+depletion, the next return is undefined and stored as `null`, not as an
+invented zero or infinity. Undefined observations are omitted from risk-metric
+inputs. The initial-capital value remains the first running-peak candidate, so
+entry costs can create an immediate drawdown.
 
 A calendar-resolved signal whose execution session is beyond the dataset is
 retained with an `unexecuted_end_of_data` order. An unresolved calendar date or
@@ -223,10 +227,13 @@ The benchmark starts with the same capital and buys the maximum affordable
 whole-share position at the first dataset session's open. It uses the exact same
 commission, fee, and slippage models, preserves residual cash, marks every
 session at the close, and holds through the final session without an invented
-sale. It therefore has an open trade count when purchased, while trade count,
-win rate, profit factor, and average closed-trade return remain unavailable. Its
-equity curve and applicable risk/return metrics are included in the result and
-export.
+sale. Its first daily return therefore measures initial capital through the
+first close, including entry costs and the first session's price move, and that
+observation participates in volatility, Sharpe, and Sortino. It therefore has
+an open trade count when purchased, while trade count, win rate, profit factor,
+and average closed-trade return remain unavailable. Its equity curve and
+applicable risk/return metrics are included in the result and export. This
+return-series convention is benchmark implementation version 2.
 
 ## Deterministic identity and export
 
@@ -235,11 +242,14 @@ reference (QF-3 dataset ID, schema, adjustment mode, and trading calendar), a
 separate SHA-256 fingerprint of the actual validated bars, QF-4 strategy name,
 explicit implementation version, configuration identity, full configuration,
 complete backtest configuration (including each cost-model implementation
-version), and engine/result schema versions. The bar fingerprint canonicalizes
-the ordered symbol, session date, and every OHLCV value and is persisted in the
-manifest as `market_data.bars_fingerprint`. Consequently, copied or manually
-constructed datasets cannot share a run identity by reusing an identifier while
-changing either the bars or execution-relevant calendar/adjustment metadata.
+version), and engine/result schema versions. Before execution, QF-5 also
+recomputes the QF-3 normalized-data digest and dataset ID from the current bars,
+complete QF-3 metadata, stored raw-data digest, schema version, and canonical
+artifact paths. A copied or manually changed dataset that retains its old ID is
+rejected before strategy, benchmark, or metric evaluation. The independent QF-5
+bar fingerprint canonicalizes the ordered symbol, session date, and every OHLCV
+value and is persisted in the manifest as `market_data.bars_fingerprint` along
+with the QF-3 raw and normalized SHA-256 digests.
 The strategy implementation version is also persisted directly on the result
 and every trade. The identity excludes object addresses, QF-3 retrieval time,
 optional initiation time, and export time.
@@ -279,11 +289,12 @@ directory and renames it into place only after every file is complete.
 ## Adjustment assumptions and MVP limitations
 
 QF-5 preserves QF-3 provider, symbol, requested and actual range, adjustment,
-calendar, timezone, adapter, dataset, schema, missing-session, and split-session
-and dividend-session metadata, and records its own fingerprint of the validated
-bars it consumed. It accepts only schema-version-3 `unadjusted` datasets with no
-verified split or cash-dividend session between the first and last observed
-bars. Legacy schemas without complete corporate-action provenance and
+calendar, timezone, adapter, dataset, schema, raw and normalized content
+digests, missing-session, split-session, and dividend-session metadata, and
+records its own fingerprint of the validated bars it consumed. It accepts only
+schema-version-3 `unadjusted` datasets with no verified split or cash-dividend
+session between the first and last observed bars. Legacy schemas without
+complete corporate-action provenance, identity-inconsistent copies, and
 unadjusted split- or dividend-bearing ranges are rejected before the strategy,
 benchmark, or metrics run.
 

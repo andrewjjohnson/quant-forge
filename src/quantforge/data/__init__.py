@@ -8,6 +8,7 @@ from quantforge.data.exceptions import (
     RequestError,
     ValidationError,
 )
+from quantforge.data.identity import dataset_identity_matches
 from quantforge.data.models import (
     AdjustmentMode,
     DailyBar,
@@ -28,4 +29,5 @@ __all__ = [
     "ProviderError",
     "RequestError",
     "ValidationError",
+    "dataset_identity_matches",
 ]

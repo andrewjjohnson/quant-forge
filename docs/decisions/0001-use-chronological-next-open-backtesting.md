@@ -41,6 +41,12 @@ records remain suitable for vectorized analysis. The state machine is
 single-threaded and intentionally does not simulate order books or intraday
 events.
 
+QF-5 verifies that current QF-3 bars and complete provenance reproduce their
+declared dataset identity before execution. The buy-and-hold benchmark's first
+return measures initial capital to the first close because it enters at the
+first open; that invested observation participates in its volatility, Sharpe,
+and Sortino metrics.
+
 Changing the source-of-truth execution ordering or same-bar eligibility is a
 research-semantics change requiring a new ADR, schema/version review, golden
 fixture review, and explicit compatibility notes.
@@ -66,4 +72,6 @@ serialization, adjusted-dataset rejection, and repeated equivalent runs.
 QF-3 cache tests verify required split coefficients and dividend amounts,
 schema-versioned immutable corporate-action provenance, reload stability, and
 safe rejection of legacy manifests; QF-5 regressions reject legacy, split-
-bearing, and dividend-bearing inputs.
+bearing, dividend-bearing, and identity-inconsistent copied inputs. Benchmark
+regressions verify that entry costs and the first session's movement participate
+in the risk-return series.

@@ -93,15 +93,20 @@ requests/<request-sha256>.json
 Canonical JSON and decimal-text CSV preserve raw fields, dates, and numeric
 values. Writes use a temporary fsynced file and an atomic hard link. Existing
 artifacts are accepted only when byte-identical and are never overwritten.
-Loads verify raw and normalized SHA-256 checksums, the dataset identifier, and
-bar count; partial or corrupt entries fail. The request key covers provider,
-symbol, inclusive dates, adjustment, calendar, and schema version.
+`DatasetMetadata` exposes the immutable `raw_sha256` and `data_sha256` digests.
+Loads verify the raw and normalized files against those digests, recompute the
+dataset identifier from the complete metadata and digests, verify canonical
+artifact paths, and check bar count; partial, corrupt, or identity-inconsistent
+entries fail. The same public identity verifier can validate an in-memory
+dataset by reserializing its bars, preventing a copied dataset from retaining an
+old identifier after its bars or provenance are changed. The request key covers
+provider, symbol, inclusive dates, adjustment, calendar, and schema version.
 
 The stable manifest records canonical and provider symbols, provider and adapter
 versions, UTC retrieval time, requested and actual session bounds, XNYS calendar,
-provider timezone, adjustment mode, raw and normalized locations, immutable
-dataset ID, schema version, bar count, missing expected sessions, and verified
-provider-reported split and cash-dividend sessions.
+provider timezone, adjustment mode, raw and normalized locations and SHA-256
+digests, immutable dataset ID, schema version, bar count, missing expected
+sessions, and verified provider-reported split and cash-dividend sessions.
 
 Schema version 3 changes request and dataset identities. Existing version-1 and
 version-2 artifacts remain immutable and are not silently upgraded; because
