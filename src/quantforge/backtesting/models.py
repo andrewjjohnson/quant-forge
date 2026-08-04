@@ -34,6 +34,7 @@ class MarketDataMetadata:
     """Complete immutable QF-3 provenance required by a backtest result."""
 
     dataset_id: str
+    bars_fingerprint: str
     schema_version: str
     canonical_symbol: str
     provider_name: str
@@ -54,9 +55,12 @@ class MarketDataMetadata:
     adapter_version: str
 
     @classmethod
-    def from_qf3(cls, metadata: DatasetMetadata) -> "MarketDataMetadata":
+    def from_qf3(
+        cls, metadata: DatasetMetadata, *, bars_fingerprint: str
+    ) -> "MarketDataMetadata":
         return cls(
             dataset_id=metadata.dataset_id,
+            bars_fingerprint=bars_fingerprint,
             schema_version=metadata.schema_version,
             canonical_symbol=metadata.canonical_symbol,
             provider_name=metadata.provider_name,
@@ -80,6 +84,7 @@ class MarketDataMetadata:
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "dataset_id": self.dataset_id,
+            "bars_fingerprint": self.bars_fingerprint,
             "schema_version": self.schema_version,
             "canonical_symbol": self.canonical_symbol,
             "provider_name": self.provider_name,

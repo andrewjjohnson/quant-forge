@@ -176,6 +176,41 @@ def test_repeated_equivalent_inputs_replay_identically() -> None:
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
 
 
+def test_actual_bar_content_changes_run_identity_when_dataset_id_is_reused() -> None:
+    original_dataset = make_dataset(PRICES, dataset_id="reused-dataset-id")
+    revised_bars = list(original_dataset.bars)
+    revised_bars[-1] = replace(revised_bars[-1], open=Decimal("1.5"))
+    revised_dataset = replace(original_dataset, bars=tuple(revised_bars))
+
+    original = run_backtest(
+        original_dataset,
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(100)),
+        ),
+    )
+    revised = run_backtest(
+        revised_dataset,
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(100)),
+        ),
+    )
+
+    assert original.market_data.dataset_id == revised.market_data.dataset_id
+    assert original.fills[-1].reference_price != revised.fills[-1].reference_price
+    assert original.market_data.bars_fingerprint != (
+        revised.market_data.bars_fingerprint
+    )
+    assert original.run_id != revised.run_id
+
+
 @pytest.mark.parametrize(
     "initiated_at",
     [

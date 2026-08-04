@@ -28,9 +28,11 @@ from quantforge.backtesting.models import (
     TradeRecord,
 )
 from quantforge.configuration import (
+    Primitive,
     PrimitiveMapping,
     PrimitiveMappingSnapshot,
     configuration_identity,
+    decimal_to_primitive,
 )
 from quantforge.data.models import (
     SCHEMA_VERSION as MARKET_DATA_SCHEMA_VERSION,
@@ -75,6 +77,29 @@ def _stable_id(values: PrimitiveMapping) -> str:
         raise InvalidSignalError(
             "run inputs must have stable JSON-compatible serialization"
         ) from error
+
+
+def _bars_fingerprint(bars: tuple[DailyBar, ...]) -> str:
+    """Fingerprint the validated bar values independently of caller metadata."""
+    serialized_bars: list[Primitive] = [
+        {
+            "symbol": bar.symbol,
+            "session_date": bar.session_date.isoformat(),
+            "open": decimal_to_primitive(bar.open),
+            "high": decimal_to_primitive(bar.high),
+            "low": decimal_to_primitive(bar.low),
+            "close": decimal_to_primitive(bar.close),
+            "volume": decimal_to_primitive(bar.volume),
+        }
+        for bar in bars
+    ]
+    return _stable_id(
+        {
+            "component": "quantforge_market_bars",
+            "fingerprint_version": "1",
+            "bars": serialized_bars,
+        }
+    )
 
 
 def _validate_dataset(dataset: MarketDataset) -> None:
@@ -380,6 +405,7 @@ def run_backtest(
 ) -> BacktestResult:
     """Run QF-4 decisions through deterministic next-open execution and accounting."""
     _validate_dataset(dataset)
+    bars_fingerprint = _bars_fingerprint(dataset.bars)
     if initiated_at is not None and initiated_at.utcoffset() is None:
         raise InvalidSignalError("initiated_at must include a defined UTC offset")
     strategy_configuration_snapshot = PrimitiveMappingSnapshot.capture(
@@ -399,6 +425,7 @@ def run_backtest(
             "result_schema_version": config.result_schema_version,
             "market_data": {
                 "dataset_id": dataset.metadata.dataset_id,
+                "bars_fingerprint": bars_fingerprint,
                 "schema_version": dataset.metadata.schema_version,
             },
             "strategy": {
@@ -704,7 +731,9 @@ def run_backtest(
         run_id=run_id,
         engine_version=config.engine_version,
         result_schema_version=config.result_schema_version,
-        market_data=MarketDataMetadata.from_qf3(dataset.metadata),
+        market_data=MarketDataMetadata.from_qf3(
+            dataset.metadata, bars_fingerprint=bars_fingerprint
+        ),
         strategy_id=strategy.name,
         strategy_implementation_version=strategy_implementation_version,
         strategy_configuration_id=strategy_configuration_id,

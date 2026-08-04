@@ -48,9 +48,12 @@ cash/position updates, preserves final unexecuted signals, and verifies through
 golden and append-future tests that later bars cannot revise earlier execution.
 Run and trade provenance includes an explicit strategy implementation version.
 Commission, fee, and slippage model versions also participate in run identity,
-and configuration provenance is deeply snapshotted before execution. Commission
-and fee models are accepted only when they explicitly guarantee nondecreasing
-buy-side costs by quantity, which makes whole-share affordability search sound.
+and configuration provenance is deeply snapshotted before execution. A
+separately persisted fingerprint of the actual validated OHLCV bars also
+participates in run identity, preventing reused or stale QF-3 metadata from
+aliasing different market inputs. Commission and fee models are accepted only
+when they explicitly guarantee nondecreasing buy-side costs by quantity, which
+makes whole-share affordability search sound.
 QF-5 rejects QF-3 datasets with missing expected sessions inside the observed
 range so a multi-session equity change cannot be annualized as one daily return.
 QF-3 schema version 2 requires a provider coefficient for every bar and retains

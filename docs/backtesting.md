@@ -231,12 +231,16 @@ export.
 ## Deterministic identity and export
 
 The SHA-256 run ID is canonical-JSON-derived from the QF-3 dataset ID and schema,
-QF-4 strategy name, explicit implementation version, configuration identity,
-full configuration, complete backtest configuration (including each cost-model
-implementation version), and engine/result schema versions. The strategy
-implementation version is also persisted directly on the result and every
-trade. The identity excludes object addresses, QF-3 retrieval time, optional
-initiation time, and export time.
+a separate SHA-256 fingerprint of the actual validated bars, QF-4 strategy name,
+explicit implementation version, configuration identity, full configuration,
+complete backtest configuration (including each cost-model implementation
+version), and engine/result schema versions. The bar fingerprint canonicalizes
+the ordered symbol, session date, and every OHLCV value and is persisted in the
+manifest as `market_data.bars_fingerprint`. Consequently, copied or manually
+constructed datasets cannot share a run identity merely by reusing metadata.
+The strategy implementation version is also persisted directly on the result
+and every trade. The identity excludes object addresses, QF-3 retrieval time,
+optional initiation time, and export time.
 Equivalent decimal configuration values serialize identically. Record ordering
 and signal, order, fill, trade, and benchmark IDs are derived deterministically
 within the run.
@@ -274,10 +278,11 @@ directory and renames it into place only after every file is complete.
 
 QF-5 preserves QF-3 provider, symbol, requested and actual range, adjustment,
 calendar, timezone, adapter, dataset, schema, missing-session, and split-session
-metadata. It accepts only schema-version-2 `unadjusted` datasets with no verified
-split session between the first and last observed bars. Legacy schemas without
-split provenance and unadjusted split-bearing ranges are rejected before the
-strategy, benchmark, or metrics run.
+metadata, and records its own fingerprint of the validated bars it consumed. It
+accepts only schema-version-2 `unadjusted` datasets with no verified split
+session between the first and last observed bars. Legacy schemas without split
+provenance and unadjusted split-bearing ranges are rejected before the strategy,
+benchmark, or metrics run.
 
 QF-3's `split_adjusted` mode divides earlier prices by later split coefficients
 but retains only their effective sessions, not the point-in-time factors needed
