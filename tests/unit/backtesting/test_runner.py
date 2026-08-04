@@ -994,6 +994,17 @@ class MutableConfigurationStrategy(ManualTransitionStrategy):
         return self.mutable_configuration
 
 
+class ConfigurationChangingDuringInitializationStrategy(ManualTransitionStrategy):
+    def __init__(self) -> None:
+        self._configuration_generation = 0
+
+    def configuration(self) -> PrimitiveMapping:
+        self._configuration_generation += 1
+        configuration = super().configuration()
+        configuration["configuration_generation"] = self._configuration_generation
+        return configuration
+
+
 class RevisedFixedCommission(FixedCommission):
     implementation_version = "2"
 
@@ -1126,3 +1137,20 @@ def test_result_provenance_is_deeply_snapshotted_from_strategy_configuration() -
 
     assert result.manifest_primitive() == expected_manifest
     assert result.strategy_configuration["parameters"] == {}
+
+
+def test_backtest_rejects_identity_that_does_not_match_captured_configuration() -> None:
+    with pytest.raises(
+        InvalidSignalError,
+        match="configuration identity does not match the captured configuration",
+    ):
+        run_backtest(
+            make_dataset(("10", "11", "12", "13")),
+            ConfigurationChangingDuringInitializationStrategy(),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(10)),
+            ),
+        )

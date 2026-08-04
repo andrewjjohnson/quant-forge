@@ -342,12 +342,22 @@ def run_backtest(
         strategy.configuration()
     )
     strategy_configuration = strategy_configuration_snapshot.to_primitive()
+    expected_strategy_configuration_id = configuration_identity(strategy_configuration)
+    strategy_configuration_id_value = cast(object, strategy.configuration_id)
+    if (
+        not isinstance(strategy_configuration_id_value, str)
+        or not strategy_configuration_id_value.strip()
+        or strategy_configuration_id_value != expected_strategy_configuration_id
+    ):
+        raise InvalidSignalError(
+            "strategy configuration identity does not match the captured configuration"
+        )
+    strategy_configuration_id = strategy_configuration_id_value
     backtest_configuration_snapshot = PrimitiveMappingSnapshot.capture(
         config.to_primitive()
     )
     backtest_configuration = backtest_configuration_snapshot.to_primitive()
     strategy_implementation_version = strategy.implementation_version
-    strategy_configuration_id = strategy.configuration_id
     run_id = _stable_id(
         {
             "component": "quantforge_backtest",

@@ -256,8 +256,11 @@ reference (QF-3 dataset ID, schema, adjustment mode, and trading calendar), a
 separate SHA-256 fingerprint of the actual validated bars, QF-4 strategy name,
 explicit implementation version, configuration identity, full configuration,
 complete backtest configuration (including each cost-model implementation
-version), and engine/result schema versions. Before execution, QF-5 invokes the
-authoritative QF-3 complete-dataset validator. It checks bar types, values,
+version), and engine/result schema versions. QF-5 recomputes the strategy
+configuration identity from the exact immutable snapshot used by the run ID and
+rejects stale, hard-coded, or initialization-mutated identities. Before
+execution, it invokes the authoritative QF-3 complete-dataset validator. It
+checks bar types, values,
 symbols, ordering, requested and actual bounds, bar count, exchange sessions,
 the exact recomputed missing-session set, corporate-action-session structure,
 normalized-data digest, dataset ID, schema version, and canonical artifact

@@ -5,7 +5,11 @@ from typing import cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping, PrimitiveScalar
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveScalar,
+    configuration_identity,
+)
 from quantforge.data.models import DailyBar, MarketDataset
 from quantforge.indicators import Indicator, MarketField
 from quantforge.strategies import (
@@ -124,6 +128,41 @@ class VersionMismatchedStrategy(OutputTransformingStrategy):
         return "2"
 
 
+class StaleConfigurationIdentityStrategy(OutputTransformingStrategy):
+    @property
+    def configuration_id(self) -> str:
+        return "stale-configuration-id"
+
+
+class ConfigurationChangingDuringGenerationStrategy(OutputTransformingStrategy):
+    def __init__(self, delegate: MovingAverageCrossoverStrategy) -> None:
+        super().__init__(delegate, lambda output: output)
+        self._generation_complete = False
+
+    def configuration(self) -> PrimitiveMapping:
+        configuration = super().configuration()
+        configuration["generation_complete"] = self._generation_complete
+        return configuration
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def generate(self, dataset: MarketDataset) -> StrategyOutput:
+        configuration_id = self.configuration_id
+        output = self._delegate.generate(dataset)
+        decisions = tuple(
+            replace(decision, strategy_configuration_id=configuration_id)
+            for decision in output.decisions
+        )
+        self._generation_complete = True
+        return replace(
+            output,
+            strategy_configuration_id=configuration_id,
+            decisions=decisions,
+        )
+
+
 def duplicate_first_decision(output: StrategyOutput) -> StrategyOutput:
     decision = output.decisions[0]
     return replace(output, decisions=(decision, decision))
@@ -186,6 +225,25 @@ def test_generic_runner_rejects_implementation_version_mismatch() -> None:
     )
 
     with pytest.raises(InvalidStrategyOutputError, match="implementation version"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
+
+
+def test_generic_runner_rejects_stale_strategy_configuration_identity() -> None:
+    strategy = StaleConfigurationIdentityStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        lambda output: output,
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="configuration identity"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
+
+
+def test_generic_runner_rejects_configuration_changes_during_generation() -> None:
+    strategy = ConfigurationChangingDuringGenerationStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3))
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="changed during generation"):
         run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
 
 

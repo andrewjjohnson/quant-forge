@@ -95,6 +95,12 @@ values exactly; for example, JSON `true` is not interchangeable with integer
 equivalent values such as `Decimal("0.50")` and `Decimal("0.5")` receive the same
 identity regardless of the caller's active decimal context.
 
+The generic runner recomputes that identity from the concrete configuration
+captured before generation, rejects a stale or hard-coded `configuration_id`,
+and requires the same identity on the strategy output and every decision. It
+also verifies that the strategy configuration remains unchanged through
+generation.
+
 The implementation version is a required top-level field in the strategy's
 primitive configuration. It therefore participates in the configuration
 identity and QF-5 run identity even when parameters are unchanged. The reference
@@ -102,9 +108,10 @@ moving-average crossover strategy currently declares implementation version
 `1`.
 
 QF-5 canonicalizes the complete strategy configuration into an immutable
-snapshot before calculating its run identity. A custom strategy may return an
-ordinary primitive dictionary, but mutating that dictionary after the run does
-not alter the result manifest or exported provenance.
+snapshot before calculating its run identity and independently requires the
+declared configuration ID to match that exact snapshot. A custom strategy may
+return an ordinary primitive dictionary, but mutating that dictionary after the
+run does not alter the result manifest or exported provenance.
 
 ## Decision schema
 
