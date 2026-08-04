@@ -3,7 +3,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, tzinfo
 from decimal import ROUND_DOWN, ROUND_UP, Decimal, getcontext, localcontext
 from pathlib import Path
-from typing import Literal, cast
+from typing import ClassVar, Literal, cast
 
 import pytest
 
@@ -705,6 +705,7 @@ def test_removed_dividend_provenance_is_rejected_by_dataset_identity() -> None:
 
 
 class FavorableSlippage:
+    cost_category: ClassVar[Literal["slippage"]] = "slippage"
     name = "invalid_favorable_slippage"
     implementation_version = "1"
 
@@ -721,6 +722,7 @@ class FavorableSlippage:
 
 
 class AmbientContextCommission:
+    cost_category: ClassVar[Literal["commission"]] = "commission"
     name = "ambient_context_commission"
     implementation_version = "1"
     buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
@@ -745,6 +747,7 @@ class AmbientContextCommission:
 
 
 class AmbientContextFees:
+    cost_category: ClassVar[Literal["transaction_fee"]] = "transaction_fee"
     name = "ambient_context_fees"
     implementation_version = "1"
     buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
@@ -774,6 +777,7 @@ class AmbientContextFees:
 
 
 class AmbientContextSlippage:
+    cost_category: ClassVar[Literal["slippage"]] = "slippage"
     name = "ambient_context_slippage"
     implementation_version = "1"
 

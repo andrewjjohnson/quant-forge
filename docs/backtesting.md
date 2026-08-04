@@ -74,10 +74,13 @@ Every commission, fee, and slippage model declares a nonempty
 `implementation_version`, which is serialized beside its model name and
 parameters. Custom model authors must increment that version whenever a
 calculation change could alter fills or results, even when user-facing
-parameters are unchanged. QF-5 invokes custom configuration, commission, fee,
-and slippage callbacks only through its private 34-digit `ROUND_HALF_EVEN`
-arithmetic boundary. The strategy engine and benchmark share that evaluator, so
-the caller's ambient Decimal context cannot change costs under a fixed run ID.
+parameters are unchanged. Each model also declares a structural `cost_category`
+of `commission`, `transaction_fee`, or `slippage`; configuration construction
+rejects a model placed in the wrong slot before any run can be serialized or
+executed. QF-5 invokes custom configuration, commission, fee, and slippage
+callbacks only through its private 34-digit `ROUND_HALF_EVEN` arithmetic
+boundary. The strategy engine and benchmark share that evaluator, so the
+caller's ambient Decimal context cannot change costs under a fixed run ID.
 
 Commission and fee models must also declare and serialize
 `buy_cost_is_non_decreasing_by_quantity=true`. This is a semantic contract that,

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Literal, Protocol, cast
+from typing import ClassVar, Literal, Protocol, cast
 
 from quantforge.backtesting._arithmetic import arithmetic, decimal_from
 from quantforge.backtesting.errors import InvalidBacktestConfigurationError
@@ -19,6 +19,8 @@ class OrderSide(StrEnum):
 
 class CommissionModel(Protocol):
     """Calculate a separately auditable nonnegative fill commission."""
+
+    cost_category: ClassVar[Literal["commission"]]
 
     @property
     def name(self) -> str: ...
@@ -36,6 +38,8 @@ class CommissionModel(Protocol):
 
 class FeeModel(Protocol):
     """Calculate separately auditable non-commission transaction fees."""
+
+    cost_category: ClassVar[Literal["transaction_fee"]]
 
     @property
     def name(self) -> str: ...
@@ -55,6 +59,8 @@ class FeeModel(Protocol):
 
 class SlippageModel(Protocol):
     """Transform a reference price in the adverse trade direction."""
+
+    cost_category: ClassVar[Literal["slippage"]]
 
     @property
     def name(self) -> str: ...
@@ -93,6 +99,7 @@ class FixedCommission:
     """Charge one fixed amount for every filled order, including explicit zero."""
 
     amount: Decimal
+    cost_category: ClassVar[Literal["commission"]] = "commission"
     name = "fixed_per_fill"
     implementation_version = "1"
     buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
@@ -121,6 +128,7 @@ class PerShareCommission:
 
     amount_per_share: Decimal
     minimum: Decimal = Decimal(0)
+    cost_category: ClassVar[Literal["commission"]] = "commission"
     name = "per_share"
     implementation_version = "1"
     buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
@@ -159,6 +167,7 @@ class BasisPointCommission:
     """Charge basis points of final fill notional."""
 
     basis_points: Decimal
+    cost_category: ClassVar[Literal["commission"]] = "commission"
     name = "basis_points"
     implementation_version = "1"
     buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
@@ -190,6 +199,7 @@ class BasisPointCommission:
 class ExplicitZeroFees:
     """Make the absence of additional transaction fees explicit and serializable."""
 
+    cost_category: ClassVar[Literal["transaction_fee"]] = "transaction_fee"
     name = "explicit_zero_fees"
     implementation_version = "1"
     buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
@@ -216,6 +226,7 @@ class BasisPointFees:
     """Charge explicit transaction fees as basis points of fill notional."""
 
     basis_points: Decimal
+    cost_category: ClassVar[Literal["transaction_fee"]] = "transaction_fee"
     name = "basis_point_fees"
     implementation_version = "1"
     buy_cost_is_non_decreasing_by_quantity: Literal[True] = True
@@ -250,6 +261,7 @@ class BasisPointSlippage:
     """Apply deterministic adverse-direction basis-point slippage."""
 
     basis_points: Decimal
+    cost_category: ClassVar[Literal["slippage"]] = "slippage"
     name = "adverse_basis_points"
     implementation_version = "1"
 

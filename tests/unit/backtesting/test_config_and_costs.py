@@ -1,7 +1,7 @@
 import json
 from collections.abc import Callable
 from decimal import Decimal
-from typing import cast
+from typing import ClassVar, Literal, cast
 
 import pytest
 
@@ -25,6 +25,7 @@ from quantforge.configuration import PrimitiveMapping
 
 
 class UnversionedCommission:
+    cost_category: ClassVar[Literal["commission"]] = "commission"
     name = "legacy_commission"
 
     def calculate(self, quantity: int, fill_price: Decimal) -> Decimal:
@@ -36,6 +37,7 @@ class UnversionedCommission:
 
 
 class NonmonotonicCommission:
+    cost_category: ClassVar[Literal["commission"]] = "commission"
     name = "nonmonotonic_tiered_commission"
     implementation_version = "1"
     buy_cost_is_non_decreasing_by_quantity = False
@@ -56,6 +58,7 @@ class NonmonotonicCommission:
 
 
 class UnverifiedFeeSchedule:
+    cost_category: ClassVar[Literal["transaction_fee"]] = "transaction_fee"
     name = "unverified_fee_schedule"
     implementation_version = "1"
 
@@ -139,6 +142,41 @@ def test_config_rejects_cost_models_without_non_decreasing_buy_cost_contract(
     with pytest.raises(
         InvalidBacktestConfigurationError,
         match=rf"{model_label} model must guarantee nondecreasing buy cost",
+    ):
+        BacktestConfig(
+            Decimal(100),
+            commission,
+            fees,
+            BasisPointSlippage(Decimal(0)),
+        )
+
+
+@pytest.mark.parametrize(
+    ("commission", "fees", "model_label", "expected_category"),
+    [
+        (
+            cast(CommissionModel, ExplicitZeroFees()),
+            ExplicitZeroFees(),
+            "commission",
+            "commission",
+        ),
+        (
+            FixedCommission(Decimal(0)),
+            cast(FeeModel, FixedCommission(Decimal(0))),
+            "transaction-fee",
+            "transaction_fee",
+        ),
+    ],
+)
+def test_config_rejects_cost_models_in_the_wrong_category(
+    commission: CommissionModel,
+    fees: FeeModel,
+    model_label: str,
+    expected_category: str,
+) -> None:
+    with pytest.raises(
+        InvalidBacktestConfigurationError,
+        match=rf"{model_label} model must declare cost category '{expected_category}'",
     ):
         BacktestConfig(
             Decimal(100),

@@ -26,8 +26,13 @@ def _cost_model_configuration(
     model: object,
     model_label: str,
     *,
+    expected_cost_category: str,
     require_non_decreasing_buy_cost: bool = False,
 ) -> PrimitiveMapping:
+    if getattr(model, "cost_category", None) != expected_cost_category:
+        raise InvalidBacktestConfigurationError(
+            f"{model_label} model must declare cost category {expected_cost_category!r}"
+        )
     implementation_version = cast(
         object, getattr(model, "implementation_version", None)
     )
@@ -200,14 +205,20 @@ class BacktestConfig:
         _cost_model_configuration(
             self.commission,
             "commission",
+            expected_cost_category="commission",
             require_non_decreasing_buy_cost=True,
         )
         _cost_model_configuration(
             self.fees,
             "transaction-fee",
+            expected_cost_category="transaction_fee",
             require_non_decreasing_buy_cost=True,
         )
-        _cost_model_configuration(self.slippage, "slippage")
+        _cost_model_configuration(
+            self.slippage,
+            "slippage",
+            expected_cost_category="slippage",
+        )
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -216,14 +227,20 @@ class BacktestConfig:
             "commission": _cost_model_configuration(
                 self.commission,
                 "commission",
+                expected_cost_category="commission",
                 require_non_decreasing_buy_cost=True,
             ),
             "fees": _cost_model_configuration(
                 self.fees,
                 "transaction-fee",
+                expected_cost_category="transaction_fee",
                 require_non_decreasing_buy_cost=True,
             ),
-            "slippage": _cost_model_configuration(self.slippage, "slippage"),
+            "slippage": _cost_model_configuration(
+                self.slippage,
+                "slippage",
+                expected_cost_category="slippage",
+            ),
             "sizing": self.sizing.to_primitive(),
             "annual_risk_free_rate": decimal_to_primitive(self.annual_risk_free_rate),
             "annualization_factor": self.annualization_factor,
