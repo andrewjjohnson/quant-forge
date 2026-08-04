@@ -152,6 +152,12 @@ Must not:
 
 ### Execution simulation
 
+QF-5 implements deterministic daily-bar execution in
+`quantforge.backtesting`. It consumes the generic QF-4 target-state/weight
+contract, creates an auditable order for every decision, enforces next-exchange-
+session eligibility, sizes whole shares, and applies separately configured
+commission and adverse slippage. See `docs/backtesting.md` and ADR 0001.
+
 Responsibilities:
 
 - convert eligible signals into orders;
@@ -167,6 +173,11 @@ Must not:
 
 ### Portfolio accounting
 
+QF-5 owns a chronological single-symbol, long-only state machine. Each session
+executes eligible orders at its open before marking shares at its close. It
+emits immutable position, trade, cash, equity, return, peak, and drawdown
+records, and rejects negative cash or shares.
+
 Responsibilities:
 
 - own cash, positions, cost basis, realized/unrealized P&L, and equity;
@@ -180,6 +191,10 @@ Must not:
 - calculate indicators.
 
 ### Metrics and validation
+
+QF-5 calculates typed, nullable performance summaries and a cost-matched
+full-period buy-and-hold benchmark without altering the underlying ledgers.
+Undefined ratios serialize as `null`; metrics never insert `NaN` or infinity.
 
 Responsibilities:
 
@@ -212,6 +227,11 @@ Must not:
 - discard failed trials without a record.
 
 ### Reporting and experiment manifests
+
+QF-5 exports a stable manifest and ordered CSV ledgers into an immutable
+run-identity directory. The deterministic identity covers QF-3 dataset
+provenance, QF-4 strategy configuration, all execution/cost/sizing assumptions,
+and engine/result schema versions.
 
 Responsibilities:
 

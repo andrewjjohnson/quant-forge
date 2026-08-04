@@ -41,6 +41,13 @@ sessions, exchange-calendar resolution, and append-future causality tests. A
 calendar-resolved execution session is eligibility metadata only; it does not
 claim an order or fill occurred. See `docs/strategy-contracts.md`.
 
+QF-5 turns that eligibility metadata into auditable orders but fills only at the
+eligible session's open. Its chronological state machine applies explicit
+adverse slippage and commission before cash/position updates, preserves final
+unexecuted signals, and verifies through golden and append-future tests that
+later bars cannot revise earlier execution. See `docs/backtesting.md` and ADR
+0001.
+
 ## Survivorship bias
 
 Testing only securities that exist today can overstate historical performance.

@@ -4,8 +4,11 @@ QuantForge is a quantitative research and systematic-trading platform focused on
 reproducible, auditable experiments. The project is currently establishing the
 **MVP Quantitative Research Foundation (QF-1)**. Provider-agnostic adjusted daily
 market-data ingestion and reusable causal indicator and engine-neutral strategy
-contracts are available. Backtesting, optimization, paper-trading, and
-live-trading functionality is not yet implemented.
+contracts are available. Deterministic single-symbol, long-only daily-bar
+backtesting now provides explicit next-open execution, commission, slippage,
+whole-share accounting, typed metrics, a buy-and-hold benchmark, and structured
+result export. Optimization, paper trading, and live trading are not yet
+implemented.
 
 ## Prerequisites
 
@@ -52,7 +55,9 @@ Ordinary tests are deterministic and must not require network access. See
 [`docs/market-data.md`](docs/market-data.md) for adjusted daily data usage and
 the explicitly opted-in Alpha Vantage SPY verification. See
 [`docs/strategy-contracts.md`](docs/strategy-contracts.md) for indicator,
-strategy, signal-timing, and sizing-intent usage.
+strategy, signal-timing, and sizing-intent usage. See
+[`docs/backtesting.md`](docs/backtesting.md) for execution, accounting, metric,
+benchmark, and export semantics.
 
 ## Repository layout
 

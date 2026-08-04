@@ -159,6 +159,11 @@ A strategy should:
 
 ## Adding a backtest feature
 
+Use the public contracts, numerical policies, and execution sequence in
+[`backtesting.md`](backtesting.md). QF-5's chronological next-open behavior is
+recorded in ADR 0001; changes to that behavior require explicit compatibility
+and research-integrity review.
+
 Changes to execution or accounting require:
 
 - explicit semantics in documentation;
@@ -243,10 +248,12 @@ Provide `.env.example` with names and safe placeholders only.
 Before opening or updating a PR:
 
 ```bash
+uv sync --all-extras --frozen
 uv run ruff format --check .
 uv run ruff check .
 uv run pyright
 uv run pytest
+uv run pre-commit run --all-files
 ```
 
 Then complete the PR template honestly. Document unavailable checks instead of claiming success.

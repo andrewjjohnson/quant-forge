@@ -1,0 +1,66 @@
+{
+  "input": {
+    "closes": ["3", "2", "1", "2", "3", "4", "3", "2", "1"],
+    "initial_capital": "100",
+    "fixed_commission": "1",
+    "slippage_basis_points": "100"
+  },
+  "signals": [
+    {"signal_session": "2024-07-08", "target_position": "long"},
+    {"signal_session": "2024-07-11", "target_position": "flat"}
+  ],
+  "orders": [
+    {"side": "buy", "requested_quantity": 24, "status": "filled"},
+    {"side": "sell", "requested_quantity": 24, "status": "filled"}
+  ],
+  "fills": [
+    {
+      "side": "buy",
+      "execution_session": "2024-07-09",
+      "reference_price": "4",
+      "fill_price": "4.04",
+      "gross_notional": "96.96",
+      "commission": "1",
+      "net_cash_effect": "-97.96"
+    },
+    {
+      "side": "sell",
+      "execution_session": "2024-07-12",
+      "reference_price": "1",
+      "fill_price": "0.99",
+      "gross_notional": "23.76",
+      "commission": "1",
+      "net_cash_effect": "22.76"
+    }
+  ],
+  "trades": [
+    {
+      "entry_session": "2024-07-09",
+      "exit_session": "2024-07-12",
+      "entry_quantity": 24,
+      "gross_profit_loss": "-73.2",
+      "net_profit_loss": "-75.2",
+      "holding_period_sessions": 3
+    }
+  ],
+  "equity": [
+    {"session": "2024-07-01", "cash": "100", "shares": 0, "total_equity": "100", "drawdown": "0"},
+    {"session": "2024-07-02", "cash": "100", "shares": 0, "total_equity": "100", "drawdown": "0"},
+    {"session": "2024-07-03", "cash": "100", "shares": 0, "total_equity": "100", "drawdown": "0"},
+    {"session": "2024-07-05", "cash": "100", "shares": 0, "total_equity": "100", "drawdown": "0"},
+    {"session": "2024-07-08", "cash": "100", "shares": 0, "total_equity": "100", "drawdown": "0"},
+    {"session": "2024-07-09", "cash": "2.04", "shares": 24, "total_equity": "98.04", "drawdown": "-0.0196"},
+    {"session": "2024-07-10", "cash": "2.04", "shares": 24, "total_equity": "74.04", "drawdown": "-0.2596"},
+    {"session": "2024-07-11", "cash": "2.04", "shares": 24, "total_equity": "50.04", "drawdown": "-0.4996"},
+    {"session": "2024-07-12", "cash": "24.8", "shares": 0, "total_equity": "24.8", "drawdown": "-0.752"}
+  ],
+  "metrics": {
+    "total_return": "-0.752",
+    "maximum_drawdown": "-0.752",
+    "profit_factor": "0",
+    "exposure": "0.3333333333333333333333333333333333",
+    "trade_count": 1,
+    "win_rate": "0",
+    "benchmark_total_return": "-0.6596"
+  }
+}
