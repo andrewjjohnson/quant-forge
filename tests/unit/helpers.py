@@ -28,6 +28,7 @@ def make_dataset(
     *,
     sessions: tuple[date, ...] | None = None,
     dataset_id: str = "synthetic-dataset",
+    adjustment_mode: AdjustmentMode = AdjustmentMode.UNADJUSTED,
 ) -> MarketDataset:
     """Build canonical in-memory daily bars with explicit QF-3 metadata."""
     selected_sessions = SESSIONS[: len(closes)] if sessions is None else sessions
@@ -58,7 +59,7 @@ def make_dataset(
         actual_last_session=selected_sessions[-1],
         calendar="XNYS",
         provider_timezone="America/New_York",
-        adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+        adjustment_mode=adjustment_mode,
         raw_location="raw/synthetic.json",
         normalized_location="datasets/synthetic/bars.csv",
         dataset_id=dataset_id,

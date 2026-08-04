@@ -25,7 +25,7 @@ from quantforge.backtesting import (
     run_backtest,
 )
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.data.models import MarketDataset
+from quantforge.data.models import AdjustmentMode, MarketDataset
 from quantforge.indicators import Indicator, MarketField
 from quantforge.strategies import (
     ExecutionSessionStatus,
@@ -419,6 +419,34 @@ def test_invalid_execution_price_fails_with_market_data_domain_error() -> None:
                 FixedCommission(Decimal(1)),
                 ExplicitZeroFees(),
                 BasisPointSlippage(Decimal(1)),
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "adjustment_mode",
+    [
+        AdjustmentMode.SPLIT_ADJUSTED,
+        AdjustmentMode.SPLIT_AND_DIVIDEND_ADJUSTED,
+    ],
+)
+def test_adjusted_data_is_rejected_without_point_in_time_corporate_actions(
+    adjustment_mode: AdjustmentMode,
+) -> None:
+    dataset = make_dataset(
+        PRICES,
+        adjustment_mode=adjustment_mode,
+    )
+
+    with pytest.raises(InvalidMarketDataError, match="point-in-time"):
+        run_backtest(
+            dataset,
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(100)),
             ),
         )
 

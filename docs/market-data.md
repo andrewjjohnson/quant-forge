@@ -48,6 +48,12 @@ dividends, this adapter deliberately does not consume them:
 factor to volume would not define coherent OHLCV semantics. No dividend cash
 flows or corporate-action ledger are exposed in QF-3.
 
+`split_adjusted` is suitable for causal indicator and strategy research on a
+coherent price basis, but QF-5 does not execute shares against it. Because the
+current `MarketDataset` omits point-in-time split factors, QF-5 accepts only
+`unadjusted` requests whose range contains no split. Split-aware backtesting
+requires a future corporate-action schema and quantity transformation policy.
+
 ## Calendar and validation
 
 The maintained `exchange-calendars` XNYS schedule determines expected sessions.

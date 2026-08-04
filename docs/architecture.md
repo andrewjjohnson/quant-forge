@@ -159,6 +159,11 @@ session eligibility, sizes whole shares, and applies separately configured
 commission, additional fees, and adverse slippage. See `docs/backtesting.md` and
 ADR 0001.
 
+The QF-5 execution boundary accepts only unadjusted QF-3 datasets whose range
+does not contain a split. Split-adjusted datasets are valid for indicator and
+strategy research, but execution rejects them until QF-3 carries point-in-time
+split factors needed to preserve historical share units.
+
 Responsibilities:
 
 - convert eligible signals into orders;

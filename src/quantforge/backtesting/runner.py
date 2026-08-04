@@ -80,9 +80,10 @@ def _validate_dataset(dataset: MarketDataset) -> None:
     metadata = dataset_value.metadata
     if not metadata.dataset_id or not metadata.schema_version:
         raise InvalidMarketDataError("dataset identity and schema version are required")
-    if metadata.adjustment_mode is AdjustmentMode.SPLIT_AND_DIVIDEND_ADJUSTED:
+    if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
         raise InvalidMarketDataError(
-            "split-and-dividend-adjusted data is unsupported by QF-3/QF-5"
+            "adjusted market data requires point-in-time corporate-action data "
+            "that QF-3/QF-5 do not provide"
         )
     if metadata.bar_count != len(dataset.bars):
         raise InvalidMarketDataError("dataset bar count does not match metadata")
@@ -658,11 +659,8 @@ def run_backtest(
         benchmark_total_return=benchmark.performance.total_return,
     )
     warnings = (
-        (
-            "unadjusted data does not model split quantity changes"
-            if dataset.metadata.adjustment_mode is AdjustmentMode.UNADJUSTED
-            else "split effects are embedded in QF-3 split-adjusted bars"
-        ),
+        "unadjusted data does not model split quantity changes; restrict the "
+        "backtest to ranges without splits",
     )
     return BacktestResult(
         run_id=run_id,

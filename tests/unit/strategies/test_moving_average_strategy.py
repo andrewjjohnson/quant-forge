@@ -148,7 +148,7 @@ def test_output_supports_tabular_and_event_consumers_and_json_serialization() ->
     assert rows[0]["target_position"] == "long"
     assert chronological == output.decisions
     assert json.loads(json.dumps(output.to_primitive()))["contract_version"] == "1"
-    assert output.market_data.adjustment_mode == "split_adjusted"
+    assert output.market_data.adjustment_mode == "unadjusted"
     assert strategy.configuration()["implementation_version"] == "1"
 
 

@@ -21,8 +21,10 @@ costs and accounting, then mark at close. A fixed explicit Decimal policy is
 used for calculations.
 
 The MVP uses one symbol, long-only whole shares, market orders, full fills, and
-no forced final liquidation. Later execution models must preserve the signal
-eligibility boundary and produce equally auditable records.
+no forced final liquidation. It accepts only unadjusted datasets restricted to
+ranges without splits. Adjusted execution is deferred until point-in-time split
+factors and corporate-action accounting exist. Later execution models must
+preserve the signal eligibility boundary and produce equally auditable records.
 
 ## Consequences
 
@@ -58,4 +60,4 @@ tests cover weekend/holiday calendar semantics through QF-4, final-session
 nonexecution, future-bar causality, accounting invariants, generic strategy
 compatibility, strategy-version provenance, complete-equity-depletion returns,
 cost-model-version identity, deeply immutable configuration provenance, stable
-serialization, and repeated equivalent runs.
+serialization, adjusted-dataset rejection, and repeated equivalent runs.

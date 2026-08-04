@@ -258,12 +258,20 @@ directory and renames it into place only after every file is complete.
 ## Adjustment assumptions and MVP limitations
 
 QF-5 preserves QF-3 provider, symbol, requested and actual range, adjustment,
-calendar, timezone, adapter, dataset, and schema metadata. Split-adjusted bars
-embed QF-3's historical split transformations. The engine does not add dividend
-cash flows, preventing double counting. QF-3 does not produce coherent
-split-and-dividend-adjusted OHLCV, so QF-5 rejects that mode. Unadjusted data is
-accepted with a warning because the MVP does not change share quantities for
-splits and may therefore be economically misleading across a split.
+calendar, timezone, adapter, dataset, and schema metadata. It currently accepts
+only `unadjusted` datasets and warns that the requested range must not contain a
+split. QF-3's `split_adjusted` mode divides earlier prices by later split
+coefficients but does not carry point-in-time factors into `MarketDataset`.
+Using those prices directly for whole-share fills or per-share costs would mix
+post-split-equivalent units with historical share units and allow a future split
+to revise earlier execution economics. QF-5 therefore rejects both
+`split_adjusted` and `split_and_dividend_adjusted` datasets.
+
+Supporting a range containing a split requires a future QF-3 schema that
+preserves point-in-time split factors plus QF-5 quantity and cost-basis
+transformation at the effective session. Dividend-adjusted execution likewise
+requires an explicit cash-flow policy. The MVP does not infer either behavior
+from normalized prices.
 
 This implementation is intentionally limited to one stock or ETF, long-only,
 unlevered whole shares, next-open market orders, full fills, and discrete state
