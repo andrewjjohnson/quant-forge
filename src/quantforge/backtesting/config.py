@@ -1,6 +1,6 @@
 """Immutable typed backtest configuration."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import cast
 
@@ -136,8 +136,8 @@ class BacktestConfig:
     annualization_factor: int = 252
     long_only: bool = True
     forced_liquidation: bool = False
-    engine_version: str = ENGINE_VERSION
-    result_schema_version: str = RESULT_SCHEMA_VERSION
+    engine_version: str = field(default=ENGINE_VERSION, init=False)
+    result_schema_version: str = field(default=RESULT_SCHEMA_VERSION, init=False)
 
     def __post_init__(self) -> None:
         try:
@@ -195,8 +195,6 @@ class BacktestConfig:
             raise InvalidBacktestConfigurationError(
                 "forced liquidation is not supported in the MVP"
             )
-        if not self.engine_version or not self.result_schema_version:
-            raise InvalidBacktestConfigurationError("schema versions must not be empty")
         object.__setattr__(self, "initial_capital", initial_capital)
         object.__setattr__(self, "annual_risk_free_rate", risk_free_rate)
         _cost_model_configuration(

@@ -6,6 +6,8 @@ from typing import cast
 import pytest
 
 from quantforge.backtesting import (
+    ENGINE_VERSION,
+    RESULT_SCHEMA_VERSION,
     BacktestConfig,
     BasisPointCommission,
     BasisPointFees,
@@ -200,6 +202,39 @@ def test_zero_cost_models_are_explicit_and_serialize_stably() -> None:
     arithmetic = cast(PrimitiveMapping, first.to_primitive()["arithmetic"])
     assert arithmetic["decimal_precision"] == 34
     assert arithmetic["rounding"] == "ROUND_HALF_EVEN"
+
+
+@pytest.mark.parametrize(
+    "version_override",
+    [
+        {"engine_version": "unsupported"},
+        {"result_schema_version": "unsupported"},
+    ],
+)
+def test_engine_and_result_versions_are_implementation_owned(
+    version_override: dict[str, str],
+) -> None:
+    config_factory = cast(Callable[..., BacktestConfig], BacktestConfig)
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        config_factory(
+            Decimal(100),
+            FixedCommission(Decimal(0)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(0)),
+            **version_override,
+        )
+
+    config = BacktestConfig(
+        Decimal(100),
+        FixedCommission(Decimal(0)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(0)),
+    )
+    assert config.engine_version == ENGINE_VERSION
+    assert config.result_schema_version == RESULT_SCHEMA_VERSION
+    assert config.to_primitive()["engine_version"] == ENGINE_VERSION
+    assert config.to_primitive()["result_schema_version"] == RESULT_SCHEMA_VERSION
 
 
 def test_commissions_and_adverse_slippage_are_separate_and_deterministic() -> None:

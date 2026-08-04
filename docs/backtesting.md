@@ -66,6 +66,9 @@ zero commission is likewise expressed with a zero-valued commission model. No
 cost category has an implicit default. The configuration is frozen and includes
 the execution, sizing, risk-free-rate, annualization, long-only,
 forced-liquidation, engine, and result-schema assumptions.
+Engine and result-schema versions are implementation-owned constants rather than
+caller-supplied configuration; QF-5 serializes them but rejects constructor
+overrides that could mislabel the executed implementation or exported schema.
 
 Every commission, fee, and slippage model declares a nonempty
 `implementation_version`, which is serialized beside its model name and
