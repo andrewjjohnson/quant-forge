@@ -128,6 +128,9 @@ Before adding a module:
 
 ## Adding an indicator
 
+Use the public QF-4 contracts and examples in
+[`strategy-contracts.md`](strategy-contracts.md).
+
 An indicator should:
 
 - accept canonical aligned inputs;
@@ -140,6 +143,9 @@ An indicator should:
 - include a test that protects against accidental forward shifts.
 
 ## Adding a strategy
+
+Use the public QF-4 contracts, decision schema, and examples in
+[`strategy-contracts.md`](strategy-contracts.md).
 
 A strategy should:
 

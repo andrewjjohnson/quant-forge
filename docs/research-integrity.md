@@ -35,6 +35,12 @@ Required safeguards:
 - next-permitted-execution rules;
 - separate modules for contemporaneous features and forward labels.
 
+QF-4 enforces these safeguards through aligned trailing indicator windows,
+explicit unavailable warm-up values, distinct signal and earliest-executable
+sessions, exchange-calendar resolution, and append-future causality tests. A
+calendar-resolved execution session is eligibility metadata only; it does not
+claim an order or fill occurred. See `docs/strategy-contracts.md`.
+
 ## Survivorship bias
 
 Testing only securities that exist today can overstate historical performance.
