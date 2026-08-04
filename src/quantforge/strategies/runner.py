@@ -1,6 +1,7 @@
 """Minimal generic strategy invocation and output validation."""
 
 from itertools import pairwise
+from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveScalar
 from quantforge.data.models import MarketDataset
@@ -28,6 +29,16 @@ def run_strategy(strategy: Strategy, dataset: MarketDataset) -> StrategyOutput:
 
 
 def _validate_input(strategy: Strategy, dataset: MarketDataset) -> None:
+    implementation_version = cast(object, strategy.implementation_version)
+    if (
+        not isinstance(implementation_version, str)
+        or not implementation_version.strip()
+        or strategy.configuration().get("implementation_version")
+        != implementation_version
+    ):
+        raise InvalidStrategyOutputError(
+            "strategy implementation version must be explicit in configuration"
+        )
     sessions = tuple(bar.session_date for bar in dataset.bars)
     if any(current >= following for current, following in pairwise(sessions)):
         raise UnorderedStrategyInputError(

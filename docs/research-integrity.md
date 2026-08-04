@@ -43,10 +43,11 @@ claim an order or fill occurred. See `docs/strategy-contracts.md`.
 
 QF-5 turns that eligibility metadata into auditable orders but fills only at the
 eligible session's open. Its chronological state machine applies explicit
-adverse slippage and commission before cash/position updates, preserves final
-unexecuted signals, and verifies through golden and append-future tests that
-later bars cannot revise earlier execution. See `docs/backtesting.md` and ADR
-0001.
+adverse slippage, commission, and additional transaction fees before
+cash/position updates, preserves final unexecuted signals, and verifies through
+golden and append-future tests that later bars cannot revise earlier execution.
+Run and trade provenance includes an explicit strategy implementation version.
+See `docs/backtesting.md` and ADR 0001.
 
 ## Survivorship bias
 

@@ -28,9 +28,12 @@ eligibility boundary and produce equally auditable records.
 
 The implementation favors correctness and traceability over opaque dataframe
 expressions. Every fill is causally later than its signal, and every quantity
-change is linked to one fill. Runs are deterministic and their tabular records
-remain suitable for vectorized analysis. The state machine is single-threaded
-and intentionally does not simulate order books or intraday events.
+change is linked to one fill. Commission and additional fees remain separate in
+configuration and accounting. Strategy implementation versions participate in
+run identity and trade provenance. Runs are deterministic and their tabular
+records remain suitable for vectorized analysis. The state machine is
+single-threaded and intentionally does not simulate order books or intraday
+events.
 
 Changing the source-of-truth execution ordering or same-bar eligibility is a
 research-semantics change requiring a new ADR, schema/version review, golden
@@ -48,7 +51,8 @@ fixture review, and explicit compatibility notes.
 ## Validation
 
 Golden fixture tests verify signal, next-session order/fill, price impact,
-commission, cash, trade, equity, drawdown, and metric values. Additional tests
-cover weekend/holiday calendar semantics through QF-4, final-session
+commission, fees, cash, trade, equity, drawdown, and metric values. Additional
+tests cover weekend/holiday calendar semantics through QF-4, final-session
 nonexecution, future-bar causality, accounting invariants, generic strategy
-compatibility, stable serialization, and repeated equivalent runs.
+compatibility, strategy-version provenance, complete-equity-depletion returns,
+stable serialization, and repeated equivalent runs.

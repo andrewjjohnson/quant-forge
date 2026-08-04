@@ -76,6 +76,10 @@ class OutputTransformingStrategy:
         return self._delegate.name
 
     @property
+    def implementation_version(self) -> str:
+        return self._delegate.implementation_version
+
+    @property
     def parameters(self) -> StrategyParameters:
         return self._delegate.parameters
 
@@ -112,6 +116,12 @@ class OutputTransformingStrategy:
 
     def generate(self, dataset: MarketDataset) -> StrategyOutput:
         return self._transform(self._delegate.generate(dataset))
+
+
+class VersionMismatchedStrategy(OutputTransformingStrategy):
+    @property
+    def implementation_version(self) -> str:
+        return "2"
 
 
 def duplicate_first_decision(output: StrategyOutput) -> StrategyOutput:
@@ -167,6 +177,16 @@ def test_generic_runner_rejects_unordered_input() -> None:
 
     with pytest.raises(UnorderedStrategyInputError, match="chronological"):
         run_strategy(strategy, unordered)
+
+
+def test_generic_runner_rejects_implementation_version_mismatch() -> None:
+    strategy = VersionMismatchedStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        lambda output: output,
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="implementation version"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
 
 
 def test_generic_runner_rejects_duplicate_decisions() -> None:
@@ -267,6 +287,7 @@ def test_strategy_contract_exposes_owned_components_and_configuration() -> None:
     assert len(strategy.required_indicators) == 2
     assert strategy.warm_up_observations == 5
     assert strategy.timing is ExecutionTiming.NEXT_SESSION_AFTER_CLOSE
+    assert strategy.implementation_version == "1"
     assert strategy.configuration()["sizing"] == strategy.sizing_policy.configuration()
 
 

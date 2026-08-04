@@ -5,10 +5,10 @@ reproducible, auditable experiments. The project is currently establishing the
 **MVP Quantitative Research Foundation (QF-1)**. Provider-agnostic adjusted daily
 market-data ingestion and reusable causal indicator and engine-neutral strategy
 contracts are available. Deterministic single-symbol, long-only daily-bar
-backtesting now provides explicit next-open execution, commission, slippage,
-whole-share accounting, typed metrics, a buy-and-hold benchmark, and structured
-result export. Optimization, paper trading, and live trading are not yet
-implemented.
+backtesting now provides explicit next-open execution, separate commission and
+transaction-fee policies, slippage, whole-share accounting, typed metrics, a
+buy-and-hold benchmark, and structured result export. Optimization, paper
+trading, and live trading are not yet implemented.
 
 ## Prerequisites
 

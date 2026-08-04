@@ -156,7 +156,8 @@ QF-5 implements deterministic daily-bar execution in
 `quantforge.backtesting`. It consumes the generic QF-4 target-state/weight
 contract, creates an auditable order for every decision, enforces next-exchange-
 session eligibility, sizes whole shares, and applies separately configured
-commission and adverse slippage. See `docs/backtesting.md` and ADR 0001.
+commission, additional fees, and adverse slippage. See `docs/backtesting.md` and
+ADR 0001.
 
 Responsibilities:
 
@@ -230,8 +231,8 @@ Must not:
 
 QF-5 exports a stable manifest and ordered CSV ledgers into an immutable
 run-identity directory. The deterministic identity covers QF-3 dataset
-provenance, QF-4 strategy configuration, all execution/cost/sizing assumptions,
-and engine/result schema versions.
+provenance, QF-4 strategy configuration and implementation version, all
+execution/cost/sizing assumptions, and engine/result schema versions.
 
 Responsibilities:
 

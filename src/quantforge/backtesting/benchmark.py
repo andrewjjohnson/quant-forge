@@ -34,6 +34,18 @@ def _commission(config: BacktestConfig, quantity: int, price: Decimal) -> Decima
     return value
 
 
+def _fees(
+    config: BacktestConfig, side: OrderSide, quantity: int, price: Decimal
+) -> Decimal:
+    try:
+        value = config.fees.calculate(side, quantity, price)
+    except (ArithmeticError, ValueError) as error:
+        raise ExecutionError("benchmark transaction-fee calculation failed") from error
+    if not value.is_finite() or value < 0:
+        raise ExecutionError("transaction-fee model returned an invalid amount")
+    return value
+
+
 def _slipped_price(
     config: BacktestConfig, reference_price: Decimal, side: OrderSide
 ) -> Decimal:
@@ -65,8 +77,11 @@ def _affordable_quantity(
     while low < high:
         candidate = (low + high + 1) // 2
         commission = _commission(config, candidate, fill_price)
+        fees = _fees(config, OrderSide.BUY, candidate, fill_price)
         with arithmetic():
-            affordable = Decimal(candidate) * fill_price + commission <= cash_budget
+            affordable = (
+                Decimal(candidate) * fill_price + commission + fees <= cash_budget
+            )
         if affordable:
             low = candidate
         else:
@@ -80,10 +95,12 @@ def run_buy_and_hold_benchmark(
     """Buy whole shares at the first open and hold through the final close."""
     configuration: PrimitiveMapping = {
         "model": "buy_and_hold",
+        "implementation_version": "1",
         "start": "first_dataset_session_open",
         "forced_liquidation": False,
         "initial_capital": decimal_to_primitive(config.initial_capital),
         "commission": config.commission.configuration(),
+        "fees": config.fees.configuration(),
         "slippage": config.slippage.configuration(),
     }
     benchmark_id = configuration_identity(
@@ -125,9 +142,10 @@ def run_buy_and_hold_benchmark(
         shares = 0
     else:
         commission = _commission(config, quantity, fill_price)
+        fees = _fees(config, OrderSide.BUY, quantity, fill_price)
         with arithmetic():
             gross_notional = Decimal(quantity) * fill_price
-            cash_effect = -(gross_notional + commission)
+            cash_effect = -(gross_notional + commission + fees)
             cash = config.initial_capital + cash_effect
             slippage_per_share = fill_price - first_bar.open
             effective_bps = abs(slippage_per_share) / first_bar.open * Decimal(10_000)
@@ -151,6 +169,7 @@ def run_buy_and_hold_benchmark(
             slippage_basis_points=effective_bps,
             gross_notional=gross_notional,
             commission=commission,
+            fees=fees,
             net_cash_effect=cash_effect,
             strategy_id="buy_and_hold_benchmark",
             strategy_configuration_id=benchmark_id,
@@ -180,9 +199,12 @@ def run_buy_and_hold_benchmark(
         with arithmetic():
             market_value = Decimal(shares) * bar.close
             equity = cash + market_value
-            daily_return = (
-                Decimal(0) if index == 0 else equity / previous_equity - Decimal(1)
-            )
+            if index == 0:
+                daily_return = Decimal(0)
+            elif previous_equity == 0:
+                daily_return = None
+            else:
+                daily_return = equity / previous_equity - Decimal(1)
             peak = max(peak, equity)
             drawdown = equity / peak - Decimal(1)
             exposure_weight = Decimal(0) if shares == 0 else market_value / equity
@@ -221,17 +243,20 @@ def run_buy_and_hold_benchmark(
                 entry_price=fill.fill_price,
                 entry_quantity=fill.quantity,
                 entry_commission=fill.commission,
+                entry_fees=fill.fees,
                 exit_signal_id=None,
                 exit_order_id=None,
                 exit_fill_id=None,
                 exit_session=None,
                 exit_price=None,
                 exit_commission=None,
+                exit_fees=None,
                 gross_profit_loss=None,
                 net_profit_loss=None,
                 return_percentage=None,
                 holding_period_sessions=None,
                 strategy_id=fill.strategy_id,
+                strategy_implementation_version="1",
                 strategy_configuration_id=fill.strategy_configuration_id,
                 is_open=True,
             ),

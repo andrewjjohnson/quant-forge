@@ -1,4 +1,4 @@
-"""Typed deterministic commission and adverse-slippage models."""
+"""Typed deterministic commission, fee, and adverse-slippage models."""
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -28,6 +28,19 @@ class CommissionModel(Protocol):
     def configuration(self) -> PrimitiveMapping: ...
 
 
+class FeeModel(Protocol):
+    """Calculate separately auditable non-commission transaction fees."""
+
+    @property
+    def name(self) -> str: ...
+
+    def calculate(
+        self, side: OrderSide, quantity: int, fill_price: Decimal
+    ) -> Decimal: ...
+
+    def configuration(self) -> PrimitiveMapping: ...
+
+
 class SlippageModel(Protocol):
     """Transform a reference price in the adverse trade direction."""
 
@@ -52,7 +65,7 @@ def _nonnegative_decimal(value: object, field_name: str) -> Decimal:
 def _validate_fill_inputs(quantity: object, fill_price: object) -> None:
     if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
         raise InvalidBacktestConfigurationError(
-            "commission quantity must be a positive integer"
+            "fill quantity must be a positive integer"
         )
     if not isinstance(fill_price, Decimal) or not fill_price.is_finite():
         raise InvalidBacktestConfigurationError("fill price must be finite")
@@ -129,6 +142,50 @@ class BasisPointCommission:
         )
 
     def calculate(self, quantity: int, fill_price: Decimal) -> Decimal:
+        _validate_fill_inputs(quantity, fill_price)
+        with arithmetic():
+            return Decimal(quantity) * fill_price * self.basis_points / Decimal(10_000)
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "model": self.name,
+            "parameters": {"basis_points": decimal_to_primitive(self.basis_points)},
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ExplicitZeroFees:
+    """Make the absence of additional transaction fees explicit and serializable."""
+
+    name = "explicit_zero_fees"
+
+    def calculate(self, side: OrderSide, quantity: int, fill_price: Decimal) -> Decimal:
+        if not isinstance(cast(object, side), OrderSide):
+            raise InvalidBacktestConfigurationError("order side is unsupported")
+        _validate_fill_inputs(quantity, fill_price)
+        return Decimal(0)
+
+    def configuration(self) -> PrimitiveMapping:
+        return {"model": self.name, "parameters": {}}
+
+
+@dataclass(frozen=True, slots=True)
+class BasisPointFees:
+    """Charge explicit transaction fees as basis points of fill notional."""
+
+    basis_points: Decimal
+    name = "basis_point_fees"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "basis_points",
+            _nonnegative_decimal(self.basis_points, "basis_points"),
+        )
+
+    def calculate(self, side: OrderSide, quantity: int, fill_price: Decimal) -> Decimal:
+        if not isinstance(cast(object, side), OrderSide):
+            raise InvalidBacktestConfigurationError("order side is unsupported")
         _validate_fill_inputs(quantity, fill_price)
         with arithmetic():
             return Decimal(quantity) * fill_price * self.basis_points / Decimal(10_000)

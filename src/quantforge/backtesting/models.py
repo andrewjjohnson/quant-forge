@@ -153,7 +153,7 @@ class OrderRecord:
 
 @dataclass(frozen=True, slots=True)
 class FillRecord:
-    """One full immutable fill with separated price impact and commission."""
+    """One full immutable fill with separated price impact, commission, and fees."""
 
     fill_id: str
     order_id: str
@@ -168,6 +168,7 @@ class FillRecord:
     slippage_basis_points: Decimal
     gross_notional: Decimal
     commission: Decimal
+    fees: Decimal
     net_cash_effect: Decimal
     strategy_id: str
     strategy_configuration_id: str
@@ -187,6 +188,7 @@ class FillRecord:
             "slippage_basis_points": decimal_to_primitive(self.slippage_basis_points),
             "gross_notional": decimal_to_primitive(self.gross_notional),
             "commission": decimal_to_primitive(self.commission),
+            "fees": decimal_to_primitive(self.fees),
             "net_cash_effect": decimal_to_primitive(self.net_cash_effect),
             "strategy_id": self.strategy_id,
             "strategy_configuration_id": self.strategy_configuration_id,
@@ -229,7 +231,7 @@ class DailyPortfolioRecord:
     closing_mark_price: Decimal
     market_value: Decimal
     total_equity: Decimal
-    daily_return: Decimal
+    daily_return: Decimal | None
     running_equity_peak: Decimal
     drawdown: Decimal
     exposed: bool
@@ -245,7 +247,7 @@ class DailyPortfolioRecord:
             "closing_mark_price": decimal_to_primitive(self.closing_mark_price),
             "market_value": decimal_to_primitive(self.market_value),
             "total_equity": decimal_to_primitive(self.total_equity),
-            "daily_return": decimal_to_primitive(self.daily_return),
+            "daily_return": _decimal(self.daily_return),
             "running_equity_peak": decimal_to_primitive(self.running_equity_peak),
             "drawdown": decimal_to_primitive(self.drawdown),
             "exposed": self.exposed,
@@ -268,17 +270,20 @@ class TradeRecord:
     entry_price: Decimal
     entry_quantity: int
     entry_commission: Decimal
+    entry_fees: Decimal
     exit_signal_id: str | None
     exit_order_id: str | None
     exit_fill_id: str | None
     exit_session: date | None
     exit_price: Decimal | None
     exit_commission: Decimal | None
+    exit_fees: Decimal | None
     gross_profit_loss: Decimal | None
     net_profit_loss: Decimal | None
     return_percentage: Decimal | None
     holding_period_sessions: int | None
     strategy_id: str
+    strategy_implementation_version: str
     strategy_configuration_id: str
     is_open: bool
 
@@ -293,6 +298,7 @@ class TradeRecord:
             "entry_price": decimal_to_primitive(self.entry_price),
             "entry_quantity": self.entry_quantity,
             "entry_commission": decimal_to_primitive(self.entry_commission),
+            "entry_fees": decimal_to_primitive(self.entry_fees),
             "exit_signal_id": self.exit_signal_id,
             "exit_order_id": self.exit_order_id,
             "exit_fill_id": self.exit_fill_id,
@@ -301,11 +307,13 @@ class TradeRecord:
             ),
             "exit_price": _decimal(self.exit_price),
             "exit_commission": _decimal(self.exit_commission),
+            "exit_fees": _decimal(self.exit_fees),
             "gross_profit_loss": _decimal(self.gross_profit_loss),
             "net_profit_loss": _decimal(self.net_profit_loss),
             "return_percentage": _decimal(self.return_percentage),
             "holding_period_sessions": self.holding_period_sessions,
             "strategy_id": self.strategy_id,
+            "strategy_implementation_version": self.strategy_implementation_version,
             "strategy_configuration_id": self.strategy_configuration_id,
             "is_open": self.is_open,
         }
@@ -400,6 +408,7 @@ class BacktestResult:
     result_schema_version: str
     market_data: MarketDataMetadata
     strategy_id: str
+    strategy_implementation_version: str
     strategy_configuration_id: str
     strategy_configuration: PrimitiveMapping
     strategy_warm_up_observations: int
@@ -428,6 +437,9 @@ class BacktestResult:
             "market_data": self.market_data.to_primitive(),
             "strategy": {
                 "strategy_id": self.strategy_id,
+                "strategy_implementation_version": (
+                    self.strategy_implementation_version
+                ),
                 "strategy_configuration_id": self.strategy_configuration_id,
                 "configuration": self.strategy_configuration,
                 "warm_up_observations": self.strategy_warm_up_observations,

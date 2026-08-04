@@ -45,7 +45,11 @@ def calculate_performance(
                 ratio, CALENDAR_DAYS_PER_YEAR / Decimal(elapsed_days)
             ) - Decimal(1)
 
-    returns = tuple(record.daily_return for record in daily_equity[1:])
+    returns = tuple(
+        record.daily_return
+        for record in daily_equity[1:]
+        if record.daily_return is not None
+    )
     annualized_volatility: Decimal | None = None
     sharpe_ratio: Decimal | None = None
     sortino_ratio: Decimal | None = None

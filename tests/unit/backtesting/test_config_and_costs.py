@@ -8,8 +8,11 @@ import pytest
 from quantforge.backtesting import (
     BacktestConfig,
     BasisPointCommission,
+    BasisPointFees,
     BasisPointSlippage,
     CommissionModel,
+    ExplicitZeroFees,
+    FeeModel,
     FixedCommission,
     InvalidBacktestConfigurationError,
     OrderSide,
@@ -22,24 +25,37 @@ from quantforge.configuration import PrimitiveMapping
 def test_config_requires_positive_finite_capital_and_explicit_cost_models() -> None:
     with pytest.raises(InvalidBacktestConfigurationError, match="positive"):
         BacktestConfig(
-            Decimal(0), FixedCommission(Decimal(1)), BasisPointSlippage(Decimal(1))
+            Decimal(0),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(1)),
         )
     with pytest.raises(InvalidBacktestConfigurationError, match="finite"):
         BacktestConfig(
             Decimal("NaN"),
             FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
             BasisPointSlippage(Decimal(1)),
         )
     with pytest.raises(InvalidBacktestConfigurationError, match="commission"):
         BacktestConfig(
             Decimal(1),
             cast(CommissionModel, None),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(1)),
+        )
+    with pytest.raises(InvalidBacktestConfigurationError, match="fee"):
+        BacktestConfig(
+            Decimal(1),
+            FixedCommission(Decimal(1)),
+            cast(FeeModel, None),
             BasisPointSlippage(Decimal(1)),
         )
     with pytest.raises(InvalidBacktestConfigurationError, match="slippage"):
         BacktestConfig(
             Decimal(1),
             FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
             cast(SlippageModel, None),
         )
 
@@ -51,6 +67,7 @@ def test_config_requires_positive_finite_capital_and_explicit_cost_models() -> N
         lambda: PerShareCommission(Decimal("-0.01")),
         lambda: PerShareCommission(Decimal("0.01"), Decimal("-1")),
         lambda: BasisPointCommission(Decimal("-1")),
+        lambda: BasisPointFees(Decimal("-1")),
         lambda: BasisPointSlippage(Decimal("-1")),
     ],
 )
@@ -65,16 +82,24 @@ def test_zero_cost_models_are_explicit_and_serialize_stably() -> None:
     first = BacktestConfig(
         Decimal("100.00"),
         FixedCommission(Decimal("0.00")),
+        ExplicitZeroFees(),
         BasisPointSlippage(Decimal("0.0")),
     )
     second = BacktestConfig(
-        Decimal(100), FixedCommission(Decimal(0)), BasisPointSlippage(Decimal(0))
+        Decimal(100),
+        FixedCommission(Decimal(0)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(0)),
     )
 
     assert first.to_primitive() == second.to_primitive()
     assert first.to_primitive()["commission"] == {
         "model": "fixed_per_fill",
         "parameters": {"amount": "0"},
+    }
+    assert first.to_primitive()["fees"] == {
+        "model": "explicit_zero_fees",
+        "parameters": {},
     }
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
     arithmetic = cast(PrimitiveMapping, first.to_primitive()["arithmetic"])
@@ -93,3 +118,7 @@ def test_commissions_and_adverse_slippage_are_separate_and_deterministic() -> No
         10, buy
     ) == Decimal(1)
     assert BasisPointCommission(Decimal("10")).calculate(10, buy) == Decimal("1.0025")
+    assert ExplicitZeroFees().calculate(OrderSide.SELL, 10, sell) == Decimal(0)
+    assert BasisPointFees(Decimal("2")).calculate(OrderSide.SELL, 10, sell) == Decimal(
+        "0.1995"
+    )

@@ -9,8 +9,10 @@ import pytest
 from quantforge.backtesting import (
     BacktestConfig,
     BacktestResult,
+    BasisPointFees,
     BasisPointSlippage,
     ExecutionError,
+    ExplicitZeroFees,
     FixedCommission,
     InvalidMarketDataError,
     OrderSide,
@@ -57,6 +59,7 @@ def configured_result(
         BacktestConfig(
             Decimal(100),
             FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
             BasisPointSlippage(Decimal(100)),
         ),
     )
@@ -85,6 +88,7 @@ def test_human_auditable_golden_backtest() -> None:
         "fill_price",
         "gross_notional",
         "commission",
+        "fees",
         "net_cash_effect",
     )
     assert [
@@ -94,6 +98,8 @@ def test_human_auditable_golden_backtest() -> None:
         "entry_session",
         "exit_session",
         "entry_quantity",
+        "entry_fees",
+        "exit_fees",
         "gross_profit_loss",
         "net_profit_loss",
         "holding_period_sessions",
@@ -123,6 +129,7 @@ def test_next_session_timing_costs_accounting_and_traceability() -> None:
     assert entry_fill.fill_price > entry_fill.reference_price
     assert exit_fill.fill_price < exit_fill.reference_price
     assert entry_fill.commission == exit_fill.commission == Decimal(1)
+    assert entry_fill.fees == exit_fill.fees == Decimal(0)
     assert all(
         record.cash >= 0 and record.shares >= 0 for record in result.daily_equity
     )
@@ -136,6 +143,8 @@ def test_next_session_timing_costs_accounting_and_traceability() -> None:
     assert exit_fill.order_id == exit_order.order_id
     assert entry_order.originating_signal_id == result.signals[0].signal_id
     assert trade.strategy_configuration_id == result.strategy_configuration_id
+    assert trade.strategy_implementation_version == "1"
+    assert result.strategy_implementation_version == "1"
 
 
 def test_repeated_equivalent_inputs_replay_identically() -> None:
@@ -170,6 +179,7 @@ def test_different_explicit_costs_change_results_deterministically() -> None:
         BacktestConfig(
             Decimal(100),
             FixedCommission(Decimal(0)),
+            ExplicitZeroFees(),
             BasisPointSlippage(Decimal(0)),
         ),
     )
@@ -179,6 +189,46 @@ def test_different_explicit_costs_change_results_deterministically() -> None:
     assert (
         zero_cost.performance.ending_equity > realistic_cost.performance.ending_equity
     )
+
+
+def test_additional_fees_are_separate_and_reduce_cash_and_trade_results() -> None:
+    result = run_backtest(
+        make_dataset(PRICES),
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            BasisPointFees(Decimal(10)),
+            BasisPointSlippage(Decimal(100)),
+        ),
+    )
+    entry, exit_fill = result.fills
+    trade = result.completed_trades[0]
+
+    assert entry.fees == Decimal("0.09696")
+    assert exit_fill.fees == Decimal("0.02376")
+    assert entry.net_cash_effect == -(
+        entry.gross_notional + entry.commission + entry.fees
+    )
+    assert exit_fill.net_cash_effect == (
+        exit_fill.gross_notional - exit_fill.commission - exit_fill.fees
+    )
+    assert trade.gross_profit_loss is not None
+    assert trade.exit_commission is not None
+    assert trade.exit_fees is not None
+    assert trade.net_profit_loss == (
+        trade.gross_profit_loss
+        - trade.entry_commission
+        - trade.entry_fees
+        - trade.exit_commission
+        - trade.exit_fees
+    )
+    assert result.benchmark.configuration["fees"] == {
+        "model": "basis_point_fees",
+        "parameters": {"basis_points": "10"},
+    }
+    assert result.benchmark.fill is not None
+    assert result.benchmark.fill.fees > 0
 
 
 def test_final_session_signal_is_preserved_as_unexecuted_order() -> None:
@@ -198,6 +248,7 @@ def test_unaffordable_entry_is_explicit_and_never_creates_fractional_shares() ->
         BacktestConfig(
             Decimal(1),
             FixedCommission(Decimal("0.5")),
+            ExplicitZeroFees(),
             BasisPointSlippage(Decimal(100)),
         ),
     )
@@ -219,6 +270,43 @@ def test_open_position_is_not_forced_closed_at_end_of_data() -> None:
     assert len(result.open_trades) == 1
     assert result.open_trades[0].exit_fill_id is None
     assert result.daily_equity[-1].shares > 0
+
+
+def test_post_depletion_daily_return_is_explicitly_undefined() -> None:
+    sessions = (
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        date(2024, 7, 3),
+        date(2024, 7, 5),
+        date(2024, 7, 8),
+        date(2024, 7, 9),
+        date(2024, 7, 10),
+        date(2024, 7, 11),
+        date(2024, 7, 12),
+        date(2024, 7, 15),
+    )
+    result = run_backtest(
+        make_dataset(
+            ("3", "2", "1", "2", "3", "4", "3", "2", "1", "1"),
+            sessions=sessions,
+            dataset_id="complete-loss",
+        ),
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(10),
+            FixedCommission(Decimal(2)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(0)),
+        ),
+    )
+
+    assert result.daily_equity[-2].total_equity == Decimal(0)
+    assert result.daily_equity[-2].daily_return == Decimal(-1)
+    assert result.daily_equity[-1].total_equity == Decimal(0)
+    assert result.daily_equity[-1].daily_return is None
+    assert result.daily_equity[-1].to_primitive()["daily_return"] is None
+    assert result.performance.total_return == Decimal(-1)
+    assert result.performance.cagr is None
 
 
 def test_future_bars_do_not_change_prior_order_or_fill_economics() -> None:
@@ -271,6 +359,7 @@ def test_invalid_execution_price_fails_with_market_data_domain_error() -> None:
             BacktestConfig(
                 Decimal(100),
                 FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
                 BasisPointSlippage(Decimal(1)),
             ),
         )
@@ -295,6 +384,7 @@ def test_custom_slippage_cannot_improve_a_buy_fill() -> None:
             BacktestConfig(
                 Decimal(100),
                 FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
                 FavorableSlippage(),
             ),
         )
@@ -346,6 +436,7 @@ class ManualParameters:
 
 class ManualTransitionStrategy:
     name = "manual_transition"
+    implementation_version = "1"
     timing = ExecutionTiming.NEXT_SESSION_AFTER_CLOSE
     asset_assumptions = ("single symbol", "long-only")
     parameters: StrategyParameters = ManualParameters()
@@ -359,6 +450,7 @@ class ManualTransitionStrategy:
             "component_type": "strategy",
             "component_name": self.name,
             "contract_version": "1",
+            "implementation_version": self.implementation_version,
             "parameters": {},
             "required_fields": ["close"],
             "required_indicators": [],
@@ -411,6 +503,10 @@ class ManualTransitionStrategy:
         )
 
 
+class RevisedManualTransitionStrategy(ManualTransitionStrategy):
+    implementation_version = "2"
+
+
 def test_another_generic_strategy_runs_without_backtester_changes() -> None:
     result = run_backtest(
         make_dataset(("10", "11", "12", "13")),
@@ -418,6 +514,7 @@ def test_another_generic_strategy_runs_without_backtester_changes() -> None:
         BacktestConfig(
             Decimal(100),
             FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
             BasisPointSlippage(Decimal(10)),
         ),
     )
@@ -430,3 +527,22 @@ def test_another_generic_strategy_runs_without_backtester_changes() -> None:
     assert len(result.completed_trades) == 1
     assert result.performance.win_rate == Decimal(1)
     assert result.performance.profit_factor is None
+
+
+def test_strategy_implementation_version_changes_run_and_trade_provenance() -> None:
+    dataset = make_dataset(("10", "11", "12", "13"))
+    config = BacktestConfig(
+        Decimal(100),
+        FixedCommission(Decimal(1)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(10)),
+    )
+
+    original = run_backtest(dataset, ManualTransitionStrategy(), config)
+    revised = run_backtest(dataset, RevisedManualTransitionStrategy(), config)
+
+    assert original.run_id != revised.run_id
+    assert original.strategy_implementation_version == "1"
+    assert revised.strategy_implementation_version == "2"
+    assert original.completed_trades[0].strategy_implementation_version == "1"
+    assert revised.completed_trades[0].strategy_implementation_version == "2"

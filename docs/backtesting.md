@@ -29,6 +29,7 @@ from pathlib import Path
 from quantforge.backtesting import (
     BacktestConfig,
     BasisPointSlippage,
+    ExplicitZeroFees,
     PerShareCommission,
     export_backtest_result,
     run_backtest,
@@ -51,6 +52,7 @@ config = BacktestConfig(
         amount_per_share=Decimal("0.005"),
         minimum=Decimal("1"),
     ),
+    fees=ExplicitZeroFees(),
     slippage=BasisPointSlippage(Decimal("5")),
     annual_risk_free_rate=Decimal("0.03"),
 )
@@ -58,11 +60,12 @@ result = run_backtest(dataset, strategy, config)
 artifact_path = export_backtest_result(result, Path("reports/backtests"))
 ```
 
-Commission and slippage models are required constructor arguments. An explicit
-zero-valued model is available for controlled tests, but zero cost is never an
-implicit default. The configuration is frozen and includes the execution,
-sizing, risk-free-rate, annualization, long-only, forced-liquidation, engine,
-and result-schema assumptions.
+Commission, additional transaction-fee, and slippage models are required
+constructor arguments. `ExplicitZeroFees` records a deliberate zero-fee policy;
+zero commission is likewise expressed with a zero-valued commission model. No
+cost category has an implicit default. The configuration is frozen and includes
+the execution, sizing, risk-free-rate, annualization, long-only,
+forced-liquidation, engine, and result-schema assumptions.
 
 ## Chronological convention
 
@@ -74,13 +77,16 @@ QF-5 uses `NextSessionOpenExecution`, the only supported MVP convention:
 4. QF-4 and QF-5 require the first exchange-calendar successor as the earliest
    execution session. Weekends and holidays are skipped by QF-3's calendar.
 5. At that later session, the order references only the session's `open`.
-6. Adverse slippage and a separate commission are applied, then cash and whole
-   shares are updated.
+6. Adverse slippage, commission, and separately auditable transaction fees are
+   applied, then cash and whole shares are updated.
 7. The position is marked to the same session's `close`; end-of-session cash,
    holdings, equity, return, peak, drawdown, and exposure are recorded.
 
 The first daily return is exactly zero. Later daily returns are arithmetic
-end-of-session equity returns. The initial-capital value remains the first
+end-of-session equity returns while prior equity is nonzero. After complete
+equity depletion, the next return is undefined and stored as `null`, not as an
+invented zero or infinity. Undefined observations are omitted from volatility,
+Sharpe, and Sortino inputs. The initial-capital value remains the first
 running-peak candidate, so entry costs can create an immediate drawdown.
 
 A calendar-resolved signal whose execution session is beyond the dataset is
@@ -98,26 +104,34 @@ timing.
 
 On flat-to-long transitions, target weight defines the fraction of available
 cash used as the affordability budget. QF-5 finds the maximum whole-share
-quantity whose slipped notional plus commission fits that budget. Cash may not
-become negative. On long-to-flat transitions, the engine requests and sells the
-entire current quantity. It does not rebalance an existing long position to its
-target weight. Repeated already-satisfied targets become rejected audit orders
-with an explicit no-op reason. An unaffordable entry requests zero shares and is
-rejected; fractional shares are never created.
+quantity whose slipped notional plus commission and fees fits that budget. Cash
+may not become negative. On long-to-flat transitions, the engine requests and
+sells the entire current quantity. It does not rebalance an existing long
+position to its target weight. Repeated already-satisfied targets become
+rejected audit orders with an explicit no-op reason. An unaffordable entry
+requests zero shares and is rejected; fractional shares are never created.
 
 `OrderRecord` includes the run, signal, symbol, side, requested quantity,
 decision and eligibility sessions, target, strategy identities, final status,
 and reason. `FillRecord` links to the order and signal and separately records
 reference open, final fill price, effective slippage per share and basis points,
-notional, commission, and signed cash effect. A buy cash effect is
-`-(notional + commission)`; a sell cash effect is `notional - commission`.
-Every MVP market order has zero or one full fill.
+notional, commission, additional fees, and signed cash effect. A buy cash effect
+is `-(notional + commission + fees)`; a sell cash effect is
+`notional - commission - fees`. Every MVP market order has zero or one full
+fill.
 
 Supported commission models are:
 
 - `FixedCommission(amount)` per fill;
 - `PerShareCommission(amount_per_share, minimum)`; and
 - `BasisPointCommission(basis_points)` on final fill notional.
+
+Supported additional-fee models are:
+
+- `ExplicitZeroFees()` for a serialized, deliberate zero-fee policy; and
+- `BasisPointFees(basis_points)` on final fill notional. The order side is
+  supplied to every fee model so future regulatory or exchange policies can be
+  side-specific without changing the execution contract.
 
 `BasisPointSlippage` implements:
 
@@ -131,12 +145,12 @@ Slippage below 10,000 basis points is required so sell fills remain positive.
 
 ## Portfolio and trades
 
-`PositionRecord` is emitted for every session with shares, commission-inclusive
-entry cost basis, average entry cost, market value, cumulative realized P&L,
-and unrealized P&L. `DailyPortfolioRecord` contains the corresponding cash,
-close mark, equity, daily return, running peak, negative-decimal drawdown,
-exposure state and weight, and associated order/fill IDs. The accounting
-identity is always:
+`PositionRecord` is emitted for every session with shares, commission- and
+fee-inclusive entry cost basis, average entry cost, market value, cumulative
+realized P&L, and unrealized P&L. `DailyPortfolioRecord` contains the
+corresponding cash, close mark, equity, nullable daily return, running peak,
+negative-decimal drawdown, exposure state and weight, and associated order/fill
+IDs. The accounting identity is always:
 
 ```text
 equity = cash + shares * session close
@@ -148,7 +162,8 @@ IDs and preserves the strategy configuration identity. For quantity `q`:
 ```text
 gross P&L = (exit fill price - entry fill price) * q
 net P&L   = gross P&L - entry commission - exit commission
-return    = net P&L / (entry notional + entry commission)
+            - entry fees - exit fees
+return    = net P&L / (entry notional + entry commission + entry fees)
 ```
 
 Holding period is the number of dataset-session intervals from entry to exit.
@@ -166,7 +181,7 @@ trades from completed-trade statistics and serialize undefined values as JSON
 | --- | --- |
 | Total return | `ending equity / initial capital - 1`. |
 | CAGR | `(ending / initial) ** (365.2425 / elapsed calendar days) - 1`; `null` for zero elapsed days or nonpositive ending equity. |
-| Annualized volatility | Sample standard deviation of consecutive daily equity returns times `sqrt(annualization_factor)`; `null` with fewer than two returns. |
+| Annualized volatility | Sample standard deviation of defined consecutive daily equity returns times `sqrt(annualization_factor)`; `null` with fewer than two defined returns. A return following zero prior equity is undefined and excluded. |
 | Sharpe | Daily excess-return mean divided by sample standard deviation of daily excess returns, times `sqrt(annualization_factor)`. Daily risk-free return is `(1 + annual_rate) ** (1 / annualization_factor) - 1`; zero deviation or insufficient observations gives `null`. |
 | Sortino | Daily excess-return mean divided by the square root of the mean squared negative excess returns, times `sqrt(annualization_factor)`; zero downside deviation gives `null`. All return sessions are in the downside denominator. |
 | Maximum drawdown | Minimum of `equity / running_peak - 1`, reported as zero or a negative decimal. |
@@ -185,18 +200,21 @@ benchmark total return. Decimal calculations use a private 34-significant-digit
 
 The benchmark starts with the same capital and buys the maximum affordable
 whole-share position at the first dataset session's open. It uses the exact same
-commission and slippage models, preserves residual cash, marks every session at
-the close, and holds through the final session without an invented sale. It
-therefore has an open trade count when purchased, while trade count, win rate,
-profit factor, and average closed-trade return remain unavailable. Its equity
-curve and applicable risk/return metrics are included in the result and export.
+commission, fee, and slippage models, preserves residual cash, marks every
+session at the close, and holds through the final session without an invented
+sale. It therefore has an open trade count when purchased, while trade count,
+win rate, profit factor, and average closed-trade return remain unavailable. Its
+equity curve and applicable risk/return metrics are included in the result and
+export.
 
 ## Deterministic identity and export
 
 The SHA-256 run ID is canonical-JSON-derived from the QF-3 dataset ID and schema,
-QF-4 strategy name/configuration identity/full configuration, complete
-backtest configuration, and engine/result schema versions. It excludes object
-addresses, QF-3 retrieval time, optional initiation time, and export time.
+QF-4 strategy name, explicit implementation version, configuration identity,
+full configuration, complete backtest configuration, and engine/result schema
+versions. The implementation version is also persisted directly on the result
+and every trade. The identity excludes object addresses, QF-3 retrieval time,
+optional initiation time, and export time.
 Equivalent decimal configuration values serialize identically. Record ordering
 and signal, order, fill, trade, and benchmark IDs are derived deterministically
 within the run.

@@ -127,6 +127,18 @@ def _commission(config: BacktestConfig, quantity: int, price: Decimal) -> Decima
     return value
 
 
+def _fees(
+    config: BacktestConfig, side: OrderSide, quantity: int, price: Decimal
+) -> Decimal:
+    try:
+        value = config.fees.calculate(side, quantity, price)
+    except (ArithmeticError, ValueError) as error:
+        raise ExecutionError("transaction-fee calculation failed") from error
+    if not value.is_finite() or value < 0:
+        raise ExecutionError("transaction-fee model returned an invalid amount")
+    return value
+
+
 def _slipped_price(
     config: BacktestConfig, reference_price: Decimal, side: OrderSide
 ) -> Decimal:
@@ -158,8 +170,11 @@ def _affordable_quantity(
     while low < high:
         candidate = (low + high + 1) // 2
         commission = _commission(config, candidate, fill_price)
+        fees = _fees(config, OrderSide.BUY, candidate, fill_price)
         with arithmetic():
-            affordable = Decimal(candidate) * fill_price + commission <= cash_budget
+            affordable = (
+                Decimal(candidate) * fill_price + commission + fees <= cash_budget
+            )
         if affordable:
             low = candidate
         else:
@@ -213,6 +228,7 @@ def _fill(
     reference_price: Decimal,
     fill_price: Decimal,
     commission: Decimal,
+    fees: Decimal,
 ) -> FillRecord:
     quantity = order.requested_quantity
     if quantity is None or quantity <= 0:
@@ -222,9 +238,9 @@ def _fill(
         slippage_per_share = fill_price - reference_price
         effective_bps = abs(slippage_per_share) / reference_price * Decimal(10_000)
         net_cash_effect = (
-            -(gross_notional + commission)
+            -(gross_notional + commission + fees)
             if order.side is OrderSide.BUY
-            else gross_notional - commission
+            else gross_notional - commission - fees
         )
     fill_id = _stable_id(
         {
@@ -247,6 +263,7 @@ def _fill(
         slippage_basis_points=effective_bps,
         gross_notional=gross_notional,
         commission=commission,
+        fees=fees,
         net_cash_effect=net_cash_effect,
         strategy_id=order.strategy_id,
         strategy_configuration_id=order.strategy_configuration_id,
@@ -274,7 +291,9 @@ def _signal_records(
     return tuple(records)
 
 
-def _open_trade_record(run_id: str, open_trade: _OpenTrade) -> TradeRecord:
+def _open_trade_record(
+    run_id: str, open_trade: _OpenTrade, strategy_implementation_version: str
+) -> TradeRecord:
     fill = open_trade.fill
     trade_id = _stable_id(
         {"run_id": run_id, "record_type": "trade", "entry_fill_id": fill.fill_id}
@@ -289,17 +308,20 @@ def _open_trade_record(run_id: str, open_trade: _OpenTrade) -> TradeRecord:
         entry_price=fill.fill_price,
         entry_quantity=fill.quantity,
         entry_commission=fill.commission,
+        entry_fees=fill.fees,
         exit_signal_id=None,
         exit_order_id=None,
         exit_fill_id=None,
         exit_session=None,
         exit_price=None,
         exit_commission=None,
+        exit_fees=None,
         gross_profit_loss=None,
         net_profit_loss=None,
         return_percentage=None,
         holding_period_sessions=None,
         strategy_id=fill.strategy_id,
+        strategy_implementation_version=strategy_implementation_version,
         strategy_configuration_id=fill.strategy_configuration_id,
         is_open=True,
     )
@@ -317,6 +339,7 @@ def run_backtest(
     if initiated_at is not None and initiated_at.tzinfo is None:
         raise InvalidSignalError("initiated_at must include a timezone")
     strategy_configuration = strategy.configuration()
+    strategy_implementation_version = strategy.implementation_version
     run_id = _stable_id(
         {
             "component": "quantforge_backtest",
@@ -328,6 +351,7 @@ def run_backtest(
             },
             "strategy": {
                 "strategy_id": strategy.name,
+                "strategy_implementation_version": strategy_implementation_version,
                 "strategy_configuration_id": strategy.configuration_id,
                 "configuration": strategy_configuration,
             },
@@ -394,6 +418,7 @@ def run_backtest(
                     )
                     continue
                 commission = _commission(config, quantity, fill_price)
+                fees = _fees(config, OrderSide.BUY, quantity, fill_price)
                 order = _base_order(
                     run_id,
                     signal,
@@ -402,11 +427,17 @@ def run_backtest(
                     reason=None,
                 )
                 fill = _fill(
-                    run_id, order, bar.session_date, bar.open, fill_price, commission
+                    run_id,
+                    order,
+                    bar.session_date,
+                    bar.open,
+                    fill_price,
+                    commission,
+                    fees,
                 )
                 with arithmetic():
                     next_cash = cash + fill.net_cash_effect
-                    total_entry_cost = fill.gross_notional + fill.commission
+                    total_entry_cost = fill.gross_notional + fill.commission + fill.fees
                 if next_cash < 0:
                     raise PortfolioAccountingError("purchase would make cash negative")
                 cash = next_cash
@@ -425,6 +456,7 @@ def run_backtest(
                 quantity = shares
                 fill_price = _slipped_price(config, bar.open, OrderSide.SELL)
                 commission = _commission(config, quantity, fill_price)
+                fees = _fees(config, OrderSide.SELL, quantity, fill_price)
                 order = _base_order(
                     run_id,
                     signal,
@@ -433,7 +465,13 @@ def run_backtest(
                     reason=None,
                 )
                 fill = _fill(
-                    run_id, order, bar.session_date, bar.open, fill_price, commission
+                    run_id,
+                    order,
+                    bar.session_date,
+                    bar.open,
+                    fill_price,
+                    commission,
+                    fees,
                 )
                 with arithmetic():
                     next_cash = cash + fill.net_cash_effect
@@ -441,7 +479,11 @@ def run_backtest(
                         fill.fill_price - open_trade.fill.fill_price
                     ) * Decimal(quantity)
                     net_profit_loss = (
-                        gross_profit_loss - open_trade.fill.commission - fill.commission
+                        gross_profit_loss
+                        - open_trade.fill.commission
+                        - open_trade.fill.fees
+                        - fill.commission
+                        - fill.fees
                     )
                     trade_return = net_profit_loss / open_trade.total_entry_cost
                 if next_cash < 0:
@@ -473,12 +515,14 @@ def run_backtest(
                         entry_price=open_trade.fill.fill_price,
                         entry_quantity=open_trade.fill.quantity,
                         entry_commission=open_trade.fill.commission,
+                        entry_fees=open_trade.fill.fees,
                         exit_signal_id=signal.signal_id,
                         exit_order_id=order.order_id,
                         exit_fill_id=fill.fill_id,
                         exit_session=fill.execution_session,
                         exit_price=fill.fill_price,
                         exit_commission=fill.commission,
+                        exit_fees=fill.fees,
                         gross_profit_loss=gross_profit_loss,
                         net_profit_loss=net_profit_loss,
                         return_percentage=trade_return,
@@ -487,6 +531,9 @@ def run_backtest(
                             - session_index[open_trade.fill.execution_session]
                         ),
                         strategy_id=fill.strategy_id,
+                        strategy_implementation_version=(
+                            strategy_implementation_version
+                        ),
                         strategy_configuration_id=fill.strategy_configuration_id,
                         is_open=False,
                     )
@@ -504,9 +551,12 @@ def run_backtest(
             equity = cash + market_value
             if equity != cash + market_value:
                 raise PortfolioAccountingError("equity invariant failed")
-            daily_return = (
-                Decimal(0) if index == 0 else equity / previous_equity - Decimal(1)
-            )
+            if index == 0:
+                daily_return = Decimal(0)
+            elif previous_equity == 0:
+                daily_return = None
+            else:
+                daily_return = equity / previous_equity - Decimal(1)
             running_peak = max(running_peak, equity)
             drawdown = equity / running_peak - Decimal(1)
             exposure_weight = Decimal(0) if shares == 0 else market_value / equity
@@ -580,7 +630,9 @@ def run_backtest(
     if len({fill.fill_id for fill in fills}) != len(fills):
         raise InvalidSignalError("duplicate fill identifiers")
     open_trades = (
-        () if open_trade is None else (_open_trade_record(run_id, open_trade),)
+        ()
+        if open_trade is None
+        else (_open_trade_record(run_id, open_trade, strategy_implementation_version),)
     )
     benchmark = run_buy_and_hold_benchmark(dataset, config, run_id)
     performance = calculate_performance(
@@ -605,6 +657,7 @@ def run_backtest(
         result_schema_version=config.result_schema_version,
         market_data=MarketDataMetadata.from_qf3(dataset.metadata),
         strategy_id=strategy.name,
+        strategy_implementation_version=strategy_implementation_version,
         strategy_configuration_id=strategy.configuration_id,
         strategy_configuration=strategy_configuration,
         strategy_warm_up_observations=strategy.warm_up_observations,

@@ -70,6 +70,8 @@ rows = output.to_rows()  # one row for every input session
 `quantforge.strategies.Strategy` is a structural protocol. A strategy declares:
 
 - its stable identifier and immutable parameters;
+- an explicit implementation version that changes when decision-relevant
+  strategy code changes;
 - required market fields and owned indicator definitions;
 - the maximum observations required by its indicators;
 - asset assumptions and a timing convention;
@@ -92,6 +94,12 @@ values exactly; for example, JSON `true` is not interchangeable with integer
 `1`. A component configuration is canonical-JSON encoded and SHA-256 hashed, so
 equivalent values such as `Decimal("0.50")` and `Decimal("0.5")` receive the same
 identity regardless of the caller's active decimal context.
+
+The implementation version is a required top-level field in the strategy's
+primitive configuration. It therefore participates in the configuration
+identity and QF-5 run identity even when parameters are unchanged. The reference
+moving-average crossover strategy currently declares implementation version
+`1`.
 
 ## Decision schema
 
@@ -240,6 +248,7 @@ engine-neutral state changes:
 ```python
 class CloseAboveAverageStrategy:
     name = "close_above_average"
+    implementation_version = "1"
     timing = ExecutionTiming.NEXT_SESSION_AFTER_CLOSE
 
     # Expose parameters, required_fields, required_indicators,

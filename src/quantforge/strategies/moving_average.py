@@ -45,6 +45,7 @@ class MovingAverageCrossoverStrategy:
     """
 
     name = "moving_average_crossover"
+    implementation_version = "1"
     timing = ExecutionTiming.NEXT_SESSION_AFTER_CLOSE
     asset_assumptions = ("single stock or ETF symbol", "long-only")
 
@@ -91,6 +92,7 @@ class MovingAverageCrossoverStrategy:
             "component_type": "strategy",
             "component_name": self.name,
             "contract_version": "1",
+            "implementation_version": self.implementation_version,
             "parameters": self._parameters.to_primitive(),
             "required_fields": [field.value for field in sorted(self.required_fields)],
             "required_indicators": [

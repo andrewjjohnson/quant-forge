@@ -3,6 +3,7 @@ from decimal import Decimal
 from quantforge.backtesting import (
     BacktestConfig,
     BasisPointSlippage,
+    ExplicitZeroFees,
     PerShareCommission,
     run_backtest,
 )
@@ -29,6 +30,7 @@ def test_local_spy_dataset_runs_qf4_strategy_end_to_end() -> None:
         BacktestConfig(
             Decimal("100000"),
             PerShareCommission(Decimal("0.005"), minimum=Decimal("1")),
+            ExplicitZeroFees(),
             BasisPointSlippage(Decimal("5")),
         ),
     )

@@ -149,6 +149,7 @@ def test_output_supports_tabular_and_event_consumers_and_json_serialization() ->
     assert chronological == output.decisions
     assert json.loads(json.dumps(output.to_primitive()))["contract_version"] == "1"
     assert output.market_data.adjustment_mode == "split_adjusted"
+    assert strategy.configuration()["implementation_version"] == "1"
 
 
 def test_future_bars_do_not_change_historical_signals() -> None:

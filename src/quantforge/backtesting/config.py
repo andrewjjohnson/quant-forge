@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import cast
 
 from quantforge.backtesting._arithmetic import arithmetic_configuration, decimal_from
-from quantforge.backtesting.costs import CommissionModel, SlippageModel
+from quantforge.backtesting.costs import CommissionModel, FeeModel, SlippageModel
 from quantforge.backtesting.errors import InvalidBacktestConfigurationError
 from quantforge.configuration import (
     PrimitiveMapping,
@@ -70,6 +70,7 @@ class BacktestConfig:
 
     initial_capital: Decimal
     commission: CommissionModel
+    fees: FeeModel
     slippage: SlippageModel
     execution: NextSessionOpenExecution = NextSessionOpenExecution()
     sizing: DiscreteTargetWeightSizing = DiscreteTargetWeightSizing()
@@ -104,6 +105,7 @@ class BacktestConfig:
                 "annualization factor must be a positive integer"
             )
         commission = cast(object, self.commission)
+        fees = cast(object, self.fees)
         slippage = cast(object, self.slippage)
         execution = cast(object, self.execution)
         sizing = cast(object, self.sizing)
@@ -112,6 +114,10 @@ class BacktestConfig:
         if commission is None or not callable(getattr(commission, "calculate", None)):
             raise InvalidBacktestConfigurationError(
                 "an explicit commission model is required"
+            )
+        if fees is None or not callable(getattr(fees, "calculate", None)):
+            raise InvalidBacktestConfigurationError(
+                "an explicit transaction-fee model is required"
             )
         if slippage is None or not callable(getattr(slippage, "apply", None)):
             raise InvalidBacktestConfigurationError(
@@ -139,6 +145,7 @@ class BacktestConfig:
             configuration_identity(
                 {
                     "commission": self.commission.configuration(),
+                    "fees": self.fees.configuration(),
                     "slippage": self.slippage.configuration(),
                 }
             )
@@ -152,6 +159,7 @@ class BacktestConfig:
             "initial_capital": decimal_to_primitive(self.initial_capital),
             "execution": self.execution.to_primitive(),
             "commission": self.commission.configuration(),
+            "fees": self.fees.configuration(),
             "slippage": self.slippage.configuration(),
             "sizing": self.sizing.to_primitive(),
             "annual_risk_free_rate": decimal_to_primitive(self.annual_risk_free_rate),
