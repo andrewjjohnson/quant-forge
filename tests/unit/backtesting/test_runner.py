@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import UTC, date, datetime, tzinfo
 from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 from pathlib import Path
 from typing import cast
@@ -16,6 +16,7 @@ from quantforge.backtesting import (
     ExplicitZeroFees,
     FixedCommission,
     InvalidMarketDataError,
+    InvalidSignalError,
     OrderSide,
     OrderStatus,
     ResultExportError,
@@ -49,6 +50,20 @@ GOLDEN_PATH = (
     / "backtesting"
     / "deterministic_moving_average.json"
 )
+
+
+class UndefinedOffsetTimezone(tzinfo):
+    def utcoffset(self, date_time: datetime | None) -> None:
+        del date_time
+        return None
+
+    def dst(self, date_time: datetime | None) -> None:
+        del date_time
+        return None
+
+    def tzname(self, date_time: datetime | None) -> str:
+        del date_time
+        return "undefined-offset"
 
 
 def configured_result(
@@ -156,6 +171,47 @@ def test_repeated_equivalent_inputs_replay_identically() -> None:
     assert first.run_id == second.run_id
     assert first.to_primitive() == second.to_primitive()
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
+
+
+@pytest.mark.parametrize(
+    "initiated_at",
+    [
+        datetime(2024, 7, 15, 12),
+        datetime(2024, 7, 15, 12, tzinfo=UndefinedOffsetTimezone()),
+    ],
+)
+def test_initiation_timestamp_requires_a_defined_utc_offset(
+    initiated_at: datetime,
+) -> None:
+    with pytest.raises(InvalidSignalError, match="defined UTC offset"):
+        run_backtest(
+            make_dataset(PRICES),
+            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+            BacktestConfig(
+                Decimal(100),
+                FixedCommission(Decimal(1)),
+                ExplicitZeroFees(),
+                BasisPointSlippage(Decimal(100)),
+            ),
+            initiated_at=initiated_at,
+        )
+
+
+def test_initiation_timestamp_preserves_its_defined_utc_offset() -> None:
+    initiated_at = datetime(2024, 7, 15, 12, tzinfo=UTC)
+    result = run_backtest(
+        make_dataset(PRICES),
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(100)),
+        ),
+        initiated_at=initiated_at,
+    )
+
+    assert result.manifest_primitive()["initiated_at"] == "2024-07-15T12:00:00+00:00"
 
 
 def test_backtest_ignores_the_callers_ambient_decimal_context() -> None:

@@ -337,8 +337,8 @@ def run_backtest(
 ) -> BacktestResult:
     """Run QF-4 decisions through deterministic next-open execution and accounting."""
     _validate_dataset(dataset)
-    if initiated_at is not None and initiated_at.tzinfo is None:
-        raise InvalidSignalError("initiated_at must include a timezone")
+    if initiated_at is not None and initiated_at.utcoffset() is None:
+        raise InvalidSignalError("initiated_at must include a defined UTC offset")
     strategy_configuration_snapshot = PrimitiveMappingSnapshot.capture(
         strategy.configuration()
     )
