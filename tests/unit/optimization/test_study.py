@@ -669,6 +669,34 @@ def test_result_loading_rejects_trials_outside_the_candidate_set(
         study.resume()
 
 
+@pytest.mark.parametrize("tamper", ["candidate", "metrics"])
+def test_expected_trial_files_must_match_candidate_and_qf5_artifact(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    study = GridSearchStudy(
+        _dataset("tampered-expected-trial"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    result = study.run()
+    successful = result.successful_trials[0]
+    trial_path = study.store.trial_path(successful.trial_id)
+    trial = json.loads(trial_path.read_text(encoding="utf-8"))
+    if tamper == "candidate":
+        trial["combination_id"] = "e" * 64
+        expected_message = "expected candidate"
+    else:
+        trial["metrics"]["total_return"] = "999"
+        expected_message = "linked QF-5 artifact"
+    trial_path.write_text(json.dumps(trial), encoding="utf-8")
+
+    with pytest.raises(StudyPersistenceError, match=expected_message):
+        study.load_result()
+    with pytest.raises(StudyPersistenceError, match=expected_message):
+        study.resume()
+
+
 def test_grid_limit_fails_before_execution_with_multiplicative_count(
     tmp_path: Path,
 ) -> None:

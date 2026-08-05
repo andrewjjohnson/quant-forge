@@ -251,7 +251,11 @@ are accepted only when their manifest carries the expected immutable run ID.
 Before scheduling, QF-6 rejects any persisted trial ID outside the study's exact
 candidate set. Before ranking, result loading, or export, the persisted IDs must
 also cover that complete candidate set, so extra files cannot inflate results or
-reach stability analysis.
+reach stability analysis. Every loaded record must also match its candidate's
+combination index, parameters, strategy configuration, dataset, and backtest
+configuration. Successful compact metrics and run provenance are cross-checked
+against the record's exact immutable QF-5 artifact manifest before they can be
+skipped on resume or used by ranking and stability analysis.
 
 ```text
 reports/optimization/<study-id>/

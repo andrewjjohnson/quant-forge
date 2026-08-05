@@ -114,6 +114,10 @@ class GridSearchStudy:
                 "allow_large_grid=True only after reviewing the multiplicative grid"
             )
         self.dataset = dataset
+        self._expected_market_data = MarketDataMetadata.from_qf3(
+            dataset.metadata,
+            bars_fingerprint=fingerprint_market_bars(dataset.bars),
+        )
         self.strategy_factory = strategy_factory
         self.config = config
         self._backtest_runner = backtest_runner
@@ -131,9 +135,9 @@ class GridSearchStudy:
             )
         self._identity_inputs = self._scientific_definition()
         self.study_id = configuration_identity(self._identity_inputs)
-        self._expected_trial_ids = frozenset(
-            self._trial_id(candidate) for candidate in self._candidates
-        )
+        self._expected_candidates_by_trial_id = {
+            self._trial_id(candidate): candidate for candidate in self._candidates
+        }
         self.store = FileStudyStore(
             config.persistence.output_root,
             self.study_id,
@@ -350,11 +354,7 @@ class GridSearchStudy:
         running: TrialRecord,
         result: BacktestResult,
     ) -> None:
-        expected_market_data = MarketDataMetadata.from_qf3(
-            self.dataset.metadata,
-            bars_fingerprint=fingerprint_market_bars(self.dataset.bars),
-        )
-        if result.market_data != expected_market_data:
+        if result.market_data != self._expected_market_data:
             raise StudyPersistenceError(
                 "QF-5 result market data does not match the study dataset"
             )
@@ -507,6 +507,128 @@ class GridSearchStudy:
                             halted = True
                             break
 
+    def _validate_success_artifact(self, trial: TrialRecord) -> None:
+        qf5_run_id = trial.qf5_run_id
+        artifact_location = trial.artifact_location
+        if not qf5_run_id or not artifact_location or trial.metrics is None:
+            raise StudyPersistenceError(
+                "successful persisted trial is missing QF-5 result provenance"
+            )
+        expected_location = (Path("backtests") / trial.trial_id / qf5_run_id).as_posix()
+        if artifact_location != expected_location:
+            raise StudyPersistenceError(
+                "successful persisted trial has an incompatible artifact location"
+            )
+        try:
+            manifest = load_backtest_manifest(
+                self.study_path / expected_location / "manifest.json"
+            )
+        except BacktestError as error:
+            raise StudyPersistenceError(
+                "successful persisted trial has an invalid QF-5 artifact"
+            ) from error
+        strategy_value = cast(object, manifest.get("strategy"))
+        if not isinstance(strategy_value, dict):
+            raise StudyPersistenceError(
+                "successful persisted trial has an invalid QF-5 strategy manifest"
+            )
+        strategy = cast(dict[object, object], strategy_value)
+        configuration_value = strategy.get("configuration")
+        if not isinstance(configuration_value, dict):
+            raise StudyPersistenceError(
+                "successful persisted trial has an invalid QF-5 strategy configuration"
+            )
+        configuration = cast(dict[object, object], configuration_value)
+        try:
+            manifest_strategy_configuration_id = configuration_identity(
+                cast(PrimitiveMapping, configuration_value)
+            )
+        except (TypeError, ValueError) as error:
+            raise StudyPersistenceError(
+                "successful persisted trial has unstable QF-5 strategy provenance"
+            ) from error
+        if (
+            manifest.get("run_id") != qf5_run_id
+            or manifest.get("engine_version") != ENGINE_VERSION
+            or manifest.get("result_schema_version") != RESULT_SCHEMA_VERSION
+            or manifest.get("market_data") != trial.dataset
+            or manifest.get("backtest_configuration") != trial.backtest_configuration
+            or manifest.get("performance") != trial.metrics
+            or strategy.get("strategy_id") != trial.strategy_name
+            or strategy.get("strategy_implementation_version") != trial.strategy_version
+            or strategy.get("strategy_configuration_id")
+            != trial.strategy_configuration_id
+            or manifest_strategy_configuration_id != trial.strategy_configuration_id
+            or configuration.get("parameters") != trial.strategy_parameters
+        ):
+            raise StudyPersistenceError(
+                "successful persisted trial does not match its linked QF-5 artifact"
+            )
+
+    def _validate_trial_contents(
+        self,
+        trial: TrialRecord,
+        candidate: CombinationCandidate,
+    ) -> None:
+        expected = self._base_record(candidate, trial.status)
+        expected_dataset = (
+            self._expected_market_data.to_primitive()
+            if trial.status is TrialStatus.SUCCEEDED
+            else expected.dataset
+        )
+        if (
+            trial.schema_version != expected.schema_version
+            or trial.study_id != expected.study_id
+            or trial.trial_id != expected.trial_id
+            or trial.combination_id != expected.combination_id
+            or trial.combination_index != expected.combination_index
+            or trial.parameters != expected.parameters
+            or trial.strategy_parameters != expected.strategy_parameters
+            or trial.strategy_name != expected.strategy_name
+            or trial.strategy_version != expected.strategy_version
+            or trial.strategy_configuration_id != expected.strategy_configuration_id
+            or trial.dataset != expected_dataset
+            or trial.backtest_configuration != expected.backtest_configuration
+        ):
+            raise StudyPersistenceError(
+                "persisted trial contents do not match the expected candidate"
+            )
+        if isinstance(candidate, CombinationExclusion):
+            if (
+                trial.status is not TrialStatus.EXCLUDED
+                or trial.exclusion_code != candidate.reason_code
+                or trial.exclusion_reason != candidate.reason
+            ):
+                raise StudyPersistenceError(
+                    "persisted exclusion does not match the expected candidate"
+                )
+        elif trial.status is TrialStatus.EXCLUDED:
+            raise StudyPersistenceError(
+                "persisted valid candidate cannot have excluded status"
+            )
+        if trial.status is TrialStatus.SUCCEEDED:
+            if any(
+                value is not None
+                for value in (
+                    trial.failure_category,
+                    trial.failure_type,
+                    trial.failure_message,
+                    trial.exclusion_code,
+                    trial.exclusion_reason,
+                )
+            ):
+                raise StudyPersistenceError(
+                    "successful persisted trial contains incompatible outcome fields"
+                )
+            self._validate_success_artifact(trial)
+        elif any(
+            value is not None
+            for value in (trial.metrics, trial.qf5_run_id, trial.artifact_location)
+        ):
+            raise StudyPersistenceError(
+                "non-successful persisted trial contains QF-5 result fields"
+            )
+
     def _load_validated_trials(
         self,
         *,
@@ -514,15 +636,19 @@ class GridSearchStudy:
     ) -> tuple[TrialRecord, ...]:
         trials = self.store.load_trials()
         persisted_trial_ids = frozenset(trial.trial_id for trial in trials)
-        if persisted_trial_ids.difference(self._expected_trial_ids):
+        expected_trial_ids = frozenset(self._expected_candidates_by_trial_id)
+        if persisted_trial_ids.difference(expected_trial_ids):
             raise StudyPersistenceError(
                 "persisted trial IDs include records outside the expected candidate set"
             )
-        if require_complete and self._expected_trial_ids.difference(
-            persisted_trial_ids
-        ):
+        if require_complete and expected_trial_ids.difference(persisted_trial_ids):
             raise StudyPersistenceError(
                 "persisted trial IDs do not cover the complete candidate set"
+            )
+        for trial in trials:
+            self._validate_trial_contents(
+                trial,
+                self._expected_candidates_by_trial_id[trial.trial_id],
             )
         return trials
 
