@@ -30,6 +30,7 @@ from quantforge.optimization.factories import (
 from quantforge.optimization.models import (
     ExecutionConfig,
     ExecutionMode,
+    FailedTrialAttempt,
     FilePersistenceConfig,
     GridSearchConfig,
     HardMetricConstraint,
@@ -74,6 +75,7 @@ __all__ = [
     "CustomParameterConstraint",
     "ExecutionConfig",
     "ExecutionMode",
+    "FailedTrialAttempt",
     "FilePersistenceConfig",
     "FloatValues",
     "GridSearchConfig",

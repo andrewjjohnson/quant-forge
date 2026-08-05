@@ -307,11 +307,21 @@ class GridSearchStudy:
         return tuple(pending)
 
     def _write_running(self, candidate: ParameterCombination) -> TrialRecord:
+        existing = self.store.load_trial(self._trial_id(candidate))
+        failed_attempts = () if existing is None else existing.failed_attempts
+        if existing is not None and existing.status is TrialStatus.FAILED:
+            try:
+                failed_attempts = (*failed_attempts, existing.failed_attempt_snapshot())
+            except ValueError as error:
+                raise StudyPersistenceError(
+                    "cannot retry a failed trial with incomplete failure context"
+                ) from error
         record = self._base_record(
             candidate,
             TrialStatus.RUNNING,
             started_at=_utc_now(),
         )
+        record = replace(record, failed_attempts=failed_attempts)
         self.store.write_trial(record)
         return record
 
@@ -364,6 +374,7 @@ class GridSearchStudy:
             ),
             qf5_run_id=result.run_id,
             artifact_location=artifact_location,
+            failed_attempts=running.failed_attempts,
             started_at=running.started_at,
             finished_at=_utc_now(),
         )

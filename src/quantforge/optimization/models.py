@@ -481,6 +481,65 @@ class GridSearchConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class FailedTrialAttempt:
+    """Immutable diagnostic context for one completed failed attempt."""
+
+    attempt_number: int
+    failure_category: str
+    failure_type: str
+    failure_message: str
+    started_at: str | None
+    finished_at: str | None
+
+    def __post_init__(self) -> None:
+        attempt_number = cast(object, self.attempt_number)
+        if (
+            isinstance(attempt_number, bool)
+            or not isinstance(attempt_number, int)
+            or attempt_number < 1
+        ):
+            raise ValueError("archived trial attempt number must be positive")
+        if any(
+            not isinstance(cast(object, item), str)
+            for item in (
+                self.failure_category,
+                self.failure_type,
+                self.failure_message,
+            )
+        ):
+            raise ValueError("archived trial failure context must be text")
+        if any(
+            item is not None and not isinstance(cast(object, item), str)
+            for item in (self.started_at, self.finished_at)
+        ):
+            raise ValueError("archived trial attempt timestamps must be text or null")
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "attempt_number": self.attempt_number,
+            "status": TrialStatus.FAILED.value,
+            "failure_category": self.failure_category,
+            "failure_type": self.failure_type,
+            "failure_message": self.failure_message,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+        }
+
+    @classmethod
+    def from_primitive(cls, value: PrimitiveMapping) -> "FailedTrialAttempt":
+        if value.get("status") != TrialStatus.FAILED.value:
+            raise ValueError("archived trial attempt must have failed status")
+        return cls(
+            attempt_number=cast(int, value.get("attempt_number")),
+            failure_category=cast(str, value["failure_category"]),
+            failure_type=cast(str, value["failure_type"]),
+            failure_message=cast(str, value["failure_message"]),
+            started_at=cast(str | None, value.get("started_at")),
+            finished_at=cast(str | None, value.get("finished_at")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TrialRecord:
     """Persisted status and complete provenance for one Cartesian assignment."""
 
@@ -502,6 +561,7 @@ class TrialRecord:
     failure_category: str | None = None
     failure_type: str | None = None
     failure_message: str | None = None
+    failed_attempts: tuple[FailedTrialAttempt, ...] = ()
     exclusion_code: str | None = None
     exclusion_reason: str | None = None
     started_at: str | None = None
@@ -532,6 +592,26 @@ class TrialRecord:
             else self.metrics_snapshot.to_primitive()
         )
 
+    def failed_attempt_snapshot(self) -> FailedTrialAttempt:
+        """Capture the current failure before a configured retry begins."""
+        if self.status is not TrialStatus.FAILED or any(
+            item is None
+            for item in (
+                self.failure_category,
+                self.failure_type,
+                self.failure_message,
+            )
+        ):
+            raise ValueError("only a complete failed trial can be archived")
+        return FailedTrialAttempt(
+            attempt_number=len(self.failed_attempts) + 1,
+            failure_category=cast(str, self.failure_category),
+            failure_type=cast(str, self.failure_type),
+            failure_message=cast(str, self.failure_message),
+            started_at=self.started_at,
+            finished_at=self.finished_at,
+        )
+
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "schema_version": self.schema_version,
@@ -553,6 +633,9 @@ class TrialRecord:
             "failure_category": self.failure_category,
             "failure_type": self.failure_type,
             "failure_message": self.failure_message,
+            "failed_attempts": [
+                attempt.to_primitive() for attempt in self.failed_attempts
+            ],
             "exclusion_code": self.exclusion_code,
             "exclusion_reason": self.exclusion_reason,
             "started_at": self.started_at,
@@ -569,6 +652,7 @@ class TrialRecord:
             dataset_value = cast(object, value["dataset"])
             backtest_configuration_value = cast(object, value["backtest_configuration"])
             metrics_value = cast(object, value["metrics"])
+            failed_attempts_value = cast(object, value.get("failed_attempts", []))
             if not all(
                 isinstance(item, dict)
                 for item in (
@@ -581,6 +665,11 @@ class TrialRecord:
                 raise TypeError("trial object fields must be mappings")
             if metrics_value is not None and not isinstance(metrics_value, dict):
                 raise TypeError("trial metrics must be an object or null")
+            if not isinstance(failed_attempts_value, list):
+                raise TypeError("failed trial attempts must be a list of objects")
+            failed_attempt_items = cast(list[object], failed_attempts_value)
+            if any(not isinstance(item, dict) for item in failed_attempt_items):
+                raise TypeError("failed trial attempts must be a list of objects")
             parameters = cast(PrimitiveMapping, parameters_value)
             strategy_parameters = cast(PrimitiveMapping, strategy_parameters_value)
             dataset = cast(PrimitiveMapping, dataset_value)
@@ -618,6 +707,10 @@ class TrialRecord:
                 failure_category=cast(str | None, value["failure_category"]),
                 failure_type=cast(str | None, value["failure_type"]),
                 failure_message=cast(str | None, value["failure_message"]),
+                failed_attempts=tuple(
+                    FailedTrialAttempt.from_primitive(cast(PrimitiveMapping, attempt))
+                    for attempt in failed_attempt_items
+                ),
                 exclusion_code=cast(str | None, value["exclusion_code"]),
                 exclusion_reason=cast(str | None, value["exclusion_reason"]),
                 started_at=cast(str | None, value["started_at"]),

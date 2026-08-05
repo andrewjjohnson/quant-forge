@@ -71,6 +71,8 @@ def _ratio(numerator: Decimal | int, denominator: Decimal | int) -> Decimal:
 
 
 def _ceiling_fraction(count: int, fraction: Decimal) -> int:
+    if count == 0 or fraction == 0:
+        return 0
     with localcontext() as context:
         context.prec = 34
         value = (Decimal(count) * fraction).to_integral_value(rounding=ROUND_CEILING)

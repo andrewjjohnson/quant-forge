@@ -206,6 +206,10 @@ are not persisted.
 
 The default `retry_failed=False` means resume does not silently rerun failures.
 Set it before the initial study to make every later resume retry failed trials.
+Before a failed trial advances back to `RUNNING`, its category, exception type,
+sanitized message, and attempt timestamps are atomically appended to the trial's
+`failed_attempts` history. Later success, failure, or interruption therefore
+cannot erase prior attempt context, and the history is included in `trials.csv`.
 Persisted stale `RUNNING` trials are always retried because they have no complete
 result. State transitions are validated; successful and excluded records are
 immutable.
@@ -307,6 +311,8 @@ evidence and are labeled in the reason.
 trial inside the configured top objective fraction. It may be undefined. It is
 an in-sample descriptive recommendation only, not approval for paper or live
 trading. `best_objective` and `best_stability` remain independently visible.
+Setting either top-fraction threshold to zero selects no trials for that
+isolated-peak or robust-recommendation step.
 
 Parameter summaries preserve contract/candidate order and report, for every
 candidate value, successful count, eligible count, constraint-pass fraction,

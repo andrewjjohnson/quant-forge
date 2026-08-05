@@ -235,3 +235,42 @@ def test_stability_identifies_isolated_spike_without_zeroing_failed_neighbors() 
     assert spike.constraint_pass_fraction == Decimal("0.5")
     assert spike.is_isolated_peak
     assert spike.isolation_reason is not None
+
+
+def test_zero_top_fractions_select_no_trials() -> None:
+    ranking_config = RankingConfig(
+        MetricName.TOTAL_RETURN,
+        hard_constraints=(MinimumTrades(1), PositiveReturn()),
+    )
+    spike_trials, spike_candidates, search_space = _surface_trials(spike=True)
+    spike_outcome = analyze_stability(
+        spike_trials,
+        spike_candidates,
+        rank_trials(spike_trials, ranking_config),
+        search_space,
+        MovingAverageCrossoverFactory(),
+        ranking_config,
+        StabilityConfig(
+            minimum_eligible_neighbors=2,
+            isolated_peak_top_fraction=Decimal(0),
+            isolated_peak_relative_drop=Decimal("0.50"),
+            isolated_peak_maximum_constraint_pass_fraction=Decimal("0.50"),
+        ),
+    )
+    plateau_trials, plateau_candidates, search_space = _surface_trials(spike=False)
+    plateau_outcome = analyze_stability(
+        plateau_trials,
+        plateau_candidates,
+        rank_trials(plateau_trials, ranking_config),
+        search_space,
+        MovingAverageCrossoverFactory(),
+        ranking_config,
+        StabilityConfig(
+            minimum_eligible_neighbors=2,
+            stable_maximum_relative_dispersion=Decimal("0.10"),
+            robust_recommendation_top_fraction=Decimal(0),
+        ),
+    )
+
+    assert not any(item.is_isolated_peak for item in spike_outcome.summaries)
+    assert plateau_outcome.recommended_robust_trial_id is None

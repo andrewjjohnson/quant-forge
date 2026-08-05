@@ -138,6 +138,22 @@ class FileStudyStore:
                     f"invalid trial transition {existing.status.value} -> "
                     f"{record.status.value}"
                 )
+            expected_failed_attempts = existing.failed_attempts
+            if (
+                existing.status is TrialStatus.FAILED
+                and record.status is TrialStatus.RUNNING
+            ):
+                try:
+                    archived_failure = existing.failed_attempt_snapshot()
+                except ValueError as error:
+                    raise StudyPersistenceError(
+                        "cannot retry a failed trial with incomplete failure context"
+                    ) from error
+                expected_failed_attempts = (*expected_failed_attempts, archived_failure)
+            if record.failed_attempts != expected_failed_attempts:
+                raise InvalidTrialTransitionError(
+                    "trial transition must preserve complete failed-attempt history"
+                )
         _atomic_write(self.trial_path(record.trial_id), record.to_primitive())
 
     def load_trials(self) -> tuple[TrialRecord, ...]:

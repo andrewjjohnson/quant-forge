@@ -1,4 +1,6 @@
+import csv
 import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -30,7 +32,9 @@ from quantforge.optimization import (
     StabilityConfig,
     StudyPersistenceError,
     StudyResult,
+    TrialStatus,
 )
+from quantforge.optimization.errors import InvalidTrialTransitionError
 from quantforge.optimization.spaces import IntegerValues
 from quantforge.strategies import Strategy
 
@@ -204,16 +208,18 @@ def test_sequential_execution_persists_failures_and_resume_skips_completed(
 
 
 def test_failed_trial_retry_policy_is_explicit(tmp_path: Path) -> None:
-    calls = 0
+    calls_by_strategy: dict[str, int] = {}
 
-    def failing_runner(
+    def retrying_runner(
         dataset: MarketDataset,
         strategy: Strategy,
         config: BacktestConfig,
     ) -> BacktestResult:
-        nonlocal calls
-        calls += 1
-        raise RuntimeError("always fails")
+        attempt = calls_by_strategy.get(strategy.configuration_id, 0) + 1
+        calls_by_strategy[strategy.configuration_id] = attempt
+        if attempt == 1:
+            raise RuntimeError("first attempt fails")
+        return run_backtest(dataset, strategy, config)
 
     study = GridSearchStudy(
         _dataset(),
@@ -223,14 +229,72 @@ def test_failed_trial_retry_policy_is_explicit(tmp_path: Path) -> None:
             execution=ExecutionConfig(retry_failed=True),
             fast_values=(2,),
         ),
-        backtest_runner=failing_runner,
+        backtest_runner=retrying_runner,
     )
     first = study.run()
-    calls_after_first = calls
+    invalid_retry = replace(
+        first.failed_trials[0],
+        status=TrialStatus.RUNNING,
+        failure_category=None,
+        failure_type=None,
+        failure_message=None,
+        finished_at=None,
+    )
+    with pytest.raises(InvalidTrialTransitionError, match="failed-attempt history"):
+        study.store.write_trial(invalid_retry)
+
+    def interrupting_runner(
+        dataset: MarketDataset,
+        strategy: Strategy,
+        config: BacktestConfig,
+    ) -> BacktestResult:
+        raise KeyboardInterrupt
+
+    interrupted_study = GridSearchStudy(
+        _dataset(),
+        MovingAverageCrossoverFactory(),
+        _study_config(
+            tmp_path,
+            execution=ExecutionConfig(retry_failed=True),
+            fast_values=(2,),
+        ),
+        backtest_runner=interrupting_runner,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        interrupted_study.resume()
+    interrupted = tuple(
+        trial
+        for trial in interrupted_study.store.load_trials()
+        if trial.status is TrialStatus.RUNNING
+    )
+
+    assert len(interrupted) == 1
+    assert interrupted[0].failed_attempts[0].failure_message == "first attempt fails"
+
     second = study.resume()
 
-    assert len(first.failed_trials) == len(second.failed_trials) == 2
-    assert calls == calls_after_first * 2
+    assert len(first.failed_trials) == 2
+    assert len(second.successful_trials) == 2
+    assert not second.failed_trials
+    assert set(calls_by_strategy.values()) == {2}
+    for trial in second.successful_trials:
+        assert trial.failure_category is None
+        assert len(trial.failed_attempts) == 1
+        failed_attempt = trial.failed_attempts[0]
+        assert failed_attempt.attempt_number == 1
+        assert failed_attempt.failure_category == "unexpected_implementation_failure"
+        assert failed_attempt.failure_type == "RuntimeError"
+        assert failed_attempt.failure_message == "first attempt fails"
+        assert failed_attempt.started_at is not None
+        assert failed_attempt.finished_at is not None
+    with (study.study_path / "trials.csv").open(encoding="utf-8", newline="") as stream:
+        trial_rows = tuple(csv.DictReader(stream))
+    assert all(
+        json.loads(row["failed_attempts"])[0]["failure_message"]
+        == "first attempt fails"
+        for row in trial_rows
+        if row["status"] == TrialStatus.SUCCEEDED.value
+    )
 
 
 def test_process_and_sequential_execution_have_equivalent_final_results(

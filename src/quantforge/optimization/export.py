@@ -112,6 +112,9 @@ def _trial_export_row(trial: TrialRecord) -> PrimitiveMapping:
         "failure_category": trial.failure_category,
         "failure_type": trial.failure_type,
         "failure_message": trial.failure_message,
+        "failed_attempts": [
+            attempt.to_primitive() for attempt in trial.failed_attempts
+        ],
         "exclusion_code": trial.exclusion_code,
         "exclusion_reason": trial.exclusion_reason,
         "started_at": trial.started_at,
@@ -144,6 +147,7 @@ _TRIAL_FIELDS = (
     "failure_category",
     "failure_type",
     "failure_message",
+    "failed_attempts",
     "exclusion_code",
     "exclusion_reason",
     "started_at",
