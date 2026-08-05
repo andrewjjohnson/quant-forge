@@ -240,8 +240,10 @@ immutable.
 The manifest is written atomically before trial records. Parent-owned writes use
 a same-directory temporary file, `fsync`, and atomic replacement. Corrupt JSON,
 wrong identities, incompatible manifests, and invalid state transitions fail
-clearly. Existing successful QF-5 artifacts are accepted only when their
-manifest carries the expected immutable run ID.
+clearly. A non-empty study directory without `manifest.json` is treated as an
+orphaned or corrupt store and is rejected for both fresh runs and resume; it is
+never initialized over existing trial files. Existing successful QF-5 artifacts
+are accepted only when their manifest carries the expected immutable run ID.
 
 ```text
 reports/optimization/<study-id>/

@@ -96,12 +96,25 @@ class FileStudyStore:
                     f"study already exists; use resume: {self.study_path}"
                 )
             return
+        if self.study_path.exists():
+            try:
+                is_orphaned = not self.study_path.is_dir() or (
+                    next(self.study_path.iterdir(), None) is not None
+                )
+            except OSError as error:
+                raise StudyPersistenceError(
+                    f"failed to inspect study directory: {self.study_path}"
+                ) from error
+            if is_orphaned:
+                raise StudyPersistenceError(
+                    "study directory is non-empty but its manifest is missing; "
+                    f"restore or remove the orphaned directory: {self.study_path}"
+                )
         if resume:
             raise StudyPersistenceError(
                 "cannot resume because the study manifest does not exist: "
                 f"{self.study_path}"
             )
-        self.trials_path.mkdir(parents=True, exist_ok=True)
         _atomic_write(self.manifest_path, manifest)
 
     def load_manifest(self) -> PrimitiveMapping:

@@ -577,6 +577,28 @@ def test_export_reconstructs_from_trials_and_rejects_corruption(tmp_path: Path) 
         study.load_result()
 
 
+@pytest.mark.parametrize("resume", [False, True])
+def test_missing_manifest_rejects_a_nonempty_orphaned_study_directory(
+    tmp_path: Path,
+    resume: bool,
+) -> None:
+    study = GridSearchStudy(
+        _dataset("orphaned-store"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    orphaned_trial = study.store.trial_path("orphaned-trial")
+    orphaned_trial.parent.mkdir(parents=True)
+    orphaned_trial.write_text("{}\n", encoding="utf-8")
+
+    action = study.resume if resume else study.run
+    with pytest.raises(StudyPersistenceError, match="manifest is missing"):
+        action()
+
+    assert not study.store.manifest_path.exists()
+    assert orphaned_trial.read_text(encoding="utf-8") == "{}\n"
+
+
 def test_grid_limit_fails_before_execution_with_multiplicative_count(
     tmp_path: Path,
 ) -> None:
