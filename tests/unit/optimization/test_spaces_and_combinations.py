@@ -4,10 +4,12 @@ from typing import cast
 
 import pytest
 
+from quantforge.configuration import PrimitiveMapping
 from quantforge.optimization import (
     BooleanValues,
     CategoricalValues,
     CombinationExclusion,
+    CustomParameterConstraint,
     FloatValues,
     IntegerValues,
     InvalidSearchSpaceError,
@@ -18,6 +20,21 @@ from quantforge.optimization import (
     ParameterSearchSpace,
     iter_combination_candidates,
 )
+from quantforge.optimization.spaces import SearchValue
+from quantforge.strategies import Strategy
+
+
+class _MismatchedIdentityFactory(MovingAverageCrossoverFactory):
+    strategy_name = "mismatched_strategy_identity"
+
+
+class _ExplodingFactory(MovingAverageCrossoverFactory):
+    def build(self, parameters: PrimitiveMapping) -> Strategy:
+        raise RuntimeError("broken factory implementation")
+
+
+def _fast_window_is_two(parameters: dict[str, SearchValue]) -> bool:
+    return parameters["fast_window"] == 2
 
 
 def test_typed_value_spaces_normalize_and_expand_deterministically() -> None:
@@ -143,6 +160,46 @@ def test_real_parameter_model_excludes_invalid_values_before_backtesting() -> No
     assert isinstance(candidates[0], CombinationExclusion)
     assert candidates[0].reason_code == "invalid_strategy_parameters"
     assert not isinstance(candidates[1], CombinationExclusion)
+
+
+def test_factory_contract_invariant_failures_abort_combination_generation() -> None:
+    search_space = ParameterSearchSpace(
+        {
+            "fast_window": IntegerValues([2]),
+            "slow_window": IntegerValues([3]),
+        }
+    )
+    with pytest.raises(InvalidStudyConfigurationError, match="incompatible identity"):
+        tuple(
+            iter_combination_candidates(
+                _MismatchedIdentityFactory(),
+                search_space,
+                (),
+            )
+        )
+    with pytest.raises(RuntimeError, match="broken factory implementation"):
+        tuple(iter_combination_candidates(_ExplodingFactory(), search_space, ()))
+
+
+def test_custom_constraints_require_true_module_level_predicates() -> None:
+    constraint = CustomParameterConstraint(
+        "fast_window_is_two",
+        "1",
+        _fast_window_is_two,
+        ("fast_window",),
+    )
+
+    def nested_predicate(parameters: dict[str, SearchValue]) -> bool:
+        return parameters["fast_window"] == 2
+
+    assert constraint.to_primitive()["predicate"] == (f"{__name__}._fast_window_is_two")
+    with pytest.raises(InvalidStudyConfigurationError, match="module-level"):
+        CustomParameterConstraint(
+            "nested",
+            "1",
+            nested_predicate,
+            ("fast_window",),
+        )
 
 
 def test_constraints_fail_early_for_unknown_names_and_support_constants() -> None:

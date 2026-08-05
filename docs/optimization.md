@@ -147,13 +147,16 @@ Constraints execute before QF-5. `ParameterComparison` supports comparisons
 against another searched parameter or a constant. Convenience constraints
 include `ParameterLessThan` and `ParameterAtMost`. A named, versioned
 `CustomParameterConstraint` is available for uncommon deterministic predicates;
-anonymous lambdas are rejected because they have no durable identity.
+anonymous lambdas and nested local functions are rejected because they have no
+durable module-level identity.
 
 Unknown parameter names and malformed constraints fail study construction.
 Every assignment that passes declarative constraints is then passed through the
 factory's actual QF-4 parameter constructor. Parameter-model failures become
 structured `EXCLUDED` records with exact searched parameters and a concise
-reason. Exclusions are not failed backtests and never invoke QF-5.
+reason. Factory identity, version, configuration, and unexpected implementation
+failures abort study construction rather than being mislabeled as parameter
+exclusions. Exclusions are not failed backtests and never invoke QF-5.
 
 ## Deterministic identities
 

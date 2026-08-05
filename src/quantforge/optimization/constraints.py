@@ -158,11 +158,17 @@ class CustomParameterConstraint:
     def __post_init__(self) -> None:
         predicate_name = getattr(self.predicate, "__name__", "")
         predicate_module = getattr(self.predicate, "__module__", "")
+        predicate_qualname = getattr(self.predicate, "__qualname__", "")
         if not self.name.strip() or not self.version.strip():
             raise InvalidStudyConfigurationError(
                 "custom constraints require nonempty names and versions"
             )
-        if predicate_name == "<lambda>" or not predicate_name or not predicate_module:
+        if (
+            predicate_name == "<lambda>"
+            or not predicate_name
+            or not predicate_module
+            or predicate_qualname != predicate_name
+        ):
             raise InvalidStudyConfigurationError(
                 "custom constraints require a named module-level predicate"
             )

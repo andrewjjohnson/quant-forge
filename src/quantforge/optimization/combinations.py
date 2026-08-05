@@ -17,6 +17,7 @@ from quantforge.optimization.spaces import (
     ParameterSearchSpace,
     search_value_to_primitive,
 )
+from quantforge.strategies import InvalidStrategyParametersError
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,32 +171,7 @@ def iter_combination_candidates(
 
         try:
             strategy = strategy_factory.build(primitive_parameters.copy())
-            if strategy.name != strategy_factory.strategy_name:
-                raise InvalidStudyConfigurationError(
-                    "factory produced a strategy with an incompatible identity"
-                )
-            if strategy.implementation_version != strategy_factory.strategy_version:
-                raise InvalidStudyConfigurationError(
-                    "factory produced a strategy with an incompatible version"
-                )
-            strategy_configuration = strategy.configuration()
-            expected_configuration_id = configuration_identity(strategy_configuration)
-            if strategy.configuration_id != expected_configuration_id:
-                raise InvalidStudyConfigurationError(
-                    "factory strategy configuration identity is stale or invalid"
-                )
-            strategy_parameters_value = cast(
-                object, strategy_configuration.get("parameters")
-            )
-            if not isinstance(strategy_parameters_value, dict):
-                raise InvalidStudyConfigurationError(
-                    "strategy configuration must contain primitive parameters"
-                )
-            strategy_parameters = cast(PrimitiveMapping, strategy_parameters_value)
-            strategy_parameters_snapshot = PrimitiveMappingSnapshot.capture(
-                strategy_parameters
-            )
-        except Exception as error:
+        except InvalidStrategyParametersError as error:
             message = " ".join(str(error).split())[:500] or error.__class__.__name__
             yield CombinationExclusion(
                 index=index,
@@ -206,6 +182,31 @@ def iter_combination_candidates(
                 reason=f"{error.__class__.__name__}: {message}",
             )
             continue
+        if strategy.name != strategy_factory.strategy_name:
+            raise InvalidStudyConfigurationError(
+                "factory produced a strategy with an incompatible identity"
+            )
+        if strategy.implementation_version != strategy_factory.strategy_version:
+            raise InvalidStudyConfigurationError(
+                "factory produced a strategy with an incompatible version"
+            )
+        strategy_configuration = strategy.configuration()
+        expected_configuration_id = configuration_identity(strategy_configuration)
+        if strategy.configuration_id != expected_configuration_id:
+            raise InvalidStudyConfigurationError(
+                "factory strategy configuration identity is stale or invalid"
+            )
+        strategy_parameters_value = cast(
+            object, strategy_configuration.get("parameters")
+        )
+        if not isinstance(strategy_parameters_value, dict):
+            raise InvalidStudyConfigurationError(
+                "strategy configuration must contain primitive parameters"
+            )
+        strategy_parameters = cast(PrimitiveMapping, strategy_parameters_value)
+        strategy_parameters_snapshot = PrimitiveMappingSnapshot.capture(
+            strategy_parameters
+        )
 
         yield ParameterCombination(
             index=index,

@@ -1,12 +1,13 @@
 """Serializable strategy-construction boundary for optimization trials."""
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Protocol, cast
 
 from quantforge.configuration import Primitive, PrimitiveMapping
 from quantforge.indicators import MarketField
 from quantforge.optimization.errors import InvalidStudyConfigurationError
 from quantforge.strategies import (
+    InvalidStrategyParametersError,
     MovingAverageCrossoverParameters,
     MovingAverageCrossoverStrategy,
     Strategy,
@@ -82,20 +83,36 @@ class MovingAverageCrossoverFactory:
         source_value = parameters.get("source_field", MarketField.CLOSE.value)
         weight_value = parameters.get("target_long_weight", "1")
         if isinstance(fast_window, bool) or not isinstance(fast_window, int):
-            raise TypeError("fast_window must be an integer")
+            raise InvalidStrategyParametersError("fast_window must be an integer")
         if isinstance(slow_window, bool) or not isinstance(slow_window, int):
-            raise TypeError("slow_window must be an integer")
+            raise InvalidStrategyParametersError("slow_window must be an integer")
         if not isinstance(source_value, str):
-            raise TypeError("source_field must be a string categorical value")
+            raise InvalidStrategyParametersError(
+                "source_field must be a string categorical value"
+            )
         if not isinstance(weight_value, (str, int, float)) or isinstance(
             weight_value, bool
         ):
-            raise TypeError("target_long_weight must be a floating candidate")
+            raise InvalidStrategyParametersError(
+                "target_long_weight must be a floating candidate"
+            )
+        try:
+            source_field = MarketField(source_value)
+        except ValueError as error:
+            raise InvalidStrategyParametersError(
+                "source_field must be a supported market field"
+            ) from error
+        try:
+            target_long_weight = Decimal(str(weight_value))
+        except (InvalidOperation, ValueError) as error:
+            raise InvalidStrategyParametersError(
+                "target_long_weight must be numeric"
+            ) from error
         return MovingAverageCrossoverStrategy(
             MovingAverageCrossoverParameters(
                 fast_window=fast_window,
                 slow_window=slow_window,
-                source_field=MarketField(source_value),
-                target_long_weight=Decimal(str(weight_value)),
+                source_field=source_field,
+                target_long_weight=target_long_weight,
             )
         )
