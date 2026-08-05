@@ -88,8 +88,8 @@ def _stable_id(values: PrimitiveMapping) -> str:
         ) from error
 
 
-def _bars_fingerprint(bars: tuple[DailyBar, ...]) -> str:
-    """Fingerprint the validated bar values independently of caller metadata."""
+def fingerprint_market_bars(bars: tuple[DailyBar, ...]) -> str:
+    """Fingerprint canonical bar values independently of caller metadata."""
     serialized_bars: list[Primitive] = [
         {
             "symbol": bar.symbol,
@@ -334,7 +334,7 @@ def run_backtest(
 ) -> BacktestResult:
     """Run QF-4 decisions through deterministic next-open execution and accounting."""
     _validate_dataset(dataset)
-    bars_fingerprint = _bars_fingerprint(dataset.bars)
+    bars_fingerprint = fingerprint_market_bars(dataset.bars)
     market_data_reference = MarketDataReference.from_dataset(dataset)
     if initiated_at is not None and initiated_at.utcoffset() is None:
         raise InvalidSignalError("initiated_at must include a defined UTC offset")

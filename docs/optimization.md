@@ -173,10 +173,16 @@ hashed for every identity.
   strategy parameters and configuration identity, QF-5 configuration, and
   relevant engine/schema versions.
 
-Before exporting a successful QF-5 artifact, the parent verifies the executed
-strategy name, implementation version, configuration ID, and complete parameter
-mapping against the candidate encoded by that trial ID. A mismatch becomes a
-failed trial and cannot occupy the candidate's artifact path.
+Study construction runs the authoritative QF-3 dataset validator before
+calculating an identity or accessing persisted trials. Resume and result loading
+therefore cannot trust old successes when the supplied bars no longer reproduce
+their dataset metadata and content identity. Before exporting a successful QF-5
+artifact, the parent also verifies the returned QF-3 provenance, independently
+fingerprinted bars, and complete QF-5 backtest configuration against the study
+inputs, then verifies the executed strategy name, implementation version,
+configuration ID, and complete parameter mapping against the candidate encoded
+by that trial ID. A mismatch becomes a failed trial and cannot occupy the
+candidate's artifact path.
 
 Execution mode, worker count, persistence path, retry policy, and diagnostic
 timestamps are operational rather than scientific inputs and do not change the

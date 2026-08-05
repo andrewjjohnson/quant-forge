@@ -269,7 +269,8 @@ incorrect is rejected before strategy, benchmark, or metric evaluation. The
 independent QF-5 bar fingerprint canonicalizes the ordered symbol, session date,
 and every OHLCV value and is persisted in the manifest as
 `market_data.bars_fingerprint` along with the QF-3 raw and normalized SHA-256
-digests.
+digests. `fingerprint_market_bars()` exposes that same canonical calculation to
+orchestrators that must verify a returned result against their supplied bars.
 
 An in-memory `MarketDataset` does not contain the raw provider bytes, so its raw
 digest can be identity-bound but not independently re-read there. QF-3 cache

@@ -17,7 +17,7 @@ from quantforge.backtesting import (
     FixedCommission,
     run_backtest,
 )
-from quantforge.data import MarketDataset
+from quantforge.data import MarketDataset, ValidationError
 from quantforge.optimization import (
     CombinationLimitExceededError,
     ExecutionConfig,
@@ -207,6 +207,79 @@ def test_sequential_execution_persists_failures_and_resume_skips_completed(
     resumed = study.resume()
     assert len(calls) == calls_after_run
     assert _scientific_result(resumed) == _scientific_result(result)
+
+
+def test_study_validates_dataset_bars_before_trusting_persisted_trials(
+    tmp_path: Path,
+) -> None:
+    dataset = _dataset("resume-dataset-validation")
+    original = GridSearchStudy(
+        dataset,
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    original.run()
+    changed_first_bar = replace(
+        dataset.bars[0],
+        open=Decimal("101"),
+        high=Decimal("102"),
+        close=Decimal("101"),
+    )
+    stale_dataset = MarketDataset(
+        (changed_first_bar, *dataset.bars[1:]),
+        dataset.metadata,
+    )
+
+    with pytest.raises(ValidationError, match="dataset identity"):
+        GridSearchStudy(
+            stale_dataset,
+            MovingAverageCrossoverFactory(),
+            _study_config(tmp_path, fast_values=(2,)),
+        ).resume()
+
+
+@pytest.mark.parametrize(
+    ("mismatch", "expected_message"),
+    [
+        ("market_data", "market data does not match"),
+        ("backtest_configuration", "backtest configuration does not match"),
+    ],
+)
+def test_success_result_must_match_study_data_and_backtest_configuration(
+    tmp_path: Path,
+    mismatch: str,
+    expected_message: str,
+) -> None:
+    alternate_dataset = _dataset("runner-used-other-dataset")
+    alternate_backtest = _backtest_config("2")
+
+    def mismatched_runner(
+        dataset: MarketDataset,
+        strategy: Strategy,
+        config: BacktestConfig,
+    ) -> BacktestResult:
+        if mismatch == "market_data":
+            return run_backtest(alternate_dataset, strategy, config)
+        return run_backtest(dataset, strategy, alternate_backtest)
+
+    study = GridSearchStudy(
+        _dataset("expected-runner-inputs"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+        backtest_runner=mismatched_runner,
+    )
+
+    result = study.run()
+
+    assert not result.successful_trials
+    assert len(result.failed_trials) == 2
+    assert all(
+        trial.failure_category == "persistence_failure"
+        and trial.failure_message is not None
+        and expected_message in trial.failure_message
+        for trial in result.failed_trials
+    )
+    assert not (study.study_path / "backtests").exists()
 
 
 def test_success_result_must_match_candidate_provenance_before_export(

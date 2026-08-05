@@ -12,7 +12,9 @@ from quantforge.backtesting import (
     RESULT_SCHEMA_VERSION,
     BacktestError,
     BacktestResult,
+    MarketDataMetadata,
     export_backtest_result,
+    fingerprint_market_bars,
     load_backtest_manifest,
     run_backtest,
 )
@@ -21,7 +23,7 @@ from quantforge.configuration import (
     PrimitiveMappingSnapshot,
     configuration_identity,
 )
-from quantforge.data import MarketDataset
+from quantforge.data import MarketDataset, validate_market_dataset
 from quantforge.data.identity import serialize_metadata_values
 from quantforge.optimization.combinations import (
     CombinationCandidate,
@@ -92,6 +94,7 @@ class GridSearchStudy:
         *,
         backtest_runner: BacktestRunner = run_backtest,
     ) -> None:
+        validate_market_dataset(dataset)
         validate_combination_definition(
             strategy_factory,
             config.search_space,
@@ -344,6 +347,18 @@ class GridSearchStudy:
         running: TrialRecord,
         result: BacktestResult,
     ) -> None:
+        expected_market_data = MarketDataMetadata.from_qf3(
+            self.dataset.metadata,
+            bars_fingerprint=fingerprint_market_bars(self.dataset.bars),
+        )
+        if result.market_data != expected_market_data:
+            raise StudyPersistenceError(
+                "QF-5 result market data does not match the study dataset"
+            )
+        if result.backtest_configuration != self.config.backtest.to_primitive():
+            raise StudyPersistenceError(
+                "QF-5 result backtest configuration does not match the study"
+            )
         if (
             result.strategy_id != self.strategy_factory.strategy_name
             or result.strategy_implementation_version
