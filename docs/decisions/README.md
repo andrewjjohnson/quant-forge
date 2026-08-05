@@ -17,6 +17,10 @@ Create an ADR for decisions such as:
 
 Do not create ADRs for routine implementation details that are easy to change.
 
+## Accepted records
+
+- [ADR 0001: Use chronological next-open backtesting](0001-use-chronological-next-open-backtesting.md)
+
 ## File naming
 
 ```text

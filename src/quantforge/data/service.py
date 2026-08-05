@@ -6,7 +6,10 @@ from quantforge.data.cache import MarketDataCache, request_key
 from quantforge.data.calendar import NYSE_CALENDAR, expected_sessions
 from quantforge.data.exceptions import MarketDataError, ProviderError, RequestError
 from quantforge.data.models import AdjustmentMode, MarketDataset
-from quantforge.data.normalize import normalize_response, normalize_symbol
+from quantforge.data.normalize import (
+    normalize_response_with_corporate_action_sessions,
+    normalize_symbol,
+)
 from quantforge.data.providers.base import DailyBarProvider
 from quantforge.data.validate import validate_bars
 
@@ -58,7 +61,9 @@ class MarketDataService:
             raise ProviderError(f"{self.provider.name} provider failed") from error
         if response.adjustment_mode is not adjustment:
             raise ProviderError("provider returned a different adjustment mode")
-        bars = normalize_response(response, canonical)
+        bars, split_sessions, dividend_sessions = (
+            normalize_response_with_corporate_action_sessions(response, canonical)
+        )
         validated = validate_bars(
             bars, canonical, start, end, self.calendar, strict=strict
         )
@@ -78,6 +83,8 @@ class MarketDataService:
             "adjustment_mode": adjustment,
             "bar_count": len(validated),
             "missing_sessions": missing,
+            "split_sessions": split_sessions,
+            "dividend_sessions": dividend_sessions,
             "adapter_version": response.adapter_version,
         }
         return self.cache.persist(response, validated, values, key)

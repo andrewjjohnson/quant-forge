@@ -31,7 +31,7 @@ Add exact commands here
 - [ ] No future information is used by features, signals, orders, or fills
 - [ ] Signal and execution timestamps are explicit
 - [ ] Price-adjustment policy is explicit
-- [ ] Commission and slippage assumptions are preserved or documented
+- [ ] Commission, fee, and slippage assumptions are preserved or documented
 - [ ] Train, validation, walk-forward, and holdout boundaries remain isolated
 - [ ] Results remain deterministic when expected
 - [ ] New feature relationships are treated as hypotheses until out-of-sample validation

@@ -41,6 +41,50 @@ sessions, exchange-calendar resolution, and append-future causality tests. A
 calendar-resolved execution session is eligibility metadata only; it does not
 claim an order or fill occurred. See `docs/strategy-contracts.md`.
 
+QF-5 turns that eligibility metadata into auditable orders but fills only at the
+eligible session's open. Its chronological state machine applies explicit
+adverse slippage, commission, and additional transaction fees before
+cash/position updates, preserves final unexecuted signals, and verifies through
+golden and append-future tests that later bars cannot revise earlier execution.
+Run and trade provenance includes an explicit strategy implementation version.
+Commission, fee, and slippage model versions also participate in run identity,
+and configuration provenance is deeply snapshotted before execution. A
+separately persisted fingerprint of the actual validated OHLCV bars also
+participates in run identity, preventing reused or stale QF-3 metadata from
+aliasing different market inputs. QF-4's adjustment-mode and trading-calendar
+reference participates as well because it controls signal eligibility and
+execution timing. Commission and fee models are accepted only when they
+explicitly guarantee nondecreasing buy-side costs by quantity, which makes
+whole-share affordability search sound.
+
+Built-in and custom commission, fee, slippage, and cost-configuration callbacks
+execute under the same serialized 34-digit Decimal policy for both the strategy
+engine and benchmark. A caller's ambient Decimal precision therefore cannot
+change cost results while preserving the same run ID.
+
+Before execution, QF-5 additionally reserializes the current bars and verifies
+that their QF-3 normalized digest, the complete provenance metadata, raw digest,
+schema, and canonical artifact paths reproduce the declared QF-3 dataset ID.
+Removing a corporate-action session or replacing bars while retaining an old ID
+therefore fails closed before the strategy or benchmark runs.
+
+The QF-3 validator independently recomputes expected sessions from the declared
+calendar across the requested range and requires exact agreement with
+`missing_sessions`. QF-5 uses those recomputed facts—not the tuple alone—to
+reject gaps inside the observed range, so a multi-session equity change cannot
+be annualized as one daily return.
+QF-3 schema version 3 requires a provider split coefficient and cash-dividend
+amount for every bar and retains every non-unit split and nonzero dividend
+session as immutable provenance. QF-5 rejects legacy schemas, observed split-
+or dividend-bearing ranges, and adjusted datasets because it does not yet
+receive or apply the event details needed for causal share, cost, and cash
+accounting. See `docs/backtesting.md` and ADR 0001.
+
+Dataset hashes prove consistency, not provider authenticity. Raw-byte digest
+verification occurs when QF-3 loads the immutable cache, and corporate-action
+completeness remains dependent on schema-v3 provider ingestion because split and
+dividend events are not derivable from OHLCV alone.
+
 ## Survivorship bias
 
 Testing only securities that exist today can overstate historical performance.
@@ -64,7 +108,18 @@ Record whether each field is:
 
 Do not mix conventions silently.
 
-Execution prices, cash dividends, position quantities, and benchmark returns must use a coherent policy. Tests should cover splits and dividends before broad equity-universe work is considered reliable.
+Execution prices, cash dividends, position quantities, and benchmark returns
+must use a coherent policy. QF-5 verifies split- and dividend-free unadjusted
+ranges from QF-3 schema-version-3 provenance and rejects every range with an
+observed corporate action until point-in-time factors and dividend cash-flow
+semantics are available. Tests cover both rejection boundaries; applying those
+events still requires dedicated accounting tests before broad equity-universe
+work is considered reliable.
+
+Because the buy-and-hold benchmark enters at the first open, its risk-return
+series includes the initial-capital-to-first-close return, including entry costs
+and that session's price move. Treating that invested observation as a zero
+would understate benchmark volatility and distort Sharpe and Sortino.
 
 ## Timestamp and calendar integrity
 

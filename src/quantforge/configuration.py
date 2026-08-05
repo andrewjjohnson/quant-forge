@@ -2,11 +2,41 @@
 
 import hashlib
 import json
+from dataclasses import dataclass
 from decimal import Decimal
+from typing import cast
 
 type PrimitiveScalar = str | int | float | bool | None
 type Primitive = PrimitiveScalar | list[Primitive] | dict[str, Primitive]
 type PrimitiveMapping = dict[str, Primitive]
+
+
+def _canonical_json(configuration: PrimitiveMapping) -> str:
+    return json.dumps(
+        configuration,
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PrimitiveMappingSnapshot:
+    """Deeply immutable canonical snapshot of primitive configuration values."""
+
+    canonical_json: str
+
+    @classmethod
+    def capture(cls, configuration: PrimitiveMapping) -> "PrimitiveMappingSnapshot":
+        return cls(_canonical_json(configuration))
+
+    def to_primitive(self) -> PrimitiveMapping:
+        """Return a detached mutable representation of the immutable snapshot."""
+        loaded = json.loads(self.canonical_json)
+        if not isinstance(loaded, dict):
+            raise TypeError("primitive mapping snapshot must decode to an object")
+        return cast(PrimitiveMapping, loaded)
 
 
 def decimal_to_primitive(value: Decimal) -> str:
@@ -28,11 +58,5 @@ def decimal_to_primitive(value: Decimal) -> str:
 
 def configuration_identity(configuration: PrimitiveMapping) -> str:
     """Return a stable SHA-256 identity for a primitive configuration."""
-    encoded = json.dumps(
-        configuration,
-        ensure_ascii=True,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
+    encoded = _canonical_json(configuration).encode()
     return hashlib.sha256(encoded).hexdigest()

@@ -1,0 +1,197 @@
+"""Stable immutable structured backtest result export."""
+
+import csv
+import json
+import os
+import shutil
+import tempfile
+from collections.abc import Sequence
+from pathlib import Path
+from typing import cast
+
+from quantforge.backtesting.errors import ResultExportError
+from quantforge.backtesting.models import BacktestResult
+from quantforge.configuration import Primitive, PrimitiveMapping
+
+_FILL_CSV_FIELDS = (
+    "fill_id",
+    "order_id",
+    "originating_signal_id",
+    "symbol",
+    "side",
+    "quantity",
+    "execution_session",
+    "reference_price",
+    "fill_price",
+    "slippage_per_share",
+    "slippage_basis_points",
+    "gross_notional",
+    "commission",
+    "fees",
+    "net_cash_effect",
+    "strategy_id",
+    "strategy_configuration_id",
+)
+
+
+def _json_text(value: Primitive) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _csv_value(value: Primitive) -> str | int | float | bool | None:
+    if isinstance(value, (dict, list)):
+        return _json_text(value)
+    return value
+
+
+def _write_csv(
+    path: Path, rows: Sequence[PrimitiveMapping], fieldnames: tuple[str, ...]
+) -> None:
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({name: _csv_value(row.get(name)) for name in fieldnames})
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
+    """Atomically create ``output_root/run_id`` without overwriting a prior run."""
+    destination = output_root / result.run_id
+    if destination.exists():
+        raise ResultExportError(f"backtest run already exists: {destination}")
+    output_root.mkdir(parents=True, exist_ok=True)
+    temporary = Path(
+        tempfile.mkdtemp(prefix=f".{result.run_id}.", dir=str(output_root))
+    )
+    try:
+        manifest_path = temporary / "manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                result.manifest_primitive(),
+                ensure_ascii=True,
+                allow_nan=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with manifest_path.open("rb") as stream:
+            os.fsync(stream.fileno())
+
+        signals = [item.to_primitive() for item in result.signals]
+        orders = [item.to_primitive() for item in result.orders]
+        fills = [item.to_primitive() for item in result.fills]
+        trades = [
+            item.to_primitive()
+            for item in (*result.completed_trades, *result.open_trades)
+        ]
+        positions = [item.to_primitive() for item in result.positions]
+        equity = [item.to_primitive() for item in result.daily_equity]
+        benchmark_equity = [
+            item.to_primitive() for item in result.benchmark.daily_equity
+        ]
+        _write_csv(
+            temporary / "signals.csv",
+            signals,
+            tuple(signals[0])
+            if signals
+            else (
+                "signal_id",
+                "canonical_symbol",
+                "signal_session",
+                "earliest_executable_session",
+                "execution_timing",
+                "execution_session_status",
+                "target_position",
+                "target_weight",
+                "strategy_id",
+                "strategy_configuration_id",
+                "strategy_parameters",
+                "reason",
+                "indicator_values",
+            ),
+        )
+        _write_csv(
+            temporary / "orders.csv",
+            orders,
+            tuple(orders[0])
+            if orders
+            else tuple(result.benchmark.order.to_primitive()),
+        )
+        _write_csv(
+            temporary / "fills.csv",
+            fills,
+            _FILL_CSV_FIELDS,
+        )
+        _write_csv(
+            temporary / "trades.csv",
+            trades,
+            tuple(trades[0])
+            if trades
+            else (
+                "trade_id",
+                "symbol",
+                "entry_signal_id",
+                "entry_order_id",
+                "entry_fill_id",
+                "entry_session",
+                "entry_price",
+                "entry_quantity",
+                "entry_commission",
+                "entry_fees",
+                "exit_signal_id",
+                "exit_order_id",
+                "exit_fill_id",
+                "exit_session",
+                "exit_price",
+                "exit_commission",
+                "exit_fees",
+                "gross_profit_loss",
+                "net_profit_loss",
+                "return_percentage",
+                "holding_period_sessions",
+                "strategy_id",
+                "strategy_implementation_version",
+                "strategy_configuration_id",
+                "is_open",
+            ),
+        )
+        _write_csv(
+            temporary / "positions.csv",
+            positions,
+            tuple(positions[0]),
+        )
+        _write_csv(temporary / "equity.csv", equity, tuple(equity[0]))
+        _write_csv(
+            temporary / "benchmark_equity.csv",
+            benchmark_equity,
+            tuple(benchmark_equity[0]),
+        )
+        os.rename(temporary, destination)
+    except (OSError, TypeError, ValueError) as error:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise ResultExportError("failed to export immutable backtest result") from error
+    return destination
+
+
+def load_backtest_manifest(path: Path) -> PrimitiveMapping:
+    """Load a previously exported manifest and reject non-object JSON."""
+    try:
+        loaded: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ResultExportError("failed to load backtest manifest") from error
+    if not isinstance(loaded, dict):
+        raise ResultExportError("backtest manifest must be a JSON object")
+    loaded_mapping = cast(dict[object, object], loaded)
+    if any(not isinstance(key, str) for key in loaded_mapping):
+        raise ResultExportError("backtest manifest keys must be strings")
+    return cast(PrimitiveMapping, loaded_mapping)

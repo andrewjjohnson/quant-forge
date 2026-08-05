@@ -21,6 +21,9 @@ class Strategy(Protocol):
     def name(self) -> str: ...
 
     @property
+    def implementation_version(self) -> str: ...
+
+    @property
     def parameters(self) -> StrategyParameters: ...
 
     @property

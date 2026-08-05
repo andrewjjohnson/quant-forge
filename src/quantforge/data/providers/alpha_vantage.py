@@ -17,10 +17,10 @@ from quantforge.data.models import (
 
 
 class AlphaVantageProvider:
-    """Retrieve raw daily bars and split coefficients from Alpha Vantage."""
+    """Retrieve raw daily bars and corporate actions from Alpha Vantage."""
 
     name = "alpha_vantage"
-    adapter_version = "1"
+    adapter_version = "2"
 
     def __init__(self, api_key: str, *, timeout: float = 30.0) -> None:
         if not api_key:
@@ -80,6 +80,7 @@ class AlphaVantageProvider:
                             "low": row_value["3. low"],
                             "close": row_value["4. close"],
                             "volume": row_value["6. volume"],
+                            "dividend_amount": row_value["7. dividend amount"],
                             "split_coefficient": row_value["8. split coefficient"],
                         }
                     )

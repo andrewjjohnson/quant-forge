@@ -1,8 +1,13 @@
 """Minimal generic strategy invocation and output validation."""
 
 from itertools import pairwise
+from typing import cast
 
-from quantforge.configuration import PrimitiveMapping, PrimitiveScalar
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveScalar,
+    configuration_identity,
+)
 from quantforge.data.models import MarketDataset
 from quantforge.strategies.base import Strategy, next_exchange_session
 from quantforge.strategies.exceptions import (
@@ -21,13 +26,24 @@ from quantforge.strategies.models import (
 
 def run_strategy(strategy: Strategy, dataset: MarketDataset) -> StrategyOutput:
     """Run any strategy contract without indicator- or strategy-specific branches."""
-    _validate_input(strategy, dataset)
+    strategy_configuration_id = _validate_input(strategy, dataset)
     output = strategy.generate(dataset)
-    _validate_output(strategy, dataset, output)
+    _validate_output(strategy, dataset, output, strategy_configuration_id)
     return output
 
 
-def _validate_input(strategy: Strategy, dataset: MarketDataset) -> None:
+def _validate_input(strategy: Strategy, dataset: MarketDataset) -> str:
+    configuration = strategy.configuration()
+    strategy_configuration_id = _validated_configuration_id(strategy, configuration)
+    implementation_version = cast(object, strategy.implementation_version)
+    if (
+        not isinstance(implementation_version, str)
+        or not implementation_version.strip()
+        or configuration.get("implementation_version") != implementation_version
+    ):
+        raise InvalidStrategyOutputError(
+            "strategy implementation version must be explicit in configuration"
+        )
     sessions = tuple(bar.session_date for bar in dataset.bars)
     if any(current >= following for current, following in pairwise(sessions)):
         raise UnorderedStrategyInputError(
@@ -38,15 +54,42 @@ def _validate_input(strategy: Strategy, dataset: MarketDataset) -> None:
             raise MissingRequiredMarketFieldError(
                 f"market data is missing required field: {field.value}"
             )
+    return strategy_configuration_id
+
+
+def _validated_configuration_id(
+    strategy: Strategy, configuration: PrimitiveMapping
+) -> str:
+    expected_configuration_id = configuration_identity(configuration)
+    declared_configuration_id = cast(object, strategy.configuration_id)
+    if (
+        not isinstance(declared_configuration_id, str)
+        or not declared_configuration_id.strip()
+        or declared_configuration_id != expected_configuration_id
+    ):
+        raise InvalidStrategyOutputError(
+            "strategy configuration identity does not match its configuration"
+        )
+    return declared_configuration_id
 
 
 def _validate_output(
-    strategy: Strategy, dataset: MarketDataset, output: StrategyOutput
+    strategy: Strategy,
+    dataset: MarketDataset,
+    output: StrategyOutput,
+    expected_configuration_id: str,
 ) -> None:
+    current_configuration_id = _validated_configuration_id(
+        strategy, strategy.configuration()
+    )
+    if current_configuration_id != expected_configuration_id:
+        raise InvalidStrategyOutputError(
+            "strategy configuration changed during generation"
+        )
     if (
         output.contract_version != "1"
         or output.strategy_id != strategy.name
-        or output.strategy_configuration_id != strategy.configuration_id
+        or output.strategy_configuration_id != expected_configuration_id
     ):
         raise InvalidStrategyOutputError(
             "strategy output identity does not match the invoked strategy"
@@ -86,7 +129,7 @@ def _validate_output(
     for decision in output.decisions:
         if (
             decision.strategy_id != strategy.name
-            or decision.strategy_configuration_id != strategy.configuration_id
+            or decision.strategy_configuration_id != expected_configuration_id
             or decision.canonical_symbol != dataset.metadata.canonical_symbol
             or decision.signal_session not in available_sessions
             or decision.execution_timing is not strategy.timing

@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "3"
 type JsonPrimitive = str | int | float | bool | None
 type JsonValue = JsonPrimitive | list[JsonValue] | dict[str, JsonValue]
 type ProviderRecord = Mapping[str, JsonValue]
@@ -62,10 +62,14 @@ class DatasetMetadata:
     adjustment_mode: AdjustmentMode
     raw_location: str
     normalized_location: str
+    raw_sha256: str
+    data_sha256: str
     dataset_id: str
     schema_version: str
     bar_count: int
     missing_sessions: tuple[date, ...]
+    split_sessions: tuple[date, ...]
+    dividend_sessions: tuple[date, ...]
     adapter_version: str
 
 

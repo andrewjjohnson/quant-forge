@@ -5,7 +5,11 @@ from typing import cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping, PrimitiveScalar
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveScalar,
+    configuration_identity,
+)
 from quantforge.data.models import DailyBar, MarketDataset
 from quantforge.indicators import Indicator, MarketField
 from quantforge.strategies import (
@@ -76,6 +80,10 @@ class OutputTransformingStrategy:
         return self._delegate.name
 
     @property
+    def implementation_version(self) -> str:
+        return self._delegate.implementation_version
+
+    @property
     def parameters(self) -> StrategyParameters:
         return self._delegate.parameters
 
@@ -112,6 +120,47 @@ class OutputTransformingStrategy:
 
     def generate(self, dataset: MarketDataset) -> StrategyOutput:
         return self._transform(self._delegate.generate(dataset))
+
+
+class VersionMismatchedStrategy(OutputTransformingStrategy):
+    @property
+    def implementation_version(self) -> str:
+        return "2"
+
+
+class StaleConfigurationIdentityStrategy(OutputTransformingStrategy):
+    @property
+    def configuration_id(self) -> str:
+        return "stale-configuration-id"
+
+
+class ConfigurationChangingDuringGenerationStrategy(OutputTransformingStrategy):
+    def __init__(self, delegate: MovingAverageCrossoverStrategy) -> None:
+        super().__init__(delegate, lambda output: output)
+        self._generation_complete = False
+
+    def configuration(self) -> PrimitiveMapping:
+        configuration = super().configuration()
+        configuration["generation_complete"] = self._generation_complete
+        return configuration
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def generate(self, dataset: MarketDataset) -> StrategyOutput:
+        configuration_id = self.configuration_id
+        output = self._delegate.generate(dataset)
+        decisions = tuple(
+            replace(decision, strategy_configuration_id=configuration_id)
+            for decision in output.decisions
+        )
+        self._generation_complete = True
+        return replace(
+            output,
+            strategy_configuration_id=configuration_id,
+            decisions=decisions,
+        )
 
 
 def duplicate_first_decision(output: StrategyOutput) -> StrategyOutput:
@@ -167,6 +216,35 @@ def test_generic_runner_rejects_unordered_input() -> None:
 
     with pytest.raises(UnorderedStrategyInputError, match="chronological"):
         run_strategy(strategy, unordered)
+
+
+def test_generic_runner_rejects_implementation_version_mismatch() -> None:
+    strategy = VersionMismatchedStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        lambda output: output,
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="implementation version"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
+
+
+def test_generic_runner_rejects_stale_strategy_configuration_identity() -> None:
+    strategy = StaleConfigurationIdentityStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        lambda output: output,
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="configuration identity"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
+
+
+def test_generic_runner_rejects_configuration_changes_during_generation() -> None:
+    strategy = ConfigurationChangingDuringGenerationStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3))
+    )
+
+    with pytest.raises(InvalidStrategyOutputError, match="changed during generation"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
 
 
 def test_generic_runner_rejects_duplicate_decisions() -> None:
@@ -267,6 +345,7 @@ def test_strategy_contract_exposes_owned_components_and_configuration() -> None:
     assert len(strategy.required_indicators) == 2
     assert strategy.warm_up_observations == 5
     assert strategy.timing is ExecutionTiming.NEXT_SESSION_AFTER_CLOSE
+    assert strategy.implementation_version == "1"
     assert strategy.configuration()["sizing"] == strategy.sizing_policy.configuration()
 
 
