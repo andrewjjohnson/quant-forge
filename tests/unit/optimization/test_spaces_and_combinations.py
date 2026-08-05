@@ -181,7 +181,9 @@ def test_factory_contract_invariant_failures_abort_combination_generation() -> N
         tuple(iter_combination_candidates(_ExplodingFactory(), search_space, ()))
 
 
-def test_custom_constraints_require_true_module_level_predicates() -> None:
+def test_custom_constraints_require_true_module_level_predicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     constraint = CustomParameterConstraint(
         "fast_window_is_two",
         "1",
@@ -193,6 +195,14 @@ def test_custom_constraints_require_true_module_level_predicates() -> None:
         return parameters["fast_window"] == 2
 
     assert constraint.to_primitive()["predicate"] == (f"{__name__}._fast_window_is_two")
+    monkeypatch.setattr(_fast_window_is_two, "__module__", "__main__")
+    with pytest.raises(InvalidStudyConfigurationError, match="durable import module"):
+        CustomParameterConstraint(
+            "entry_point",
+            "1",
+            _fast_window_is_two,
+            ("fast_window",),
+        )
     with pytest.raises(InvalidStudyConfigurationError, match="module-level"):
         CustomParameterConstraint(
             "nested",

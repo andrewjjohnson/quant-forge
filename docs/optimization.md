@@ -147,8 +147,8 @@ Constraints execute before QF-5. `ParameterComparison` supports comparisons
 against another searched parameter or a constant. Convenience constraints
 include `ParameterLessThan` and `ParameterAtMost`. A named, versioned
 `CustomParameterConstraint` is available for uncommon deterministic predicates;
-anonymous lambdas and nested local functions are rejected because they have no
-durable module-level identity.
+anonymous lambdas, nested local functions, and entry-point or notebook
+`__main__` functions are rejected because they have no durable import identity.
 
 Unknown parameter names and malformed constraints fail study construction.
 Every assignment that passes declarative constraints is then passed through the

@@ -163,6 +163,10 @@ class CustomParameterConstraint:
             raise InvalidStudyConfigurationError(
                 "custom constraints require nonempty names and versions"
             )
+        if predicate_module == "__main__":
+            raise InvalidStudyConfigurationError(
+                "custom constraint predicates require a durable import module"
+            )
         if (
             predicate_name == "<lambda>"
             or not predicate_name
