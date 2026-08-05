@@ -109,7 +109,11 @@ supplying a serializable factory with strategy name/version, parameter contract
 order, required parameter names, primitive configuration, and `build()`. The
 factory must construct the real QF-4 parameter model and return a QF-4
 `Strategy`. The optimizer verifies the produced configuration identity before
-the combination becomes executable.
+the combination becomes executable. Factory configuration records every
+behavioral default used when an optional parameter is absent; the moving-average
+factory identity includes its default source field and target-long weight. A
+default change therefore changes combination, study, and trial identities even
+when that parameter is not searched.
 
 ## Search spaces and canonical order
 

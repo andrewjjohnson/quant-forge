@@ -18,6 +18,7 @@ from quantforge.backtesting import (
     run_backtest,
 )
 from quantforge.data import MarketDataset, ValidationError
+from quantforge.indicators import MarketField
 from quantforge.optimization import (
     CombinationLimitExceededError,
     ExecutionConfig,
@@ -167,6 +168,50 @@ def test_study_identity_covers_scientific_inputs_and_is_equivalent(
         ),
     )
     assert all(item.study_id != baseline.study_id for item in variants)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        MovingAverageCrossoverFactory(default_source_field=MarketField.OPEN),
+        MovingAverageCrossoverFactory(default_target_long_weight=Decimal("0.5")),
+    ],
+)
+def test_factory_defaults_are_recorded_in_study_and_trial_identities(
+    tmp_path: Path,
+    factory: MovingAverageCrossoverFactory,
+) -> None:
+    baseline_factory = MovingAverageCrossoverFactory()
+    baseline = GridSearchStudy(
+        _dataset("factory-defaults"),
+        baseline_factory,
+        _study_config(tmp_path / "baseline", fast_values=(2,)),
+    )
+    changed = GridSearchStudy(
+        _dataset("factory-defaults"),
+        factory,
+        _study_config(tmp_path / "changed", fast_values=(2,)),
+    )
+
+    assert baseline_factory.configuration()["default_parameters"] == {
+        "source_field": "close",
+        "target_long_weight": "1",
+    }
+    assert (
+        factory.configuration()["default_parameters"]
+        != (baseline_factory.configuration()["default_parameters"])
+    )
+    assert baseline.study_id != changed.study_id
+    assert {candidate.combination_id for candidate in baseline.candidates}.isdisjoint(
+        candidate.combination_id for candidate in changed.candidates
+    )
+
+    baseline_result = baseline.run()
+    changed_result = changed.run()
+
+    assert {trial.trial_id for trial in baseline_result.trials}.isdisjoint(
+        trial.trial_id for trial in changed_result.trials
+    )
 
 
 def test_sequential_execution_persists_failures_and_resume_skips_completed(

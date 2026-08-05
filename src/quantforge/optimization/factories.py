@@ -1,9 +1,14 @@
 """Serializable strategy-construction boundary for optimization trials."""
 
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Protocol, cast
 
-from quantforge.configuration import Primitive, PrimitiveMapping
+from quantforge.configuration import (
+    Primitive,
+    PrimitiveMapping,
+    decimal_to_primitive,
+)
 from quantforge.indicators import MarketField
 from quantforge.optimization.errors import InvalidStudyConfigurationError
 from quantforge.strategies import (
@@ -34,8 +39,12 @@ class StrategyFactory(Protocol):
     def build(self, parameters: PrimitiveMapping) -> Strategy: ...
 
 
+@dataclass(frozen=True, slots=True)
 class MovingAverageCrossoverFactory:
     """QF-4 moving-average constructor exposed through the generic factory API."""
+
+    default_source_field: MarketField = MarketField.CLOSE
+    default_target_long_weight: Decimal = Decimal("1")
 
     strategy_name = MovingAverageCrossoverStrategy.name
     strategy_version = MovingAverageCrossoverStrategy.implementation_version
@@ -46,6 +55,25 @@ class MovingAverageCrossoverFactory:
         "target_long_weight",
     )
     required_parameter_names = frozenset(("fast_window", "slow_window"))
+
+    def __post_init__(self) -> None:
+        try:
+            defaults = MovingAverageCrossoverParameters(
+                fast_window=1,
+                slow_window=2,
+                source_field=self.default_source_field,
+                target_long_weight=self.default_target_long_weight,
+            )
+        except InvalidStrategyParametersError as error:
+            raise InvalidStudyConfigurationError(
+                "moving-average factory defaults are invalid"
+            ) from error
+        object.__setattr__(self, "default_source_field", defaults.source_field)
+        object.__setattr__(
+            self,
+            "default_target_long_weight",
+            defaults.target_long_weight,
+        )
 
     def configuration(self) -> PrimitiveMapping:
         return {
@@ -63,6 +91,12 @@ class MovingAverageCrossoverFactory:
             "required_parameters": cast(
                 list[Primitive], sorted(self.required_parameter_names)
             ),
+            "default_parameters": {
+                "source_field": self.default_source_field.value,
+                "target_long_weight": decimal_to_primitive(
+                    self.default_target_long_weight
+                ),
+            },
         }
 
     def build(self, parameters: PrimitiveMapping) -> Strategy:
@@ -80,8 +114,11 @@ class MovingAverageCrossoverFactory:
             )
         fast_window = parameters["fast_window"]
         slow_window = parameters["slow_window"]
-        source_value = parameters.get("source_field", MarketField.CLOSE.value)
-        weight_value = parameters.get("target_long_weight", "1")
+        source_value = parameters.get("source_field", self.default_source_field.value)
+        weight_value = parameters.get(
+            "target_long_weight",
+            decimal_to_primitive(self.default_target_long_weight),
+        )
         if isinstance(fast_window, bool) or not isinstance(fast_window, int):
             raise InvalidStrategyParametersError("fast_window must be an integer")
         if isinstance(slow_window, bool) or not isinstance(slow_window, int):

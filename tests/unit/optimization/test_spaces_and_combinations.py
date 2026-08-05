@@ -5,6 +5,7 @@ from typing import cast
 import pytest
 
 from quantforge.configuration import PrimitiveMapping
+from quantforge.indicators import MarketField
 from quantforge.optimization import (
     BooleanValues,
     CategoricalValues,
@@ -181,6 +182,15 @@ def test_factory_contract_invariant_failures_abort_combination_generation() -> N
         )
     with pytest.raises(RuntimeError, match="broken factory implementation"):
         tuple(iter_combination_candidates(_ExplodingFactory(), search_space, ()))
+
+
+def test_moving_average_factory_defaults_must_be_valid_strategy_parameters() -> None:
+    with pytest.raises(InvalidStudyConfigurationError, match="defaults are invalid"):
+        MovingAverageCrossoverFactory(
+            default_source_field=cast(MarketField, "adjusted_close")
+        )
+    with pytest.raises(InvalidStudyConfigurationError, match="defaults are invalid"):
+        MovingAverageCrossoverFactory(default_target_long_weight=Decimal("0"))
 
 
 def test_custom_constraints_require_true_module_level_predicates(
