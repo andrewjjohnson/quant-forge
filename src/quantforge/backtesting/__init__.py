@@ -46,7 +46,7 @@ from quantforge.backtesting.models import (
     SignalRecord,
     TradeRecord,
 )
-from quantforge.backtesting.runner import run_backtest
+from quantforge.backtesting.runner import fingerprint_market_bars, run_backtest
 
 __all__ = [
     "CALENDAR_DAYS_PER_YEAR",
@@ -84,6 +84,7 @@ __all__ = [
     "SlippageModel",
     "TradeRecord",
     "export_backtest_result",
+    "fingerprint_market_bars",
     "load_backtest_manifest",
     "run_backtest",
 ]

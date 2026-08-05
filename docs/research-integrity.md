@@ -168,6 +168,16 @@ Safeguards:
 
 An isolated optimum surrounded by poor neighbors is a warning, not a discovery.
 
+QF-6 makes that warning operational for deterministic Cartesian studies. It
+records the full grid size, exclusions, failures, ineligible successes, hard
+constraints, objective/tie-breaker policy, and immediate candidate-index
+neighborhood statistics. Objective rank and stability rank remain separate;
+failed, missing, and ineligible neighbors are never converted to zero. Its
+`recommended_robust` result is restricted to stable, non-isolated candidates in
+a configured top objective band, but remains an in-sample descriptive result.
+It is not a substitute for untouched validation, walk-forward evaluation, or
+multiple-comparison controls. See `docs/optimization.md`.
+
 ## Multiple comparisons
 
 Testing many indicators, ranges, time horizons, symbols, and parameter sets creates false discoveries.
