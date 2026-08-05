@@ -270,6 +270,36 @@ class RankingConfig:
             raise InvalidStudyConfigurationError(
                 "minimum successful trials must be a positive integer"
             )
+        for constraint_value in cast(tuple[object, ...], self.hard_constraints):
+            if not callable(getattr(constraint_value, "to_primitive", None)):
+                raise InvalidStudyConfigurationError(
+                    "ranking hard constraints must be HardMetricConstraint records"
+                )
+            if not isinstance(
+                cast(object, getattr(constraint_value, "metric", None)), MetricName
+            ):
+                raise InvalidStudyConfigurationError(
+                    "ranking hard-constraint metric must be a supported QF-5 metric"
+                )
+            if not isinstance(
+                cast(object, getattr(constraint_value, "operator", None)),
+                ThresholdOperator,
+            ):
+                raise InvalidStudyConfigurationError(
+                    "ranking hard-constraint operator is unsupported"
+                )
+            threshold_value = cast(
+                object,
+                getattr(constraint_value, "threshold", None),
+            )
+            if not isinstance(threshold_value, (Decimal, int, str)):
+                raise InvalidStudyConfigurationError(
+                    "ranking hard-constraint threshold must be numeric"
+                )
+            _finite_threshold(
+                threshold_value,
+                "ranking hard-constraint threshold",
+            )
         for tie_breaker_value in cast(tuple[object, ...], self.tie_breakers):
             if not isinstance(tie_breaker_value, MetricTieBreaker):
                 raise InvalidStudyConfigurationError(

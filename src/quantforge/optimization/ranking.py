@@ -59,7 +59,9 @@ def _passes_threshold(
         return actual < threshold
     if operator is ThresholdOperator.LESS_THAN_OR_EQUAL:
         return actual <= threshold
-    return actual == threshold
+    if operator is ThresholdOperator.EQUAL:
+        return actual == threshold
+    raise RankingError("ranking threshold operator is unsupported")
 
 
 def _eligibility_reasons(trial: TrialRecord, config: RankingConfig) -> tuple[str, ...]:

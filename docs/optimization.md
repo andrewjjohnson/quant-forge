@@ -295,10 +295,13 @@ Hard constraints execute before ranking:
   requires `maximum_drawdown >= -magnitude` inclusively; and
 - `PositiveReturn()` requires strictly `total_return > 0`.
 
-`MetricThreshold` supports other typed QF-5 metric thresholds. An undefined
-required metric makes the successful trial ineligible. Failed and excluded
-trials are never eligible. `minimum_successful_trials` can suppress ranking
-when a study has too few successful observations.
+`MetricThreshold` supports other typed QF-5 metric thresholds. Every hard
+constraint must expose a typed QF-5 `MetricName`, a typed `ThresholdOperator`, a
+finite numeric threshold, and stable primitive serialization; raw or malformed
+deserialized constraints fail configuration instead of falling through to
+equality. An undefined required metric makes the successful trial ineligible.
+Failed and excluded trials are never eligible. `minimum_successful_trials` can
+suppress ranking when a study has too few successful observations.
 
 Ranking uses the objective first, configured metric tie breakers next, and the
 combination ID ascending as the final fallback. The defaults prefer the less

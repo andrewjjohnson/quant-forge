@@ -5,9 +5,11 @@ import pytest
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.optimization import (
+    HardMetricConstraint,
     InvalidStudyConfigurationError,
     MaximumDrawdown,
     MetricName,
+    MetricThreshold,
     MetricTieBreaker,
     MinimumTrades,
     MovingAverageCrossoverFactory,
@@ -19,6 +21,7 @@ from quantforge.optimization import (
     RankingDirection,
     StabilityClassification,
     StabilityConfig,
+    ThresholdOperator,
     TrialRecord,
     TrialStatus,
     analyze_stability,
@@ -146,6 +149,42 @@ def test_ranking_rejects_raw_tie_breaker_metric_or_direction(
         RankingConfig(
             MetricName.TOTAL_RETURN,
             tie_breakers=(tie_breaker,),
+        )
+
+
+@pytest.mark.parametrize(
+    ("constraint", "expected_message"),
+    [
+        (
+            MetricThreshold(
+                cast(MetricName, "trade_count"),
+                ThresholdOperator.GREATER_THAN_OR_EQUAL,
+                1,
+            ),
+            "hard-constraint metric",
+        ),
+        (
+            MetricThreshold(
+                MetricName.TRADE_COUNT,
+                cast(ThresholdOperator, "ge"),
+                1,
+            ),
+            "hard-constraint operator",
+        ),
+        (
+            cast(HardMetricConstraint, {"metric": "trade_count"}),
+            "HardMetricConstraint records",
+        ),
+    ],
+)
+def test_ranking_rejects_raw_or_malformed_hard_constraints(
+    constraint: HardMetricConstraint,
+    expected_message: str,
+) -> None:
+    with pytest.raises(InvalidStudyConfigurationError, match=expected_message):
+        RankingConfig(
+            MetricName.TOTAL_RETURN,
+            hard_constraints=(constraint,),
         )
 
 
