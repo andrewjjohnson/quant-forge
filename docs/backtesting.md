@@ -307,11 +307,13 @@ caller-selected ignored reports root:
 The manifest contains provenance, strategy and backtest configuration,
 performance, benchmark metadata and metrics, record counts, warnings, and
 limitations. CSV field and row order is stable; nested values use canonical
-JSON. Dates are ISO `YYYY-MM-DD`; the optional initiation timestamp must be
-timezone-aware ISO 8601 with a defined UTC offset. A `tzinfo` object whose
-`utcoffset()` returns `None` is rejected as naive. Export builds a temporary
-directory and renames it into place only after every file is complete.
-`load_backtest_manifest` reloads the complete JSON object.
+JSON. Empty record tables retain their complete headers, including the full fill
+schema when neither the strategy nor benchmark can afford a share. Dates are ISO
+`YYYY-MM-DD`; the optional initiation timestamp must be timezone-aware ISO 8601
+with a defined UTC offset. A `tzinfo` object whose `utcoffset()` returns `None`
+is rejected as naive. Export builds a temporary directory and renames it into
+place only after every file is complete. `load_backtest_manifest` reloads the
+complete JSON object.
 
 ## Adjustment assumptions and MVP limitations
 

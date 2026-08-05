@@ -1,3 +1,4 @@
+import csv
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, tzinfo
@@ -905,6 +906,47 @@ def test_structured_export_is_stable_reloadable_and_never_overwrites(
     )
     with pytest.raises(ResultExportError, match="already exists"):
         export_backtest_result(result, tmp_path / "reports")
+
+
+def test_empty_fill_export_preserves_the_full_fill_schema(tmp_path: Path) -> None:
+    result = run_backtest(
+        make_dataset(("1000", "1000")),
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(1, 2)),
+        BacktestConfig(
+            Decimal(1),
+            FixedCommission(Decimal(0)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(0)),
+        ),
+    )
+
+    assert result.fills == ()
+    assert result.benchmark.fill is None
+    exported = export_backtest_result(result, tmp_path / "reports")
+    with (exported / "fills.csv").open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.reader(stream))
+
+    assert rows == [
+        [
+            "fill_id",
+            "order_id",
+            "originating_signal_id",
+            "symbol",
+            "side",
+            "quantity",
+            "execution_session",
+            "reference_price",
+            "fill_price",
+            "slippage_per_share",
+            "slippage_basis_points",
+            "gross_notional",
+            "commission",
+            "fees",
+            "net_cash_effect",
+            "strategy_id",
+            "strategy_configuration_id",
+        ]
+    ]
 
 
 @dataclass(frozen=True, slots=True)

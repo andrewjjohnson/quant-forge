@@ -13,6 +13,26 @@ from quantforge.backtesting.errors import ResultExportError
 from quantforge.backtesting.models import BacktestResult
 from quantforge.configuration import Primitive, PrimitiveMapping
 
+_FILL_CSV_FIELDS = (
+    "fill_id",
+    "order_id",
+    "originating_signal_id",
+    "symbol",
+    "side",
+    "quantity",
+    "execution_session",
+    "reference_price",
+    "fill_price",
+    "slippage_per_share",
+    "slippage_basis_points",
+    "gross_notional",
+    "commission",
+    "fees",
+    "net_cash_effect",
+    "strategy_id",
+    "strategy_configuration_id",
+)
+
 
 def _json_text(value: Primitive) -> str:
     return json.dumps(
@@ -110,13 +130,7 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
         _write_csv(
             temporary / "fills.csv",
             fills,
-            tuple(fills[0])
-            if fills
-            else (
-                tuple(result.benchmark.fill.to_primitive())
-                if result.benchmark.fill is not None
-                else ("fill_id", "order_id", "originating_signal_id")
-            ),
+            _FILL_CSV_FIELDS,
         )
         _write_csv(
             temporary / "trades.csv",
