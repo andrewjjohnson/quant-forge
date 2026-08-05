@@ -173,6 +173,11 @@ hashed for every identity.
   strategy parameters and configuration identity, QF-5 configuration, and
   relevant engine/schema versions.
 
+Before exporting a successful QF-5 artifact, the parent verifies the executed
+strategy name, implementation version, configuration ID, and complete parameter
+mapping against the candidate encoded by that trial ID. A mismatch becomes a
+failed trial and cannot occupy the candidate's artifact path.
+
 Execution mode, worker count, persistence path, retry policy, and diagnostic
 timestamps are operational rather than scientific inputs and do not change the
 study/trial identity. They remain explicit in the manifest, and an existing
@@ -197,8 +202,10 @@ The immutable dataset, generic factory, and QF-5 configuration are initialized
 once per worker rather than submitted with every task. At most
 `maximum_workers` trials are outstanding. The parent process alone owns trial
 persistence and QF-5 artifact export. It handles completed futures in canonical
-combination order within each completed batch, and final results are always
-sorted canonically, so worker completion order cannot affect ranking or export.
+combination order across the entire completed batch before deciding whether to
+submit replacement work. This preserves `fail_fast` when successes and failures
+complete together. Final results are always sorted canonically, so worker
+completion order cannot affect ranking or export.
 A broken process pool halts new scheduling: active trials receive
 `worker_failure` records while combinations not yet submitted remain `PENDING`
 for an explicit resume on a fresh pool. See ADR 0002.

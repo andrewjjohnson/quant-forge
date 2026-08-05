@@ -209,6 +209,42 @@ def test_sequential_execution_persists_failures_and_resume_skips_completed(
     assert _scientific_result(resumed) == _scientific_result(result)
 
 
+def test_success_result_must_match_candidate_provenance_before_export(
+    tmp_path: Path,
+) -> None:
+    factory = MovingAverageCrossoverFactory()
+
+    def mismatched_runner(
+        dataset: MarketDataset,
+        strategy: Strategy,
+        config: BacktestConfig,
+    ) -> BacktestResult:
+        wrong_parameters = strategy.parameters.to_primitive()
+        wrong_parameters["slow_window"] = (
+            4 if wrong_parameters["slow_window"] == 3 else 3
+        )
+        return run_backtest(dataset, factory.build(wrong_parameters), config)
+
+    study = GridSearchStudy(
+        _dataset("mismatched-result"),
+        factory,
+        _study_config(tmp_path, fast_values=(2,)),
+        backtest_runner=mismatched_runner,
+    )
+
+    result = study.run()
+
+    assert not result.successful_trials
+    assert len(result.failed_trials) == 2
+    assert all(
+        trial.failure_category == "persistence_failure"
+        and trial.failure_message is not None
+        and "configuration does not match" in trial.failure_message
+        for trial in result.failed_trials
+    )
+    assert not (study.study_path / "backtests").exists()
+
+
 def test_failed_trial_retry_policy_is_explicit(tmp_path: Path) -> None:
     calls_by_strategy: dict[str, int] = {}
 
@@ -324,6 +360,64 @@ def test_process_and_sequential_execution_have_equivalent_final_results(
 
     assert sequential_study.study_id == process_study.study_id
     assert _scientific_result(sequential) == _scientific_result(parallel)
+
+
+def test_fail_fast_inspects_completed_batch_before_process_rescheduling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _dataset("fail-fast-batch")
+    factory = MovingAverageCrossoverFactory()
+    successful_result = run_backtest(
+        dataset,
+        factory.build({"fast_window": 1, "slow_window": 3}),
+        _backtest_config(),
+    )
+    submissions: list[tuple[object, ...]] = []
+
+    class CompletedBatchExecutor:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def submit(self, function: object, *args: object) -> Future[BacktestResult]:
+            submissions.append(args)
+            future: Future[BacktestResult] = Future()
+            if len(submissions) == 1:
+                future.set_result(successful_result)
+            else:
+                future.set_exception(RuntimeError("synthetic batch failure"))
+            return future
+
+    monkeypatch.setattr(
+        "quantforge.optimization.study.ProcessPoolExecutor",
+        CompletedBatchExecutor,
+    )
+    study = GridSearchStudy(
+        dataset,
+        factory,
+        _study_config(
+            tmp_path,
+            execution=ExecutionConfig(
+                mode=ExecutionMode.PROCESS,
+                maximum_workers=2,
+                fail_fast=True,
+            ),
+            fast_values=(1, 2),
+        ),
+    )
+
+    result = study.run()
+
+    assert len(submissions) == 2
+    assert len(result.successful_trials) == 1
+    assert len(result.failed_trials) == 1
+    assert len(result.pending_trials) == 2
 
 
 def test_broken_process_pool_stops_scheduling_without_stale_running_trials(

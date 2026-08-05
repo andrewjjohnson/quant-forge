@@ -344,12 +344,28 @@ class GridSearchStudy:
         running: TrialRecord,
         result: BacktestResult,
     ) -> None:
-        artifact_location = self._artifact_for_result(running.trial_id, result)
+        if (
+            result.strategy_id != self.strategy_factory.strategy_name
+            or result.strategy_implementation_version
+            != self.strategy_factory.strategy_version
+        ):
+            raise StudyPersistenceError(
+                "QF-5 result strategy identity does not match the trial candidate"
+            )
+        if result.strategy_configuration_id != candidate.strategy_configuration_id:
+            raise StudyPersistenceError(
+                "QF-5 result strategy configuration does not match the trial candidate"
+            )
         parameters = result.strategy_configuration.get("parameters")
         if not isinstance(parameters, dict):
             raise StudyPersistenceError(
                 "QF-5 result strategy configuration omitted parameter provenance"
             )
+        if parameters != candidate.strategy_parameters:
+            raise StudyPersistenceError(
+                "QF-5 result strategy parameters do not match the trial candidate"
+            )
+        artifact_location = self._artifact_for_result(running.trial_id, result)
         record = TrialRecord(
             study_id=self.study_id,
             trial_id=running.trial_id,
@@ -464,10 +480,14 @@ class GridSearchStudy:
                             or self.config.execution.fail_fast
                             or isinstance(error, BrokenProcessPool)
                         )
-                    if not halted:
+                if not halted:
+                    for _ in ordered_completed:
                         next_candidate = next(remaining, None)
-                        if next_candidate is not None and not schedule(next_candidate):
+                        if next_candidate is None:
+                            break
+                        if not schedule(next_candidate):
                             halted = True
+                            break
 
     def _build_result(self) -> StudyResult:
         trials = self.store.load_trials()
