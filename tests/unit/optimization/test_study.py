@@ -660,6 +660,42 @@ def test_failed_trial_requires_complete_failure_context(
         action()
 
 
+@pytest.mark.parametrize(
+    "artifact_name",
+    [
+        "signals.csv",
+        "orders.csv",
+        "fills.csv",
+        "positions.csv",
+        "trades.csv",
+        "equity.csv",
+        "benchmark_equity.csv",
+    ],
+)
+@pytest.mark.parametrize("action_name", ["load_result", "resume"])
+def test_successful_trial_requires_complete_qf5_artifact(
+    tmp_path: Path,
+    artifact_name: str,
+    action_name: str,
+) -> None:
+    study = GridSearchStudy(
+        _dataset("incomplete-qf5-artifact"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    result = study.run()
+    successful = result.successful_trials[0]
+    artifact_path = study.study_path / cast(str, successful.artifact_location)
+    (artifact_path / artifact_name).unlink()
+
+    action = study.load_result if action_name == "load_result" else study.resume
+    with pytest.raises(
+        StudyPersistenceError,
+        match="incomplete QF-5 artifact",
+    ):
+        action()
+
+
 @pytest.mark.parametrize("resume", [False, True])
 def test_missing_manifest_rejects_a_nonempty_orphaned_study_directory(
     tmp_path: Path,
