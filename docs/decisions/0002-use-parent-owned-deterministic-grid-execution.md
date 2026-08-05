@@ -41,8 +41,9 @@ Workers cannot race to claim or overwrite the same trial, and a corrupt partial
 JSON write cannot be mistaken for completion. Completed successes and
 exclusions remain immutable. A crash can lose only active work; stale `RUNNING`
 records retry on resume. Failed-trial retry remains explicit and disabled by
-default. Completion order cannot affect final ordering, ranking, stability, or
-recommendation.
+default. A broken pool halts new scheduling, records active failures, and leaves
+unsubmitted combinations pending for resume. Completion order cannot affect
+final ordering, ranking, stability, or recommendation.
 
 The parent receives one complete QF-5 result at a time per active worker so it
 can create the immutable QF-5 artifact and persist the compact trial summary.

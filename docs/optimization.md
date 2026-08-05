@@ -189,7 +189,8 @@ directory.
 
 `ExecutionMode.SEQUENTIAL` is the reference mode. It visits combinations in
 canonical order and persists `RUNNING`, then `SUCCEEDED` or `FAILED`, for every
-attempt. One failure does not stop later combinations unless `fail_fast=True`.
+attempt. One trial-domain failure does not stop later combinations unless
+`fail_fast=True`.
 
 `ExecutionMode.PROCESS` uses a bounded standard-library `ProcessPoolExecutor`.
 The immutable dataset, generic factory, and QF-5 configuration are initialized
@@ -198,7 +199,9 @@ once per worker rather than submitted with every task. At most
 persistence and QF-5 artifact export. It handles completed futures in canonical
 combination order within each completed batch, and final results are always
 sorted canonically, so worker completion order cannot affect ranking or export.
-See ADR 0002.
+A broken process pool halts new scheduling: active trials receive
+`worker_failure` records while combinations not yet submitted remain `PENDING`
+for an explicit resume on a fresh pool. See ADR 0002.
 
 Failures are stored with one of the categories `strategy_failure`,
 `backtest_domain_failure`, `worker_failure`, `persistence_failure`, or

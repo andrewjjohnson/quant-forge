@@ -1,9 +1,11 @@
 import csv
 import json
+from concurrent.futures import Future
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Self, cast
 
 import pytest
 
@@ -322,6 +324,55 @@ def test_process_and_sequential_execution_have_equivalent_final_results(
 
     assert sequential_study.study_id == process_study.study_id
     assert _scientific_result(sequential) == _scientific_result(parallel)
+
+
+def test_broken_process_pool_stops_scheduling_without_stale_running_trials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submissions: list[tuple[object, ...]] = []
+
+    class BrokenPoolExecutor:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def submit(self, function: object, *args: object) -> Future[BacktestResult]:
+            submissions.append(args)
+            future: Future[BacktestResult] = Future()
+            future.set_exception(BrokenProcessPool("synthetic worker-pool failure"))
+            return future
+
+    monkeypatch.setattr(
+        "quantforge.optimization.study.ProcessPoolExecutor",
+        BrokenPoolExecutor,
+    )
+    study = GridSearchStudy(
+        _dataset("broken-pool"),
+        MovingAverageCrossoverFactory(),
+        _study_config(
+            tmp_path,
+            execution=ExecutionConfig(
+                mode=ExecutionMode.PROCESS,
+                maximum_workers=1,
+            ),
+            fast_values=(2,),
+        ),
+    )
+
+    result = study.run()
+
+    assert len(submissions) == 1
+    assert len(result.failed_trials) == 1
+    assert result.failed_trials[0].failure_category == "worker_failure"
+    assert len(result.pending_trials) == 1
+    assert result.pending_trials[0].status is TrialStatus.PENDING
+    assert all(trial.status is not TrialStatus.RUNNING for trial in result.trials)
 
 
 def test_export_reconstructs_from_trials_and_rejects_corruption(tmp_path: Path) -> None:

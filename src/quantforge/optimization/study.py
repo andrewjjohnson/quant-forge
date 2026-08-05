@@ -428,13 +428,24 @@ class GridSearchStudy:
             initializer=initialize_process_worker,
             initargs=(self.dataset, self.strategy_factory, self.config.backtest),
         ) as executor:
+
+            def schedule(candidate: ParameterCombination) -> bool:
+                running = self._write_running(candidate)
+                try:
+                    future = executor.submit(run_process_trial, candidate.parameters)
+                except Exception as error:
+                    self._write_failure(candidate, running, error)
+                    return False
+                futures[future] = (candidate, running)
+                return True
+
             for _ in range(self.config.execution.maximum_workers):
                 candidate = next(remaining, None)
                 if candidate is None:
                     break
-                running = self._write_running(candidate)
-                future = executor.submit(run_process_trial, candidate.parameters)
-                futures[future] = (candidate, running)
+                if not schedule(candidate):
+                    halted = True
+                    break
 
             while futures:
                 completed, _ = wait(tuple(futures), return_when=FIRST_COMPLETED)
@@ -448,16 +459,15 @@ class GridSearchStudy:
                         self._write_success(candidate, running, future.result())
                     except Exception as error:
                         self._write_failure(candidate, running, error)
-                        halted = halted or self.config.execution.fail_fast
+                        halted = (
+                            halted
+                            or self.config.execution.fail_fast
+                            or isinstance(error, BrokenProcessPool)
+                        )
                     if not halted:
                         next_candidate = next(remaining, None)
-                        if next_candidate is not None:
-                            next_running = self._write_running(next_candidate)
-                            next_future = executor.submit(
-                                run_process_trial,
-                                next_candidate.parameters,
-                            )
-                            futures[next_future] = (next_candidate, next_running)
+                        if next_candidate is not None and not schedule(next_candidate):
+                            halted = True
 
     def _build_result(self) -> StudyResult:
         trials = self.store.load_trials()
