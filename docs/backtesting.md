@@ -346,4 +346,6 @@ This implementation is intentionally limited to one stock or ETF, long-only,
 unlevered whole shares, next-open market orders, full fills, and discrete state
 transitions. It has no volume or order-book model, partial fills, intraday
 sequencing, taxes, multi-asset allocation, shorting, derivatives, brokerage,
-event-driven engine, optimization, or forced liquidation.
+event-driven engine, or forced liquidation. QF-5 itself does not optimize;
+QF-6's `quantforge.optimization` package coordinates repeated unchanged QF-5
+runs and reads this typed performance model. See `docs/optimization.md`.

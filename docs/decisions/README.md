@@ -20,6 +20,7 @@ Do not create ADRs for routine implementation details that are easy to change.
 ## Accepted records
 
 - [ADR 0001: Use chronological next-open backtesting](0001-use-chronological-next-open-backtesting.md)
+- [ADR 0002: Use parent-owned deterministic grid execution](0002-use-parent-owned-deterministic-grid-execution.md)
 
 ## File naming
 

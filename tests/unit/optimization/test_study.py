@@ -1,0 +1,328 @@
+import json
+from decimal import Decimal
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from quantforge.backtesting import (
+    BacktestConfig,
+    BacktestResult,
+    BasisPointSlippage,
+    ExplicitZeroFees,
+    FixedCommission,
+    run_backtest,
+)
+from quantforge.data import MarketDataset
+from quantforge.optimization import (
+    CombinationLimitExceededError,
+    ExecutionConfig,
+    ExecutionMode,
+    FilePersistenceConfig,
+    GridSearchConfig,
+    GridSearchStudy,
+    InvalidStudyConfigurationError,
+    MetricName,
+    MovingAverageCrossoverFactory,
+    ParameterLessThan,
+    ParameterSearchSpace,
+    RankingConfig,
+    StabilityConfig,
+    StudyPersistenceError,
+    StudyResult,
+)
+from quantforge.optimization.spaces import IntegerValues
+from quantforge.strategies import Strategy
+
+from ..helpers import make_dataset
+
+
+def _backtest_config(commission: str = "1") -> BacktestConfig:
+    return BacktestConfig(
+        Decimal("100000"),
+        FixedCommission(Decimal(commission)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal("5")),
+    )
+
+
+def _study_config(
+    output_root: Path,
+    *,
+    execution: ExecutionConfig = ExecutionConfig(),
+    commission: str = "1",
+    fast_values: tuple[int, ...] = (2, 3),
+    ranking: RankingConfig | None = None,
+    stability: StabilityConfig | None = None,
+    maximum_combinations: int = 100,
+) -> GridSearchConfig:
+    return GridSearchConfig(
+        label="QF-6 deterministic SPY grid",
+        search_space=ParameterSearchSpace(
+            {
+                "slow_window": IntegerValues([3, 4]),
+                "fast_window": IntegerValues(fast_values),
+            }
+        ),
+        parameter_constraints=(ParameterLessThan("fast_window", "slow_window"),),
+        backtest=_backtest_config(commission),
+        execution=execution,
+        ranking=(
+            RankingConfig(MetricName.TOTAL_RETURN) if ranking is None else ranking
+        ),
+        stability=(
+            StabilityConfig(minimum_eligible_neighbors=1)
+            if stability is None
+            else stability
+        ),
+        persistence=FilePersistenceConfig(output_root),
+        maximum_combinations=maximum_combinations,
+    )
+
+
+def _dataset(seed: str = "study") -> MarketDataset:
+    return make_dataset(
+        ("100", "99", "98", "99", "101", "103", "102", "99", "97"),
+        dataset_id=seed,
+    )
+
+
+def _scientific_result(result: StudyResult) -> tuple[object, ...]:
+    return (
+        [
+            (
+                trial.combination_index,
+                trial.status,
+                trial.parameters,
+                trial.qf5_run_id,
+                trial.metrics,
+            )
+            for trial in result.trials
+        ],
+        result.rankings,
+        result.ineligible_trials,
+        result.stability,
+        result.parameter_summaries,
+    )
+
+
+def test_study_identity_covers_scientific_inputs_and_is_equivalent(
+    tmp_path: Path,
+) -> None:
+    baseline = GridSearchStudy(
+        _dataset("same"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path / "a"),
+    )
+    equivalent = GridSearchStudy(
+        _dataset("same"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path / "b"),
+    )
+    assert baseline.study_id == equivalent.study_id
+    assert [item.combination_id for item in baseline.candidates] == [
+        item.combination_id for item in equivalent.candidates
+    ]
+
+    variants = (
+        GridSearchStudy(
+            _dataset("different"),
+            MovingAverageCrossoverFactory(),
+            _study_config(tmp_path / "dataset"),
+        ),
+        GridSearchStudy(
+            _dataset("same"),
+            MovingAverageCrossoverFactory(),
+            _study_config(tmp_path / "space", fast_values=(1, 2)),
+        ),
+        GridSearchStudy(
+            _dataset("same"),
+            MovingAverageCrossoverFactory(),
+            _study_config(tmp_path / "cost", commission="2"),
+        ),
+        GridSearchStudy(
+            _dataset("same"),
+            MovingAverageCrossoverFactory(),
+            _study_config(
+                tmp_path / "rank",
+                ranking=RankingConfig(MetricName.MAXIMUM_DRAWDOWN),
+            ),
+        ),
+        GridSearchStudy(
+            _dataset("same"),
+            MovingAverageCrossoverFactory(),
+            _study_config(
+                tmp_path / "stability",
+                stability=StabilityConfig(
+                    minimum_eligible_neighbors=1,
+                    isolated_peak_relative_drop=Decimal("0.5"),
+                ),
+            ),
+        ),
+    )
+    assert all(item.study_id != baseline.study_id for item in variants)
+
+
+def test_sequential_execution_persists_failures_and_resume_skips_completed(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    def selective_runner(
+        dataset: MarketDataset,
+        strategy: Strategy,
+        config: BacktestConfig,
+    ) -> BacktestResult:
+        parameters = strategy.parameters.to_primitive()
+        calls.append(strategy.configuration_id)
+        if parameters["fast_window"] == 3:
+            raise RuntimeError("synthetic sanitized trial failure")
+        return run_backtest(dataset, strategy, config)
+
+    study = GridSearchStudy(
+        _dataset(),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path),
+        backtest_runner=selective_runner,
+    )
+    result = study.run()
+    calls_after_run = len(calls)
+
+    assert len(result.successful_trials) == 2
+    assert len(result.failed_trials) == 1
+    assert len(result.excluded_trials) == 1
+    failure = result.failed_trials[0]
+    assert failure.failure_category == "unexpected_implementation_failure"
+    assert failure.failure_type == "RuntimeError"
+    assert failure.failure_message == "synthetic sanitized trial failure"
+    assert all(trial.qf5_run_id for trial in result.successful_trials)
+    assert all(trial.metrics is not None for trial in result.successful_trials)
+
+    resumed = study.resume()
+    assert len(calls) == calls_after_run
+    assert _scientific_result(resumed) == _scientific_result(result)
+
+
+def test_failed_trial_retry_policy_is_explicit(tmp_path: Path) -> None:
+    calls = 0
+
+    def failing_runner(
+        dataset: MarketDataset,
+        strategy: Strategy,
+        config: BacktestConfig,
+    ) -> BacktestResult:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("always fails")
+
+    study = GridSearchStudy(
+        _dataset(),
+        MovingAverageCrossoverFactory(),
+        _study_config(
+            tmp_path,
+            execution=ExecutionConfig(retry_failed=True),
+            fast_values=(2,),
+        ),
+        backtest_runner=failing_runner,
+    )
+    first = study.run()
+    calls_after_first = calls
+    second = study.resume()
+
+    assert len(first.failed_trials) == len(second.failed_trials) == 2
+    assert calls == calls_after_first * 2
+
+
+def test_process_and_sequential_execution_have_equivalent_final_results(
+    tmp_path: Path,
+) -> None:
+    sequential_study = GridSearchStudy(
+        _dataset("parallel"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path / "sequential"),
+    )
+    process_study = GridSearchStudy(
+        _dataset("parallel"),
+        MovingAverageCrossoverFactory(),
+        _study_config(
+            tmp_path / "process",
+            execution=ExecutionConfig(
+                mode=ExecutionMode.PROCESS,
+                maximum_workers=2,
+            ),
+        ),
+    )
+
+    sequential = sequential_study.run()
+    parallel = process_study.run()
+
+    assert sequential_study.study_id == process_study.study_id
+    assert _scientific_result(sequential) == _scientific_result(parallel)
+
+
+def test_export_reconstructs_from_trials_and_rejects_corruption(tmp_path: Path) -> None:
+    study = GridSearchStudy(
+        _dataset(),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    result = study.run()
+    reconstructed = study.load_result()
+
+    assert _scientific_result(result) == _scientific_result(reconstructed)
+    expected = {
+        "manifest.json",
+        "trials.csv",
+        "eligible_rankings.csv",
+        "ineligible_trials.csv",
+        "failures.csv",
+        "exclusions.csv",
+        "stability.csv",
+        "parameter_summary.csv",
+        "ranking.json",
+        "stability.json",
+        "summary.json",
+    }
+    assert expected.issubset({path.name for path in study.study_path.iterdir()})
+    json.dumps(
+        json.loads((study.study_path / "summary.json").read_text(encoding="utf-8")),
+        allow_nan=False,
+    )
+
+    successful = result.successful_trials[0]
+    study.store.trial_path(successful.trial_id).write_text("{broken", encoding="utf-8")
+    with pytest.raises(StudyPersistenceError, match="failed to load"):
+        study.load_result()
+
+
+def test_grid_limit_fails_before_execution_with_multiplicative_count(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(CombinationLimitExceededError, match=r"2 x 2 = 4"):
+        GridSearchStudy(
+            _dataset(),
+            MovingAverageCrossoverFactory(),
+            _study_config(tmp_path, maximum_combinations=3),
+        )
+
+
+def test_unsupported_execution_mode_fails_during_configuration() -> None:
+    with pytest.raises(InvalidStudyConfigurationError, match="execution mode"):
+        ExecutionConfig(mode=cast(ExecutionMode, "threads"))
+
+
+def test_changed_scientific_inputs_cannot_resume_old_study(tmp_path: Path) -> None:
+    original = GridSearchStudy(
+        _dataset("resume"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    original.run()
+    changed = GridSearchStudy(
+        _dataset("resume"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(1,)),
+    )
+
+    with pytest.raises(StudyPersistenceError, match="does not exist"):
+        changed.resume()

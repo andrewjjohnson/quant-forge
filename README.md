@@ -7,8 +7,12 @@ market-data ingestion and reusable causal indicator and engine-neutral strategy
 contracts are available. Deterministic single-symbol, long-only daily-bar
 backtesting now provides explicit next-open execution, separate commission and
 transaction-fee policies, slippage, whole-share accounting, typed metrics, a
-buy-and-hold benchmark, and structured result export. Optimization, paper
-trading, and live trading are not yet implemented.
+buy-and-hold benchmark, and structured result export. Deterministic Cartesian
+parameter optimization adds typed search spaces, pre-execution constraints,
+sequential or bounded local process execution, incremental persistence, resume,
+hard-constrained metric ranking, neighborhood stability analysis, isolated-peak
+detection, and complete exports. Paper trading and live trading are not yet
+implemented.
 
 ## Prerequisites
 
@@ -57,7 +61,9 @@ the explicitly opted-in Alpha Vantage SPY verification. See
 [`docs/strategy-contracts.md`](docs/strategy-contracts.md) for indicator,
 strategy, signal-timing, and sizing-intent usage. See
 [`docs/backtesting.md`](docs/backtesting.md) for execution, accounting, metric,
-benchmark, and export semantics.
+benchmark, and export semantics. See
+[`docs/optimization.md`](docs/optimization.md) for grid definition, ranking,
+resume, stability, scale safeguards, and the cached SPY moving-average example.
 
 ## Repository layout
 

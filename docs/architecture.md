@@ -52,7 +52,9 @@ Trades, equity, and artifacts
 Metrics/validation       Feature analysis       Reports/manifests
 ```
 
-Optimization orchestrates repeated strategy runs but must not alter the semantics of the underlying backtest.
+QF-6 optimization orchestrates repeated strategy runs but does not alter the
+semantics of the underlying QF-4 strategy or QF-5 backtest. See
+`docs/optimization.md` and ADR 0002.
 
 ## Module boundaries
 
@@ -236,6 +238,21 @@ Must not:
 
 ### Optimization
 
+QF-6 implements this boundary in `quantforge.optimization`. Typed finite search
+spaces use QF-4 strategy parameter-contract order, declarative constraints and
+the real strategy factory exclude invalid assignments before QF-5, and stable
+study/trial identities reuse QF-3 dataset identity plus QF-4/QF-5
+configuration/version provenance. Sequential execution is the reference;
+bounded local process execution initializes the immutable dataset once per
+worker. The parent process alone owns atomic persistence, QF-5 artifact export,
+resume state, ranking, stability, and final ordering.
+
+Ranking reads only typed QF-5 performance fields and applies explicit hard
+constraints before a deterministic objective/tie-breaker policy. Stability is
+computed in finite candidate-index coordinates, reports failed/ineligible
+neighbors without replacing them with zero, and keeps objective rank separate
+from stability rank. All outputs are explicitly in-sample.
+
 Responsibilities:
 
 - define search spaces and constraints;
@@ -243,12 +260,20 @@ Responsibilities:
 - persist status and metrics;
 - resume interrupted studies;
 - assess parameter stability.
+- record excluded, failed, pending, ineligible, and successful trials without
+  hiding poor outcomes;
+- export reproducible study manifests, trial summaries, rankings, neighborhood
+  statistics, and parameter-value summaries.
 
 Must not:
 
 - introduce different execution assumptions between trials;
 - select using holdout outcomes;
 - discard failed trials without a record.
+- retrieve provider data during trials;
+- recalculate QF-5 metrics or duplicate strategy/backtest representations;
+- treat stability as holdout or out-of-sample validation;
+- deploy or promote a selected strategy automatically.
 
 ### Reporting and experiment manifests
 

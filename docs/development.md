@@ -175,6 +175,28 @@ Changes to execution or accounting require:
 
 Do not alter fill rules solely to improve historical results.
 
+## Adding an optimization feature
+
+Use the QF-6 contracts and deterministic policies in
+[`optimization.md`](optimization.md). Optimization code coordinates generic
+QF-4 factories and QF-5 results; it must not branch on strategy names or
+reimplement metrics, execution, costs, accounting, or market-data validation.
+
+Changes to search, ranking, stability, persistence, or parallel execution
+require:
+
+- stable primitive configuration and schema/version review;
+- identity-change tests for scientific inputs;
+- exact combination-order and exclusion tests;
+- sequential/process equivalence when execution is affected;
+- resume call-count tests when state transitions are affected;
+- synthetic objective surfaces when stability rules are affected; and
+- explicit in-sample, overfitting, and multiple-comparison limitations.
+
+Keep normal tests network-free. A documented SPY example must consume an
+already-loaded/cache-validated QF-3 dataset and must not retrieve provider data
+inside any trial.
+
 ## Adding feature analysis
 
 Keep contemporaneous features separate from forward-looking labels.
