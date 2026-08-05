@@ -628,6 +628,17 @@ class GridSearchStudy:
             raise StudyPersistenceError(
                 "non-successful persisted trial contains QF-5 result fields"
             )
+        elif trial.status is TrialStatus.FAILED and any(
+            value is None
+            for value in (
+                trial.failure_category,
+                trial.failure_type,
+                trial.failure_message,
+            )
+        ):
+            raise StudyPersistenceError(
+                "failed persisted trial has incomplete failure context"
+            )
 
     def _load_validated_trials(
         self,

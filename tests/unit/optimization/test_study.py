@@ -622,6 +622,44 @@ def test_export_reconstructs_from_trials_and_rejects_corruption(tmp_path: Path) 
         study.load_result()
 
 
+@pytest.mark.parametrize(
+    "failure_field",
+    ["failure_category", "failure_type", "failure_message"],
+)
+@pytest.mark.parametrize("action_name", ["load_result", "resume"])
+def test_failed_trial_requires_complete_failure_context(
+    tmp_path: Path,
+    failure_field: str,
+    action_name: str,
+) -> None:
+    def failing_runner(
+        dataset: MarketDataset,
+        strategy: Strategy,
+        config: BacktestConfig,
+    ) -> BacktestResult:
+        raise RuntimeError("synthetic persisted failure")
+
+    study = GridSearchStudy(
+        _dataset("incomplete-failure-context"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+        backtest_runner=failing_runner,
+    )
+    result = study.run()
+    failed = result.failed_trials[0]
+    trial_path = study.store.trial_path(failed.trial_id)
+    trial = json.loads(trial_path.read_text(encoding="utf-8"))
+    trial[failure_field] = None
+    trial_path.write_text(json.dumps(trial), encoding="utf-8")
+
+    action = study.load_result if action_name == "load_result" else study.resume
+    with pytest.raises(
+        StudyPersistenceError,
+        match="incomplete failure context",
+    ):
+        action()
+
+
 @pytest.mark.parametrize("resume", [False, True])
 def test_missing_manifest_rejects_a_nonempty_orphaned_study_directory(
     tmp_path: Path,
