@@ -1,9 +1,14 @@
 from decimal import Decimal, localcontext
+from typing import cast
+
+import pytest
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.optimization import (
+    InvalidStudyConfigurationError,
     MaximumDrawdown,
     MetricName,
+    MetricTieBreaker,
     MinimumTrades,
     MovingAverageCrossoverFactory,
     ParameterCombination,
@@ -112,6 +117,36 @@ def test_minimize_ranking_uses_configured_direction() -> None:
         ),
     )
     assert [item.combination_id for item in outcome.rankings] == ["b", "a"]
+
+
+@pytest.mark.parametrize(
+    ("tie_breaker", "expected_message"),
+    [
+        (
+            MetricTieBreaker(
+                cast(MetricName, "maximum_drawdown"),
+                RankingDirection.MAXIMIZE,
+            ),
+            "tie-breaker metric",
+        ),
+        (
+            MetricTieBreaker(
+                MetricName.MAXIMUM_DRAWDOWN,
+                cast(RankingDirection, "maximize"),
+            ),
+            "tie-breaker direction",
+        ),
+    ],
+)
+def test_ranking_rejects_raw_tie_breaker_metric_or_direction(
+    tie_breaker: MetricTieBreaker,
+    expected_message: str,
+) -> None:
+    with pytest.raises(InvalidStudyConfigurationError, match=expected_message):
+        RankingConfig(
+            MetricName.TOTAL_RETURN,
+            tie_breakers=(tie_breaker,),
+        )
 
 
 def _surface_trials(

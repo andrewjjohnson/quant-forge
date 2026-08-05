@@ -303,8 +303,11 @@ when a study has too few successful observations.
 Ranking uses the objective first, configured metric tie breakers next, and the
 combination ID ascending as the final fallback. The defaults prefer the less
 negative maximum drawdown, then greater completed-trade count. Ranking never
-uses completion order. Full results remain exported even when a caller uses a
-top-N slice of `StudyResult.rankings`.
+uses completion order. Objectives, directions, and every tie-breaker metric and
+direction must be their typed enum members; raw or unsupported deserialized
+strings fail configuration instead of falling through to alternate ordering.
+Full results remain exported even when a caller uses a top-N slice of
+`StudyResult.rankings`.
 
 ## Stability and isolated peaks
 

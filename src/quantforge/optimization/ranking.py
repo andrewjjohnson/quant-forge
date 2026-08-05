@@ -81,7 +81,11 @@ def _eligibility_reasons(trial: TrialRecord, config: RankingConfig) -> tuple[str
 
 
 def _directional(value: Decimal, direction: RankingDirection) -> Decimal:
-    return -value if direction is RankingDirection.MAXIMIZE else value
+    if direction is RankingDirection.MAXIMIZE:
+        return -value
+    if direction is RankingDirection.MINIMIZE:
+        return value
+    raise RankingError("ranking direction is unsupported")
 
 
 def _ranking_key(trial: TrialRecord, config: RankingConfig) -> tuple[object, ...]:

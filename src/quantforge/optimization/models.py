@@ -270,6 +270,21 @@ class RankingConfig:
             raise InvalidStudyConfigurationError(
                 "minimum successful trials must be a positive integer"
             )
+        for tie_breaker_value in cast(tuple[object, ...], self.tie_breakers):
+            if not isinstance(tie_breaker_value, MetricTieBreaker):
+                raise InvalidStudyConfigurationError(
+                    "ranking tie breakers must be MetricTieBreaker records"
+                )
+            if not isinstance(cast(object, tie_breaker_value.metric), MetricName):
+                raise InvalidStudyConfigurationError(
+                    "ranking tie-breaker metric must be a supported QF-5 metric"
+                )
+            if not isinstance(
+                cast(object, tie_breaker_value.direction), RankingDirection
+            ):
+                raise InvalidStudyConfigurationError(
+                    "ranking tie-breaker direction is unsupported"
+                )
         metrics = [tie_breaker.metric for tie_breaker in self.tie_breakers]
         if len(set(metrics)) != len(metrics):
             raise InvalidStudyConfigurationError(
