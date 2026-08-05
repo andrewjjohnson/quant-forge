@@ -179,6 +179,11 @@ hashed for every identity.
   strategy parameters and configuration identity, QF-5 configuration, and
   relevant engine/schema versions.
 
+The factory's declared strategy name and implementation version are hashed as
+explicit identity fields, independently of its serialized factory
+configuration. A custom factory therefore cannot alias another strategy by
+omitting those fields or providing stale values in `configuration()`.
+
 Study construction runs the authoritative QF-3 dataset validator before
 calculating an identity or accessing persisted trials. Resume and result loading
 therefore cannot trust old successes when the supplied bars no longer reproduce

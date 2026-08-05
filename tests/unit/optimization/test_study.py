@@ -17,6 +17,7 @@ from quantforge.backtesting import (
     FixedCommission,
     run_backtest,
 )
+from quantforge.configuration import PrimitiveMapping
 from quantforge.data import MarketDataset, ValidationError
 from quantforge.indicators import MarketField
 from quantforge.optimization import (
@@ -39,9 +40,32 @@ from quantforge.optimization import (
 )
 from quantforge.optimization.errors import InvalidTrialTransitionError
 from quantforge.optimization.spaces import IntegerValues
-from quantforge.strategies import Strategy
+from quantforge.strategies import (
+    MovingAverageCrossoverParameters,
+    MovingAverageCrossoverStrategy,
+    Strategy,
+)
 
 from ..helpers import make_dataset
+
+
+class _IdentityOmittingFactory(MovingAverageCrossoverFactory):
+    def configuration(self) -> PrimitiveMapping:
+        return {"component": "test_identity_omitting_factory"}
+
+
+class _VersionTwoMovingAverageStrategy(MovingAverageCrossoverStrategy):
+    implementation_version = "2"
+
+
+class _VersionTwoIdentityOmittingFactory(_IdentityOmittingFactory):
+    strategy_version = "2"
+
+    def build(self, parameters: PrimitiveMapping) -> Strategy:
+        original = super().build(parameters)
+        return _VersionTwoMovingAverageStrategy(
+            cast(MovingAverageCrossoverParameters, original.parameters)
+        )
 
 
 def _backtest_config(commission: str = "1") -> BacktestConfig:
@@ -168,6 +192,34 @@ def test_study_identity_covers_scientific_inputs_and_is_equivalent(
         ),
     )
     assert all(item.study_id != baseline.study_id for item in variants)
+
+
+def test_study_and_combination_identities_bind_explicit_strategy_version(
+    tmp_path: Path,
+) -> None:
+    version_one_factory = _IdentityOmittingFactory()
+    version_two_factory = _VersionTwoIdentityOmittingFactory()
+    version_one = GridSearchStudy(
+        _dataset("explicit-strategy-identity"),
+        version_one_factory,
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    version_two = GridSearchStudy(
+        _dataset("explicit-strategy-identity"),
+        version_two_factory,
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+
+    assert version_one_factory.configuration() == version_two_factory.configuration()
+    assert version_one.study_id != version_two.study_id
+    assert {item.combination_id for item in version_one.candidates}.isdisjoint(
+        item.combination_id for item in version_two.candidates
+    )
+    identity_inputs = cast(
+        dict[str, object], version_two.manifest_primitive()["identity_inputs"]
+    )
+    assert identity_inputs["strategy_name"] == version_two_factory.strategy_name
+    assert identity_inputs["strategy_version"] == version_two_factory.strategy_version
 
 
 @pytest.mark.parametrize(

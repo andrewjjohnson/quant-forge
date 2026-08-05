@@ -66,6 +66,8 @@ def _combination_id(
         {
             "component": "quantforge_parameter_combination",
             "combination_schema_version": "1",
+            "strategy_name": strategy_factory.strategy_name,
+            "strategy_version": strategy_factory.strategy_version,
             "strategy_factory": strategy_factory.configuration(),
             "parameters": parameters,
         }

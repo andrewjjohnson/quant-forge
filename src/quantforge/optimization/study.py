@@ -171,6 +171,8 @@ class GridSearchStudy:
             "qf5_result_schema_version": RESULT_SCHEMA_VERSION,
             "label": self.config.label,
             "dataset": _dataset_primitive(self.dataset),
+            "strategy_name": self.strategy_factory.strategy_name,
+            "strategy_version": self.strategy_factory.strategy_version,
             "strategy_factory": self.strategy_factory.configuration(),
             "search_space": self.config.search_space.to_primitive(
                 self.strategy_factory.parameter_order
