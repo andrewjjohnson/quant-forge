@@ -143,9 +143,11 @@ strategy or backtest runs.
 
 ## Parameter constraints and exclusions
 
-Constraints execute before QF-5. `ParameterComparison` supports comparisons
-against another searched parameter or a constant. Convenience constraints
-include `ParameterLessThan` and `ParameterAtMost`. A named, versioned
+Constraints execute before QF-5. `ParameterComparison` requires an explicit
+`ComparisonOperator` member and supports comparisons against another searched
+parameter or a constant; raw or unsupported operator strings fail during
+construction. Convenience constraints include `ParameterLessThan` and
+`ParameterAtMost`. A named, versioned
 `CustomParameterConstraint` is available for uncommon deterministic predicates;
 anonymous lambdas, nested local functions, and entry-point or notebook
 `__main__` functions are rejected because they have no durable import identity.

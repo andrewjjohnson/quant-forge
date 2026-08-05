@@ -9,6 +9,7 @@ from quantforge.optimization import (
     BooleanValues,
     CategoricalValues,
     CombinationExclusion,
+    ComparisonOperator,
     CustomParameterConstraint,
     FloatValues,
     IntegerValues,
@@ -16,6 +17,7 @@ from quantforge.optimization import (
     InvalidStudyConfigurationError,
     MovingAverageCrossoverFactory,
     ParameterAtMost,
+    ParameterComparison,
     ParameterLessThan,
     ParameterSearchSpace,
     iter_combination_candidates,
@@ -236,4 +238,16 @@ def test_constraints_fail_early_for_unknown_names_and_support_constants() -> Non
                 search_space,
                 (ParameterLessThan("frist_window", "slow_window"),),
             )
+        )
+
+
+@pytest.mark.parametrize("operator", ["lt", "le", "unsupported"])
+def test_parameter_comparison_rejects_raw_or_unsupported_operators(
+    operator: str,
+) -> None:
+    with pytest.raises(InvalidStudyConfigurationError, match="ComparisonOperator"):
+        ParameterComparison(
+            "fast_window",
+            cast(ComparisonOperator, operator),
+            other_parameter="slow_window",
         )

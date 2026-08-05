@@ -54,7 +54,11 @@ def _compare(
             return le(left_value, right_value)
         if operator is ComparisonOperator.GREATER_THAN:
             return gt(left_value, right_value)
-        return ge(left_value, right_value)
+        if operator is ComparisonOperator.GREATER_THAN_OR_EQUAL:
+            return ge(left_value, right_value)
+        raise InvalidStudyConfigurationError(
+            "constraint comparison operator is unsupported"
+        )
     except TypeError as error:
         raise InvalidStudyConfigurationError(
             "constraint operands are not deterministically comparable"
@@ -74,6 +78,11 @@ class ParameterComparison:
     def __post_init__(self) -> None:
         if not self.parameter:
             raise InvalidStudyConfigurationError("constraint parameter is required")
+        operator = cast(object, self.operator)
+        if not isinstance(operator, ComparisonOperator):
+            raise InvalidStudyConfigurationError(
+                "constraint comparison operator must be a ComparisonOperator"
+            )
         if (self.other_parameter is None) == (self.constant is None):
             raise InvalidStudyConfigurationError(
                 "a parameter comparison requires exactly one right-hand operand"
