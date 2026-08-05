@@ -244,6 +244,10 @@ clearly. A non-empty study directory without `manifest.json` is treated as an
 orphaned or corrupt store and is rejected for both fresh runs and resume; it is
 never initialized over existing trial files. Existing successful QF-5 artifacts
 are accepted only when their manifest carries the expected immutable run ID.
+Before scheduling, QF-6 rejects any persisted trial ID outside the study's exact
+candidate set. Before ranking, result loading, or export, the persisted IDs must
+also cover that complete candidate set, so extra files cannot inflate results or
+reach stability analysis.
 
 ```text
 reports/optimization/<study-id>/

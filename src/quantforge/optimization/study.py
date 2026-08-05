@@ -131,6 +131,9 @@ class GridSearchStudy:
             )
         self._identity_inputs = self._scientific_definition()
         self.study_id = configuration_identity(self._identity_inputs)
+        self._expected_trial_ids = frozenset(
+            self._trial_id(candidate) for candidate in self._candidates
+        )
         self.store = FileStudyStore(
             config.persistence.output_root,
             self.study_id,
@@ -504,8 +507,27 @@ class GridSearchStudy:
                             halted = True
                             break
 
-    def _build_result(self) -> StudyResult:
+    def _load_validated_trials(
+        self,
+        *,
+        require_complete: bool,
+    ) -> tuple[TrialRecord, ...]:
         trials = self.store.load_trials()
+        persisted_trial_ids = frozenset(trial.trial_id for trial in trials)
+        if persisted_trial_ids.difference(self._expected_trial_ids):
+            raise StudyPersistenceError(
+                "persisted trial IDs include records outside the expected candidate set"
+            )
+        if require_complete and self._expected_trial_ids.difference(
+            persisted_trial_ids
+        ):
+            raise StudyPersistenceError(
+                "persisted trial IDs do not cover the complete candidate set"
+            )
+        return trials
+
+    def _build_result(self) -> StudyResult:
+        trials = self._load_validated_trials(require_complete=True)
         ranking = rank_trials(trials, self.config.ranking)
         stability = analyze_stability(
             trials,
@@ -546,6 +568,7 @@ class GridSearchStudy:
 
     def _execute(self, *, resume: bool) -> StudyResult:
         self.store.initialize(self.manifest_primitive(), resume=resume)
+        self._load_validated_trials(require_complete=False)
         pending = self._prepare_records()
         if self.config.execution.mode.value == "sequential":
             self._execute_sequential(pending)

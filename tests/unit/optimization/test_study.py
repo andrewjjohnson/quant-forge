@@ -599,6 +599,31 @@ def test_missing_manifest_rejects_a_nonempty_orphaned_study_directory(
     assert orphaned_trial.read_text(encoding="utf-8") == "{}\n"
 
 
+@pytest.mark.parametrize("reuse_known_combination", [False, True])
+def test_result_loading_rejects_trials_outside_the_candidate_set(
+    tmp_path: Path,
+    reuse_known_combination: bool,
+) -> None:
+    study = GridSearchStudy(
+        _dataset("orphaned-trial"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    result = study.run()
+    source = result.successful_trials[0]
+    orphan = replace(
+        source,
+        trial_id="f" * 64,
+        combination_id=(source.combination_id if reuse_known_combination else "e" * 64),
+    )
+    study.store.write_trial(orphan)
+
+    with pytest.raises(StudyPersistenceError, match="expected candidate set"):
+        study.load_result()
+    with pytest.raises(StudyPersistenceError, match="expected candidate set"):
+        study.resume()
+
+
 def test_grid_limit_fails_before_execution_with_multiplicative_count(
     tmp_path: Path,
 ) -> None:
