@@ -28,8 +28,8 @@ from quantforge.backtesting import (
     ResultExportError,
     SplitAccountingPolicy,
     export_backtest_result,
-    load_backtest_manifest,
     run_backtest,
+    validate_backtest_result_export,
 )
 from quantforge.data import (
     AdjustmentMode,
@@ -206,9 +206,7 @@ def export_result(result: BacktestResult, output_root: Path) -> tuple[Path, str]
     except ResultExportError:
         if not expected_path.is_dir():
             raise
-        manifest = load_backtest_manifest(expected_path / "manifest.json")
-        if manifest.get("run_id") != result.run_id:
-            raise
+        validate_backtest_result_export(result, expected_path)
         return expected_path, "reused existing immutable export"
 
 
@@ -319,3 +317,5 @@ if __name__ == "__main__":
         main()
     except MarketDataError as error:
         raise SystemExit(f"market-data error: {error}") from None
+    except ResultExportError as error:
+        raise SystemExit(f"result-export error: {error}") from None

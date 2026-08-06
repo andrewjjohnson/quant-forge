@@ -9,6 +9,7 @@ from typing import ClassVar, Literal, cast
 import pytest
 
 from quantforge.backtesting import (
+    BACKTEST_ARTIFACT_FILENAMES,
     BacktestConfig,
     BacktestResult,
     BasisPointFees,
@@ -27,6 +28,7 @@ from quantforge.backtesting import (
     export_backtest_result,
     load_backtest_manifest,
     run_backtest,
+    validate_backtest_result_export,
 )
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data import dataset_identity_matches
@@ -989,8 +991,37 @@ def test_structured_export_is_stable_reloadable_and_never_overwrites(
     assert load_backtest_manifest(exported / "manifest.json") == (
         result.manifest_primitive()
     )
+    assert validate_backtest_result_export(result, exported) == exported
     with pytest.raises(ResultExportError, match="already exists"):
         export_backtest_result(result, tmp_path / "reports")
+
+
+@pytest.mark.parametrize("artifact_name", BACKTEST_ARTIFACT_FILENAMES)
+@pytest.mark.parametrize("mutation", ["delete", "truncate"])
+def test_export_validation_rejects_incomplete_or_modified_artifacts(
+    tmp_path: Path,
+    artifact_name: str,
+    mutation: str,
+) -> None:
+    result = configured_result()
+    exported = export_backtest_result(result, tmp_path / "reports")
+    artifact = exported / artifact_name
+    if mutation == "delete":
+        artifact.unlink()
+    else:
+        artifact.write_bytes(b"")
+
+    with pytest.raises(ResultExportError, match="expected immutable result"):
+        validate_backtest_result_export(result, exported)
+
+
+def test_export_validation_rejects_unexpected_artifacts(tmp_path: Path) -> None:
+    result = configured_result()
+    exported = export_backtest_result(result, tmp_path / "reports")
+    (exported / "unexpected.csv").write_text("unexpected\n", encoding="utf-8")
+
+    with pytest.raises(ResultExportError, match="expected immutable result"):
+        validate_backtest_result_export(result, exported)
 
 
 def test_empty_fill_export_preserves_the_full_fill_schema(tmp_path: Path) -> None:

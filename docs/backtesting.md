@@ -395,7 +395,10 @@ schema when neither the strategy nor benchmark can afford a share. Dates are ISO
 with a defined UTC offset. A `tzinfo` object whose `utcoffset()` returns `None`
 is rejected as naive. Export builds a temporary directory and renames it into
 place only after every file is complete. `load_backtest_manifest` reloads the
-complete JSON object.
+complete JSON object. `BACKTEST_ARTIFACT_FILENAMES` exposes the authoritative
+file set, and `validate_backtest_result_export(result, path)` regenerates the
+expected deterministic artifact in a temporary directory and byte-compares
+every required file before an existing export may be reported as reusable.
 
 ## Adjustment assumptions and MVP limitations
 

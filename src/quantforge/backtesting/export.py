@@ -13,6 +13,21 @@ from quantforge.backtesting.errors import ResultExportError
 from quantforge.backtesting.models import BacktestResult
 from quantforge.configuration import Primitive, PrimitiveMapping
 
+BACKTEST_ARTIFACT_FILENAMES = (
+    "manifest.json",
+    "signals.csv",
+    "orders.csv",
+    "fills.csv",
+    "positions.csv",
+    "trades.csv",
+    "equity.csv",
+    "benchmark_equity.csv",
+    "dividend_cashflows.csv",
+    "split_adjustments.csv",
+    "benchmark_dividend_cashflows.csv",
+    "benchmark_split_adjustments.csv",
+)
+
 _FILL_CSV_FIELDS = (
     "fill_id",
     "order_id",
@@ -253,6 +268,41 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
         shutil.rmtree(temporary, ignore_errors=True)
         raise ResultExportError("failed to export immutable backtest result") from error
     return destination
+
+
+def validate_backtest_result_export(result: BacktestResult, path: Path) -> Path:
+    """Require an existing export to exactly match this immutable result."""
+    try:
+        if path.name != result.run_id or path.is_symlink() or not path.is_dir():
+            raise ResultExportError(
+                "backtest export does not match the expected immutable result"
+            )
+        entries = {entry.name: entry for entry in path.iterdir()}
+        if set(entries) != set(BACKTEST_ARTIFACT_FILENAMES) or any(
+            entry.is_symlink() or not entry.is_file() for entry in entries.values()
+        ):
+            raise ResultExportError(
+                "backtest export does not match the expected immutable result"
+            )
+        with tempfile.TemporaryDirectory(
+            prefix="quantforge-export-validation-"
+        ) as temporary_root:
+            expected_path = export_backtest_result(result, Path(temporary_root))
+            if any(
+                entries[filename].read_bytes()
+                != (expected_path / filename).read_bytes()
+                for filename in BACKTEST_ARTIFACT_FILENAMES
+            ):
+                raise ResultExportError(
+                    "backtest export does not match the expected immutable result"
+                )
+    except ResultExportError:
+        raise
+    except OSError as error:
+        raise ResultExportError(
+            "failed to validate immutable backtest export"
+        ) from error
+    return path
 
 
 def load_backtest_manifest(path: Path) -> PrimitiveMapping:

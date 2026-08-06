@@ -10,6 +10,7 @@ from typing import Self, cast
 import pytest
 
 from quantforge.backtesting import (
+    BACKTEST_ARTIFACT_FILENAMES,
     BacktestConfig,
     BacktestResult,
     BasisPointSlippage,
@@ -714,15 +715,7 @@ def test_failed_trial_requires_complete_failure_context(
 
 @pytest.mark.parametrize(
     "artifact_name",
-    [
-        "signals.csv",
-        "orders.csv",
-        "fills.csv",
-        "positions.csv",
-        "trades.csv",
-        "equity.csv",
-        "benchmark_equity.csv",
-    ],
+    BACKTEST_ARTIFACT_FILENAMES,
 )
 @pytest.mark.parametrize("action_name", ["load_result", "resume"])
 def test_successful_trial_requires_complete_qf5_artifact(

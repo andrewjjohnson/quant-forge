@@ -31,8 +31,10 @@ from quantforge.backtesting.errors import (
     ResultExportError,
 )
 from quantforge.backtesting.export import (
+    BACKTEST_ARTIFACT_FILENAMES,
     export_backtest_result,
     load_backtest_manifest,
+    validate_backtest_result_export,
 )
 from quantforge.backtesting.metrics import CALENDAR_DAYS_PER_YEAR
 from quantforge.backtesting.models import (
@@ -55,6 +57,7 @@ from quantforge.backtesting.models import (
 from quantforge.backtesting.runner import fingerprint_market_bars, run_backtest
 
 __all__ = [
+    "BACKTEST_ARTIFACT_FILENAMES",
     "CALENDAR_DAYS_PER_YEAR",
     "ENGINE_VERSION",
     "RESULT_SCHEMA_VERSION",
@@ -99,4 +102,5 @@ __all__ = [
     "fingerprint_market_bars",
     "load_backtest_manifest",
     "run_backtest",
+    "validate_backtest_result_export",
 ]
