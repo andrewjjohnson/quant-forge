@@ -232,6 +232,13 @@ Keep the two concepts separate:
 - **features:** information available at signal time;
 - **labels:** outcomes calculated using later observations.
 
+QF-11 enforces this split for overnight-gap research. Its prediction strategy
+sees completed-session OHLC and causal Wilder indicator outputs but no next-open
+price. Only the prediction runner pairs an already-generated signal with the
+immediate next exchange session. The signal close is explicitly a label anchor,
+not a fabricated same-close fill, and exported accuracy is not labeled as trade
+performance. See `docs/prediction-analysis.md`.
+
 Use versioned schemas for both.
 
 ## Walk-forward testing

@@ -56,6 +56,11 @@ QF-6 optimization orchestrates repeated strategy runs but does not alter the
 semantics of the underlying QF-4 strategy or QF-5 backtest. See
 `docs/optimization.md` and ADR 0002.
 
+QF-11 prediction analysis is a separate branch from execution. It pairs causal
+completed-session predictions with later next-open labels only after signal
+generation. It never creates orders, fills, or portfolio results. See
+`docs/prediction-analysis.md`.
+
 ## Module boundaries
 
 ### Data acquisition
@@ -274,6 +279,29 @@ Must not:
 - recalculate QF-5 metrics or duplicate strategy/backtest representations;
 - treat stability as holdout or out-of-sample validation;
 - deploy or promote a selected strategy automatically.
+
+### Prediction analysis
+
+QF-11 implements this boundary in `quantforge.prediction`. Prediction strategies
+consume QF-3 datasets and causal QF-4 indicators, emit direction guesses that
+contain no future prices, and are then paired by the generic runner with the
+immediate next exchange session's open. The signal close is retained only as the
+outcome reference price and is never represented as a fill.
+
+Responsibilities:
+
+- preserve a strict boundary between contemporaneous features and future labels;
+- validate immediate next-session alignment;
+- calculate direction correctness, signed gap return, and gap magnitude;
+- retain strategy, parameter, feature, dataset, and schema provenance;
+- export deterministic immutable analysis artifacts.
+
+Must not:
+
+- create orders, fills, positions, or trade P&L;
+- alter QF-5 timing or execution assumptions;
+- expose future outcome values to prediction generation;
+- describe direction accuracy as executable performance.
 
 ### Reporting and experiment manifests
 

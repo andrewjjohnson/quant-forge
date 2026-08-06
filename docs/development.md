@@ -94,6 +94,18 @@ TIINGO_API_KEY=... uv run python scripts/run_spy_backtest.py
 uv run python scripts/run_spy_backtest.py --fixture
 ```
 
+Run the provider-neutral QF-11 overnight-gap analysis against the fixed
+2020-2025 Tiingo SPY request, or reproduce it from an existing cache entry:
+
+```bash
+TIINGO_API_KEY=... uv run python scripts/run_spy_gap_prediction.py
+uv run python scripts/run_spy_gap_prediction.py --dataset-id <dataset-id>
+```
+
+The command prints direction accuracy and average gap sizes; it creates no
+orders or fills. Use `--refresh` only to intentionally retrieve a new immutable
+Tiingo snapshot.
+
 Downloaded provider responses remain under ignored `data/`; structured results
 remain under ignored `reports/`. Use `--refresh` only when intentionally
 retrieving a new immutable provider revision. Never stage either directory.
@@ -246,6 +258,11 @@ Outcome labels may include:
 - bars to event.
 
 Outcome-label code must never be imported into live signal-generation paths.
+
+For next-session gap studies, use `quantforge.prediction` and the contracts in
+[`prediction-analysis.md`](prediction-analysis.md). Keep signal generation and
+label alignment as separate calls, require the immediate calendar successor,
+and include append-future tests proving historical predictions do not change.
 
 ## Test organization
 

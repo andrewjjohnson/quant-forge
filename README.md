@@ -15,7 +15,9 @@ parameter optimization adds typed search spaces, pre-execution constraints,
 sequential or bounded local process execution, incremental persistence, resume,
 hard-constrained metric ranking, neighborhood stability analysis, isolated-peak
 detection, and complete exports. Paper trading and live trading are not yet
-implemented.
+implemented. A separate causal prediction-analysis boundary can evaluate
+completed-session RSI, DMI, and ADX rules against next-session opening gaps
+without fabricating close-price fills.
 
 ## Prerequisites
 
@@ -67,6 +69,8 @@ strategy, signal-timing, and sizing-intent usage. See
 benchmark, and export semantics. See
 [`docs/optimization.md`](docs/optimization.md) for grid definition, ranking,
 resume, stability, scale safeguards, and the cached SPY moving-average example.
+See [`docs/prediction-analysis.md`](docs/prediction-analysis.md) for overnight-gap
+direction rules, forward-label alignment, metrics, and deterministic exports.
 
 ## Repository layout
 
@@ -106,6 +110,18 @@ prices, and an explicit `PRICE_RETURN_ONLY` dividend policy. Its performance
 therefore excludes dividends and is labeled `price_return`; the script prints
 ignored-event disclosures for both strategy and benchmark. `--fixture` runs a
 short synthetic offline flow and must not be interpreted as market performance.
+
+Run the separate close-to-next-open direction analysis on the same fixed Tiingo
+SPY range with:
+
+```bash
+TIINGO_API_KEY=... uv run python scripts/run_spy_gap_prediction.py
+```
+
+This reports prediction accuracy and average absolute gap size for correct and
+incorrect guesses. It does not execute trades or claim a fill at the signal
+close. Pass `--dataset-id <id>` to reproduce the analysis from a cached QF-3
+dataset without contacting Tiingo.
 
 ## Contributing
 
