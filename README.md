@@ -101,7 +101,8 @@ TIINGO_API_KEY=... uv run python scripts/run_spy_backtest.py
 
 It uses the existing moving-average strategy, nonzero commission and slippage,
 $100,000 initial capital, next-session-open execution, mandatory split
-accounting, and an explicit `PRICE_RETURN_ONLY` dividend policy. Its performance
+accounting with causal split-normalized strategy features over raw execution
+prices, and an explicit `PRICE_RETURN_ONLY` dividend policy. Its performance
 therefore excludes dividends and is labeled `price_return`; the script prints
 ignored-event disclosures for both strategy and benchmark. `--fixture` runs a
 short synthetic offline flow and must not be interpreted as market performance.

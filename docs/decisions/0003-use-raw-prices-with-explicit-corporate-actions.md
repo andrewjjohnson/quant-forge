@@ -58,6 +58,13 @@ credited/ignored disclosures, explicit `price_return` or
 mode is suitable for early price-signal research but understates long-period
 wealth relative to total-return accounting.
 
+Raw OHLCV remains authoritative for execution and portfolio marks. QF-5 derives
+a non-persisted causal strategy-feature view that multiplies OHLC and divides
+volume by the cumulative split factor beginning on each effective session. This
+prevents artificial indicator crossovers at splits without using a later split
+to revise earlier observations; the transformation is fixed and versioned in
+the separate split policy.
+
 The daily model credits on ex-date rather than the real payment date. It does
 not support DRIPs, tax/withholding, cash-in-lieu, fractional positions, or
 intraday action sequencing. Fully adjusted execution datasets remain rejected.

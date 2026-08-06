@@ -291,7 +291,18 @@ def test_dividend_and_split_policies_are_separate_and_serialized() -> None:
     assert primitive["dividend_policy"] == "price_return_only"
     split_policy = primitive["split_policy"]
     assert isinstance(split_policy, dict)
+    assert split_policy["implementation_version"] == "2"
     assert split_policy["split_timing"] == "before_open_execution"
+    assert split_policy["execution_price_basis"] == "raw_provider"
+    assert split_policy["strategy_price_basis"] == (
+        "raw_price_times_cumulative_effective_split_factor"
+    )
+    assert split_policy["strategy_volume_basis"] == (
+        "raw_volume_divided_by_cumulative_effective_split_factor"
+    )
+    assert split_policy["strategy_feature_timing"] == (
+        "effective_splits_through_current_session_only"
+    )
     with pytest.raises(
         InvalidBacktestConfigurationError,
         match="unsupported split accounting policy",

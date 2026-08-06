@@ -18,6 +18,7 @@ from quantforge.backtesting.corporate_actions import (
     actions_by_session,
     apply_dividend_policy,
     apply_split_action,
+    causal_split_normalized_strategy_dataset,
     summarize_dividend_accounting,
 )
 from quantforge.backtesting.costs import OrderSide
@@ -75,6 +76,8 @@ LIMITATIONS = (
     "market orders with full whole-share fills only",
     "next-session open execution only",
     "no volume, liquidity, partial-fill, or intraday sequencing model",
+    "strategy features use causal forward split-normalized OHLCV while execution "
+    "and marks use raw provider prices",
     "dividend treatment follows the explicit backtest policy",
     "cash-dividend mode credits on ex-date rather than provider payment date",
     "fractional shares from stock splits are rejected without cash-in-lieu",
@@ -347,6 +350,7 @@ def run_backtest(
     """Run QF-4 decisions through deterministic next-open execution and accounting."""
     _validate_dataset(dataset, config)
     bars_fingerprint = fingerprint_market_bars(dataset.bars)
+    strategy_dataset = causal_split_normalized_strategy_dataset(dataset)
     market_data_reference = MarketDataReference.from_dataset(dataset)
     if initiated_at is not None and initiated_at.utcoffset() is None:
         raise InvalidSignalError("initiated_at must include a defined UTC offset")
@@ -391,7 +395,7 @@ def run_backtest(
             "backtest_configuration": backtest_configuration,
         }
     )
-    strategy_output = run_strategy(strategy, dataset)
+    strategy_output = run_strategy(strategy, strategy_dataset)
     if strategy_output.strategy_configuration_id != strategy_configuration_id:
         raise InvalidSignalError(
             "strategy configuration changed during backtest initialization"

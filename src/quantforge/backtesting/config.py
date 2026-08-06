@@ -19,7 +19,7 @@ from quantforge.configuration import (
     decimal_to_primitive,
 )
 
-ENGINE_VERSION = "3"
+ENGINE_VERSION = "4"
 RESULT_SCHEMA_VERSION = "3"
 
 
@@ -140,18 +140,34 @@ class DividendPolicy(StrEnum):
 class SplitAccountingPolicy:
     """Mandatory raw-price split accounting convention."""
 
-    implementation_version: str = "1"
+    implementation_version: str = "2"
     split_timing: str = "before_open_execution"
     split_factor_semantics: str = "shares_after_divided_by_shares_before"
     fractional_split_shares: str = "reject"
+    execution_price_basis: str = "raw_provider"
+    strategy_price_basis: str = "raw_price_times_cumulative_effective_split_factor"
+    strategy_volume_basis: str = (
+        "raw_volume_divided_by_cumulative_effective_split_factor"
+    )
+    strategy_feature_timing: str = "effective_splits_through_current_session_only"
 
     def __post_init__(self) -> None:
         if self.to_primitive() != {
             "model": "raw_price_explicit_splits",
-            "implementation_version": "1",
+            "implementation_version": "2",
             "split_timing": "before_open_execution",
             "split_factor_semantics": "shares_after_divided_by_shares_before",
             "fractional_split_shares": "reject",
+            "execution_price_basis": "raw_provider",
+            "strategy_price_basis": (
+                "raw_price_times_cumulative_effective_split_factor"
+            ),
+            "strategy_volume_basis": (
+                "raw_volume_divided_by_cumulative_effective_split_factor"
+            ),
+            "strategy_feature_timing": (
+                "effective_splits_through_current_session_only"
+            ),
         }:
             raise InvalidBacktestConfigurationError(
                 "unsupported split accounting policy"
@@ -164,6 +180,10 @@ class SplitAccountingPolicy:
             "split_timing": self.split_timing,
             "split_factor_semantics": self.split_factor_semantics,
             "fractional_split_shares": self.fractional_split_shares,
+            "execution_price_basis": self.execution_price_basis,
+            "strategy_price_basis": self.strategy_price_basis,
+            "strategy_volume_basis": self.strategy_volume_basis,
+            "strategy_feature_timing": self.strategy_feature_timing,
         }
 
 

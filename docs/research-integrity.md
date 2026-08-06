@@ -110,7 +110,11 @@ Do not mix conventions silently.
 
 Execution prices, cash dividends, position quantities, and benchmark returns
 must use a coherent disclosed policy. QF-5 always uses raw OHLCV and point-in-
-time split factors for both accounts. `CASH_DIVIDENDS` credits explicit ex-date
+time split factors for fills, marks, and both accounts. To prevent a split from
+appearing to price indicators as a crash or jump, strategy features use a
+causal forward-normalized view: effective and prior split factors scale the
+current OHLCV row, while later split factors never alter earlier rows.
+`CASH_DIVIDENDS` credits explicit ex-date
 cash, `PRICE_RETURN_ONLY` preserves events but excludes cash from all economics,
 and `REJECT_IF_DIVIDENDS` fails closed. It never uses Tiingo adjusted fields for
 fills or marks and rejects adjusted prices with any raw-price policy.

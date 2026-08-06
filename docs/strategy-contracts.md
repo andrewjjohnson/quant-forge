@@ -159,9 +159,16 @@ current and immediately prior session. Tests calculate through a cutoff, append
 sentinel future bars, recalculate, and require all historical indicator values
 and decisions to remain identical.
 
-QF-3 adjustment metadata is retained by reference and never reinterpreted.
-Strategies request exactly their declared source field; they do not substitute
-adjusted close or another column.
+QF-3 adjustment metadata is retained by reference. A direct QF-4 invocation uses
+exactly the bars supplied by its caller. For QF-5's raw corporate-action path,
+the backtester supplies an ephemeral causal split-normalized feature view while
+retaining the immutable raw QF-3 dataset reference: OHLC is multiplied by the
+cumulative split factor and volume is divided by it beginning on each effective
+session. Later splits never revise earlier feature rows. Strategies request
+exactly their declared source field and do not inspect or apply corporate-action
+records themselves. QF-5 continues to use only the original raw bars for fills,
+marks, and portfolio accounting, and exports the feature-basis convention in its
+split policy.
 
 ## Position-sizing boundary
 

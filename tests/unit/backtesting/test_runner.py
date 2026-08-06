@@ -661,6 +661,82 @@ def test_unadjusted_data_with_stock_split_is_accounted_for() -> None:
     assert result.split_adjustments[0].effective_session == split_session
 
 
+def test_split_normalized_strategy_view_prevents_false_moving_average_exit() -> None:
+    continuous_dataset = make_dataset(("100", "100", "99", "101", "102", "103", "105"))
+    split_dataset = make_dataset(
+        ("100", "100", "99", "101", "102", "51.5", "52.5"),
+        splits=((date(2024, 7, 9), "2"),),
+    )
+    strategy_parameters = MovingAverageCrossoverParameters(2, 3)
+    continuous_result = run_backtest(
+        continuous_dataset,
+        MovingAverageCrossoverStrategy(strategy_parameters),
+        zero_cost_config(),
+    )
+    split_result = run_backtest(
+        split_dataset,
+        MovingAverageCrossoverStrategy(strategy_parameters),
+        zero_cost_config(),
+    )
+
+    continuous_decisions = tuple(
+        (
+            signal.decision.signal_session,
+            signal.decision.target_position,
+            signal.decision.indicator_values,
+        )
+        for signal in continuous_result.signals
+    )
+    split_decisions = tuple(
+        (
+            signal.decision.signal_session,
+            signal.decision.target_position,
+            signal.decision.indicator_values,
+        )
+        for signal in split_result.signals
+    )
+    assert split_decisions == continuous_decisions
+    assert tuple(item[1] for item in split_decisions) == (PositionIntent.LONG,)
+    assert split_result.fills[0].reference_price == Decimal("51.5")
+
+
+def test_future_split_does_not_revise_prior_strategy_decisions() -> None:
+    strategy_parameters = MovingAverageCrossoverParameters(2, 3)
+    prefix_result = run_backtest(
+        make_dataset(("100", "100", "99", "101", "102", "103")),
+        MovingAverageCrossoverStrategy(strategy_parameters),
+        zero_cost_config(),
+    )
+    future_split_result = run_backtest(
+        make_dataset(
+            ("100", "100", "99", "101", "102", "103", "52.5"),
+            splits=((date(2024, 7, 10), "2"),),
+        ),
+        MovingAverageCrossoverStrategy(strategy_parameters),
+        zero_cost_config(),
+    )
+
+    prefix_decisions = tuple(
+        (
+            signal.decision.signal_session,
+            signal.decision.target_position,
+            signal.decision.indicator_values,
+        )
+        for signal in prefix_result.signals
+    )
+    matching_full_decisions = tuple(
+        (
+            signal.decision.signal_session,
+            signal.decision.target_position,
+            signal.decision.indicator_values,
+        )
+        for signal in future_split_result.signals
+        if signal.decision.signal_session
+        <= prefix_result.market_data.actual_last_session
+    )
+    assert matching_full_decisions == prefix_decisions
+
+
 def test_unadjusted_data_with_cash_dividend_is_accounted_for() -> None:
     dividend_session = date(2024, 7, 9)
     dividend_bearing = make_dataset(

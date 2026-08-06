@@ -123,12 +123,20 @@ Changing only the policy changes the backtest and benchmark identities.
 Split handling is never optional for raw data. Every supported non-unit split
 still transforms existing shares and per-share basis before the open, preserves
 aggregate basis and cash, and rejects fractional results. Dividend policy cannot
-disable or weaken split validation.
+disable or weaken split validation. Raw provider OHLCV remains authoritative for
+fills, marks, and portfolio accounting. Before QF-4 indicator calculation, QF-5
+also derives an ephemeral causal split-normalized feature view: beginning on an
+effective split session, OHLC values are multiplied by the cumulative
+shares-after/shares-before factor and volume is divided by that factor. This
+keeps moving windows continuous in original-share units without revising any
+earlier row when a later split occurs. The fixed transformation is serialized in
+`split_policy` and is not persisted as a second QF-3 dataset.
 
 ## Chronological convention
 
 QF-5 uses `NextSessionOpenExecution` plus raw-price explicit corporate-action
-accounting. For every session it applies this exact order:
+accounting. Strategy decisions are first calculated from the causal feature view
+described above. For every execution session QF-5 then applies this exact order:
 
 1. Snapshot shares held at the previous session's close for dividend entitlement.
 2. Apply effective split factors to existing shares and per-share cost basis.
@@ -318,8 +326,8 @@ reference (QF-3 dataset ID, schema, adjustment mode, and trading calendar), a
 separate SHA-256 fingerprint of the actual validated bars, QF-4 strategy name,
 explicit implementation version, configuration identity, full configuration,
 complete backtest configuration (including each cost-model implementation
-version, dividend policy, and separate split policy), corporate-action snapshot
-ID, and engine/result
+version, dividend policy, and the versioned split policy defining both raw
+execution and causal feature bases), corporate-action snapshot ID, and engine/result
 schema versions. QF-5 recomputes the strategy
 configuration identity from the exact immutable snapshot used by the run ID and
 rejects stale, hard-coded, or initialization-mutated identities. Before

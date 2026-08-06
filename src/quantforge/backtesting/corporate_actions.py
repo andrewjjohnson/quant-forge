@@ -16,6 +16,7 @@ from quantforge.configuration import configuration_identity
 from quantforge.data.models import (
     CashDividend,
     CorporateAction,
+    DailyBar,
     MarketDataset,
     StockSplit,
 )
@@ -39,6 +40,52 @@ def actions_by_session(
         )
         indexed.setdefault(session, []).append(action)
     return {session: tuple(actions) for session, actions in indexed.items()}
+
+
+def causal_split_normalized_strategy_dataset(
+    dataset: MarketDataset,
+) -> MarketDataset:
+    """Return an ephemeral causal feature view without changing raw execution bars.
+
+    Effective split factors are accumulated chronologically and applied beginning
+    with their own session. Prices are multiplied and volume is divided by the
+    cumulative shares-after/shares-before factor, expressing every observation
+    in the dataset's original-share units. A later split never changes an earlier
+    feature row.
+
+    The immutable QF-3 metadata and corporate-action records remain attached so
+    strategy decisions retain the source dataset provenance. This derived view is
+    not a normalized QF-3 artifact and must never be used for fills or marks.
+    """
+    split_factors = {
+        action.effective_session: action.split_factor
+        for action in dataset.corporate_actions
+        if isinstance(action, StockSplit)
+    }
+    if not split_factors:
+        return dataset
+
+    normalized_bars: list[DailyBar] = []
+    cumulative_factor = Decimal(1)
+    with arithmetic():
+        for bar in dataset.bars:
+            cumulative_factor *= split_factors.get(bar.session_date, Decimal(1))
+            normalized_bars.append(
+                DailyBar(
+                    symbol=bar.symbol,
+                    session_date=bar.session_date,
+                    open=bar.open * cumulative_factor,
+                    high=bar.high * cumulative_factor,
+                    low=bar.low * cumulative_factor,
+                    close=bar.close * cumulative_factor,
+                    volume=bar.volume / cumulative_factor,
+                )
+            )
+    return MarketDataset(
+        bars=tuple(normalized_bars),
+        metadata=dataset.metadata,
+        corporate_actions=dataset.corporate_actions,
+    )
 
 
 def apply_split_action(
