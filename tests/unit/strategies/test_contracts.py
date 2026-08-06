@@ -13,6 +13,7 @@ from quantforge.configuration import (
 from quantforge.data.models import DailyBar, MarketDataset
 from quantforge.indicators import Indicator, MarketField
 from quantforge.strategies import (
+    STRATEGY_OUTPUT_CONTRACT_VERSION,
     DuplicateStrategyDecisionError,
     ExecutionSessionStatus,
     ExecutionTiming,
@@ -225,6 +226,17 @@ def test_generic_runner_rejects_implementation_version_mismatch() -> None:
     )
 
     with pytest.raises(InvalidStrategyOutputError, match="implementation version"):
+        run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
+
+
+def test_generic_runner_rejects_legacy_output_contract_version() -> None:
+    strategy = OutputTransformingStrategy(
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        lambda output: replace(output, contract_version="1"),
+    )
+
+    assert STRATEGY_OUTPUT_CONTRACT_VERSION == "2"
+    with pytest.raises(InvalidStrategyOutputError, match="contract version 2"):
         run_strategy(strategy, make_dataset(("3", "2", "1", "2", "3")))
 
 

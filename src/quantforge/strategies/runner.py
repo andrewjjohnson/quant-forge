@@ -18,6 +18,7 @@ from quantforge.strategies.exceptions import (
     UnsupportedTimingConventionError,
 )
 from quantforge.strategies.models import (
+    STRATEGY_OUTPUT_CONTRACT_VERSION,
     ExecutionSessionStatus,
     MarketDataReference,
     StrategyOutput,
@@ -86,9 +87,13 @@ def _validate_output(
         raise InvalidStrategyOutputError(
             "strategy configuration changed during generation"
         )
+    if output.contract_version != STRATEGY_OUTPUT_CONTRACT_VERSION:
+        raise InvalidStrategyOutputError(
+            "strategy output contract version "
+            f"{STRATEGY_OUTPUT_CONTRACT_VERSION} is required"
+        )
     if (
-        output.contract_version != "1"
-        or output.strategy_id != strategy.name
+        output.strategy_id != strategy.name
         or output.strategy_configuration_id != expected_configuration_id
     ):
         raise InvalidStrategyOutputError(

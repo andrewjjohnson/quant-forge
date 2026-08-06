@@ -12,6 +12,7 @@ from quantforge.strategies.exceptions import (
     UnsupportedTimingConventionError,
 )
 from quantforge.strategies.models import (
+    STRATEGY_OUTPUT_CONTRACT_VERSION,
     ExecutionSessionStatus,
     ExecutionTiming,
     IndicatorObservation,
@@ -36,6 +37,7 @@ from quantforge.strategies.sizing import (
 )
 
 __all__ = [
+    "STRATEGY_OUTPUT_CONTRACT_VERSION",
     "DuplicateStrategyDecisionError",
     "ExecutionSessionStatus",
     "ExecutionTiming",

@@ -133,10 +133,15 @@ Every `StrategyDecision` contains:
 
 `StrategyOutput` also retains the input dataset ID, schema version, adjustment
 mode, exchange calendar, and corporate-action snapshot ID. Strategies do not
-inspect or apply actions; QF-5 owns that accounting. `to_rows()` supports tabular/vectorized consumers;
-iteration over the output supports a future chronological event-driven consumer.
-Both see the same immutable decisions. There are no callbacks, engine objects,
-provider types, fill prices, or quantities in the schema.
+inspect or apply actions; QF-5 owns that accounting. The serialized output
+envelope is contract version 2; version 1 did not include the corporate-action
+snapshot reference. The generic runner rejects outputs from any other contract
+version. This output-envelope version is distinct from the strategy component
+configuration contract version. `to_rows()` supports tabular/vectorized
+consumers; iteration over the output supports a future chronological
+event-driven consumer. Both see the same immutable decisions. There are no
+callbacks, engine objects, provider types, fill prices, or quantities in the
+schema.
 
 ## Daily timing and causality
 

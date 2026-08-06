@@ -285,14 +285,19 @@ def _manifest_dates(value: dict[str, Any], field_name: str) -> tuple[date, ...]:
     return tuple(date.fromisoformat(cast(str, item)) for item in items)
 
 
+def _manifest_utc_datetime(value: dict[str, Any], field_name: str) -> datetime:
+    parsed = datetime.fromisoformat(_manifest_string(value, field_name))
+    if parsed.utcoffset() is None:
+        raise ValueError(f"{field_name} must include a defined UTC offset")
+    return parsed.astimezone(UTC)
+
+
 def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
     return DatasetMetadata(
         canonical_symbol=_manifest_string(value, "canonical_symbol"),
         provider_name=_manifest_string(value, "provider_name"),
         provider_symbol=_manifest_string(value, "provider_symbol"),
-        retrieved_at=datetime.fromisoformat(
-            _manifest_string(value, "retrieved_at")
-        ).astimezone(UTC),
+        retrieved_at=_manifest_utc_datetime(value, "retrieved_at"),
         requested_start=date.fromisoformat(_manifest_string(value, "requested_start")),
         requested_end=date.fromisoformat(_manifest_string(value, "requested_end")),
         actual_first_session=date.fromisoformat(

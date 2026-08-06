@@ -150,10 +150,11 @@ correction. Duplicate sessions, out-of-range rows, empty input, inconsistent
 symbols or adjustment modes, invalid/nonpositive OHLCV, impossible high/low
 relationships, malformed dates, incomplete action fields, duplicate actions,
 invalid action economics, and non-canonical manifest JSON field types are
-rejected. Strict ingestion (the default)
-rejects missing exchange sessions. Non-strict ingestion records them; QF-5
-still rejects gaps inside the observed range. Values are never filled,
-interpolated, rounded, or invented.
+rejected. Cached retrieval timestamps must be ISO 8601 values with a defined UTC
+offset; timezone-naive values are rejected before UTC normalization. Strict
+ingestion (the default) rejects missing exchange sessions. Non-strict ingestion
+records them; QF-5 still rejects gaps inside the observed range. Values are
+never filled, interpolated, rounded, or invented.
 
 ## Immutable storage
 
