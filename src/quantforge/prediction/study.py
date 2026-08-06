@@ -32,7 +32,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "1"
+STUDY_ENGINE_VERSION = "2"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -213,6 +213,7 @@ def run_prediction_study(
     ] = []
     unavailable_outcome_count = 0
     available_sessions = {bar.session_date for bar in dataset.bars}
+    bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
     for signal in output.signals:
         label = study.outcome_labeler.label(dataset, signal.signal_session)
         if label is None:
@@ -226,6 +227,21 @@ def run_prediction_study(
             raise InvalidPredictionOutputError(
                 "outcome labels require matching signal and later dataset sessions"
             )
+        expected_outcome_index = (
+            bar_indexes[signal.signal_session] + configuration.required_future_sessions
+        )
+        if (
+            expected_outcome_index >= len(dataset.bars)
+            or label.outcome_session
+            != dataset.bars[expected_outcome_index].session_date
+        ):
+            raise InvalidPredictionOutputError(
+                "outcome label session does not match its declared future-session "
+                "horizon"
+            )
+        signal_snapshot = _capture_values_snapshot(
+            "prediction signal", _prediction_record_primitive(signal)
+        )
         outcome = _prediction_outcome(
             market_data,
             configuration,
@@ -233,7 +249,18 @@ def run_prediction_study(
             label.outcome_session,
             label.values,
         )
+        outcome_snapshot = _capture_values_snapshot(
+            "prediction outcome", outcome.to_primitive()
+        )
         evaluation_values = study.evaluator.evaluate(signal, outcome)
+        _validate_unchanged_values(
+            "prediction signal",
+            _prediction_record_primitive(signal),
+            signal_snapshot,
+        )
+        _validate_unchanged_values(
+            "prediction outcome", outcome.to_primitive(), outcome_snapshot
+        )
         evaluation = _prediction_evaluation(
             configuration, signal, outcome, evaluation_values
         )
@@ -242,9 +269,8 @@ def run_prediction_study(
                 "evaluation_id": evaluation.evaluation_id,
                 "outcome_id": outcome.outcome_id,
                 "record_type": "prediction_study_row",
-                "signal_session": signal.signal_session.isoformat(),
+                "signal": signal_snapshot.to_primitive(),
                 "study_id": study_id,
-                "symbol": signal.symbol,
             }
         )
         rows.append(
@@ -464,6 +490,44 @@ def _prediction_evaluation(
         outcome.outcome_id,
         values,
     )
+
+
+def _prediction_record_primitive(signal: PredictionRecord) -> PrimitiveMapping:
+    return {
+        "features": signal.features_primitive(),
+        "prediction": {
+            "signal_session": signal.signal_session.isoformat(),
+            "strategy_configuration_id": signal.strategy_configuration_id,
+            "strategy_id": signal.strategy_id,
+            "strategy_implementation_version": (signal.strategy_implementation_version),
+            "strategy_parameters": signal.parameters_primitive(),
+            "symbol": signal.symbol,
+            "values": signal.prediction_primitive(),
+        },
+    }
+
+
+def _capture_values_snapshot(
+    label: str, values: PrimitiveMapping
+) -> PrimitiveMappingSnapshot:
+    try:
+        return PrimitiveMappingSnapshot.capture(values)
+    except (TypeError, ValueError) as error:
+        raise InvalidPredictionOutputError(
+            f"{label} requires stable JSON-compatible serialization"
+        ) from error
+
+
+def _validate_unchanged_values(
+    label: str,
+    values: PrimitiveMapping,
+    expected_snapshot: PrimitiveMappingSnapshot,
+) -> None:
+    current_snapshot = _capture_values_snapshot(label, values)
+    if current_snapshot != expected_snapshot:
+        raise InvalidPredictionOutputError(
+            f"{label} changed while the prediction evaluator was running"
+        )
 
 
 def _validate_dataset(dataset: MarketDataset) -> None:

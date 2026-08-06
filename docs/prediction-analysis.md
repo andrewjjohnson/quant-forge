@@ -57,6 +57,13 @@ a distinct study identity. Component configurations are captured before the run
 and checked again afterward so a mutable component cannot silently change the
 meaning of a result.
 
+The runner also verifies that a returned outcome session is exactly the
+labeler's declared number of future sessions after the signal within the
+validated QF-3 session sequence. Prediction and outcome primitives are captured
+before evaluation and checked afterward, preventing an evaluator from mutating
+the scientific inputs it receives. The complete fixed prediction payload,
+including contemporaneous features, participates in each generic row identity.
+
 To add a future prediction experiment, define a typed prediction record and
 rule when an existing one is unsuitable, define typed outcome values and an
 `OutcomeLabeler`, define the corresponding typed `PredictionEvaluator`, compose
@@ -232,12 +239,21 @@ artifact_path = export_prediction_analysis(result, Path("reports/predictions"))
 ```
 
 This original API is a backward-compatible overnight-gap adapter. Its
-`PredictionRow`, `PredictionMetrics`, `PredictionAnalysisResult`, manifest,
-identities, and CSV columns remain the QF-11 gap-specific schema. Internally it
-delegates ordering and provenance to `run_prediction_study`, then adapts the
-typed gap outcome and directional evaluation back into that unchanged public
-result. Existing callers and exports therefore remain runnable and directly
-comparable with earlier QF-11 runs.
+`PredictionRow`, `PredictionMetrics`, `PredictionAnalysisResult`, and CSV
+columns remain the QF-11 gap-specific schema. Internally it delegates ordering
+and provenance to `run_prediction_study`, then adapts the typed gap outcome and
+directional evaluation back into that public result. Existing callers remain
+runnable and numerical results remain directly comparable.
+
+The pre-merge schema-v2 integrity fix adds QF-3 retrieval time and provider
+timezone to prediction manifests. Legacy gap and comparison engine/result
+versions therefore advance to `2`, and the generic study engine advances to
+`2` for exact horizon enforcement, evaluator-input mutation detection, and
+feature-complete row identities. These corrections intentionally change
+analysis, study, prediction, and row IDs even when numerical predictions and
+metrics are unchanged. Existing schema-v1 immutable artifacts remain historical
+records at their original paths; schema-v2 runs write new identity paths rather
+than reusing or overwriting them.
 
 New experiments should use the generic composition API and add their own
 study-specific result summaries rather than widening the legacy gap schema:
@@ -305,8 +321,8 @@ Each legacy overnight-gap analysis exports atomically to
 `<output-root>/<analysis-id>/`:
 
 - `manifest.json` records engine and schema versions, complete strategy and
-  indicator configuration, QF-3 dataset identity and bar fingerprint, counts,
-  metrics, and limitations.
+  indicator configuration, QF-3 dataset identity, bar fingerprint, retrieval
+  timestamp, provider timezone, counts, metrics, and limitations.
 - `predictions.csv` contains one labeled row per evaluable signal.
 
 Prediction rows record:

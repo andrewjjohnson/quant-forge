@@ -4,6 +4,8 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from quantforge.configuration import (
     PrimitiveMapping,
     configuration_identity,
@@ -14,6 +16,7 @@ from quantforge.indicators import Indicator
 from quantforge.prediction import (
     AlwaysUpParameters,
     AlwaysUpPredictionStrategy,
+    InvalidPredictionOutputError,
     OutcomeLabel,
     PredictionEvaluation,
     PredictionFeature,
@@ -73,8 +76,9 @@ class RecordingPredictionStrategy:
     required_indicators: tuple[Indicator, ...] = ()
     warm_up_observations = 1
 
-    def __init__(self, events: list[str]) -> None:
+    def __init__(self, events: list[str], feature_offset: Decimal = Decimal(0)) -> None:
         self._events = events
+        self._feature_offset = feature_offset
         self._parameters = RecordingParameters()
 
     @property
@@ -108,7 +112,9 @@ class RecordingPredictionStrategy:
                 strategy_implementation_version=self.implementation_version,
                 strategy_configuration_id=self.configuration_id,
                 strategy_parameters=parameters,
-                feature_values=(PredictionFeature("signal_close", bar.close),),
+                feature_values=(
+                    PredictionFeature("signal_close", bar.close + self._feature_offset),
+                ),
             )
             for bar in dataset.bars
         )
@@ -137,9 +143,17 @@ class FutureCloseOutcomeLabeler:
     result_schema_version = "1"
     required_market_fields = ("close",)
 
-    def __init__(self, events: list[str], horizon: int = 1) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        horizon: int = 1,
+        returned_horizon: int | None = None,
+    ) -> None:
         self._events = events
         self.required_future_sessions = horizon
+        self._returned_horizon = (
+            horizon if returned_horizon is None else returned_horizon
+        )
         self.name = "future_close"
 
     @property
@@ -167,7 +181,7 @@ class FutureCloseOutcomeLabeler:
         self._events.append("outcome_label")
         indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
         index = indexes[signal_session]
-        outcome_index = index + self.required_future_sessions
+        outcome_index = index + self._returned_horizon
         if outcome_index >= len(dataset.bars):
             return None
         return OutcomeLabel(
@@ -227,18 +241,44 @@ class FutureCloseChangeEvaluator:
         )
 
 
+class SignalMutatingEvaluator(FutureCloseChangeEvaluator):
+    name = "signal_mutating_future_close_change"
+
+    def evaluate(
+        self,
+        signal: NumericPrediction,
+        outcome: PredictionOutcome[FutureCloseValues],
+    ) -> FutureCloseChangeValues:
+        object.__setattr__(signal, "predicted_change", Decimal(999))
+        return super().evaluate(signal, outcome)
+
+
+class OutcomeMutatingEvaluator(FutureCloseChangeEvaluator):
+    name = "outcome_mutating_future_close_change"
+
+    def evaluate(
+        self,
+        signal: NumericPrediction,
+        outcome: PredictionOutcome[FutureCloseValues],
+    ) -> FutureCloseChangeValues:
+        object.__setattr__(outcome.values, "future_close", Decimal(999))
+        return super().evaluate(signal, outcome)
+
+
 def _study(
     events: list[str],
     horizon: int = 1,
     *,
     multiplier: Decimal = Decimal(1),
     feature_schema_version: str = "1",
+    feature_offset: Decimal = Decimal(0),
+    returned_horizon: int | None = None,
 ) -> PredictionStudy[NumericPrediction, FutureCloseValues, FutureCloseChangeValues]:
     return PredictionStudy[
         NumericPrediction, FutureCloseValues, FutureCloseChangeValues
     ].create(
-        RecordingPredictionStrategy(events),
-        FutureCloseOutcomeLabeler(events, horizon),
+        RecordingPredictionStrategy(events, feature_offset),
+        FutureCloseOutcomeLabeler(events, horizon, returned_horizon),
         FutureCloseChangeEvaluator(events, multiplier),
         feature_configuration={
             "feature_schema_version": feature_schema_version,
@@ -312,6 +352,52 @@ def test_study_identity_includes_outcome_configuration() -> None:
     assert one_session.study_id != gap_study.study_id
     assert one_session.configuration.required_future_sessions == 1
     assert two_sessions.configuration.required_future_sessions == 2
+
+
+def test_label_session_must_match_declared_future_session_horizon() -> None:
+    dataset = make_dataset(("100", "102", "101", "104"))
+
+    with pytest.raises(InvalidPredictionOutputError, match=r"declared.*horizon"):
+        run_prediction_study(
+            dataset,
+            _study([], horizon=2, returned_horizon=1),
+        )
+
+
+@pytest.mark.parametrize(
+    ("evaluator", "changed_component"),
+    [
+        (SignalMutatingEvaluator([]), "prediction signal"),
+        (OutcomeMutatingEvaluator([]), "prediction outcome"),
+    ],
+)
+def test_evaluator_cannot_mutate_fixed_inputs(
+    evaluator: FutureCloseChangeEvaluator,
+    changed_component: str,
+) -> None:
+    events: list[str] = []
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        RecordingPredictionStrategy(events),
+        FutureCloseOutcomeLabeler(events),
+        evaluator,
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match=changed_component):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+def test_row_identity_includes_fixed_feature_values() -> None:
+    dataset = make_dataset(("100", "102", "101", "104"))
+
+    original = run_prediction_study(dataset, _study([], feature_offset=Decimal(0)))
+    changed = run_prediction_study(dataset, _study([], feature_offset=Decimal(1)))
+
+    assert original.study_id == changed.study_id
+    assert tuple(row.row_id for row in original.rows) != tuple(
+        row.row_id for row in changed.rows
+    )
 
 
 def test_repeated_generic_studies_have_stable_component_and_row_ids() -> None:

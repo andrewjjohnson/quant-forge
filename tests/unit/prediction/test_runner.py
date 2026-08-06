@@ -170,13 +170,15 @@ def test_repeated_inputs_are_deterministic_and_json_safe() -> None:
 
     assert first == second
     assert first.analysis_id == (
-        "635dc25a5da83788cc31cddec776acc3fc71ed50f8b35ff6b4c355e84c72bcf8"
+        "349c8ec4ad441cf21f4329b2d2231040db056026fe80cb4eee6336ae19a1048c"
     )
     assert tuple(row.prediction_id for row in first.rows) == (
-        "42e847be3f4ffc06524abbc202fa04b7c070a03cc4330207cc1776a7f7782707",
-        "500c4cc92253472d83585305843cc5ff4554a07e4e25e404ed0dc324747705d9",
-        "832c9fd9011d4bffccac75ea04dcd330cac314920952d6315d483e91f293da97",
+        "193ec1921b1a6567576e00dc3c716301afa53096392abaf732a5e5536eb77807",
+        "96271bc2dacb356bd4f3628372bf3bc3003b9b6ba59fee0019571df6a5efc216",
+        "3d73548c003b91e764353b39f77914d139507fe17d0d2ff4f7124a9641e981d5",
     )
+    assert first.engine_version == "2"
+    assert first.result_schema_version == "2"
     assert first.analysis_id == second.analysis_id
     assert first.to_primitive() == second.to_primitive()
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
@@ -189,6 +191,9 @@ def test_export_writes_manifest_and_labeled_prediction_csv(tmp_path: Path) -> No
 
     manifest = load_prediction_manifest(destination / "manifest.json")
     assert manifest["analysis_id"] == result.analysis_id
+    assert result.market_data.retrieved_at.isoformat() == "2024-07-15T00:00:00+00:00"
+    assert result.market_data.provider_timezone == "America/New_York"
+    assert manifest["market_data"] == result.market_data.to_primitive()
     assert manifest["record_counts"] == {
         "generated_signals": 4,
         "labeled_predictions": 3,

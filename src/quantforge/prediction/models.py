@@ -1,7 +1,7 @@
 """Immutable prediction signals, forward labels, metrics, and results."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import cast
@@ -129,6 +129,8 @@ class PredictionMarketData:
     schema_version: str
     symbol: str
     provider_name: str
+    retrieved_at: datetime
+    provider_timezone: str | None
     requested_start: date
     requested_end: date
     actual_first_session: date
@@ -151,6 +153,8 @@ class PredictionMarketData:
             schema_version=metadata.schema_version,
             symbol=metadata.canonical_symbol,
             provider_name=metadata.provider_name,
+            retrieved_at=metadata.retrieved_at,
+            provider_timezone=metadata.provider_timezone,
             requested_start=metadata.requested_start,
             requested_end=metadata.requested_end,
             actual_first_session=metadata.actual_first_session,
@@ -173,6 +177,8 @@ class PredictionMarketData:
             "schema_version": self.schema_version,
             "symbol": self.symbol,
             "provider_name": self.provider_name,
+            "retrieved_at": self.retrieved_at.astimezone(UTC).isoformat(),
+            "provider_timezone": self.provider_timezone,
             "requested_start": self.requested_start.isoformat(),
             "requested_end": self.requested_end.isoformat(),
             "actual_first_session": self.actual_first_session.isoformat(),

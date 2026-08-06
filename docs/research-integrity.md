@@ -238,6 +238,10 @@ labeler, then invokes the evaluator with only the fixed prediction and its typed
 outcome. Study identity includes the rule, outcome, evaluator, feature, horizon,
 market-field, schema, and dataset configurations. The generic core does not
 assume an outcome is a gap or an evaluation is directional correctness.
+Returned outcome sessions must match the labeler's exact declared session
+horizon. The runner snapshots prediction and outcome primitives around
+evaluation and rejects mutation, and the complete contemporaneous feature
+payload participates in row identity.
 
 For the original overnight-gap study, the prediction strategy sees
 completed-session OHLC and causal Wilder indicator outputs but no next-open
