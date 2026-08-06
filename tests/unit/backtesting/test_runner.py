@@ -31,6 +31,9 @@ from quantforge.backtesting import (
     validate_backtest_result_artifact,
     validate_backtest_result_export,
 )
+from quantforge.backtesting.corporate_actions import (
+    causal_split_normalized_strategy_dataset,
+)
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data import dataset_identity_matches
 from quantforge.data.models import AdjustmentMode, MarketDataset
@@ -701,6 +704,21 @@ def test_split_normalized_strategy_view_prevents_false_moving_average_exit() -> 
     assert split_decisions == continuous_decisions
     assert tuple(item[1] for item in split_decisions) == (PositionIntent.LONG,)
     assert split_result.fills[0].reference_price == Decimal("51.5")
+
+
+def test_split_normalization_applies_rational_factor_before_division() -> None:
+    split_session = date(2024, 7, 2)
+    dataset = make_dataset(
+        ("100", "300"),
+        splits=((split_session, "0.3333333333333333"),),
+    )
+
+    normalized = causal_split_normalized_strategy_dataset(dataset)
+
+    assert normalized.bars[1].open == Decimal(100)
+    assert normalized.bars[1].low == Decimal(100)
+    assert normalized.bars[1].close == Decimal(100)
+    assert normalized.bars[1].volume == Decimal(3000)
 
 
 def test_future_split_does_not_revise_prior_strategy_decisions() -> None:
@@ -1395,8 +1413,12 @@ def test_buying_at_open_on_ex_date_does_not_receive_dividend() -> None:
 
     assert result.dividend_cashflows[0].entitled_share_quantity == 0
     assert result.dividend_cashflows[0].total_dividend_cash == Decimal(0)
+    assert result.dividend_accounting.dividend_events_credited == 0
+    assert result.performance.dividend_event_count == 0
     assert result.completed_trades[0].dividend_income == Decimal(0)
     assert result.benchmark.dividend_cashflows[0].entitled_share_quantity == 10
+    assert result.benchmark.dividend_accounting.dividend_events_credited == 1
+    assert result.benchmark.performance.dividend_event_count == 1
 
 
 def test_selling_at_open_on_ex_date_retains_dividend_entitlement() -> None:
@@ -1424,6 +1446,10 @@ def test_first_session_ex_date_does_not_entitle_first_open_buys() -> None:
 
     assert result.dividend_cashflows[0].entitled_share_quantity == 0
     assert result.benchmark.dividend_cashflows[0].entitled_share_quantity == 0
+    assert result.dividend_accounting.dividend_events_credited == 0
+    assert result.benchmark.dividend_accounting.dividend_events_credited == 0
+    assert result.performance.dividend_event_count == 0
+    assert result.benchmark.performance.dividend_event_count == 0
     assert result.performance.total_dividend_income == Decimal(0)
     assert result.benchmark.performance.total_dividend_income == Decimal(0)
 

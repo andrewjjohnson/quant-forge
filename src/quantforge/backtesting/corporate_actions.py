@@ -85,18 +85,17 @@ def causal_split_normalized_strategy_dataset(
     with arithmetic():
         for bar in dataset.bars:
             cumulative_ratio *= split_ratios.get(bar.session_date, Fraction(1))
-            cumulative_factor = Decimal(cumulative_ratio.numerator) / Decimal(
-                cumulative_ratio.denominator
-            )
+            numerator = Decimal(cumulative_ratio.numerator)
+            denominator = Decimal(cumulative_ratio.denominator)
             normalized_bars.append(
                 DailyBar(
                     symbol=bar.symbol,
                     session_date=bar.session_date,
-                    open=bar.open * cumulative_factor,
-                    high=bar.high * cumulative_factor,
-                    low=bar.low * cumulative_factor,
-                    close=bar.close * cumulative_factor,
-                    volume=bar.volume / cumulative_factor,
+                    open=bar.open * numerator / denominator,
+                    high=bar.high * numerator / denominator,
+                    low=bar.low * numerator / denominator,
+                    close=bar.close * numerator / denominator,
+                    volume=bar.volume * denominator / numerator,
                 )
             )
     return MarketDataset(
@@ -229,9 +228,12 @@ def summarize_dividend_accounting(
     estimated_ignored_cash: Decimal,
 ) -> DividendAccountingSummary:
     """Describe applied and intentionally excluded dividend economics."""
+    credited_cashflows = tuple(
+        item for item in cashflows if item.entitled_share_quantity > 0
+    )
     with arithmetic():
         total_cash_credited = sum(
-            (item.total_dividend_cash for item in cashflows), start=Decimal(0)
+            (item.total_dividend_cash for item in credited_cashflows), start=Decimal(0)
         )
     price_only = policy is not DividendPolicy.CASH_DIVIDENDS
     events_present = len(actions)
@@ -244,7 +246,7 @@ def summarize_dividend_accounting(
         ),
         corporate_action_snapshot_id=corporate_action_snapshot_id,
         dividend_events_present=events_present,
-        dividend_events_credited=len(cashflows),
+        dividend_events_credited=len(credited_cashflows),
         dividend_events_ignored=(
             events_present if policy is DividendPolicy.PRICE_RETURN_ONLY else 0
         ),

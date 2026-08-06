@@ -116,11 +116,11 @@ Price-only mode never changes cash, equity, daily returns, CAGR, Sharpe,
 Sortino, drawdown, trade P&L, or benchmark performance for a dividend event.
 Its estimated ignored cash is informational only. Both accounts expose a typed
 `DividendAccountingSummary` containing policy, return basis, events present,
-credited and ignored counts, credited cash, estimated ignored portfolio cash,
-the corporate-action snapshot identifier, and a warning. Per-share dividend
-amounts remain event-level QF-3 records because aggregating them across splits
-would mix incompatible share units. Changing only the policy changes the
-backtest and benchmark identities.
+positive-entitlement credited and ignored counts, credited cash, estimated
+ignored portfolio cash, the corporate-action snapshot identifier, and a warning.
+Per-share dividend amounts remain event-level QF-3 records because aggregating
+them across splits would mix incompatible share units. Changing only the policy
+changes the backtest and benchmark identities.
 
 Split handling is never optional for raw data. Every supported non-unit split
 still transforms existing shares and per-share basis before the open, preserves
@@ -137,8 +137,10 @@ feature view from the same decoded ratios: beginning on an effective split
 session, OHLC values are multiplied by the cumulative shares-after/shares-before
 ratio and volume is divided by that ratio. This keeps moving windows continuous
 in original-share units without revising any earlier row when a later split
-occurs. The fixed transformation is serialized in `split_policy` and is not
-persisted as a second QF-3 dataset.
+occurs. Rational scaling multiplies by the integer numerator before dividing by
+the denominator (and uses the reciprocal ordering for volume), avoiding an
+intermediate rounded decimal factor. The fixed transformation is serialized in
+`split_policy` and is not persisted as a second QF-3 dataset.
 
 ## Chronological convention
 
