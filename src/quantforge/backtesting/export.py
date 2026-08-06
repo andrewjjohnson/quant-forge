@@ -77,6 +77,8 @@ _SPLIT_ADJUSTMENT_FIELDS = (
     "symbol",
     "effective_session",
     "split_factor",
+    "split_ratio_numerator",
+    "split_ratio_denominator",
     "shares_before",
     "shares_after",
     "average_entry_cost_before",

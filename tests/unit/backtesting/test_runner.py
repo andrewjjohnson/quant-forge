@@ -1669,6 +1669,50 @@ def test_fractional_split_shares_are_rejected_without_cash_in_lieu() -> None:
         run_backtest(dataset, ManualTransitionStrategy(), zero_cost_config())
 
 
+def test_reverse_split_float_factor_recovers_integral_share_ratio() -> None:
+    dataset = make_dataset(
+        ("100", "100", "300", "300"),
+        splits=((date(2024, 7, 3), "0.3333333333333333"),),
+    )
+    config = BacktestConfig(
+        Decimal(600),
+        FixedCommission(Decimal(0)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(0)),
+        dividend_policy=DividendPolicy.CASH_DIVIDENDS,
+    )
+
+    result = run_backtest(dataset, ManualTransitionStrategy(), config)
+
+    strategy_adjustment = result.split_adjustments[0]
+    benchmark_adjustment = result.benchmark.split_adjustments[0]
+    assert strategy_adjustment.split_factor == Decimal("0.3333333333333333")
+    assert strategy_adjustment.split_ratio_numerator == 1
+    assert strategy_adjustment.split_ratio_denominator == 3
+    assert strategy_adjustment.shares_before == 3
+    assert strategy_adjustment.shares_after == 1
+    assert benchmark_adjustment.shares_before == 6
+    assert benchmark_adjustment.shares_after == 2
+    assert result.daily_equity[2].total_equity == Decimal(600)
+
+
+def test_non_roundtripping_reverse_split_factor_remains_fractional() -> None:
+    dataset = make_dataset(
+        ("100", "100", "299.9400119976", "299.9400119976"),
+        splits=((date(2024, 7, 3), "0.3334"),),
+    )
+    config = BacktestConfig(
+        Decimal(600),
+        FixedCommission(Decimal(0)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(0)),
+        dividend_policy=DividendPolicy.CASH_DIVIDENDS,
+    )
+
+    with pytest.raises(PortfolioAccountingError, match="fractional shares"):
+        run_backtest(dataset, ManualTransitionStrategy(), config)
+
+
 def test_adjusted_or_incomplete_action_data_is_rejected() -> None:
     adjusted = make_dataset(
         ("100", "100", "100", "100"),

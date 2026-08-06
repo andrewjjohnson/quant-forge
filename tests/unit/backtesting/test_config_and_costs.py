@@ -291,8 +291,12 @@ def test_dividend_and_split_policies_are_separate_and_serialized() -> None:
     assert primitive["dividend_policy"] == "price_return_only"
     split_policy = primitive["split_policy"]
     assert isinstance(split_policy, dict)
-    assert split_policy["implementation_version"] == "2"
+    assert split_policy["implementation_version"] == "3"
     assert split_policy["split_timing"] == "before_open_execution"
+    assert split_policy["split_ratio_reconstruction"] == (
+        "canonical_binary64_round_trip"
+    )
+    assert split_policy["maximum_split_ratio_denominator"] == 1_000_000
     assert split_policy["execution_price_basis"] == "raw_provider"
     assert split_policy["strategy_price_basis"] == (
         "raw_price_times_cumulative_effective_split_factor"

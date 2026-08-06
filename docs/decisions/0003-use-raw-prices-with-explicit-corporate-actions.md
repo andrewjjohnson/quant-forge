@@ -42,7 +42,11 @@ Each session uses:
 5. remaining shares mark at the raw close.
 
 Aggregate split cost basis and cash are unchanged; average per-share basis moves
-inversely. Fractional split results are rejected until cash-in-lieu exists.
+inversely. Tiingo's float split factor is decoded into a bounded rational ratio
+only when the candidate exactly reproduces the canonical provider float text;
+the provider factor and decoded numerator/denominator are both retained for
+audit. Fractional split results after that reconstruction are rejected until
+cash-in-lieu exists.
 Cash dividends remain separate from price-trade P&L, with attributed income and
 total economic trade P&L exposed separately. Price-only estimates are
 informational and never affect economics. Strategy and benchmark share the

@@ -298,6 +298,8 @@ class SplitAdjustmentRecord:
     symbol: str
     effective_session: date
     split_factor: Decimal
+    split_ratio_numerator: int
+    split_ratio_denominator: int
     shares_before: int
     shares_after: int
     average_entry_cost_before: Decimal | None
@@ -316,6 +318,8 @@ class SplitAdjustmentRecord:
             "symbol": self.symbol,
             "effective_session": self.effective_session.isoformat(),
             "split_factor": decimal_to_primitive(self.split_factor),
+            "split_ratio_numerator": self.split_ratio_numerator,
+            "split_ratio_denominator": self.split_ratio_denominator,
             "shares_before": self.shares_before,
             "shares_after": self.shares_after,
             "average_entry_cost_before": _decimal(self.average_entry_cost_before),

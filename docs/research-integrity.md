@@ -130,8 +130,10 @@ entitlement for an ex-date opening sale.
 
 Tiingo's `divCash` marks the ex-dividend date. Crediting it that session is a
 documented daily-model approximation, not the real payment date. Splits multiply
-shares by Tiingo's shares-after/shares-before factor, conserve aggregate basis
-and cash, and create no realized P&L. A fractional result is rejected because
+shares by Tiingo's shares-after/shares-before factor, reconstructed as a bounded
+rational ratio only when it exactly round-trips through the provider's canonical
+float representation. Splits conserve aggregate basis and cash and create no
+realized P&L. A fractional result after reconstruction is rejected because
 cash-in-lieu is not modeled. Dividend selection never disables split handling.
 Tests cover all policy/data combinations, entitlement boundaries, exactly-once
 cash, ignored-cash non-effects, split continuity under every policy, benchmark

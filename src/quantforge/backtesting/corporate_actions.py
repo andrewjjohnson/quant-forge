@@ -2,9 +2,13 @@
 
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 
 from quantforge.backtesting._arithmetic import arithmetic
-from quantforge.backtesting.config import DividendPolicy
+from quantforge.backtesting.config import (
+    MAXIMUM_SPLIT_RATIO_DENOMINATOR,
+    DividendPolicy,
+)
 from quantforge.backtesting.errors import PortfolioAccountingError
 from quantforge.backtesting.models import (
     DividendAccountingSummary,
@@ -25,6 +29,17 @@ PRICE_RETURN_ONLY_WARNING = (
     "PRICE-RETURN-ONLY: reported strategy and benchmark performance excludes "
     "cash dividends; long-period returns are understated relative to total return."
 )
+
+
+def _split_ratio(split_factor: Decimal) -> Fraction:
+    """Recover a simple ratio only when it round-trips to Tiingo's float text."""
+    exact_ratio = Fraction(split_factor)
+    candidate = exact_ratio.limit_denominator(MAXIMUM_SPLIT_RATIO_DENOMINATOR)
+    try:
+        candidate_provider_value = Decimal(str(float(candidate)))
+    except OverflowError:
+        return exact_ratio
+    return candidate if candidate_provider_value == split_factor else exact_ratio
 
 
 def actions_by_session(
@@ -57,19 +72,22 @@ def causal_split_normalized_strategy_dataset(
     strategy decisions retain the source dataset provenance. This derived view is
     not a normalized QF-3 artifact and must never be used for fills or marks.
     """
-    split_factors = {
-        action.effective_session: action.split_factor
+    split_ratios = {
+        action.effective_session: _split_ratio(action.split_factor)
         for action in dataset.corporate_actions
         if isinstance(action, StockSplit)
     }
-    if not split_factors:
+    if not split_ratios:
         return dataset
 
     normalized_bars: list[DailyBar] = []
-    cumulative_factor = Decimal(1)
+    cumulative_ratio = Fraction(1)
     with arithmetic():
         for bar in dataset.bars:
-            cumulative_factor *= split_factors.get(bar.session_date, Decimal(1))
+            cumulative_ratio *= split_ratios.get(bar.session_date, Fraction(1))
+            cumulative_factor = Decimal(cumulative_ratio.numerator) / Decimal(
+                cumulative_ratio.denominator
+            )
             normalized_bars.append(
                 DailyBar(
                     symbol=bar.symbol,
@@ -98,15 +116,14 @@ def apply_split_action(
     cash: Decimal,
 ) -> tuple[int, SplitAdjustmentRecord]:
     """Multiply shares by Tiingo's shares-after/shares-before factor."""
+    split_ratio = _split_ratio(action.split_factor)
+    shares_after_numerator = shares * split_ratio.numerator
+    if shares_after_numerator % split_ratio.denominator != 0:
+        raise PortfolioAccountingError(
+            "stock split would create fractional shares; cash-in-lieu is unsupported"
+        )
+    shares_after = shares_after_numerator // split_ratio.denominator
     with arithmetic():
-        exact_shares_after = Decimal(shares) * action.split_factor
-        integral_shares_after = exact_shares_after.to_integral_value()
-        if exact_shares_after != integral_shares_after:
-            raise PortfolioAccountingError(
-                "stock split would create fractional shares; "
-                "cash-in-lieu is unsupported"
-            )
-        shares_after = int(integral_shares_after)
         average_before = None if shares == 0 else total_cost_basis / Decimal(shares)
         average_after = (
             None if shares_after == 0 else total_cost_basis / Decimal(shares_after)
@@ -127,6 +144,8 @@ def apply_split_action(
         symbol=action.symbol,
         effective_session=action.effective_session,
         split_factor=action.split_factor,
+        split_ratio_numerator=split_ratio.numerator,
+        split_ratio_denominator=split_ratio.denominator,
         shares_before=shares,
         shares_after=shares_after,
         average_entry_cost_before=average_before,

@@ -136,13 +136,18 @@ class DividendPolicy(StrEnum):
     REJECT_IF_DIVIDENDS = "reject_if_dividends"
 
 
+MAXIMUM_SPLIT_RATIO_DENOMINATOR = 1_000_000
+
+
 @dataclass(frozen=True, slots=True)
 class SplitAccountingPolicy:
     """Mandatory raw-price split accounting convention."""
 
-    implementation_version: str = "2"
+    implementation_version: str = "3"
     split_timing: str = "before_open_execution"
     split_factor_semantics: str = "shares_after_divided_by_shares_before"
+    split_ratio_reconstruction: str = "canonical_binary64_round_trip"
+    maximum_split_ratio_denominator: int = MAXIMUM_SPLIT_RATIO_DENOMINATOR
     fractional_split_shares: str = "reject"
     execution_price_basis: str = "raw_provider"
     strategy_price_basis: str = "raw_price_times_cumulative_effective_split_factor"
@@ -154,9 +159,11 @@ class SplitAccountingPolicy:
     def __post_init__(self) -> None:
         if self.to_primitive() != {
             "model": "raw_price_explicit_splits",
-            "implementation_version": "2",
+            "implementation_version": "3",
             "split_timing": "before_open_execution",
             "split_factor_semantics": "shares_after_divided_by_shares_before",
+            "split_ratio_reconstruction": "canonical_binary64_round_trip",
+            "maximum_split_ratio_denominator": 1_000_000,
             "fractional_split_shares": "reject",
             "execution_price_basis": "raw_provider",
             "strategy_price_basis": (
@@ -179,6 +186,8 @@ class SplitAccountingPolicy:
             "implementation_version": self.implementation_version,
             "split_timing": self.split_timing,
             "split_factor_semantics": self.split_factor_semantics,
+            "split_ratio_reconstruction": self.split_ratio_reconstruction,
+            "maximum_split_ratio_denominator": (self.maximum_split_ratio_denominator),
             "fractional_split_shares": self.fractional_split_shares,
             "execution_price_basis": self.execution_price_basis,
             "strategy_price_basis": self.strategy_price_basis,

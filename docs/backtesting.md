@@ -124,15 +124,21 @@ backtest and benchmark identities.
 
 Split handling is never optional for raw data. Every supported non-unit split
 still transforms existing shares and per-share basis before the open, preserves
-aggregate basis and cash, and rejects fractional results. Dividend policy cannot
-disable or weaken split validation. Raw provider OHLCV remains authoritative for
-fills, marks, and portfolio accounting. Before QF-4 indicator calculation, QF-5
-also derives an ephemeral causal split-normalized feature view: beginning on an
-effective split session, OHLC values are multiplied by the cumulative
-shares-after/shares-before factor and volume is divided by that factor. This
-keeps moving windows continuous in original-share units without revising any
-earlier row when a later split occurs. The fixed transformation is serialized in
-`split_policy` and is not persisted as a second QF-3 dataset.
+aggregate basis and cash, and rejects fractional results. Because Tiingo exposes
+`splitFactor` as a float, QF-5 reconstructs the simplest rational ratio with a
+denominator no greater than 1,000,000 only when converting that ratio back to
+canonical binary64 text exactly reproduces the provider decimal. Otherwise the
+exact finite decimal ratio is retained. The decoded numerator and denominator
+are recorded on every split adjustment and used for exact share integrality.
+Dividend policy cannot disable or weaken split validation. Raw provider OHLCV
+remains authoritative for fills, marks, and portfolio accounting. Before QF-4
+indicator calculation, QF-5 also derives an ephemeral causal split-normalized
+feature view from the same decoded ratios: beginning on an effective split
+session, OHLC values are multiplied by the cumulative shares-after/shares-before
+ratio and volume is divided by that ratio. This keeps moving windows continuous
+in original-share units without revising any earlier row when a later split
+occurs. The fixed transformation is serialized in `split_policy` and is not
+persisted as a second QF-3 dataset.
 
 ## Chronological convention
 
@@ -201,8 +207,9 @@ quantity. It does not rebalance an existing long position to its target weight.
 Repeated already-satisfied targets become rejected audit orders with an explicit
 no-op reason. An unaffordable entry requests zero shares and is rejected;
 ordinary entries are always whole-share. A corporate-action factor that would
-produce fractional shares is rejected clearly because cash-in-lieu is not
-implemented; it is never rounded or discarded.
+produce fractional shares after the documented rational reconstruction is
+rejected clearly because cash-in-lieu is not implemented; it is never rounded
+or discarded.
 
 `OrderRecord` includes the run, signal, symbol, side, requested quantity,
 decision and eligibility sessions, target, strategy identities, final status,
@@ -265,12 +272,13 @@ total economic return = total economic P&L / total entry cost
 `DividendCashflowRecord` separately records run, account, action, symbol,
 ex-date, entitled shares, per-share amount, total cash, resulting cash, and
 source dataset. It is not a fill or trading proceeds. `SplitAdjustmentRecord`
-records factor, pre/post shares and average cost, preserved aggregate basis,
-unchanged cash, action ID, run/account, and source dataset. Splits create no
-realized P&L. `TradeRecord` exposes price net P&L, attributed dividend income,
-and total economic P&L/return separately. In cash mode, completed-trade win
-rate, profit factor, and average return use total economic values; in price-only
-mode, dividend attribution is zero and these equal price-trade economics.
+records the provider factor, decoded ratio numerator and denominator, pre/post
+shares and average cost, preserved aggregate basis, unchanged cash, action ID,
+run/account, and source dataset. Splits create no realized P&L. `TradeRecord`
+exposes price net P&L, attributed dividend income, and total economic P&L/return
+separately. In cash mode, completed-trade win rate, profit factor, and average
+return use total economic values; in price-only mode, dividend attribution is
+zero and these equal price-trade economics.
 Portfolio metrics always come from the policy-aware equity ledger.
 
 Holding period is the number of dataset-session intervals from entry to exit.
