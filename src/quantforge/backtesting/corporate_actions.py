@@ -214,11 +214,6 @@ def summarize_dividend_accounting(
         total_cash_credited = sum(
             (item.total_dividend_cash for item in cashflows), start=Decimal(0)
         )
-        ignored_amount_per_share = (
-            sum((item.amount_per_share for item in actions), start=Decimal(0))
-            if policy is DividendPolicy.PRICE_RETURN_ONLY
-            else Decimal(0)
-        )
     price_only = policy is not DividendPolicy.CASH_DIVIDENDS
     events_present = len(actions)
     return DividendAccountingSummary(
@@ -235,7 +230,6 @@ def summarize_dividend_accounting(
             events_present if policy is DividendPolicy.PRICE_RETURN_ONLY else 0
         ),
         total_dividend_cash_credited=total_cash_credited,
-        total_ignored_dividend_amount_per_share=ignored_amount_per_share,
         estimated_ignored_dividend_cash=(
             estimated_ignored_cash
             if policy is DividendPolicy.PRICE_RETURN_ONLY

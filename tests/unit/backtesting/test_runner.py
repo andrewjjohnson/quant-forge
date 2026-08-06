@@ -1434,7 +1434,6 @@ def test_price_return_only_ignores_cash_with_complete_disclosure() -> None:
     assert strategy_summary.dividend_events_credited == 0
     assert strategy_summary.dividend_events_ignored == 1
     assert strategy_summary.total_dividend_cash_credited == Decimal(0)
-    assert strategy_summary.total_ignored_dividend_amount_per_share == Decimal(1)
     assert strategy_summary.estimated_ignored_dividend_cash == Decimal(5)
     assert strategy_summary.warning is not None
     assert price_only.warnings == (strategy_summary.warning,)
@@ -1455,6 +1454,31 @@ def test_price_return_only_ignores_cash_with_complete_disclosure() -> None:
     assert cash_dividends.dividend_accounting.dividend_events_credited == 1
     assert cash_dividends.dividend_accounting.dividend_events_ignored == 0
     assert cash_dividends.benchmark.dividend_accounting.dividend_events_credited == 1
+
+
+def test_price_return_only_does_not_sum_dividends_across_split_share_units() -> None:
+    result = run_backtest(
+        make_dataset(
+            ("100", "100", "50", "50"),
+            dividends=((date(2024, 7, 2), "1"), (date(2024, 7, 5), "0.60")),
+            splits=((date(2024, 7, 3), "2"),),
+        ),
+        ManualTransitionStrategy(),
+        zero_cost_config(DividendPolicy.PRICE_RETURN_ONLY),
+    )
+
+    strategy_summary = result.dividend_accounting
+    benchmark_summary = result.benchmark.dividend_accounting
+    assert strategy_summary.dividend_events_ignored == 2
+    assert strategy_summary.estimated_ignored_dividend_cash == Decimal(6)
+    assert benchmark_summary.estimated_ignored_dividend_cash == Decimal(22)
+    assert (
+        "total_ignored_dividend_amount_per_share" not in strategy_summary.to_primitive()
+    )
+    assert (
+        "total_ignored_dividend_amount_per_share"
+        not in benchmark_summary.to_primitive()
+    )
 
 
 def test_reject_if_dividends_requires_an_explicit_alternative() -> None:

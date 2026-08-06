@@ -538,7 +538,6 @@ class DividendAccountingSummary:
     dividend_events_credited: int
     dividend_events_ignored: int
     total_dividend_cash_credited: Decimal
-    total_ignored_dividend_amount_per_share: Decimal
     estimated_ignored_dividend_cash: Decimal
     warning: str | None
 
@@ -552,9 +551,6 @@ class DividendAccountingSummary:
             "dividend_events_ignored": self.dividend_events_ignored,
             "total_dividend_cash_credited": decimal_to_primitive(
                 self.total_dividend_cash_credited
-            ),
-            "total_ignored_dividend_amount_per_share": decimal_to_primitive(
-                self.total_ignored_dividend_amount_per_share
             ),
             "estimated_ignored_dividend_cash": decimal_to_primitive(
                 self.estimated_ignored_dividend_cash

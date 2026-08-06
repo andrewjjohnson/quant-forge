@@ -100,7 +100,7 @@ discounts that violate this guarantee are rejected during configuration.
 
 | Policy | Raw dataset with dividends | Return basis |
 | --- | --- | --- |
-| `PRICE_RETURN_ONLY` | Preserve events but credit no cash. Record ignored events, their summed per-share amount, and estimated excluded cash based on prior-close holdings. | `price_return` |
+| `PRICE_RETURN_ONLY` | Preserve events but credit no cash. Record ignored events and estimated excluded cash based on prior-close holdings. | `price_return` |
 | `CASH_DIVIDENDS` | Credit each entitled dividend exactly once and attribute it separately from price-trade P&L. | `total_return_with_cash_dividends` |
 | `REJECT_IF_DIVIDENDS` | Reject with instructions to select one of the two economic policies. | `price_return` when no events exist |
 
@@ -116,9 +116,11 @@ Price-only mode never changes cash, equity, daily returns, CAGR, Sharpe,
 Sortino, drawdown, trade P&L, or benchmark performance for a dividend event.
 Its estimated ignored cash is informational only. Both accounts expose a typed
 `DividendAccountingSummary` containing policy, return basis, events present,
-credited and ignored counts, credited cash, ignored per-share amount, estimated
-ignored portfolio cash, the corporate-action snapshot identifier, and a warning.
-Changing only the policy changes the backtest and benchmark identities.
+credited and ignored counts, credited cash, estimated ignored portfolio cash,
+the corporate-action snapshot identifier, and a warning. Per-share dividend
+amounts remain event-level QF-3 records because aggregating them across splits
+would mix incompatible share units. Changing only the policy changes the
+backtest and benchmark identities.
 
 Split handling is never optional for raw data. Every supported non-unit split
 still transforms existing shares and per-share basis before the open, preserves
