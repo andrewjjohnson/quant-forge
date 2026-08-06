@@ -149,8 +149,8 @@ Weekends and holidays are not gaps. Stable ascending sort is the only automatic
 correction. Duplicate sessions, out-of-range rows, empty input, inconsistent
 symbols or adjustment modes, invalid/nonpositive OHLCV, impossible high/low
 relationships, malformed dates, incomplete action fields, duplicate actions,
-invalid action economics, and non-boolean completeness provenance are rejected.
-Strict ingestion (the default)
+invalid action economics, and non-canonical manifest JSON field types are
+rejected. Strict ingestion (the default)
 rejects missing exchange sessions. Non-strict ingestion records them; QF-5
 still rejects gaps inside the observed range. Values are never filled,
 interpolated, rounded, or invented.

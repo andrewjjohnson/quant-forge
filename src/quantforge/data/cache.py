@@ -247,49 +247,90 @@ def _metadata_to_dict(metadata: DatasetMetadata) -> dict[str, object]:
     return serialize_metadata_values(asdict(metadata))
 
 
+def _manifest_string(value: dict[str, Any], field_name: str) -> str:
+    field_value = value[field_name]
+    if not isinstance(field_value, str):
+        raise ValueError(f"{field_name} must be a JSON string")
+    return field_value
+
+
+def _manifest_optional_string(value: dict[str, Any], field_name: str) -> str | None:
+    field_value = value[field_name]
+    if field_value is not None and not isinstance(field_value, str):
+        raise ValueError(f"{field_name} must be a JSON string or null")
+    return field_value
+
+
+def _manifest_integer(value: dict[str, Any], field_name: str) -> int:
+    field_value = value[field_name]
+    if isinstance(field_value, bool) or not isinstance(field_value, int):
+        raise ValueError(f"{field_name} must be a JSON integer")
+    return field_value
+
+
+def _manifest_boolean(value: dict[str, Any], field_name: str) -> bool:
+    field_value = value[field_name]
+    if not isinstance(field_value, bool):
+        raise ValueError(f"{field_name} must be a JSON boolean")
+    return field_value
+
+
+def _manifest_dates(value: dict[str, Any], field_name: str) -> tuple[date, ...]:
+    field_value = value[field_name]
+    if not isinstance(field_value, list):
+        raise ValueError(f"{field_name} must be a JSON array of date strings")
+    items = cast(list[object], field_value)
+    if any(not isinstance(item, str) for item in items):
+        raise ValueError(f"{field_name} must be a JSON array of date strings")
+    return tuple(date.fromisoformat(cast(str, item)) for item in items)
+
+
 def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
-    corporate_actions_complete = value["corporate_actions_complete"]
-    if not isinstance(corporate_actions_complete, bool):
-        raise ValueError("corporate_actions_complete must be a JSON boolean")
     return DatasetMetadata(
-        canonical_symbol=str(value["canonical_symbol"]),
-        provider_name=str(value["provider_name"]),
-        provider_symbol=str(value["provider_symbol"]),
-        retrieved_at=datetime.fromisoformat(value["retrieved_at"]).astimezone(UTC),
-        requested_start=date.fromisoformat(value["requested_start"]),
-        requested_end=date.fromisoformat(value["requested_end"]),
-        actual_first_session=date.fromisoformat(value["actual_first_session"]),
-        actual_last_session=date.fromisoformat(value["actual_last_session"]),
-        calendar=str(value["calendar"]),
-        provider_timezone=value["provider_timezone"],
-        adjustment_mode=AdjustmentMode(value["adjustment_mode"]),
-        raw_location=str(value["raw_location"]),
-        normalized_location=str(value["normalized_location"]),
-        corporate_actions_location=str(value["corporate_actions_location"]),
-        raw_sha256=str(value["raw_sha256"]),
-        data_sha256=str(value["data_sha256"]),
-        dataset_id=str(value["dataset_id"]),
-        schema_version=str(value["schema_version"]),
-        bar_count=int(value["bar_count"]),
-        missing_sessions=tuple(
-            date.fromisoformat(item) for item in value["missing_sessions"]
+        canonical_symbol=_manifest_string(value, "canonical_symbol"),
+        provider_name=_manifest_string(value, "provider_name"),
+        provider_symbol=_manifest_string(value, "provider_symbol"),
+        retrieved_at=datetime.fromisoformat(
+            _manifest_string(value, "retrieved_at")
+        ).astimezone(UTC),
+        requested_start=date.fromisoformat(_manifest_string(value, "requested_start")),
+        requested_end=date.fromisoformat(_manifest_string(value, "requested_end")),
+        actual_first_session=date.fromisoformat(
+            _manifest_string(value, "actual_first_session")
         ),
-        split_sessions=tuple(
-            date.fromisoformat(item) for item in value["split_sessions"]
+        actual_last_session=date.fromisoformat(
+            _manifest_string(value, "actual_last_session")
         ),
-        dividend_sessions=tuple(
-            date.fromisoformat(item) for item in value["dividend_sessions"]
+        calendar=_manifest_string(value, "calendar"),
+        provider_timezone=_manifest_optional_string(value, "provider_timezone"),
+        adjustment_mode=AdjustmentMode(_manifest_string(value, "adjustment_mode")),
+        raw_location=_manifest_string(value, "raw_location"),
+        normalized_location=_manifest_string(value, "normalized_location"),
+        corporate_actions_location=_manifest_string(
+            value, "corporate_actions_location"
         ),
-        corporate_actions_complete=corporate_actions_complete,
-        corporate_action_count=int(value["corporate_action_count"]),
-        dividend_count=int(value["dividend_count"]),
-        split_count=int(value["split_count"]),
-        corporate_action_snapshot_id=str(value["corporate_action_snapshot_id"]),
-        ohlc_basis=str(value["ohlc_basis"]),
-        volume_basis=str(value["volume_basis"]),
-        adjusted_fields_used=bool(value["adjusted_fields_used"]),
-        corporate_action_policy=str(value["corporate_action_policy"]),
-        adapter_version=str(value["adapter_version"]),
+        raw_sha256=_manifest_string(value, "raw_sha256"),
+        data_sha256=_manifest_string(value, "data_sha256"),
+        dataset_id=_manifest_string(value, "dataset_id"),
+        schema_version=_manifest_string(value, "schema_version"),
+        bar_count=_manifest_integer(value, "bar_count"),
+        missing_sessions=_manifest_dates(value, "missing_sessions"),
+        split_sessions=_manifest_dates(value, "split_sessions"),
+        dividend_sessions=_manifest_dates(value, "dividend_sessions"),
+        corporate_actions_complete=_manifest_boolean(
+            value, "corporate_actions_complete"
+        ),
+        corporate_action_count=_manifest_integer(value, "corporate_action_count"),
+        dividend_count=_manifest_integer(value, "dividend_count"),
+        split_count=_manifest_integer(value, "split_count"),
+        corporate_action_snapshot_id=_manifest_string(
+            value, "corporate_action_snapshot_id"
+        ),
+        ohlc_basis=_manifest_string(value, "ohlc_basis"),
+        volume_basis=_manifest_string(value, "volume_basis"),
+        adjusted_fields_used=_manifest_boolean(value, "adjusted_fields_used"),
+        corporate_action_policy=_manifest_string(value, "corporate_action_policy"),
+        adapter_version=_manifest_string(value, "adapter_version"),
     )
 
 

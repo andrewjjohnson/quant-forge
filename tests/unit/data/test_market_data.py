@@ -398,6 +398,37 @@ def test_cache_rejects_non_boolean_corporate_action_completeness(
         cache.load(dataset.metadata.dataset_id)
 
 
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("canonical_symbol", ["SPY"]),
+        ("provider_timezone", 0),
+        ("bar_count", "3"),
+        ("missing_sessions", "[]"),
+        ("corporate_action_count", "0"),
+        ("dividend_count", "0"),
+        ("split_count", "0"),
+        ("adjusted_fields_used", 0),
+    ],
+)
+def test_cache_rejects_coercible_manifest_scalar_types(
+    tmp_path: Path, field_name: str, invalid_value: object
+) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(FakeProvider(VALID), cache).get_daily_bars(
+        "SPY", date(2024, 7, 1), date(2024, 7, 3)
+    )
+    manifest_path = (
+        tmp_path / "datasets" / dataset.metadata.dataset_id / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest[field_name] = invalid_value
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
+
+
 def test_cache_rejects_legacy_manifest_without_split_provenance(
     tmp_path: Path,
 ) -> None:
