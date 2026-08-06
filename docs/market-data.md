@@ -170,9 +170,9 @@ Raw JSON is a lossless representation of the complete provider response and
 request metadata. Bars use exact decimal-text CSV. Corporate actions use stable
 canonical JSON. Raw, bar, action, and manifest artifacts are immutable and
 written with fsynced temporary files. Loads verify raw/bar hashes, canonical
-paths, metadata, action snapshot/action IDs, dataset identity, calendar facts,
-and all complete-dataset invariants. Dataset hashes prove consistency, not
-provider authenticity.
+paths, metadata, the exact supported corporate-action artifact schema, action
+snapshot/action IDs, dataset identity, calendar facts, and all complete-dataset
+invariants. Dataset hashes prove consistency, not provider authenticity.
 
 Schema version 4 changes request and dataset identities. Older artifacts remain
 immutable and are not upgraded silently; re-ingest them for action-aware QF-5.

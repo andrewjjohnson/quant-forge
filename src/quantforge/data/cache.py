@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from quantforge.data.corporate_actions import (
+    CORPORATE_ACTION_SCHEMA_VERSION,
     CorporateActionSeed,
     bind_corporate_actions,
     corporate_actions_primitive,
@@ -295,6 +296,8 @@ def _corporate_actions_from_dict(
     if not isinstance(value, dict):
         raise ValueError("corporate-action artifact must be an object")
     mapping = cast(dict[object, object], value)
+    if mapping.get("schema_version") != CORPORATE_ACTION_SCHEMA_VERSION:
+        raise ValueError("unsupported corporate-action artifact schema")
     if mapping.get(
         "corporate_action_snapshot_id"
     ) != expected_snapshot_id or not isinstance(mapping.get("actions"), list):
