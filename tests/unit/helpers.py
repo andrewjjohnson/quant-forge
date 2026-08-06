@@ -3,6 +3,12 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+from quantforge.data.corporate_actions import (
+    CashDividendSeed,
+    StockSplitSeed,
+    bind_corporate_actions,
+    corporate_action_snapshot_id,
+)
 from quantforge.data.identity import (
     calculate_dataset_id,
     canonical_json_bytes,
@@ -42,6 +48,9 @@ def make_dataset(
     missing_sessions: tuple[date, ...] = (),
     split_sessions: tuple[date, ...] = (),
     dividend_sessions: tuple[date, ...] = (),
+    dividends: tuple[tuple[date, str], ...] = (),
+    splits: tuple[tuple[date, str], ...] = (),
+    corporate_actions_complete: bool = True,
 ) -> MarketDataset:
     """Build identity-bound daily bars; ``dataset_id`` is a raw-fixture seed."""
     selected_sessions = SESSIONS[: len(closes)] if sessions is None else sessions
@@ -67,6 +76,27 @@ def make_dataset(
         )
     typed_bars = tuple(bars)
     retrieved_at = datetime(2024, 7, 15, tzinfo=UTC)
+    if dividends and dividend_sessions:
+        raise ValueError("use dividends or dividend_sessions, not both")
+    if splits and split_sessions:
+        raise ValueError("use splits or split_sessions, not both")
+    dividend_values = dividends or tuple(
+        (session, "1") for session in dividend_sessions
+    )
+    split_values = splits or tuple((session, "2") for session in split_sessions)
+    corporate_action_seeds = tuple(
+        [
+            CashDividendSeed("SPY", session, Decimal(amount), "synthetic")
+            for session, amount in dividend_values
+        ]
+        + [
+            StockSplitSeed("SPY", session, Decimal(factor), "synthetic")
+            for session, factor in split_values
+        ]
+    )
+    snapshot_id = corporate_action_snapshot_id(corporate_action_seeds)
+    normalized_dividend_sessions = tuple(session for session, _ in dividend_values)
+    normalized_split_sessions = tuple(session for session, _ in split_values)
     metadata_values: dict[str, object] = {
         "canonical_symbol": "SPY",
         "provider_name": "synthetic",
@@ -81,8 +111,27 @@ def make_dataset(
         "adjustment_mode": adjustment_mode,
         "bar_count": len(bars),
         "missing_sessions": missing_sessions,
-        "split_sessions": split_sessions,
-        "dividend_sessions": dividend_sessions,
+        "split_sessions": normalized_split_sessions,
+        "dividend_sessions": normalized_dividend_sessions,
+        "corporate_actions_complete": corporate_actions_complete,
+        "corporate_action_count": len(corporate_action_seeds),
+        "dividend_count": len(dividend_values),
+        "split_count": len(split_values),
+        "corporate_action_snapshot_id": snapshot_id,
+        "ohlc_basis": (
+            "raw_provider"
+            if adjustment_mode is AdjustmentMode.UNADJUSTED
+            else "split_adjusted"
+        ),
+        "volume_basis": (
+            "raw_provider"
+            if adjustment_mode is AdjustmentMode.UNADJUSTED
+            else "split_adjusted"
+        ),
+        "adjusted_fields_used": False,
+        "corporate_action_policy": (
+            "separate_provider_reported_cash_dividends_and_splits"
+        ),
         "adapter_version": "test-1",
     }
     raw_sha256 = sha256_hex(canonical_json_bytes({"synthetic_raw_fixture": dataset_id}))
@@ -92,6 +141,11 @@ def make_dataset(
         raw_sha256=raw_sha256,
         data_sha256=data_sha256,
         schema_version=SCHEMA_VERSION,
+    )
+    corporate_actions = bind_corporate_actions(
+        corporate_action_seeds,
+        dataset_id=calculated_dataset_id,
+        snapshot_id=snapshot_id,
     )
     metadata = DatasetMetadata(
         canonical_symbol="SPY",
@@ -107,14 +161,36 @@ def make_dataset(
         adjustment_mode=adjustment_mode,
         raw_location=f"raw/{raw_sha256}.json",
         normalized_location=f"datasets/{calculated_dataset_id}/bars.csv",
+        corporate_actions_location=(
+            f"datasets/{calculated_dataset_id}/corporate_actions.json"
+        ),
         raw_sha256=raw_sha256,
         data_sha256=data_sha256,
         dataset_id=calculated_dataset_id,
         schema_version=SCHEMA_VERSION,
         bar_count=len(bars),
         missing_sessions=missing_sessions,
-        split_sessions=split_sessions,
-        dividend_sessions=dividend_sessions,
+        split_sessions=normalized_split_sessions,
+        dividend_sessions=normalized_dividend_sessions,
+        corporate_actions_complete=corporate_actions_complete,
+        corporate_action_count=len(corporate_actions),
+        dividend_count=len(dividend_values),
+        split_count=len(split_values),
+        corporate_action_snapshot_id=snapshot_id,
+        ohlc_basis=(
+            "raw_provider"
+            if adjustment_mode is AdjustmentMode.UNADJUSTED
+            else "split_adjusted"
+        ),
+        volume_basis=(
+            "raw_provider"
+            if adjustment_mode is AdjustmentMode.UNADJUSTED
+            else "split_adjusted"
+        ),
+        adjusted_fields_used=False,
+        corporate_action_policy=(
+            "separate_provider_reported_cash_dividends_and_splits"
+        ),
         adapter_version="test-1",
     )
-    return MarketDataset(typed_bars, metadata)
+    return MarketDataset(typed_bars, metadata, corporate_actions)

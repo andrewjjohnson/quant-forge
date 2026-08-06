@@ -33,6 +33,38 @@ _FILL_CSV_FIELDS = (
     "strategy_configuration_id",
 )
 
+_DIVIDEND_CASHFLOW_FIELDS = (
+    "dividend_cashflow_id",
+    "run_id",
+    "account_id",
+    "corporate_action_id",
+    "symbol",
+    "ex_dividend_session",
+    "entitled_share_quantity",
+    "amount_per_share",
+    "total_dividend_cash",
+    "resulting_cash_balance",
+    "source_dataset_id",
+)
+
+_SPLIT_ADJUSTMENT_FIELDS = (
+    "split_adjustment_id",
+    "run_id",
+    "account_id",
+    "corporate_action_id",
+    "symbol",
+    "effective_session",
+    "split_factor",
+    "shares_before",
+    "shares_after",
+    "average_entry_cost_before",
+    "average_entry_cost_after",
+    "total_cost_basis_before",
+    "total_cost_basis_after",
+    "resulting_cash_balance",
+    "source_dataset_id",
+)
+
 
 def _json_text(value: Primitive) -> str:
     return json.dumps(
@@ -99,6 +131,14 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
         benchmark_equity = [
             item.to_primitive() for item in result.benchmark.daily_equity
         ]
+        dividend_cashflows = [item.to_primitive() for item in result.dividend_cashflows]
+        split_adjustments = [item.to_primitive() for item in result.split_adjustments]
+        benchmark_dividend_cashflows = [
+            item.to_primitive() for item in result.benchmark.dividend_cashflows
+        ]
+        benchmark_split_adjustments = [
+            item.to_primitive() for item in result.benchmark.split_adjustments
+        ]
         _write_csv(
             temporary / "signals.csv",
             signals,
@@ -163,6 +203,10 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
                 "strategy_implementation_version",
                 "strategy_configuration_id",
                 "is_open",
+                "exit_quantity",
+                "dividend_income",
+                "total_economic_profit_loss",
+                "total_economic_return",
             ),
         )
         _write_csv(
@@ -175,6 +219,34 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
             temporary / "benchmark_equity.csv",
             benchmark_equity,
             tuple(benchmark_equity[0]),
+        )
+        _write_csv(
+            temporary / "dividend_cashflows.csv",
+            dividend_cashflows,
+            tuple(dividend_cashflows[0])
+            if dividend_cashflows
+            else _DIVIDEND_CASHFLOW_FIELDS,
+        )
+        _write_csv(
+            temporary / "split_adjustments.csv",
+            split_adjustments,
+            tuple(split_adjustments[0])
+            if split_adjustments
+            else _SPLIT_ADJUSTMENT_FIELDS,
+        )
+        _write_csv(
+            temporary / "benchmark_dividend_cashflows.csv",
+            benchmark_dividend_cashflows,
+            tuple(benchmark_dividend_cashflows[0])
+            if benchmark_dividend_cashflows
+            else _DIVIDEND_CASHFLOW_FIELDS,
+        )
+        _write_csv(
+            temporary / "benchmark_split_adjustments.csv",
+            benchmark_split_adjustments,
+            tuple(benchmark_split_adjustments[0])
+            if benchmark_split_adjustments
+            else _SPLIT_ADJUSTMENT_FIELDS,
         )
         os.rename(temporary, destination)
     except (OSError, TypeError, ValueError) as error:

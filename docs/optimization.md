@@ -29,7 +29,8 @@ validated-bar fingerprint, costs, and immutable artifact location.
 ## Public API and SPY moving-average example
 
 The following modest study assumes `dataset` is an already-loaded or cached,
-schema-version-3, unadjusted SPY daily `MarketDataset` compatible with QF-5. It
+schema-version-4, unadjusted SPY daily `MarketDataset` with complete corporate
+actions and raw OHLCV compatible with QF-5. It
 does not retrieve provider data.
 
 ```python
@@ -39,6 +40,7 @@ from pathlib import Path
 from quantforge.backtesting import (
     BacktestConfig,
     BasisPointSlippage,
+    DividendPolicy,
     ExplicitZeroFees,
     PerShareCommission,
 )
@@ -79,6 +81,7 @@ study = GridSearchStudy(
             ),
             fees=ExplicitZeroFees(),
             slippage=BasisPointSlippage(Decimal("5")),
+            dividend_policy=DividendPolicy.PRICE_RETURN_ONLY,
             annual_risk_free_rate=Decimal("0.03"),
         ),
         execution=ExecutionConfig(),

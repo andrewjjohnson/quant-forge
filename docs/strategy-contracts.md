@@ -132,7 +132,8 @@ Every `StrategyDecision` contains:
 | `indicator_values` | finite values retained for decision auditability |
 
 `StrategyOutput` also retains the input dataset ID, schema version, adjustment
-mode, and exchange calendar. `to_rows()` supports tabular/vectorized consumers;
+mode, exchange calendar, and corporate-action snapshot ID. Strategies do not
+inspect or apply actions; QF-5 owns that accounting. `to_rows()` supports tabular/vectorized consumers;
 iteration over the output supports a future chronological event-driven consumer.
 Both see the same immutable decisions. There are no callbacks, engine objects,
 provider types, fill prices, or quantities in the schema.

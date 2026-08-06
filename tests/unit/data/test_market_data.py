@@ -264,7 +264,7 @@ def test_service_persists_metadata_and_reuses_cache_across_instances(
     assert provider.calls == 1
     assert first == second
     assert first.metadata.dataset_id
-    assert first.metadata.schema_version == SCHEMA_VERSION == "3"
+    assert first.metadata.schema_version == SCHEMA_VERSION == "4"
     assert first.metadata.bar_count == 3
     assert first.metadata.adjustment_mode is AdjustmentMode.SPLIT_ADJUSTED
     assert first.metadata.split_sessions == ()
@@ -331,6 +331,26 @@ def test_service_persists_and_reloads_verified_dividend_sessions(
     )
     assert not dataset_identity_matches(stripped)
     assert cache.load(dataset.metadata.dataset_id) == dataset
+
+
+def test_cache_rejects_tampered_corporate_action_artifact(tmp_path: Path) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(
+        FakeProvider((record("2024-07-01"), record("2024-07-02", dividend="0.75"))),
+        cache,
+    ).get_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        AdjustmentMode.UNADJUSTED,
+    )
+    action_path = tmp_path / dataset.metadata.corporate_actions_location
+    action_snapshot = json.loads(action_path.read_text(encoding="utf-8"))
+    action_snapshot["actions"][0]["amount_per_share"] = "0.76"
+    action_path.write_text(json.dumps(action_snapshot), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="cached dataset validation failed"):
+        cache.load(dataset.metadata.dataset_id)
 
 
 def test_cache_rejects_legacy_manifest_without_split_provenance(

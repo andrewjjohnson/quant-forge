@@ -13,6 +13,7 @@ from quantforge.backtesting import (
     BacktestResult,
     BasisPointFees,
     BasisPointSlippage,
+    DividendPolicy,
     ExecutionError,
     ExplicitZeroFees,
     FixedCommission,
@@ -20,7 +21,9 @@ from quantforge.backtesting import (
     InvalidSignalError,
     OrderSide,
     OrderStatus,
+    PortfolioAccountingError,
     ResultExportError,
+    ReturnBasis,
     export_backtest_result,
     load_backtest_manifest,
     run_backtest,
@@ -163,7 +166,7 @@ def test_next_session_timing_costs_accounting_and_traceability() -> None:
     assert trade.strategy_configuration_id == result.strategy_configuration_id
     assert trade.strategy_implementation_version == "1"
     assert result.strategy_implementation_version == "1"
-    assert result.market_data.schema_version == "3"
+    assert result.market_data.schema_version == "4"
     assert result.market_data.split_sessions == ()
     assert result.market_data.dividend_sessions == ()
     assert result.warnings == ()
@@ -595,7 +598,7 @@ def test_requested_range_gaps_outside_observed_bars_remain_provenance() -> None:
         AdjustmentMode.SPLIT_AND_DIVIDEND_ADJUSTED,
     ],
 )
-def test_adjusted_data_is_rejected_without_point_in_time_corporate_actions(
+def test_adjusted_data_is_rejected_by_raw_price_action_accounting(
     adjustment_mode: AdjustmentMode,
 ) -> None:
     dataset = make_dataset(
@@ -603,7 +606,7 @@ def test_adjusted_data_is_rejected_without_point_in_time_corporate_actions(
         adjustment_mode=adjustment_mode,
     )
 
-    with pytest.raises(InvalidMarketDataError, match="point-in-time"):
+    with pytest.raises(InvalidMarketDataError, match="raw-price explicit"):
         run_backtest(
             dataset,
             MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
@@ -636,50 +639,49 @@ def test_market_data_schema_without_dividend_provenance_is_rejected() -> None:
         )
 
 
-def test_unadjusted_data_with_stock_split_is_rejected() -> None:
+def test_unadjusted_data_with_stock_split_is_accounted_for() -> None:
     split_session = date(2024, 7, 9)
     split_bearing = make_dataset(
         PRICES,
         split_sessions=(split_session,),
     )
 
-    with pytest.raises(
-        InvalidMarketDataError,
-        match="stock splits within its observed range: 2024-07-09",
-    ):
-        run_backtest(
-            split_bearing,
-            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
-            BacktestConfig(
-                Decimal(100),
-                FixedCommission(Decimal(1)),
-                ExplicitZeroFees(),
-                BasisPointSlippage(Decimal(100)),
-            ),
-        )
+    result = run_backtest(
+        split_bearing,
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(100)),
+        ),
+    )
+
+    assert len(result.split_adjustments) == 1
+    assert result.split_adjustments[0].effective_session == split_session
 
 
-def test_unadjusted_data_with_cash_dividend_is_rejected() -> None:
+def test_unadjusted_data_with_cash_dividend_is_accounted_for() -> None:
     dividend_session = date(2024, 7, 9)
     dividend_bearing = make_dataset(
         PRICES,
         dividend_sessions=(dividend_session,),
     )
 
-    with pytest.raises(
-        InvalidMarketDataError,
-        match="cash dividends within its observed range: 2024-07-09",
-    ):
-        run_backtest(
-            dividend_bearing,
-            MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
-            BacktestConfig(
-                Decimal(100),
-                FixedCommission(Decimal(1)),
-                ExplicitZeroFees(),
-                BasisPointSlippage(Decimal(100)),
-            ),
-        )
+    result = run_backtest(
+        dividend_bearing,
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(100)),
+            dividend_policy=DividendPolicy.CASH_DIVIDENDS,
+        ),
+    )
+
+    assert len(result.dividend_cashflows) == 1
+    assert result.dividend_cashflows[0].ex_dividend_session == dividend_session
 
 
 def test_removed_dividend_provenance_is_rejected_by_dataset_identity() -> None:
@@ -692,7 +694,10 @@ def test_removed_dividend_provenance_is_rejected_by_dataset_identity() -> None:
         metadata=replace(dividend_bearing.metadata, dividend_sessions=()),
     )
 
-    with pytest.raises(InvalidMarketDataError, match=r"do not match.*dataset identity"):
+    with pytest.raises(
+        InvalidMarketDataError,
+        match="corporate-action counts or sessions do not match records",
+    ):
         run_backtest(
             stripped,
             MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
@@ -879,7 +884,7 @@ def test_benchmark_includes_first_invested_return_in_risk_metrics() -> None:
     )
     assert result.benchmark.performance.sharpe_ratio == Decimal(0)
     assert result.benchmark.performance.sortino_ratio == Decimal(0)
-    assert result.benchmark.configuration["implementation_version"] == "2"
+    assert result.benchmark.configuration["implementation_version"] == "4"
     assert result.benchmark.configuration["return_series_start"] == (
         "initial_capital_to_first_session_close"
     )
@@ -892,13 +897,17 @@ def test_structured_export_is_stable_reloadable_and_never_overwrites(
     exported = export_backtest_result(result, tmp_path / "reports")
 
     assert sorted(path.name for path in exported.iterdir()) == [
+        "benchmark_dividend_cashflows.csv",
         "benchmark_equity.csv",
+        "benchmark_split_adjustments.csv",
+        "dividend_cashflows.csv",
         "equity.csv",
         "fills.csv",
         "manifest.json",
         "orders.csv",
         "positions.csv",
         "signals.csv",
+        "split_adjustments.csv",
         "trades.csv",
     ]
     assert load_backtest_manifest(exported / "manifest.json") == (
@@ -1196,3 +1205,398 @@ def test_backtest_rejects_identity_that_does_not_match_captured_configuration() 
                 BasisPointSlippage(Decimal(10)),
             ),
         )
+
+
+def zero_cost_config(
+    dividend_policy: DividendPolicy = DividendPolicy.CASH_DIVIDENDS,
+) -> BacktestConfig:
+    return BacktestConfig(
+        Decimal(1000),
+        FixedCommission(Decimal(0)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(0)),
+        dividend_policy=dividend_policy,
+    )
+
+
+def test_dividend_uses_previous_close_entitlement_and_economic_trade_return() -> None:
+    dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 3), "1"),),
+    )
+
+    result = run_backtest(dataset, ManualTransitionStrategy(), zero_cost_config())
+
+    strategy_cashflow = result.dividend_cashflows[0]
+    benchmark_cashflow = result.benchmark.dividend_cashflows[0]
+    trade = result.completed_trades[0]
+    assert strategy_cashflow.entitled_share_quantity == 5
+    assert strategy_cashflow.total_dividend_cash == Decimal(5)
+    assert len(result.dividend_cashflows) == 1
+    assert benchmark_cashflow.entitled_share_quantity == 10
+    assert benchmark_cashflow.total_dividend_cash == Decimal(10)
+    assert result.performance.total_dividend_income == Decimal(5)
+    assert result.benchmark.performance.total_dividend_income == Decimal(10)
+    assert result.performance.ending_equity == Decimal(1005)
+    assert result.daily_equity[2].daily_return == Decimal("0.005")
+    assert trade.net_profit_loss == Decimal(0)
+    assert trade.dividend_income == Decimal(5)
+    assert trade.total_economic_profit_loss == Decimal(5)
+    assert trade.total_economic_return == Decimal("0.01")
+    assert result.performance.win_rate == Decimal(1)
+    assert result.daily_equity[2].dividend_cashflow_ids == (
+        strategy_cashflow.dividend_cashflow_id,
+    )
+
+
+def test_buying_at_open_on_ex_date_does_not_receive_dividend() -> None:
+    dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 2), "1"),),
+    )
+
+    result = run_backtest(dataset, ManualTransitionStrategy(), zero_cost_config())
+
+    assert result.dividend_cashflows[0].entitled_share_quantity == 0
+    assert result.dividend_cashflows[0].total_dividend_cash == Decimal(0)
+    assert result.completed_trades[0].dividend_income == Decimal(0)
+    assert result.benchmark.dividend_cashflows[0].entitled_share_quantity == 10
+
+
+def test_selling_at_open_on_ex_date_retains_dividend_entitlement() -> None:
+    dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 5), "1"),),
+    )
+
+    result = run_backtest(dataset, ManualTransitionStrategy(), zero_cost_config())
+
+    cashflow = result.dividend_cashflows[0]
+    assert result.fills[-1].execution_session == date(2024, 7, 5)
+    assert cashflow.entitled_share_quantity == 5
+    assert cashflow.resulting_cash_balance == Decimal(1005)
+    assert result.completed_trades[0].dividend_income == Decimal(5)
+
+
+def test_first_session_ex_date_does_not_entitle_first_open_buys() -> None:
+    dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 1), "1"),),
+    )
+
+    result = run_backtest(dataset, ManualTransitionStrategy(), zero_cost_config())
+
+    assert result.dividend_cashflows[0].entitled_share_quantity == 0
+    assert result.benchmark.dividend_cashflows[0].entitled_share_quantity == 0
+    assert result.performance.total_dividend_income == Decimal(0)
+    assert result.benchmark.performance.total_dividend_income == Decimal(0)
+
+
+def test_price_return_only_ignores_cash_with_complete_disclosure() -> None:
+    dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 3), "1"),),
+    )
+
+    price_only = run_backtest(
+        dataset,
+        ManualTransitionStrategy(),
+        zero_cost_config(DividendPolicy.PRICE_RETURN_ONLY),
+    )
+    cash_dividends = run_backtest(
+        dataset,
+        ManualTransitionStrategy(),
+        zero_cost_config(DividendPolicy.CASH_DIVIDENDS),
+    )
+
+    strategy_summary = price_only.dividend_accounting
+    benchmark_summary = price_only.benchmark.dividend_accounting
+    assert price_only.run_id != cash_dividends.run_id
+    assert price_only.dividend_cashflows == ()
+    assert price_only.benchmark.dividend_cashflows == ()
+    assert price_only.performance.total_dividend_income == Decimal(0)
+    assert price_only.performance.ending_equity == Decimal(1000)
+    assert cash_dividends.performance.ending_equity == Decimal(1005)
+    assert strategy_summary.dividend_policy is DividendPolicy.PRICE_RETURN_ONLY
+    assert strategy_summary.return_basis is ReturnBasis.PRICE_RETURN
+    assert (
+        strategy_summary.corporate_action_snapshot_id
+        == dataset.metadata.corporate_action_snapshot_id
+    )
+    assert strategy_summary.dividend_events_present == 1
+    assert strategy_summary.dividend_events_credited == 0
+    assert strategy_summary.dividend_events_ignored == 1
+    assert strategy_summary.total_dividend_cash_credited == Decimal(0)
+    assert strategy_summary.total_ignored_dividend_amount_per_share == Decimal(1)
+    assert strategy_summary.estimated_ignored_dividend_cash == Decimal(5)
+    assert strategy_summary.warning is not None
+    assert price_only.warnings == (strategy_summary.warning,)
+    assert benchmark_summary.dividend_policy is DividendPolicy.PRICE_RETURN_ONLY
+    assert benchmark_summary.return_basis is ReturnBasis.PRICE_RETURN
+    assert (
+        benchmark_summary.corporate_action_snapshot_id
+        == dataset.metadata.corporate_action_snapshot_id
+    )
+    assert benchmark_summary.dividend_events_ignored == 1
+    assert benchmark_summary.estimated_ignored_dividend_cash == Decimal(10)
+    assert price_only.completed_trades[0].dividend_income == Decimal(0)
+    assert price_only.completed_trades[0].total_economic_profit_loss == Decimal(0)
+    assert (
+        cash_dividends.dividend_accounting.return_basis
+        is ReturnBasis.TOTAL_RETURN_WITH_CASH_DIVIDENDS
+    )
+    assert cash_dividends.dividend_accounting.dividend_events_credited == 1
+    assert cash_dividends.dividend_accounting.dividend_events_ignored == 0
+    assert cash_dividends.benchmark.dividend_accounting.dividend_events_credited == 1
+
+
+def test_reject_if_dividends_requires_an_explicit_alternative() -> None:
+    dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 3), "1"),),
+    )
+
+    with pytest.raises(
+        InvalidMarketDataError,
+        match=r"select DividendPolicy\.PRICE_RETURN_ONLY or "
+        r"DividendPolicy\.CASH_DIVIDENDS",
+    ):
+        run_backtest(
+            dataset,
+            ManualTransitionStrategy(),
+            zero_cost_config(DividendPolicy.REJECT_IF_DIVIDENDS),
+        )
+
+
+@pytest.mark.parametrize("dividend_policy", list(DividendPolicy))
+def test_dividend_free_raw_data_runs_under_every_policy(
+    dividend_policy: DividendPolicy,
+) -> None:
+    result = run_backtest(
+        make_dataset(("100", "100", "100", "100")),
+        ManualTransitionStrategy(),
+        zero_cost_config(dividend_policy),
+    )
+
+    assert result.dividend_accounting.dividend_policy is dividend_policy
+    assert result.dividend_accounting.dividend_events_present == 0
+    assert result.dividend_accounting.warning is None
+
+
+@pytest.mark.parametrize("dividend_policy", list(DividendPolicy))
+def test_inconsistent_raw_price_metadata_is_rejected_under_every_policy(
+    dividend_policy: DividendPolicy,
+) -> None:
+    dataset = make_dataset(("100", "100", "100", "100"))
+    inconsistent = replace(
+        dataset,
+        metadata=replace(dataset.metadata, ohlc_basis="provider_adjusted"),
+    )
+
+    with pytest.raises(InvalidMarketDataError, match="price or volume basis"):
+        run_backtest(
+            inconsistent,
+            ManualTransitionStrategy(),
+            zero_cost_config(dividend_policy),
+        )
+
+
+@pytest.mark.parametrize("dividend_policy", list(DividendPolicy))
+def test_split_accounting_remains_active_under_every_dividend_policy(
+    dividend_policy: DividendPolicy,
+) -> None:
+    result = run_backtest(
+        make_dataset(
+            ("100", "100", "50", "50"),
+            splits=((date(2024, 7, 3), "2"),),
+        ),
+        ManualTransitionStrategy(),
+        zero_cost_config(dividend_policy),
+    )
+
+    assert result.split_adjustments[0].shares_before == 5
+    assert result.split_adjustments[0].shares_after == 10
+    assert result.benchmark.split_adjustments[0].shares_before == 10
+    assert result.benchmark.split_adjustments[0].shares_after == 20
+
+
+def test_export_preserves_dividend_policy_return_basis_and_disclosures(
+    tmp_path: Path,
+) -> None:
+    result = run_backtest(
+        make_dataset(
+            ("100", "100", "100", "100"),
+            dividends=((date(2024, 7, 3), "1"),),
+        ),
+        ManualTransitionStrategy(),
+        zero_cost_config(DividendPolicy.PRICE_RETURN_ONLY),
+    )
+
+    exported = export_backtest_result(result, tmp_path)
+    manifest = load_backtest_manifest(exported / "manifest.json")
+    action_accounting = cast(PrimitiveMapping, manifest["corporate_action_accounting"])
+    strategy_dividends = cast(PrimitiveMapping, action_accounting["dividends"])
+    benchmark = cast(PrimitiveMapping, manifest["benchmark"])
+    benchmark_dividends = cast(PrimitiveMapping, benchmark["dividend_accounting"])
+    assert strategy_dividends["dividend_policy"] == "price_return_only"
+    assert strategy_dividends["return_basis"] == "price_return"
+    assert (
+        strategy_dividends["corporate_action_snapshot_id"]
+        == result.market_data.corporate_action_snapshot_id
+    )
+    assert strategy_dividends["dividend_events_ignored"] == 1
+    assert strategy_dividends["estimated_ignored_dividend_cash"] == "5"
+    assert benchmark_dividends["dividend_policy"] == "price_return_only"
+    assert (
+        benchmark_dividends["corporate_action_snapshot_id"]
+        == result.market_data.corporate_action_snapshot_id
+    )
+    assert benchmark_dividends["estimated_ignored_dividend_cash"] == "10"
+    assert result.backtest_configuration["dividend_policy"] == "price_return_only"
+    json.dumps(result.to_primitive(), allow_nan=False, sort_keys=True)
+
+
+def test_split_preserves_cash_equity_and_aggregate_cost_basis() -> None:
+    dataset = make_dataset(
+        ("100", "100", "50", "50"),
+        splits=((date(2024, 7, 3), "2"),),
+    )
+
+    result = run_backtest(dataset, ManualTransitionStrategy(), zero_cost_config())
+
+    adjustment = result.split_adjustments[0]
+    benchmark_adjustment = result.benchmark.split_adjustments[0]
+    trade = result.completed_trades[0]
+    assert adjustment.shares_before == 5
+    assert adjustment.shares_after == 10
+    assert adjustment.average_entry_cost_before == Decimal(100)
+    assert adjustment.average_entry_cost_after == Decimal(50)
+    assert adjustment.total_cost_basis_before == Decimal(500)
+    assert adjustment.total_cost_basis_after == Decimal(500)
+    assert adjustment.resulting_cash_balance == Decimal(500)
+    assert adjustment.corporate_action_id == dataset.corporate_actions[0].action_id
+    assert adjustment.source_dataset_id == dataset.metadata.dataset_id
+    assert result.daily_equity[1].total_equity == Decimal(1000)
+    assert result.daily_equity[2].total_equity == Decimal(1000)
+    assert trade.entry_quantity == 5
+    assert trade.exit_quantity == 10
+    assert trade.net_profit_loss == Decimal(0)
+    assert benchmark_adjustment.shares_before == 10
+    assert benchmark_adjustment.shares_after == 20
+
+
+def test_same_session_dividend_entitlement_precedes_split_adjustment() -> None:
+    dataset = make_dataset(
+        ("100", "100", "50", "50"),
+        dividends=((date(2024, 7, 3), "1"),),
+        splits=((date(2024, 7, 3), "2"),),
+    )
+
+    result = run_backtest(dataset, ManualTransitionStrategy(), zero_cost_config())
+
+    assert result.dividend_cashflows[0].entitled_share_quantity == 5
+    assert result.dividend_cashflows[0].total_dividend_cash == Decimal(5)
+    assert result.split_adjustments[0].shares_after == 10
+
+
+def test_fractional_split_shares_are_rejected_without_cash_in_lieu() -> None:
+    dataset = make_dataset(
+        ("100", "100", "66.6666666667", "66.6666666667"),
+        splits=((date(2024, 7, 3), "1.5"),),
+    )
+
+    with pytest.raises(PortfolioAccountingError, match="fractional shares"):
+        run_backtest(dataset, ManualTransitionStrategy(), zero_cost_config())
+
+
+def test_adjusted_or_incomplete_action_data_is_rejected() -> None:
+    adjusted = make_dataset(
+        ("100", "100", "100", "100"),
+        adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+        dividends=((date(2024, 7, 3), "1"),),
+    )
+    incomplete = make_dataset(
+        ("100", "100", "100", "100"),
+        corporate_actions_complete=False,
+    )
+
+    with pytest.raises(InvalidMarketDataError, match="adjusted market data"):
+        run_backtest(adjusted, ManualTransitionStrategy(), zero_cost_config())
+    with pytest.raises(
+        InvalidMarketDataError,
+        match="requires complete explicit corporate actions",
+    ):
+        run_backtest(incomplete, ManualTransitionStrategy(), zero_cost_config())
+
+
+def test_corporate_action_snapshot_changes_dataset_and_run_identity(
+    tmp_path: Path,
+) -> None:
+    first_dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 3), "1"),),
+    )
+    equivalent_dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 3), "1"),),
+    )
+    revised_dataset = make_dataset(
+        ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 3), "1.01"),),
+    )
+
+    first = run_backtest(first_dataset, ManualTransitionStrategy(), zero_cost_config())
+    equivalent = run_backtest(
+        equivalent_dataset, ManualTransitionStrategy(), zero_cost_config()
+    )
+    revised = run_backtest(
+        revised_dataset, ManualTransitionStrategy(), zero_cost_config()
+    )
+
+    assert first == equivalent
+    assert first_dataset.metadata.dataset_id == equivalent_dataset.metadata.dataset_id
+    assert (
+        first_dataset.metadata.corporate_action_snapshot_id
+        == equivalent_dataset.metadata.corporate_action_snapshot_id
+    )
+    assert revised_dataset.metadata.dataset_id != first_dataset.metadata.dataset_id
+    assert (
+        revised_dataset.metadata.corporate_action_snapshot_id
+        != first_dataset.metadata.corporate_action_snapshot_id
+    )
+    assert revised.run_id != first.run_id
+    first_export = export_backtest_result(first, tmp_path / "first")
+    equivalent_export = export_backtest_result(equivalent, tmp_path / "equivalent")
+    assert [path.name for path in first_export.iterdir()] == [
+        path.name for path in equivalent_export.iterdir()
+    ]
+    assert {path.name: path.read_bytes() for path in first_export.iterdir()} == {
+        path.name: path.read_bytes() for path in equivalent_export.iterdir()
+    }
+
+
+def test_split_factor_changes_snapshot_and_run_identity() -> None:
+    first_dataset = make_dataset(
+        ("100", "100", "50", "50"),
+        splits=((date(2024, 7, 3), "2"),),
+    )
+    revised_dataset = make_dataset(
+        (
+            "100",
+            "100",
+            "33.33333333333333333333333333",
+            "33.33333333333333333333333333",
+        ),
+        splits=((date(2024, 7, 3), "3"),),
+    )
+
+    first = run_backtest(first_dataset, ManualTransitionStrategy(), zero_cost_config())
+    revised = run_backtest(
+        revised_dataset, ManualTransitionStrategy(), zero_cost_config()
+    )
+
+    assert (
+        first_dataset.metadata.corporate_action_snapshot_id
+        != revised_dataset.metadata.corporate_action_snapshot_id
+    )
+    assert first.run_id != revised.run_id

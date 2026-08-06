@@ -1,0 +1,8 @@
+{
+  "ticker": "SPY",
+  "name": "Synthetic SPY fixture",
+  "exchangeCode": "NYSE ARCA",
+  "startDate": "1993-01-29",
+  "endDate": "2024-07-08",
+  "description": "Deterministic offline Tiingo-shaped fixture; not provider data."
+}

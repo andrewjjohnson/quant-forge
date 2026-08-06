@@ -21,6 +21,7 @@ Do not create ADRs for routine implementation details that are easy to change.
 
 - [ADR 0001: Use chronological next-open backtesting](0001-use-chronological-next-open-backtesting.md)
 - [ADR 0002: Use parent-owned deterministic grid execution](0002-use-parent-owned-deterministic-grid-execution.md)
+- [ADR 0003: Use raw prices with explicit corporate actions](0003-use-raw-prices-with-explicit-corporate-actions.md)
 
 ## File naming
 

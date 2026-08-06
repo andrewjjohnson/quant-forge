@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+from enum import StrEnum
 from typing import cast
 
 from quantforge.backtesting._arithmetic import (
@@ -18,8 +19,8 @@ from quantforge.configuration import (
     decimal_to_primitive,
 )
 
-ENGINE_VERSION = "1"
-RESULT_SCHEMA_VERSION = "1"
+ENGINE_VERSION = "3"
+RESULT_SCHEMA_VERSION = "3"
 
 
 def _cost_model_configuration(
@@ -127,6 +128,45 @@ class DiscreteTargetWeightSizing:
         }
 
 
+class DividendPolicy(StrEnum):
+    """Supported treatment of explicit dividends on raw-price datasets."""
+
+    PRICE_RETURN_ONLY = "price_return_only"
+    CASH_DIVIDENDS = "cash_dividends"
+    REJECT_IF_DIVIDENDS = "reject_if_dividends"
+
+
+@dataclass(frozen=True, slots=True)
+class SplitAccountingPolicy:
+    """Mandatory raw-price split accounting convention."""
+
+    implementation_version: str = "1"
+    split_timing: str = "before_open_execution"
+    split_factor_semantics: str = "shares_after_divided_by_shares_before"
+    fractional_split_shares: str = "reject"
+
+    def __post_init__(self) -> None:
+        if self.to_primitive() != {
+            "model": "raw_price_explicit_splits",
+            "implementation_version": "1",
+            "split_timing": "before_open_execution",
+            "split_factor_semantics": "shares_after_divided_by_shares_before",
+            "fractional_split_shares": "reject",
+        }:
+            raise InvalidBacktestConfigurationError(
+                "unsupported split accounting policy"
+            )
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "model": "raw_price_explicit_splits",
+            "implementation_version": self.implementation_version,
+            "split_timing": self.split_timing,
+            "split_factor_semantics": self.split_factor_semantics,
+            "fractional_split_shares": self.fractional_split_shares,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class BacktestConfig:
     """All assumptions required for a reportable deterministic MVP backtest."""
@@ -141,6 +181,8 @@ class BacktestConfig:
     annualization_factor: int = 252
     long_only: bool = True
     forced_liquidation: bool = False
+    dividend_policy: DividendPolicy = DividendPolicy.REJECT_IF_DIVIDENDS
+    split_policy: SplitAccountingPolicy = SplitAccountingPolicy()
     engine_version: str = field(default=ENGINE_VERSION, init=False)
     result_schema_version: str = field(default=RESULT_SCHEMA_VERSION, init=False)
 
@@ -170,6 +212,8 @@ class BacktestConfig:
         commission = cast(object, self.commission)
         fees = cast(object, self.fees)
         slippage = cast(object, self.slippage)
+        dividend_policy = cast(object, self.dividend_policy)
+        split_policy = cast(object, self.split_policy)
         execution = cast(object, self.execution)
         sizing = cast(object, self.sizing)
         long_only = cast(object, self.long_only)
@@ -189,6 +233,14 @@ class BacktestConfig:
         if not isinstance(execution, NextSessionOpenExecution):
             raise InvalidBacktestConfigurationError(
                 "unsupported execution configuration"
+            )
+        if not isinstance(dividend_policy, DividendPolicy):
+            raise InvalidBacktestConfigurationError(
+                "unsupported dividend accounting policy"
+            )
+        if not isinstance(split_policy, SplitAccountingPolicy):
+            raise InvalidBacktestConfigurationError(
+                "unsupported split accounting configuration"
             )
         if not isinstance(sizing, DiscreteTargetWeightSizing):
             raise InvalidBacktestConfigurationError("unsupported sizing configuration")
@@ -241,6 +293,13 @@ class BacktestConfig:
                 "slippage",
                 expected_cost_category="slippage",
             ),
+            "dividend_policy": self.dividend_policy.value,
+            "dividend_entitlement": "previous_session_close_shares",
+            "dividend_credit_timing": "after_open_execution_before_close_mark",
+            "trade_dividend_attribution": (
+                "total_economic_pnl_separate_from_price_pnl"
+            ),
+            "split_policy": self.split_policy.to_primitive(),
             "sizing": self.sizing.to_primitive(),
             "annual_risk_free_rate": decimal_to_primitive(self.annual_risk_free_rate),
             "annualization_factor": self.annualization_factor,

@@ -10,9 +10,11 @@ from quantforge.data.identity import dataset_identity_matches
 from quantforge.data.models import (
     SCHEMA_VERSION,
     AdjustmentMode,
+    CashDividend,
     DailyBar,
     DatasetMetadata,
     MarketDataset,
+    StockSplit,
 )
 
 
@@ -202,6 +204,89 @@ def validate_market_dataset(dataset: MarketDataset) -> tuple[date, ...]:
             raise ValidationError(
                 f"{field_name} provenance must reference an observed bar"
             )
+
+    actions_value = cast(object, dataset_value.corporate_actions)
+    if not isinstance(actions_value, tuple):
+        raise ValidationError("corporate actions must be an immutable tuple")
+    corporate_actions = cast(tuple[object, ...], actions_value)
+    if not isinstance(cast(object, metadata.corporate_actions_complete), bool):
+        raise ValidationError("corporate-action completeness must be explicit")
+    count_fields = (
+        ("corporate-action count", metadata.corporate_action_count),
+        ("dividend count", metadata.dividend_count),
+        ("split count", metadata.split_count),
+    )
+    for field_name, field_value in count_fields:
+        if (
+            isinstance(cast(object, field_value), bool)
+            or not isinstance(cast(object, field_value), int)
+            or field_value < 0
+        ):
+            raise ValidationError(f"{field_name} must be a nonnegative integer")
+    dividends: list[CashDividend] = []
+    splits: list[StockSplit] = []
+    action_keys: list[tuple[str, date]] = []
+    for action in corporate_actions:
+        if isinstance(action, CashDividend):
+            if not action.amount_per_share.is_finite() or action.amount_per_share <= 0:
+                raise ValidationError("cash-dividend amount must be positive")
+            action_session = action.ex_dividend_session
+            action_key = ("cash_dividend", action_session)
+            dividends.append(action)
+        elif isinstance(action, StockSplit):
+            if (
+                not action.split_factor.is_finite()
+                or action.split_factor <= 0
+                or action.split_factor == Decimal(1)
+            ):
+                raise ValidationError(
+                    "stock-split factor must be positive and nonneutral"
+                )
+            action_session = action.effective_session
+            action_key = ("stock_split", action_session)
+            splits.append(action)
+        else:
+            raise ValidationError("dataset contains an unsupported corporate action")
+        if (
+            not action.action_id
+            or action.symbol != metadata.canonical_symbol
+            or action.provider_name != metadata.provider_name
+            or action.source_dataset_id != metadata.dataset_id
+            or action_session not in actual_sessions
+        ):
+            raise ValidationError("corporate-action provenance is inconsistent")
+        action_keys.append(action_key)
+    if action_keys != sorted(action_keys, key=lambda item: (item[1], item[0])):
+        raise ValidationError("corporate actions must be chronological")
+    if len(action_keys) != len(set(action_keys)):
+        raise ValidationError("duplicate corporate actions")
+    if (
+        metadata.corporate_action_count != len(corporate_actions)
+        or metadata.dividend_count != len(dividends)
+        or metadata.split_count != len(splits)
+        or metadata.dividend_sessions
+        != tuple(action.ex_dividend_session for action in dividends)
+        or metadata.split_sessions
+        != tuple(action.effective_session for action in splits)
+    ):
+        raise ValidationError(
+            "corporate-action counts or sessions do not match records"
+        )
+    if not metadata.corporate_action_snapshot_id:
+        raise ValidationError("corporate-action snapshot identity is required")
+    if metadata.corporate_action_policy != (
+        "separate_provider_reported_cash_dividends_and_splits"
+    ):
+        raise ValidationError("unsupported corporate-action dataset policy")
+    if not isinstance(cast(object, metadata.adjusted_fields_used), bool):
+        raise ValidationError("adjusted-field usage must be explicit")
+    expected_basis = (
+        "raw_provider"
+        if metadata.adjustment_mode is AdjustmentMode.UNADJUSTED
+        else "split_adjusted"
+    )
+    if metadata.ohlc_basis != expected_basis or metadata.volume_basis != expected_basis:
+        raise ValidationError("dataset price or volume basis is inconsistent")
 
     if not dataset_identity_matches(dataset_value):
         raise ValidationError(

@@ -1,4 +1,4 @@
-"""Provider-agnostic adjusted daily market data."""
+"""Provider-agnostic daily market data and typed corporate actions."""
 
 from quantforge.data.cache import MarketDataCache
 from quantforge.data.exceptions import (
@@ -11,9 +11,13 @@ from quantforge.data.exceptions import (
 from quantforge.data.identity import dataset_identity_matches
 from quantforge.data.models import (
     AdjustmentMode,
+    CashDividend,
+    CorporateAction,
+    CorporateActionType,
     DailyBar,
     DatasetMetadata,
     MarketDataset,
+    StockSplit,
 )
 from quantforge.data.service import MarketDataService
 from quantforge.data.validate import validate_market_dataset
@@ -21,6 +25,9 @@ from quantforge.data.validate import validate_market_dataset
 __all__ = [
     "AdjustmentMode",
     "CacheError",
+    "CashDividend",
+    "CorporateAction",
+    "CorporateActionType",
     "DailyBar",
     "DatasetMetadata",
     "MarketDataCache",
@@ -29,6 +36,7 @@ __all__ = [
     "MarketDataset",
     "ProviderError",
     "RequestError",
+    "StockSplit",
     "ValidationError",
     "dataset_identity_matches",
     "validate_market_dataset",

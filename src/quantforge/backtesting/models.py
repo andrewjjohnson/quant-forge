@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import cast
 
+from quantforge.backtesting.config import DividendPolicy
 from quantforge.backtesting.costs import OrderSide
 from quantforge.configuration import (
     Primitive,
@@ -29,6 +30,13 @@ class OrderStatus(StrEnum):
     UNEXECUTED_END_OF_DATA = "unexecuted_end_of_data"
 
 
+class ReturnBasis(StrEnum):
+    """Economic basis represented by portfolio returns."""
+
+    PRICE_RETURN = "price_return"
+    TOTAL_RETURN_WITH_CASH_DIVIDENDS = "total_return_with_cash_dividends"
+
+
 @dataclass(frozen=True, slots=True)
 class MarketDataMetadata:
     """Complete immutable QF-3 provenance required by a backtest result."""
@@ -49,12 +57,22 @@ class MarketDataMetadata:
     adjustment_mode: str
     raw_location: str
     normalized_location: str
+    corporate_actions_location: str
     raw_sha256: str
     data_sha256: str
     bar_count: int
     missing_sessions: tuple[date, ...]
     split_sessions: tuple[date, ...]
     dividend_sessions: tuple[date, ...]
+    corporate_actions_complete: bool
+    corporate_action_count: int
+    dividend_count: int
+    split_count: int
+    corporate_action_snapshot_id: str
+    ohlc_basis: str
+    volume_basis: str
+    adjusted_fields_used: bool
+    corporate_action_policy: str
     adapter_version: str
 
     @classmethod
@@ -78,12 +96,22 @@ class MarketDataMetadata:
             adjustment_mode=metadata.adjustment_mode.value,
             raw_location=metadata.raw_location,
             normalized_location=metadata.normalized_location,
+            corporate_actions_location=metadata.corporate_actions_location,
             raw_sha256=metadata.raw_sha256,
             data_sha256=metadata.data_sha256,
             bar_count=metadata.bar_count,
             missing_sessions=metadata.missing_sessions,
             split_sessions=metadata.split_sessions,
             dividend_sessions=metadata.dividend_sessions,
+            corporate_actions_complete=metadata.corporate_actions_complete,
+            corporate_action_count=metadata.corporate_action_count,
+            dividend_count=metadata.dividend_count,
+            split_count=metadata.split_count,
+            corporate_action_snapshot_id=metadata.corporate_action_snapshot_id,
+            ohlc_basis=metadata.ohlc_basis,
+            volume_basis=metadata.volume_basis,
+            adjusted_fields_used=metadata.adjusted_fields_used,
+            corporate_action_policy=metadata.corporate_action_policy,
             adapter_version=metadata.adapter_version,
         )
 
@@ -105,12 +133,23 @@ class MarketDataMetadata:
             "adjustment_mode": self.adjustment_mode,
             "raw_location": self.raw_location,
             "normalized_location": self.normalized_location,
+            "corporate_actions_location": self.corporate_actions_location,
+            "raw_snapshot_id": self.raw_sha256,
             "raw_sha256": self.raw_sha256,
             "data_sha256": self.data_sha256,
             "bar_count": self.bar_count,
             "missing_sessions": [item.isoformat() for item in self.missing_sessions],
             "split_sessions": [item.isoformat() for item in self.split_sessions],
             "dividend_sessions": [item.isoformat() for item in self.dividend_sessions],
+            "corporate_actions_complete": self.corporate_actions_complete,
+            "corporate_action_count": self.corporate_action_count,
+            "dividend_count": self.dividend_count,
+            "split_count": self.split_count,
+            "corporate_action_snapshot_id": self.corporate_action_snapshot_id,
+            "ohlc_basis": self.ohlc_basis,
+            "volume_basis": self.volume_basis,
+            "adjusted_fields_used": self.adjusted_fields_used,
+            "corporate_action_policy": self.corporate_action_policy,
             "adapter_version": self.adapter_version,
         }
 
@@ -217,6 +256,80 @@ class FillRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class DividendCashflowRecord:
+    """One ex-date cashflow determined from previous-close share ownership."""
+
+    dividend_cashflow_id: str
+    run_id: str
+    account_id: str
+    corporate_action_id: str
+    symbol: str
+    ex_dividend_session: date
+    entitled_share_quantity: int
+    amount_per_share: Decimal
+    total_dividend_cash: Decimal
+    resulting_cash_balance: Decimal
+    source_dataset_id: str
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "dividend_cashflow_id": self.dividend_cashflow_id,
+            "run_id": self.run_id,
+            "account_id": self.account_id,
+            "corporate_action_id": self.corporate_action_id,
+            "symbol": self.symbol,
+            "ex_dividend_session": self.ex_dividend_session.isoformat(),
+            "entitled_share_quantity": self.entitled_share_quantity,
+            "amount_per_share": decimal_to_primitive(self.amount_per_share),
+            "total_dividend_cash": decimal_to_primitive(self.total_dividend_cash),
+            "resulting_cash_balance": decimal_to_primitive(self.resulting_cash_balance),
+            "source_dataset_id": self.source_dataset_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SplitAdjustmentRecord:
+    """One split transformation preserving cash and aggregate cost basis."""
+
+    split_adjustment_id: str
+    run_id: str
+    account_id: str
+    corporate_action_id: str
+    symbol: str
+    effective_session: date
+    split_factor: Decimal
+    shares_before: int
+    shares_after: int
+    average_entry_cost_before: Decimal | None
+    average_entry_cost_after: Decimal | None
+    total_cost_basis_before: Decimal
+    total_cost_basis_after: Decimal
+    resulting_cash_balance: Decimal
+    source_dataset_id: str
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "split_adjustment_id": self.split_adjustment_id,
+            "run_id": self.run_id,
+            "account_id": self.account_id,
+            "corporate_action_id": self.corporate_action_id,
+            "symbol": self.symbol,
+            "effective_session": self.effective_session.isoformat(),
+            "split_factor": decimal_to_primitive(self.split_factor),
+            "shares_before": self.shares_before,
+            "shares_after": self.shares_after,
+            "average_entry_cost_before": _decimal(self.average_entry_cost_before),
+            "average_entry_cost_after": _decimal(self.average_entry_cost_after),
+            "total_cost_basis_before": decimal_to_primitive(
+                self.total_cost_basis_before
+            ),
+            "total_cost_basis_after": decimal_to_primitive(self.total_cost_basis_after),
+            "resulting_cash_balance": decimal_to_primitive(self.resulting_cash_balance),
+            "source_dataset_id": self.source_dataset_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PositionRecord:
     """End-of-session single-symbol holding and cost-basis record."""
 
@@ -259,6 +372,8 @@ class DailyPortfolioRecord:
     exposure_weight: Decimal
     order_ids: tuple[str, ...]
     fill_ids: tuple[str, ...]
+    dividend_cashflow_ids: tuple[str, ...] = ()
+    split_adjustment_ids: tuple[str, ...] = ()
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -275,6 +390,8 @@ class DailyPortfolioRecord:
             "exposure_weight": decimal_to_primitive(self.exposure_weight),
             "order_ids": list(self.order_ids),
             "fill_ids": list(self.fill_ids),
+            "dividend_cashflow_ids": list(self.dividend_cashflow_ids),
+            "split_adjustment_ids": list(self.split_adjustment_ids),
         }
 
 
@@ -307,6 +424,10 @@ class TradeRecord:
     strategy_implementation_version: str
     strategy_configuration_id: str
     is_open: bool
+    exit_quantity: int | None = None
+    dividend_income: Decimal = Decimal(0)
+    total_economic_profit_loss: Decimal | None = None
+    total_economic_return: Decimal | None = None
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -337,6 +458,10 @@ class TradeRecord:
             "strategy_implementation_version": self.strategy_implementation_version,
             "strategy_configuration_id": self.strategy_configuration_id,
             "is_open": self.is_open,
+            "exit_quantity": self.exit_quantity,
+            "dividend_income": decimal_to_primitive(self.dividend_income),
+            "total_economic_profit_loss": _decimal(self.total_economic_profit_loss),
+            "total_economic_return": _decimal(self.total_economic_return),
         }
 
 
@@ -367,6 +492,9 @@ class PerformanceSummary:
     annualization_factor: int
     volatility_standard_deviation: str = "sample"
     maximum_drawdown_convention: str = "negative_decimal"
+    total_dividend_income: Decimal = Decimal(0)
+    dividend_event_count: int = 0
+    split_event_count: int = 0
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -393,6 +521,45 @@ class PerformanceSummary:
             "annualization_factor": self.annualization_factor,
             "volatility_standard_deviation": self.volatility_standard_deviation,
             "maximum_drawdown_convention": self.maximum_drawdown_convention,
+            "total_dividend_income": decimal_to_primitive(self.total_dividend_income),
+            "dividend_event_count": self.dividend_event_count,
+            "split_event_count": self.split_event_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DividendAccountingSummary:
+    """Auditable applied or intentionally excluded dividend economics."""
+
+    dividend_policy: DividendPolicy
+    return_basis: ReturnBasis
+    corporate_action_snapshot_id: str
+    dividend_events_present: int
+    dividend_events_credited: int
+    dividend_events_ignored: int
+    total_dividend_cash_credited: Decimal
+    total_ignored_dividend_amount_per_share: Decimal
+    estimated_ignored_dividend_cash: Decimal
+    warning: str | None
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "dividend_policy": self.dividend_policy.value,
+            "return_basis": self.return_basis.value,
+            "corporate_action_snapshot_id": self.corporate_action_snapshot_id,
+            "dividend_events_present": self.dividend_events_present,
+            "dividend_events_credited": self.dividend_events_credited,
+            "dividend_events_ignored": self.dividend_events_ignored,
+            "total_dividend_cash_credited": decimal_to_primitive(
+                self.total_dividend_cash_credited
+            ),
+            "total_ignored_dividend_amount_per_share": decimal_to_primitive(
+                self.total_ignored_dividend_amount_per_share
+            ),
+            "estimated_ignored_dividend_cash": decimal_to_primitive(
+                self.estimated_ignored_dividend_cash
+            ),
+            "warning": self.warning,
         }
 
 
@@ -406,6 +573,9 @@ class BenchmarkResult:
     fill: FillRecord | None
     daily_equity: tuple[DailyPortfolioRecord, ...]
     performance: PerformanceSummary
+    dividend_accounting: DividendAccountingSummary
+    dividend_cashflows: tuple[DividendCashflowRecord, ...]
+    split_adjustments: tuple[SplitAdjustmentRecord, ...]
 
     @property
     def configuration(self) -> PrimitiveMapping:
@@ -422,6 +592,15 @@ class BenchmarkResult:
                 list[Primitive], [row.to_primitive() for row in self.daily_equity]
             ),
             "performance": self.performance.to_primitive(),
+            "dividend_accounting": self.dividend_accounting.to_primitive(),
+            "dividend_cashflows": cast(
+                list[Primitive],
+                [item.to_primitive() for item in self.dividend_cashflows],
+            ),
+            "split_adjustments": cast(
+                list[Primitive],
+                [item.to_primitive() for item in self.split_adjustments],
+            ),
         }
 
 
@@ -448,6 +627,9 @@ class BacktestResult:
     daily_equity: tuple[DailyPortfolioRecord, ...]
     performance: PerformanceSummary
     benchmark: BenchmarkResult
+    dividend_accounting: DividendAccountingSummary
+    dividend_cashflows: tuple[DividendCashflowRecord, ...]
+    split_adjustments: tuple[SplitAdjustmentRecord, ...]
     warnings: tuple[str, ...]
     limitations: tuple[str, ...]
     initiated_at: datetime | None = None
@@ -492,6 +674,22 @@ class BacktestResult:
                     else self.benchmark.fill.to_primitive()
                 ),
                 "performance": self.benchmark.performance.to_primitive(),
+                "dividend_accounting": (
+                    self.benchmark.dividend_accounting.to_primitive()
+                ),
+                "dividend_cashflows": [
+                    item.to_primitive() for item in self.benchmark.dividend_cashflows
+                ],
+                "split_adjustments": [
+                    item.to_primitive() for item in self.benchmark.split_adjustments
+                ],
+            },
+            "corporate_action_accounting": {
+                "corporate_action_snapshot_id": (
+                    self.market_data.corporate_action_snapshot_id
+                ),
+                "dividends": self.dividend_accounting.to_primitive(),
+                "splits": self.backtest_configuration["split_policy"],
             },
             "record_counts": {
                 "signals": len(self.signals),
@@ -502,6 +700,10 @@ class BacktestResult:
                 "open_trades": len(self.open_trades),
                 "daily_equity": len(self.daily_equity),
                 "benchmark_daily_equity": len(self.benchmark.daily_equity),
+                "dividend_cashflows": len(self.dividend_cashflows),
+                "split_adjustments": len(self.split_adjustments),
+                "benchmark_dividend_cashflows": len(self.benchmark.dividend_cashflows),
+                "benchmark_split_adjustments": len(self.benchmark.split_adjustments),
             },
             "warnings": list(self.warnings),
             "limitations": list(self.limitations),
@@ -532,8 +734,25 @@ class BacktestResult:
             "daily_equity": cast(
                 list[Primitive], [item.to_primitive() for item in self.daily_equity]
             ),
+            "dividend_accounting": self.dividend_accounting.to_primitive(),
+            "dividend_cashflows": cast(
+                list[Primitive],
+                [item.to_primitive() for item in self.dividend_cashflows],
+            ),
+            "split_adjustments": cast(
+                list[Primitive],
+                [item.to_primitive() for item in self.split_adjustments],
+            ),
             "benchmark_daily_equity": cast(
                 list[Primitive],
                 [item.to_primitive() for item in self.benchmark.daily_equity],
+            ),
+            "benchmark_dividend_cashflows": cast(
+                list[Primitive],
+                [item.to_primitive() for item in self.benchmark.dividend_cashflows],
+            ),
+            "benchmark_split_adjustments": cast(
+                list[Primitive],
+                [item.to_primitive() for item in self.benchmark.split_adjustments],
             ),
         }
