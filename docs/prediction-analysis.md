@@ -1,31 +1,69 @@
-# Overnight gap prediction analysis
+# Prediction studies and overnight gap analysis
 
 QF-11 adds `quantforge.prediction`, a provider-neutral research boundary for
-testing whether information available after one completed daily session predicts
-the next exchange session's opening gap. It does not place orders, simulate
-fills, or change QF-5's next-open execution safeguards.
+testing causal predictions against outcomes observed later. It does not place
+orders, simulate fills, or change QF-5's execution safeguards. The original
+overnight-gap implementation remains the concrete QF-11 baseline on top of the
+generic study contracts.
 
 ```text
-completed QF-3 bars
-        |
-        v
-causal QF-4 indicators
-        |
-        v
-direction prediction after session t closes
-        |
-        +-------------------- feature boundary --------------------+
-                                                                  |
-                                                                  v
-                                      next-session open outcome label
-                                                                  |
-                                                                  v
-                                      accuracy and gap-size metrics
+PredictionStudy
+    |
+    +--> prediction rule --> fixed causal predictions
+    |                              |
+    |                 feature/outcome boundary
+    |                              |
+    +--> outcome labeler --> typed future outcomes
+                                   |
+    +--> evaluator -------> typed evaluations
+                                   |
+                                   v
+                         generic study rows
 ```
 
-The signal close is a prediction anchor, not a claimed executable fill. A
-strategy that requires the completed daily close cannot also claim it purchased
-at that exact close.
+`PredictionStudy` composes three independently configured and identified
+components. A prediction rule sees the QF-3 dataset and emits typed records
+using only information available at the signal timestamp. Only after those
+records are fixed does the outcome labeler read later observations. The
+evaluator receives a fixed prediction and a typed outcome; it does not receive
+the dataset. Generic study rows and manifests do not require a direction,
+correctness flag, next-open value, or gap field.
+
+The concrete overnight-gap study composes an existing directional prediction
+strategy with `NextSessionOpenGapOutcomeLabeler` and
+`OvernightGapDirectionEvaluator`. For that study, the signal close is a label
+anchor, not a claimed executable fill. A strategy that requires the completed
+daily close cannot also claim it purchased at that exact close.
+
+## Generic study contracts
+
+The reusable contracts are:
+
+- `PredictionRule` and `PredictionRuleOutput`, which generate typed causal
+  prediction records;
+- `OutcomeLabeler`, which declares its required future-session horizon and
+  market fields and returns typed outcome values;
+- `PredictionEvaluator`, which compares one fixed prediction with one already
+  generated typed outcome;
+- `PredictionStudy`, `PredictionStudyRow`, and `PredictionStudyResult`, which
+  compose the components and retain provenance without imposing study-specific
+  metrics.
+
+The study identity includes the dataset provenance, prediction-rule identity
+and configuration, labeler identity and configuration, future-session horizon,
+required market fields, evaluator identity and configuration, feature
+configuration, and result-schema versions. Changing any of these inputs creates
+a distinct study identity. Component configurations are captured before the run
+and checked again afterward so a mutable component cannot silently change the
+meaning of a result.
+
+To add a future prediction experiment, define a typed prediction record and
+rule when an existing one is unsuitable, define typed outcome values and an
+`OutcomeLabeler`, define the corresponding typed `PredictionEvaluator`, compose
+them with `PredictionStudy.create(...)`, and call `run_prediction_study(...)`.
+Study-specific aggregation and export belong outside the generic runner. For
+example, a multi-session close-return study can declare a two-session horizon
+and a future-close outcome without adding next-open or gap logic to the core.
 
 ## Original baseline rules
 
@@ -193,6 +231,29 @@ result = run_prediction_analysis(dataset, strategy)
 artifact_path = export_prediction_analysis(result, Path("reports/predictions"))
 ```
 
+This original API is a backward-compatible overnight-gap adapter. Its
+`PredictionRow`, `PredictionMetrics`, `PredictionAnalysisResult`, manifest,
+identities, and CSV columns remain the QF-11 gap-specific schema. Internally it
+delegates ordering and provenance to `run_prediction_study`, then adapts the
+typed gap outcome and directional evaluation back into that unchanged public
+result. Existing callers and exports therefore remain runnable and directly
+comparable with earlier QF-11 runs.
+
+New experiments should use the generic composition API and add their own
+study-specific result summaries rather than widening the legacy gap schema:
+
+```python
+from quantforge.prediction import PredictionStudy, run_prediction_study
+
+study = PredictionStudy.create(
+    strategy=prediction_rule,
+    outcome_labeler=outcome_labeler,
+    evaluator=evaluator,
+    feature_configuration={"feature_schema_version": "1"},
+)
+study_result = run_prediction_study(dataset, study)
+```
+
 The maintained SPY command wraps the same API:
 
 ```bash
@@ -240,7 +301,8 @@ location. It never prints the API key.
 
 ## Export schema
 
-Each analysis exports atomically to `<output-root>/<analysis-id>/`:
+Each legacy overnight-gap analysis exports atomically to
+`<output-root>/<analysis-id>/`:
 
 - `manifest.json` records engine and schema versions, complete strategy and
   indicator configuration, QF-3 dataset identity and bar fingerprint, counts,
@@ -260,6 +322,12 @@ Prediction rows record:
 Exports never contain orders, fills, quantities, option prices, or portfolio
 profit and loss. The results measure direction prediction only and remain
 in-sample descriptive evidence until evaluated on untouched data.
+
+The generic `PredictionStudyResult` instead serializes component provenance and
+typed prediction, outcome, and evaluation payloads. It deliberately has no
+universal accuracy or gap metrics because those concepts do not apply to every
+prediction study. A new study supplies its own aggregation and immutable export
+schema when it becomes reportable.
 
 Each comparison study similarly exports atomically and immutably to
 `<output-root>/<comparison-study-id>/` with `manifest.json`, `metrics.json`, and

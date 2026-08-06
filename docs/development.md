@@ -271,10 +271,18 @@ Outcome labels may include:
 
 Outcome-label code must never be imported into live signal-generation paths.
 
-For next-session gap studies, use `quantforge.prediction` and the contracts in
-[`prediction-analysis.md`](prediction-analysis.md). Keep signal generation and
-label alignment as separate calls, require the immediate calendar successor,
-and include append-future tests proving historical predictions do not change.
+For prediction studies, use the generic `PredictionStudy` composition and
+contracts in [`prediction-analysis.md`](prediction-analysis.md). Implement a
+causal prediction rule, a typed outcome labeler with an explicit future-session
+horizon and required market fields, and a typed evaluator. Keep each component's
+configuration and result schema versioned, and test that they all participate in
+study identity. Include a non-gap contract fixture and append-future tests
+proving historical predictions do not change.
+
+For the concrete next-session gap study, require the immediate calendar
+successor and keep `run_prediction_analysis` and its legacy gap export schema
+backward compatible. Add new hypotheses as prediction strategies or new study
+compositions; do not change the original QF-11 baseline logic.
 
 ## Test organization
 

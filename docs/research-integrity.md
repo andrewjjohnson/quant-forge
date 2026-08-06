@@ -232,11 +232,18 @@ Keep the two concepts separate:
 - **features:** information available at signal time;
 - **labels:** outcomes calculated using later observations.
 
-QF-11 enforces this split for overnight-gap research. Its prediction strategy
-sees completed-session OHLC and causal Wilder indicator outputs but no next-open
-price. Only the prediction runner pairs an already-generated signal with the
-immediate next exchange session. The signal close is explicitly a label anchor,
-not a fabricated same-close fill, and exported accuracy is not labeled as trade
+QF-11 enforces this split through generic typed study contracts. The orchestrator
+first fixes every causal prediction, then invokes the configured outcome
+labeler, then invokes the evaluator with only the fixed prediction and its typed
+outcome. Study identity includes the rule, outcome, evaluator, feature, horizon,
+market-field, schema, and dataset configurations. The generic core does not
+assume an outcome is a gap or an evaluation is directional correctness.
+
+For the original overnight-gap study, the prediction strategy sees
+completed-session OHLC and causal Wilder indicator outputs but no next-open
+price. Its concrete labeler pairs an already-generated signal with the immediate
+next exchange session. The signal close is explicitly a label anchor, not a
+fabricated same-close fill, and exported accuracy is not labeled as trade
 performance. See `docs/prediction-analysis.md`.
 
 QF-11 comparison experiments preserve that original strategy as an immutable

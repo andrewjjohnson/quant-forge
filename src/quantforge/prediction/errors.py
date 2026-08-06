@@ -10,7 +10,7 @@ class InvalidPredictionConfigurationError(PredictionAnalysisError, ValueError):
 
 
 class InvalidPredictionDataError(PredictionAnalysisError, ValueError):
-    """Market data cannot support trustworthy next-session labels."""
+    """Market data cannot support trustworthy prediction-study labels."""
 
 
 class InvalidPredictionOutputError(PredictionAnalysisError, ValueError):

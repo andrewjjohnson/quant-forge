@@ -56,10 +56,12 @@ QF-6 optimization orchestrates repeated strategy runs but does not alter the
 semantics of the underlying QF-4 strategy or QF-5 backtest. See
 `docs/optimization.md` and ADR 0002.
 
-QF-11 prediction analysis is a separate branch from execution. It pairs causal
-completed-session predictions with later next-open labels only after signal
-generation. It never creates orders, fills, or portfolio results. See
-`docs/prediction-analysis.md`.
+QF-11 prediction analysis is a separate branch from execution. A generic study
+orchestrator fixes causal predictions before invoking a separately configured
+outcome labeler, then passes each typed prediction/outcome pair to a separately
+configured evaluator. The original QF-11 study supplies the concrete
+next-session-open gap label and directional evaluator. Prediction studies never
+create orders, fills, or portfolio results. See `docs/prediction-analysis.md`.
 
 ## Module boundaries
 
@@ -282,25 +284,30 @@ Must not:
 
 ### Prediction analysis
 
-QF-11 implements this boundary in `quantforge.prediction`. Prediction strategies
-consume QF-3 datasets and causal QF-4 indicators, emit direction guesses that
-contain no future prices, and are then paired by the generic runner with the
-immediate next exchange session's open. The signal close is retained only as the
-outcome reference price and is never represented as a fill.
+QF-11 implements this boundary in `quantforge.prediction`. A prediction rule
+consumes a QF-3 dataset and causal features, an outcome labeler attaches typed
+later observations only after predictions are fixed, and an evaluator compares
+each fixed prediction/outcome pair. The generic runner imposes no direction,
+correctness, next-open, or gap schema. The original QF-11 study composes this
+boundary with a directional rule, an immediate-next-session-open gap labeler,
+and a directional evaluator. Its signal close is retained only as the outcome
+reference price and is never represented as a fill.
 
 Responsibilities:
 
 - preserve a strict boundary between contemporaneous features and future labels;
-- validate immediate next-session alignment;
-- calculate direction correctness, signed gap return, and gap magnitude;
-- retain strategy, parameter, feature, dataset, and schema provenance;
-- export deterministic immutable analysis artifacts.
+- declare and validate each outcome's future-session horizon and market fields;
+- keep label construction separate from study-specific evaluation;
+- retain rule, outcome, evaluator, feature, dataset, and schema provenance;
+- preserve deterministic typed study rows and identities;
+- export study-specific deterministic immutable analysis artifacts.
 
 Must not:
 
 - create orders, fills, positions, or trade P&L;
 - alter QF-5 timing or execution assumptions;
 - expose future outcome values to prediction generation;
+- assume every prediction is directional or every evaluation is classification;
 - describe direction accuracy as executable performance.
 
 ### Reporting and experiment manifests

@@ -18,7 +18,7 @@ from quantforge.prediction.errors import InvalidPredictionOutputError
 
 
 class PredictionDirection(StrEnum):
-    """Direction predicted for the next session's open versus the current close."""
+    """Binary direction emitted by prediction rules that classify direction."""
 
     UP = "up"
     DOWN = "down"
@@ -105,6 +105,9 @@ class PredictionSignal:
             item.name: decimal_to_primitive(item.value) for item in self.feature_values
         }
 
+    def prediction_primitive(self) -> PrimitiveMapping:
+        return {"direction": self.direction.value, "reason": self.reason}
+
 
 @dataclass(frozen=True, slots=True)
 class PredictionStrategyOutput:
@@ -188,7 +191,7 @@ class PredictionMarketData:
 
 @dataclass(frozen=True, slots=True)
 class PredictionRow:
-    """One causal signal paired later with its next-session opening outcome."""
+    """Backward-compatible concrete row for the QF-11 overnight-gap study."""
 
     prediction_id: str
     dataset_id: str
@@ -245,7 +248,7 @@ class PredictionRow:
 
 @dataclass(frozen=True, slots=True)
 class PredictionMetrics:
-    """Direction accuracy and average gap magnitudes by outcome."""
+    """Backward-compatible QF-11 direction and gap metrics."""
 
     prediction_count: int
     correct_count: int
@@ -279,7 +282,7 @@ class PredictionMetrics:
 
 @dataclass(frozen=True, slots=True)
 class PredictionAnalysisResult:
-    """Complete deterministic analysis manifest and labeled prediction rows."""
+    """Backward-compatible QF-11 overnight-gap analysis result."""
 
     analysis_id: str
     engine_version: str

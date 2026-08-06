@@ -169,6 +169,14 @@ def test_repeated_inputs_are_deterministic_and_json_safe() -> None:
     second = _configured_result()
 
     assert first == second
+    assert first.analysis_id == (
+        "635dc25a5da83788cc31cddec776acc3fc71ed50f8b35ff6b4c355e84c72bcf8"
+    )
+    assert tuple(row.prediction_id for row in first.rows) == (
+        "42e847be3f4ffc06524abbc202fa04b7c070a03cc4330207cc1776a7f7782707",
+        "500c4cc92253472d83585305843cc5ff4554a07e4e25e404ed0dc324747705d9",
+        "832c9fd9011d4bffccac75ea04dcd330cac314920952d6315d483e91f293da97",
+    )
     assert first.analysis_id == second.analysis_id
     assert first.to_primitive() == second.to_primitive()
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
