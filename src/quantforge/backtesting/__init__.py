@@ -5,7 +5,9 @@ from quantforge.backtesting.config import (
     RESULT_SCHEMA_VERSION,
     BacktestConfig,
     DiscreteTargetWeightSizing,
+    DividendPolicy,
     NextSessionOpenExecution,
+    SplitAccountingPolicy,
 )
 from quantforge.backtesting.costs import (
     BasisPointCommission,
@@ -29,26 +31,34 @@ from quantforge.backtesting.errors import (
     ResultExportError,
 )
 from quantforge.backtesting.export import (
+    BACKTEST_ARTIFACT_FILENAMES,
     export_backtest_result,
     load_backtest_manifest,
+    validate_backtest_result_artifact,
+    validate_backtest_result_export,
 )
 from quantforge.backtesting.metrics import CALENDAR_DAYS_PER_YEAR
 from quantforge.backtesting.models import (
     BacktestResult,
     BenchmarkResult,
     DailyPortfolioRecord,
+    DividendAccountingSummary,
+    DividendCashflowRecord,
     FillRecord,
     MarketDataMetadata,
     OrderRecord,
     OrderStatus,
     PerformanceSummary,
     PositionRecord,
+    ReturnBasis,
     SignalRecord,
+    SplitAdjustmentRecord,
     TradeRecord,
 )
 from quantforge.backtesting.runner import fingerprint_market_bars, run_backtest
 
 __all__ = [
+    "BACKTEST_ARTIFACT_FILENAMES",
     "CALENDAR_DAYS_PER_YEAR",
     "ENGINE_VERSION",
     "RESULT_SCHEMA_VERSION",
@@ -62,6 +72,9 @@ __all__ = [
     "CommissionModel",
     "DailyPortfolioRecord",
     "DiscreteTargetWeightSizing",
+    "DividendAccountingSummary",
+    "DividendCashflowRecord",
+    "DividendPolicy",
     "ExecutionError",
     "ExplicitZeroFees",
     "FeeModel",
@@ -80,11 +93,16 @@ __all__ = [
     "PortfolioAccountingError",
     "PositionRecord",
     "ResultExportError",
+    "ReturnBasis",
     "SignalRecord",
     "SlippageModel",
+    "SplitAccountingPolicy",
+    "SplitAdjustmentRecord",
     "TradeRecord",
     "export_backtest_result",
     "fingerprint_market_bars",
     "load_backtest_manifest",
     "run_backtest",
+    "validate_backtest_result_artifact",
+    "validate_backtest_result_export",
 ]

@@ -13,6 +13,7 @@ from quantforge.backtesting import (
     BasisPointFees,
     BasisPointSlippage,
     CommissionModel,
+    DividendPolicy,
     ExplicitZeroFees,
     FeeModel,
     FixedCommission,
@@ -20,6 +21,7 @@ from quantforge.backtesting import (
     OrderSide,
     PerShareCommission,
     SlippageModel,
+    SplitAccountingPolicy,
 )
 from quantforge.configuration import PrimitiveMapping
 
@@ -273,6 +275,66 @@ def test_engine_and_result_versions_are_implementation_owned(
     assert config.result_schema_version == RESULT_SCHEMA_VERSION
     assert config.to_primitive()["engine_version"] == ENGINE_VERSION
     assert config.to_primitive()["result_schema_version"] == RESULT_SCHEMA_VERSION
+
+
+def test_dividend_and_split_policies_are_separate_and_serialized() -> None:
+    config = BacktestConfig(
+        Decimal(100),
+        FixedCommission(Decimal(0)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(0)),
+        dividend_policy=DividendPolicy.PRICE_RETURN_ONLY,
+        split_policy=SplitAccountingPolicy(),
+    )
+
+    primitive = config.to_primitive()
+    assert primitive["dividend_policy"] == "price_return_only"
+    split_policy = primitive["split_policy"]
+    assert isinstance(split_policy, dict)
+    assert split_policy["implementation_version"] == "3"
+    assert split_policy["split_timing"] == "before_open_execution"
+    assert split_policy["split_ratio_reconstruction"] == (
+        "canonical_binary64_round_trip"
+    )
+    assert split_policy["maximum_split_ratio_denominator"] == 1_000_000
+    assert split_policy["execution_price_basis"] == "raw_provider"
+    assert split_policy["strategy_price_basis"] == (
+        "raw_price_times_cumulative_effective_split_factor"
+    )
+    assert split_policy["strategy_volume_basis"] == (
+        "raw_volume_divided_by_cumulative_effective_split_factor"
+    )
+    assert split_policy["strategy_feature_timing"] == (
+        "effective_splits_through_current_session_only"
+    )
+    with pytest.raises(
+        InvalidBacktestConfigurationError,
+        match="unsupported split accounting policy",
+    ):
+        SplitAccountingPolicy(fractional_split_shares="round")
+
+
+def test_default_dividend_policy_preserves_the_strict_safeguard() -> None:
+    config = BacktestConfig(
+        Decimal(100),
+        FixedCommission(Decimal(0)),
+        ExplicitZeroFees(),
+        BasisPointSlippage(Decimal(0)),
+    )
+
+    assert config.dividend_policy is DividendPolicy.REJECT_IF_DIVIDENDS
+
+    with pytest.raises(
+        InvalidBacktestConfigurationError,
+        match="unsupported dividend accounting policy",
+    ):
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(0)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(0)),
+            dividend_policy=cast(DividendPolicy, "price_return_only"),
+        )
 
 
 def test_commissions_and_adverse_slippage_are_separate_and_deterministic() -> None:

@@ -13,7 +13,14 @@ from quantforge.backtesting._execution_costs import (
     slipped_price,
 )
 from quantforge.backtesting.benchmark import run_buy_and_hold_benchmark
-from quantforge.backtesting.config import BacktestConfig
+from quantforge.backtesting.config import BacktestConfig, DividendPolicy
+from quantforge.backtesting.corporate_actions import (
+    actions_by_session,
+    apply_dividend_policy,
+    apply_split_action,
+    causal_split_normalized_strategy_dataset,
+    summarize_dividend_accounting,
+)
 from quantforge.backtesting.costs import OrderSide
 from quantforge.backtesting.errors import (
     ExecutionError,
@@ -25,12 +32,14 @@ from quantforge.backtesting.metrics import calculate_performance
 from quantforge.backtesting.models import (
     BacktestResult,
     DailyPortfolioRecord,
+    DividendCashflowRecord,
     FillRecord,
     MarketDataMetadata,
     OrderRecord,
     OrderStatus,
     PositionRecord,
     SignalRecord,
+    SplitAdjustmentRecord,
     TradeRecord,
 )
 from quantforge.configuration import (
@@ -46,8 +55,10 @@ from quantforge.data.models import (
 )
 from quantforge.data.models import (
     AdjustmentMode,
+    CashDividend,
     DailyBar,
     MarketDataset,
+    StockSplit,
 )
 from quantforge.data.validate import validate_market_dataset
 from quantforge.strategies import (
@@ -65,7 +76,12 @@ LIMITATIONS = (
     "market orders with full whole-share fills only",
     "next-session open execution only",
     "no volume, liquidity, partial-fill, or intraday sequencing model",
-    "no split- or dividend-bearing ranges or modeled corporate-action cash flows",
+    "strategy features use causal forward split-normalized OHLCV while execution "
+    "and marks use raw provider prices",
+    "dividend treatment follows the explicit backtest policy",
+    "cash-dividend mode credits on ex-date rather than provider payment date",
+    "fractional shares from stock splits are rejected without cash-in-lieu",
+    "no dividend reinvestment plan or intraday corporate-action sequencing",
     "no forced end-of-data liquidation",
     "target weights are applied only on flat-to-long transitions",
 )
@@ -77,6 +93,7 @@ class _OpenTrade:
     order: OrderRecord
     fill: FillRecord
     total_entry_cost: Decimal
+    dividend_income: Decimal = Decimal(0)
 
 
 def _stable_id(values: PrimitiveMapping) -> str:
@@ -111,7 +128,7 @@ def fingerprint_market_bars(bars: tuple[DailyBar, ...]) -> str:
     )
 
 
-def _validate_dataset(dataset: MarketDataset) -> None:
+def _validate_dataset(dataset: MarketDataset, config: BacktestConfig) -> None:
     dataset_value = cast(object, dataset)
     if not isinstance(dataset_value, MarketDataset) or not dataset_value.bars:
         raise InvalidMarketDataError("a nonempty QF-3 MarketDataset is required")
@@ -129,8 +146,8 @@ def _validate_dataset(dataset: MarketDataset) -> None:
         raise InvalidMarketDataError(str(error)) from error
     if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
         raise InvalidMarketDataError(
-            "adjusted market data requires point-in-time corporate-action data "
-            "that QF-3/QF-5 do not provide"
+            "adjusted market data is unsupported by raw-price explicit "
+            "corporate-action accounting"
         )
     internal_missing_sessions = tuple(
         missing_session
@@ -147,36 +164,31 @@ def _validate_dataset(dataset: MarketDataset) -> None:
             "dataset has missing expected sessions within its observed range: "
             f"{rendered}"
         )
-    observed_split_sessions = tuple(
-        split_session
-        for split_session in metadata.split_sessions
-        if metadata.actual_first_session
-        <= split_session
-        <= metadata.actual_last_session
-    )
-    if observed_split_sessions:
-        rendered = ", ".join(
-            split_session.isoformat() for split_session in observed_split_sessions
-        )
+    if not metadata.corporate_actions_complete:
         raise InvalidMarketDataError(
-            "unadjusted market data contains stock splits within its observed range: "
-            f"{rendered}"
+            "unadjusted market data requires complete explicit corporate actions"
         )
-    observed_dividend_sessions = tuple(
-        dividend_session
-        for dividend_session in metadata.dividend_sessions
-        if metadata.actual_first_session
-        <= dividend_session
-        <= metadata.actual_last_session
-    )
-    if observed_dividend_sessions:
-        rendered = ", ".join(
-            dividend_session.isoformat()
-            for dividend_session in observed_dividend_sessions
-        )
+    if (
+        metadata.ohlc_basis != "raw_provider"
+        or metadata.volume_basis != "raw_provider"
+        or metadata.adjusted_fields_used
+    ):
         raise InvalidMarketDataError(
-            "unadjusted market data contains cash dividends within its observed "
-            f"range: {rendered}"
+            "corporate-action execution requires consistent raw provider OHLCV"
+        )
+    if metadata.corporate_action_policy != (
+        "separate_provider_reported_cash_dividends_and_splits"
+    ):
+        raise InvalidMarketDataError(
+            "market data has unsupported corporate-action semantics"
+        )
+    if (
+        config.dividend_policy is DividendPolicy.REJECT_IF_DIVIDENDS
+        and metadata.dividend_count > 0
+    ):
+        raise InvalidMarketDataError(
+            "dataset contains cash dividends; select DividendPolicy.PRICE_RETURN_ONLY "
+            "or DividendPolicy.CASH_DIVIDENDS explicitly"
         )
 
 
@@ -290,7 +302,9 @@ def _signal_records(
 
 
 def _open_trade_record(
-    run_id: str, open_trade: _OpenTrade, strategy_implementation_version: str
+    run_id: str,
+    open_trade: _OpenTrade,
+    strategy_implementation_version: str,
 ) -> TradeRecord:
     fill = open_trade.fill
     trade_id = _stable_id(
@@ -322,6 +336,7 @@ def _open_trade_record(
         strategy_implementation_version=strategy_implementation_version,
         strategy_configuration_id=fill.strategy_configuration_id,
         is_open=True,
+        dividend_income=open_trade.dividend_income,
     )
 
 
@@ -333,8 +348,9 @@ def run_backtest(
     initiated_at: datetime | None = None,
 ) -> BacktestResult:
     """Run QF-4 decisions through deterministic next-open execution and accounting."""
-    _validate_dataset(dataset)
+    _validate_dataset(dataset, config)
     bars_fingerprint = fingerprint_market_bars(dataset.bars)
+    strategy_dataset = causal_split_normalized_strategy_dataset(dataset)
     market_data_reference = MarketDataReference.from_dataset(dataset)
     if initiated_at is not None and initiated_at.utcoffset() is None:
         raise InvalidSignalError("initiated_at must include a defined UTC offset")
@@ -366,6 +382,9 @@ def run_backtest(
             "market_data": {
                 **market_data_reference.to_primitive(),
                 "bars_fingerprint": bars_fingerprint,
+                "corporate_action_snapshot_id": (
+                    dataset.metadata.corporate_action_snapshot_id
+                ),
             },
             "strategy": {
                 "strategy_id": strategy.name,
@@ -376,7 +395,7 @@ def run_backtest(
             "backtest_configuration": backtest_configuration,
         }
     )
-    strategy_output = run_strategy(strategy, dataset)
+    strategy_output = run_strategy(strategy, strategy_dataset)
     if strategy_output.strategy_configuration_id != strategy_configuration_id:
         raise InvalidSignalError(
             "strategy configuration changed during backtest initialization"
@@ -404,12 +423,55 @@ def run_backtest(
     order_outcomes: dict[str, OrderRecord] = {}
     fills: list[FillRecord] = []
     completed_trades: list[TradeRecord] = []
+    dividend_cashflows: list[DividendCashflowRecord] = []
+    estimated_ignored_dividend_cash = Decimal(0)
+    split_adjustments: list[SplitAdjustmentRecord] = []
     positions: list[PositionRecord] = []
     daily_equity: list[DailyPortfolioRecord] = []
     session_index = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
+    corporate_actions_by_session = actions_by_session(dataset)
+    dividend_actions = tuple(
+        action
+        for action in dataset.corporate_actions
+        if isinstance(action, CashDividend)
+    )
 
     for index, bar in enumerate(dataset.bars):
         session_fill_ids: list[str] = []
+        session_dividend_cashflow_ids: list[str] = []
+        session_split_adjustment_ids: list[str] = []
+        session_actions = corporate_actions_by_session.get(bar.session_date, ())
+        entitled_shares = shares
+        for action in session_actions:
+            if (
+                config.dividend_policy is DividendPolicy.CASH_DIVIDENDS
+                and isinstance(action, CashDividend)
+                and open_trade is not None
+            ):
+                with arithmetic():
+                    attributed_income = (
+                        Decimal(entitled_shares) * action.amount_per_share
+                    )
+                    open_trade = replace(
+                        open_trade,
+                        dividend_income=(
+                            open_trade.dividend_income + attributed_income
+                        ),
+                    )
+        for action in session_actions:
+            if isinstance(action, StockSplit):
+                shares, split_adjustment = apply_split_action(
+                    run_id=run_id,
+                    account_id="strategy",
+                    action=action,
+                    shares=shares,
+                    total_cost_basis=total_entry_cost,
+                    cash=cash,
+                )
+                split_adjustments.append(split_adjustment)
+                session_split_adjustment_ids.append(
+                    split_adjustment.split_adjustment_id
+                )
         for signal in signals_by_execution.get(bar.session_date, []):
             decision = signal.decision
             if decision.signal_session >= bar.session_date:
@@ -503,8 +565,8 @@ def run_backtest(
                 with arithmetic():
                     next_cash = cash + fill.net_cash_effect
                     gross_profit_loss = (
-                        fill.fill_price - open_trade.fill.fill_price
-                    ) * Decimal(quantity)
+                        fill.gross_notional - open_trade.fill.gross_notional
+                    )
                     net_profit_loss = (
                         gross_profit_loss
                         - open_trade.fill.commission
@@ -513,6 +575,12 @@ def run_backtest(
                         - fill.fees
                     )
                     trade_return = net_profit_loss / open_trade.total_entry_cost
+                    total_economic_profit_loss = (
+                        net_profit_loss + open_trade.dividend_income
+                    )
+                    total_economic_return = (
+                        total_economic_profit_loss / open_trade.total_entry_cost
+                    )
                 if next_cash < 0:
                     order_outcomes[signal.signal_id] = replace(
                         order,
@@ -563,6 +631,10 @@ def run_backtest(
                         ),
                         strategy_configuration_id=fill.strategy_configuration_id,
                         is_open=False,
+                        exit_quantity=quantity,
+                        dividend_income=open_trade.dividend_income,
+                        total_economic_profit_loss=total_economic_profit_loss,
+                        total_economic_return=total_economic_return,
                     )
                 )
                 shares = 0
@@ -572,6 +644,24 @@ def run_backtest(
             order_outcomes[signal.signal_id] = order
             fills.append(fill)
             session_fill_ids.append(fill.fill_id)
+
+        for action in session_actions:
+            if isinstance(action, CashDividend):
+                cash, dividend_cashflow, ignored_cash = apply_dividend_policy(
+                    policy=config.dividend_policy,
+                    run_id=run_id,
+                    account_id="strategy",
+                    action=action,
+                    entitled_shares=entitled_shares,
+                    cash=cash,
+                )
+                with arithmetic():
+                    estimated_ignored_dividend_cash += ignored_cash
+                if dividend_cashflow is not None:
+                    dividend_cashflows.append(dividend_cashflow)
+                    session_dividend_cashflow_ids.append(
+                        dividend_cashflow.dividend_cashflow_id
+                    )
 
         with arithmetic():
             market_value = Decimal(shares) * bar.close
@@ -622,6 +712,8 @@ def run_backtest(
                 exposure_weight=exposure_weight,
                 order_ids=tuple(order_ids_by_signal_session.get(bar.session_date, ())),
                 fill_ids=tuple(session_fill_ids),
+                dividend_cashflow_ids=tuple(session_dividend_cashflow_ids),
+                split_adjustment_ids=tuple(session_split_adjustment_ids),
             )
         )
         previous_equity = equity
@@ -667,6 +759,13 @@ def run_backtest(
         run_id,
         backtest_configuration,
     )
+    dividend_accounting = summarize_dividend_accounting(
+        policy=config.dividend_policy,
+        corporate_action_snapshot_id=(dataset.metadata.corporate_action_snapshot_id),
+        actions=dividend_actions,
+        cashflows=tuple(dividend_cashflows),
+        estimated_ignored_cash=estimated_ignored_dividend_cash,
+    )
     performance = calculate_performance(
         tuple(daily_equity),
         tuple(completed_trades),
@@ -675,6 +774,9 @@ def run_backtest(
         annual_risk_free_rate=config.annual_risk_free_rate,
         annualization_factor=config.annualization_factor,
         benchmark_total_return=benchmark.performance.total_return,
+        total_dividend_income=dividend_accounting.total_dividend_cash_credited,
+        dividend_event_count=dividend_accounting.dividend_events_credited,
+        split_event_count=len(split_adjustments),
     )
     return BacktestResult(
         run_id=run_id,
@@ -698,7 +800,14 @@ def run_backtest(
         daily_equity=tuple(daily_equity),
         performance=performance,
         benchmark=benchmark,
-        warnings=(),
+        dividend_accounting=dividend_accounting,
+        dividend_cashflows=tuple(dividend_cashflows),
+        split_adjustments=tuple(split_adjustments),
+        warnings=(
+            ()
+            if dividend_accounting.warning is None
+            else (dividend_accounting.warning,)
+        ),
         limitations=LIMITATIONS,
         initiated_at=initiated_at,
     )

@@ -29,7 +29,8 @@ validated-bar fingerprint, costs, and immutable artifact location.
 ## Public API and SPY moving-average example
 
 The following modest study assumes `dataset` is an already-loaded or cached,
-schema-version-3, unadjusted SPY daily `MarketDataset` compatible with QF-5. It
+schema-version-4, unadjusted SPY daily `MarketDataset` with complete corporate
+actions and raw OHLCV compatible with QF-5. It
 does not retrieve provider data.
 
 ```python
@@ -39,6 +40,7 @@ from pathlib import Path
 from quantforge.backtesting import (
     BacktestConfig,
     BasisPointSlippage,
+    DividendPolicy,
     ExplicitZeroFees,
     PerShareCommission,
 )
@@ -79,6 +81,7 @@ study = GridSearchStudy(
             ),
             fees=ExplicitZeroFees(),
             slippage=BasisPointSlippage(Decimal("5")),
+            dividend_policy=DividendPolicy.PRICE_RETURN_ONLY,
             annual_risk_free_rate=Decimal("0.03"),
         ),
         execution=ExecutionConfig(),
@@ -252,7 +255,11 @@ wrong identities, incompatible manifests, and invalid state transitions fail
 clearly. A non-empty study directory without `manifest.json` is treated as an
 orphaned or corrupt store and is rejected for both fresh runs and resume; it is
 never initialized over existing trial files. Existing successful QF-5 artifacts
-are accepted only when their manifest carries the expected immutable run ID.
+are accepted only when every file in QF-5's authoritative artifact set is
+present, their manifest carries the expected immutable run ID, and every CSV
+plus the manifest matches its independent integrity-sidecar SHA-256 digest. This
+includes the strategy and benchmark dividend-cashflow and split-adjustment
+ledgers.
 Before scheduling, QF-6 rejects any persisted trial ID outside the study's exact
 candidate set. Before ranking, result loading, or export, the persisted IDs must
 also cover that complete candidate set, so extra files cannot inflate results or

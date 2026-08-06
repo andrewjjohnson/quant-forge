@@ -20,6 +20,8 @@ from quantforge.strategies.exceptions import (
     InvalidTargetWeightError,
 )
 
+STRATEGY_OUTPUT_CONTRACT_VERSION = "2"
+
 
 class PositionIntent(StrEnum):
     """Desired long-only position state; it is not an order or fill."""
@@ -83,6 +85,7 @@ class MarketDataReference:
     schema_version: str
     adjustment_mode: str
     calendar: str
+    corporate_action_snapshot_id: str
 
     @classmethod
     def from_dataset(cls, dataset: MarketDataset) -> "MarketDataReference":
@@ -92,6 +95,7 @@ class MarketDataReference:
             metadata.schema_version,
             metadata.adjustment_mode.value,
             metadata.calendar,
+            metadata.corporate_action_snapshot_id,
         )
 
     def to_primitive(self) -> PrimitiveMapping:
@@ -100,6 +104,7 @@ class MarketDataReference:
             "schema_version": self.schema_version,
             "adjustment_mode": self.adjustment_mode,
             "calendar": self.calendar,
+            "corporate_action_snapshot_id": self.corporate_action_snapshot_id,
         }
 
 
@@ -199,7 +204,7 @@ class StrategyOutput:
     strategy_configuration_id: str
     market_data: MarketDataReference
     decisions: tuple[StrategyDecision, ...]
-    contract_version: str = "1"
+    contract_version: str = STRATEGY_OUTPUT_CONTRACT_VERSION
 
     def __iter__(self) -> Iterator[StrategyDecision]:
         return iter(self.decisions)

@@ -26,6 +26,9 @@ def calculate_performance(
     annualization_factor: int,
     benchmark_total_return: Decimal | None = None,
     include_first_daily_return: bool = False,
+    total_dividend_income: Decimal = Decimal(0),
+    dividend_event_count: int = 0,
+    split_event_count: int = 0,
 ) -> PerformanceSummary:
     """Calculate typed arithmetic-return metrics without NaN or infinity.
 
@@ -100,16 +103,25 @@ def calculate_performance(
             if downside_deviation > 0:
                 sortino_ratio = mean_excess / downside_deviation * annualization_root
 
-    net_results = tuple(
-        trade.net_profit_loss
-        for trade in completed_trades
-        if trade.net_profit_loss is not None
-    )
-    trade_returns = tuple(
-        trade.return_percentage
-        for trade in completed_trades
-        if trade.return_percentage is not None
-    )
+    net_result_values: list[Decimal] = []
+    trade_return_values: list[Decimal] = []
+    for trade in completed_trades:
+        net_result = (
+            trade.total_economic_profit_loss
+            if trade.total_economic_profit_loss is not None
+            else trade.net_profit_loss
+        )
+        trade_return = (
+            trade.total_economic_return
+            if trade.total_economic_return is not None
+            else trade.return_percentage
+        )
+        if net_result is not None:
+            net_result_values.append(net_result)
+        if trade_return is not None:
+            trade_return_values.append(trade_return)
+    net_results = tuple(net_result_values)
+    trade_returns = tuple(trade_return_values)
     winning_trades = sum(result > 0 for result in net_results)
     losing_trades = sum(result < 0 for result in net_results)
     with arithmetic():
@@ -153,4 +165,7 @@ def calculate_performance(
         benchmark_total_return=benchmark_total_return,
         annual_risk_free_rate=annual_risk_free_rate,
         annualization_factor=annualization_factor,
+        total_dividend_income=total_dividend_income,
+        dividend_event_count=dividend_event_count,
+        split_event_count=split_event_count,
     )

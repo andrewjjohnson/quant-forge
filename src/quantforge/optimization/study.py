@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 
 from quantforge.backtesting import (
+    BACKTEST_ARTIFACT_FILENAMES,
     ENGINE_VERSION,
     RESULT_SCHEMA_VERSION,
     BacktestError,
@@ -17,6 +18,7 @@ from quantforge.backtesting import (
     fingerprint_market_bars,
     load_backtest_manifest,
     run_backtest,
+    validate_backtest_result_artifact,
 )
 from quantforge.configuration import (
     PrimitiveMapping,
@@ -55,16 +57,6 @@ from quantforge.optimization.stability import analyze_stability
 from quantforge.strategies import StrategyError
 
 OPTIMIZATION_ENGINE_VERSION = "1"
-_QF5_ARTIFACT_FILENAMES = (
-    "manifest.json",
-    "signals.csv",
-    "orders.csv",
-    "fills.csv",
-    "positions.csv",
-    "trades.csv",
-    "equity.csv",
-    "benchmark_equity.csv",
-)
 
 
 def _utc_now() -> str:
@@ -534,12 +526,13 @@ class GridSearchStudy:
         artifact_path = self.study_path / expected_location
         if any(
             not (artifact_path / filename).is_file()
-            for filename in _QF5_ARTIFACT_FILENAMES
+            for filename in BACKTEST_ARTIFACT_FILENAMES
         ):
             raise StudyPersistenceError(
                 "successful persisted trial has an incomplete QF-5 artifact"
             )
         try:
+            validate_backtest_result_artifact(artifact_path)
             manifest = load_backtest_manifest(artifact_path / "manifest.json")
         except BacktestError as error:
             raise StudyPersistenceError(

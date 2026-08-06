@@ -132,10 +132,16 @@ Every `StrategyDecision` contains:
 | `indicator_values` | finite values retained for decision auditability |
 
 `StrategyOutput` also retains the input dataset ID, schema version, adjustment
-mode, and exchange calendar. `to_rows()` supports tabular/vectorized consumers;
-iteration over the output supports a future chronological event-driven consumer.
-Both see the same immutable decisions. There are no callbacks, engine objects,
-provider types, fill prices, or quantities in the schema.
+mode, exchange calendar, and corporate-action snapshot ID. Strategies do not
+inspect or apply actions; QF-5 owns that accounting. The serialized output
+envelope is contract version 2; version 1 did not include the corporate-action
+snapshot reference. The generic runner rejects outputs from any other contract
+version. This output-envelope version is distinct from the strategy component
+configuration contract version. `to_rows()` supports tabular/vectorized
+consumers; iteration over the output supports a future chronological
+event-driven consumer. Both see the same immutable decisions. There are no
+callbacks, engine objects, provider types, fill prices, or quantities in the
+schema.
 
 ## Daily timing and causality
 
@@ -158,9 +164,16 @@ current and immediately prior session. Tests calculate through a cutoff, append
 sentinel future bars, recalculate, and require all historical indicator values
 and decisions to remain identical.
 
-QF-3 adjustment metadata is retained by reference and never reinterpreted.
-Strategies request exactly their declared source field; they do not substitute
-adjusted close or another column.
+QF-3 adjustment metadata is retained by reference. A direct QF-4 invocation uses
+exactly the bars supplied by its caller. For QF-5's raw corporate-action path,
+the backtester supplies an ephemeral causal split-normalized feature view while
+retaining the immutable raw QF-3 dataset reference: OHLC is multiplied by the
+cumulative split factor and volume is divided by it beginning on each effective
+session. Later splits never revise earlier feature rows. Strategies request
+exactly their declared source field and do not inspect or apply corporate-action
+records themselves. QF-5 continues to use only the original raw bars for fills,
+marks, and portfolio accounting, and exports the feature-basis convention in its
+split policy.
 
 ## Position-sizing boundary
 

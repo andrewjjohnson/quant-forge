@@ -264,7 +264,7 @@ def test_service_persists_metadata_and_reuses_cache_across_instances(
     assert provider.calls == 1
     assert first == second
     assert first.metadata.dataset_id
-    assert first.metadata.schema_version == SCHEMA_VERSION == "3"
+    assert first.metadata.schema_version == SCHEMA_VERSION == "4"
     assert first.metadata.bar_count == 3
     assert first.metadata.adjustment_mode is AdjustmentMode.SPLIT_ADJUSTED
     assert first.metadata.split_sessions == ()
@@ -331,6 +331,158 @@ def test_service_persists_and_reloads_verified_dividend_sessions(
     )
     assert not dataset_identity_matches(stripped)
     assert cache.load(dataset.metadata.dataset_id) == dataset
+
+
+def test_cache_rejects_tampered_corporate_action_artifact(tmp_path: Path) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(
+        FakeProvider((record("2024-07-01"), record("2024-07-02", dividend="0.75"))),
+        cache,
+    ).get_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        AdjustmentMode.UNADJUSTED,
+    )
+    action_path = tmp_path / dataset.metadata.corporate_actions_location
+    action_snapshot = json.loads(action_path.read_text(encoding="utf-8"))
+    action_snapshot["actions"][0]["amount_per_share"] = "0.76"
+    action_path.write_text(json.dumps(action_snapshot), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="cached dataset validation failed"):
+        cache.load(dataset.metadata.dataset_id)
+
+
+@pytest.mark.parametrize("schema_version", [None, "unsupported"])
+def test_cache_rejects_unknown_corporate_action_artifact_schema(
+    tmp_path: Path, schema_version: object
+) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(
+        FakeProvider((record("2024-07-01"), record("2024-07-02", dividend="0.75"))),
+        cache,
+    ).get_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        AdjustmentMode.UNADJUSTED,
+    )
+    action_path = tmp_path / dataset.metadata.corporate_actions_location
+    action_snapshot = json.loads(action_path.read_text(encoding="utf-8"))
+    if schema_version is None:
+        del action_snapshot["schema_version"]
+    else:
+        action_snapshot["schema_version"] = schema_version
+    action_path.write_text(json.dumps(action_snapshot), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
+
+
+@pytest.mark.parametrize(
+    ("action_kind", "field_name", "invalid_value"),
+    [
+        ("cash_dividend", "amount_per_share", 0.75),
+        ("stock_split", "split_factor", 2),
+    ],
+)
+def test_cache_rejects_non_string_corporate_action_decimals(
+    tmp_path: Path,
+    action_kind: str,
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    action_record = (
+        record("2024-07-02", dividend="0.75")
+        if action_kind == "cash_dividend"
+        else record("2024-07-02", split="2")
+    )
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(
+        FakeProvider((record("2024-07-01"), action_record)), cache
+    ).get_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        AdjustmentMode.UNADJUSTED,
+    )
+    action_path = tmp_path / dataset.metadata.corporate_actions_location
+    action_snapshot = json.loads(action_path.read_text(encoding="utf-8"))
+    action_snapshot["actions"][0][field_name] = invalid_value
+    action_path.write_text(json.dumps(action_snapshot), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
+
+
+@pytest.mark.parametrize("invalid_value", ["false", 1])
+def test_cache_rejects_non_boolean_corporate_action_completeness(
+    tmp_path: Path, invalid_value: object
+) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(FakeProvider(VALID), cache).get_daily_bars(
+        "SPY", date(2024, 7, 1), date(2024, 7, 3)
+    )
+    manifest_path = (
+        tmp_path / "datasets" / dataset.metadata.dataset_id / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["corporate_actions_complete"] = invalid_value
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("canonical_symbol", ["SPY"]),
+        ("provider_timezone", 0),
+        ("bar_count", "3"),
+        ("missing_sessions", "[]"),
+        ("corporate_action_count", "0"),
+        ("dividend_count", "0"),
+        ("split_count", "0"),
+        ("adjusted_fields_used", 0),
+    ],
+)
+def test_cache_rejects_coercible_manifest_scalar_types(
+    tmp_path: Path, field_name: str, invalid_value: object
+) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(FakeProvider(VALID), cache).get_daily_bars(
+        "SPY", date(2024, 7, 1), date(2024, 7, 3)
+    )
+    manifest_path = (
+        tmp_path / "datasets" / dataset.metadata.dataset_id / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest[field_name] = invalid_value
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
+
+
+def test_cache_rejects_timezone_naive_retrieval_timestamp(tmp_path: Path) -> None:
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(FakeProvider(VALID), cache).get_daily_bars(
+        "SPY", date(2024, 7, 1), date(2024, 7, 3)
+    )
+    manifest_path = (
+        tmp_path / "datasets" / dataset.metadata.dataset_id / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["retrieved_at"] = (
+        datetime.fromisoformat(manifest["retrieved_at"])
+        .replace(tzinfo=None)
+        .isoformat()
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
 
 
 def test_cache_rejects_legacy_manifest_without_split_provenance(

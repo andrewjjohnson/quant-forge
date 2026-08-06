@@ -10,6 +10,7 @@ from typing import Self, cast
 import pytest
 
 from quantforge.backtesting import (
+    BACKTEST_ARTIFACT_FILENAMES,
     BacktestConfig,
     BacktestResult,
     BasisPointSlippage,
@@ -714,15 +715,7 @@ def test_failed_trial_requires_complete_failure_context(
 
 @pytest.mark.parametrize(
     "artifact_name",
-    [
-        "signals.csv",
-        "orders.csv",
-        "fills.csv",
-        "positions.csv",
-        "trades.csv",
-        "equity.csv",
-        "benchmark_equity.csv",
-    ],
+    BACKTEST_ARTIFACT_FILENAMES,
 )
 @pytest.mark.parametrize("action_name", ["load_result", "resume"])
 def test_successful_trial_requires_complete_qf5_artifact(
@@ -744,6 +737,66 @@ def test_successful_trial_requires_complete_qf5_artifact(
     with pytest.raises(
         StudyPersistenceError,
         match="incomplete QF-5 artifact",
+    ):
+        action()
+
+
+@pytest.mark.parametrize(
+    "artifact_name",
+    [
+        "dividend_cashflows.csv",
+        "split_adjustments.csv",
+        "benchmark_dividend_cashflows.csv",
+        "benchmark_split_adjustments.csv",
+    ],
+)
+@pytest.mark.parametrize("action_name", ["load_result", "resume"])
+def test_successful_trial_validates_qf5_action_ledger_contents(
+    tmp_path: Path,
+    artifact_name: str,
+    action_name: str,
+) -> None:
+    study = GridSearchStudy(
+        _dataset("modified-qf5-action-ledger"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    result = study.run()
+    successful = result.successful_trials[0]
+    artifact_path = study.study_path / cast(str, successful.artifact_location)
+    ledger_path = artifact_path / artifact_name
+    ledger_path.write_bytes(ledger_path.read_bytes() + b"modified\n")
+
+    action = study.load_result if action_name == "load_result" else study.resume
+    with pytest.raises(
+        StudyPersistenceError,
+        match="invalid QF-5 artifact",
+    ):
+        action()
+
+
+@pytest.mark.parametrize("action_name", ["load_result", "resume"])
+def test_successful_trial_validates_qf5_manifest_contents(
+    tmp_path: Path,
+    action_name: str,
+) -> None:
+    study = GridSearchStudy(
+        _dataset("modified-qf5-manifest"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    result = study.run()
+    successful = result.successful_trials[0]
+    artifact_path = study.study_path / cast(str, successful.artifact_location)
+    manifest_path = artifact_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["corporate_action_accounting"] = "corrupt"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    action = study.load_result if action_name == "load_result" else study.resume
+    with pytest.raises(
+        StudyPersistenceError,
+        match="invalid QF-5 artifact",
     ):
         action()
 

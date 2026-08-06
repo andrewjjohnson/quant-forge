@@ -4,6 +4,7 @@ from datetime import date
 from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 
 from quantforge.strategies import (
+    STRATEGY_OUTPUT_CONTRACT_VERSION,
     ExecutionSessionStatus,
     ExecutionTiming,
     MovingAverageCrossoverParameters,
@@ -147,7 +148,11 @@ def test_output_supports_tabular_and_event_consumers_and_json_serialization() ->
 
     assert rows[0]["target_position"] == "long"
     assert chronological == output.decisions
-    assert json.loads(json.dumps(output.to_primitive()))["contract_version"] == "1"
+    assert (
+        json.loads(json.dumps(output.to_primitive()))["contract_version"]
+        == STRATEGY_OUTPUT_CONTRACT_VERSION
+        == "2"
+    )
     assert output.market_data.adjustment_mode == "unadjusted"
     assert strategy.configuration()["implementation_version"] == "1"
 

@@ -1,0 +1,264 @@
+"""Deterministic raw-price corporate-action accounting primitives."""
+
+from datetime import date
+from decimal import Decimal
+from fractions import Fraction
+
+from quantforge.backtesting._arithmetic import arithmetic
+from quantforge.backtesting.config import (
+    MAXIMUM_SPLIT_RATIO_DENOMINATOR,
+    DividendPolicy,
+)
+from quantforge.backtesting.errors import PortfolioAccountingError
+from quantforge.backtesting.models import (
+    DividendAccountingSummary,
+    DividendCashflowRecord,
+    ReturnBasis,
+    SplitAdjustmentRecord,
+)
+from quantforge.configuration import configuration_identity
+from quantforge.data.models import (
+    CashDividend,
+    CorporateAction,
+    DailyBar,
+    MarketDataset,
+    StockSplit,
+)
+
+PRICE_RETURN_ONLY_WARNING = (
+    "PRICE-RETURN-ONLY: reported strategy and benchmark performance excludes "
+    "cash dividends; long-period returns are understated relative to total return."
+)
+
+
+def _split_ratio(split_factor: Decimal) -> Fraction:
+    """Recover a simple ratio only when it round-trips to Tiingo's float text."""
+    exact_ratio = Fraction(split_factor)
+    candidate = exact_ratio.limit_denominator(MAXIMUM_SPLIT_RATIO_DENOMINATOR)
+    try:
+        candidate_provider_value = Decimal(str(float(candidate)))
+    except OverflowError:
+        return exact_ratio
+    return candidate if candidate_provider_value == split_factor else exact_ratio
+
+
+def actions_by_session(
+    dataset: MarketDataset,
+) -> dict[date, tuple[CorporateAction, ...]]:
+    """Index already-validated immutable actions by effective session."""
+    indexed: dict[date, list[CorporateAction]] = {}
+    for action in dataset.corporate_actions:
+        session = (
+            action.ex_dividend_session
+            if isinstance(action, CashDividend)
+            else action.effective_session
+        )
+        indexed.setdefault(session, []).append(action)
+    return {session: tuple(actions) for session, actions in indexed.items()}
+
+
+def causal_split_normalized_strategy_dataset(
+    dataset: MarketDataset,
+) -> MarketDataset:
+    """Return an ephemeral causal feature view without changing raw execution bars.
+
+    Effective split factors are accumulated chronologically and applied beginning
+    with their own session. Prices are multiplied and volume is divided by the
+    cumulative shares-after/shares-before factor, expressing every observation
+    in the dataset's original-share units. A later split never changes an earlier
+    feature row.
+
+    The immutable QF-3 metadata and corporate-action records remain attached so
+    strategy decisions retain the source dataset provenance. This derived view is
+    not a normalized QF-3 artifact and must never be used for fills or marks.
+    """
+    split_ratios = {
+        action.effective_session: _split_ratio(action.split_factor)
+        for action in dataset.corporate_actions
+        if isinstance(action, StockSplit)
+    }
+    if not split_ratios:
+        return dataset
+
+    normalized_bars: list[DailyBar] = []
+    cumulative_ratio = Fraction(1)
+    with arithmetic():
+        for bar in dataset.bars:
+            cumulative_ratio *= split_ratios.get(bar.session_date, Fraction(1))
+            numerator = Decimal(cumulative_ratio.numerator)
+            denominator = Decimal(cumulative_ratio.denominator)
+            normalized_bars.append(
+                DailyBar(
+                    symbol=bar.symbol,
+                    session_date=bar.session_date,
+                    open=bar.open * numerator / denominator,
+                    high=bar.high * numerator / denominator,
+                    low=bar.low * numerator / denominator,
+                    close=bar.close * numerator / denominator,
+                    volume=bar.volume * denominator / numerator,
+                )
+            )
+    return MarketDataset(
+        bars=tuple(normalized_bars),
+        metadata=dataset.metadata,
+        corporate_actions=dataset.corporate_actions,
+    )
+
+
+def apply_split_action(
+    *,
+    run_id: str,
+    account_id: str,
+    action: StockSplit,
+    shares: int,
+    total_cost_basis: Decimal,
+    cash: Decimal,
+) -> tuple[int, SplitAdjustmentRecord]:
+    """Multiply shares by Tiingo's shares-after/shares-before factor."""
+    split_ratio = _split_ratio(action.split_factor)
+    shares_after_numerator = shares * split_ratio.numerator
+    if shares_after_numerator % split_ratio.denominator != 0:
+        raise PortfolioAccountingError(
+            "stock split would create fractional shares; cash-in-lieu is unsupported"
+        )
+    shares_after = shares_after_numerator // split_ratio.denominator
+    with arithmetic():
+        average_before = None if shares == 0 else total_cost_basis / Decimal(shares)
+        average_after = (
+            None if shares_after == 0 else total_cost_basis / Decimal(shares_after)
+        )
+    adjustment_id = configuration_identity(
+        {
+            "run_id": run_id,
+            "account_id": account_id,
+            "record_type": "split_adjustment",
+            "corporate_action_id": action.action_id,
+        }
+    )
+    return shares_after, SplitAdjustmentRecord(
+        split_adjustment_id=adjustment_id,
+        run_id=run_id,
+        account_id=account_id,
+        corporate_action_id=action.action_id,
+        symbol=action.symbol,
+        effective_session=action.effective_session,
+        split_factor=action.split_factor,
+        split_ratio_numerator=split_ratio.numerator,
+        split_ratio_denominator=split_ratio.denominator,
+        shares_before=shares,
+        shares_after=shares_after,
+        average_entry_cost_before=average_before,
+        average_entry_cost_after=average_after,
+        total_cost_basis_before=total_cost_basis,
+        total_cost_basis_after=total_cost_basis,
+        resulting_cash_balance=cash,
+        source_dataset_id=action.source_dataset_id,
+    )
+
+
+def credit_dividend_action(
+    *,
+    run_id: str,
+    account_id: str,
+    action: CashDividend,
+    entitled_shares: int,
+    cash: Decimal,
+) -> tuple[Decimal, DividendCashflowRecord]:
+    """Credit one ex-date cashflow without changing price-trade proceeds."""
+    with arithmetic():
+        total_cash = Decimal(entitled_shares) * action.amount_per_share
+        resulting_cash = cash + total_cash
+    cashflow_id = configuration_identity(
+        {
+            "run_id": run_id,
+            "account_id": account_id,
+            "record_type": "dividend_cashflow",
+            "corporate_action_id": action.action_id,
+        }
+    )
+    return resulting_cash, DividendCashflowRecord(
+        dividend_cashflow_id=cashflow_id,
+        run_id=run_id,
+        account_id=account_id,
+        corporate_action_id=action.action_id,
+        symbol=action.symbol,
+        ex_dividend_session=action.ex_dividend_session,
+        entitled_share_quantity=entitled_shares,
+        amount_per_share=action.amount_per_share,
+        total_dividend_cash=total_cash,
+        resulting_cash_balance=resulting_cash,
+        source_dataset_id=action.source_dataset_id,
+    )
+
+
+def apply_dividend_policy(
+    *,
+    policy: DividendPolicy,
+    run_id: str,
+    account_id: str,
+    action: CashDividend,
+    entitled_shares: int,
+    cash: Decimal,
+) -> tuple[Decimal, DividendCashflowRecord | None, Decimal]:
+    """Apply or disclose one dividend without changing split semantics."""
+    if policy is DividendPolicy.CASH_DIVIDENDS:
+        resulting_cash, cashflow = credit_dividend_action(
+            run_id=run_id,
+            account_id=account_id,
+            action=action,
+            entitled_shares=entitled_shares,
+            cash=cash,
+        )
+        return resulting_cash, cashflow, Decimal(0)
+    if policy is DividendPolicy.PRICE_RETURN_ONLY:
+        with arithmetic():
+            estimated_ignored_cash = Decimal(entitled_shares) * action.amount_per_share
+        return cash, None, estimated_ignored_cash
+    raise PortfolioAccountingError(
+        "reject-if-dividends policy reached dividend accounting unexpectedly"
+    )
+
+
+def summarize_dividend_accounting(
+    *,
+    policy: DividendPolicy,
+    corporate_action_snapshot_id: str,
+    actions: tuple[CashDividend, ...],
+    cashflows: tuple[DividendCashflowRecord, ...],
+    estimated_ignored_cash: Decimal,
+) -> DividendAccountingSummary:
+    """Describe applied and intentionally excluded dividend economics."""
+    credited_cashflows = tuple(
+        item for item in cashflows if item.entitled_share_quantity > 0
+    )
+    with arithmetic():
+        total_cash_credited = sum(
+            (item.total_dividend_cash for item in credited_cashflows), start=Decimal(0)
+        )
+    price_only = policy is not DividendPolicy.CASH_DIVIDENDS
+    events_present = len(actions)
+    return DividendAccountingSummary(
+        dividend_policy=policy,
+        return_basis=(
+            ReturnBasis.PRICE_RETURN
+            if price_only
+            else ReturnBasis.TOTAL_RETURN_WITH_CASH_DIVIDENDS
+        ),
+        corporate_action_snapshot_id=corporate_action_snapshot_id,
+        dividend_events_present=events_present,
+        dividend_events_credited=len(credited_cashflows),
+        dividend_events_ignored=(
+            events_present if policy is DividendPolicy.PRICE_RETURN_ONLY else 0
+        ),
+        total_dividend_cash_credited=total_cash_credited,
+        estimated_ignored_dividend_cash=(
+            estimated_ignored_cash
+            if policy is DividendPolicy.PRICE_RETURN_ONLY
+            else Decimal(0)
+        ),
+        warning=(
+            PRICE_RETURN_ONLY_WARNING
+            if policy is DividendPolicy.PRICE_RETURN_ONLY and actions
+            else None
+        ),
+    )

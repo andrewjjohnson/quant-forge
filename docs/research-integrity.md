@@ -73,16 +73,16 @@ calendar across the requested range and requires exact agreement with
 `missing_sessions`. QF-5 uses those recomputed facts—not the tuple alone—to
 reject gaps inside the observed range, so a multi-session equity change cannot
 be annualized as one daily return.
-QF-3 schema version 3 requires a provider split coefficient and cash-dividend
-amount for every bar and retains every non-unit split and nonzero dividend
-session as immutable provenance. QF-5 rejects legacy schemas, observed split-
-or dividend-bearing ranges, and adjusted datasets because it does not yet
-receive or apply the event details needed for causal share, cost, and cash
-accounting. See `docs/backtesting.md` and ADR 0001.
+QF-3 schema version 4 requires a provider split coefficient and cash-dividend
+amount for every bar and binds every non-unit split and nonzero dividend to an
+immutable typed action snapshot. QF-5 rejects legacy/incomplete schemas and
+adjusted datasets, then causally applies verified raw-price actions. Its run
+identity changes with the dataset, action snapshot, or selected dividend
+policy. See `docs/backtesting.md` and ADRs 0001 and 0003.
 
 Dataset hashes prove consistency, not provider authenticity. Raw-byte digest
 verification occurs when QF-3 loads the immutable cache, and corporate-action
-completeness remains dependent on schema-v3 provider ingestion because split and
+completeness remains dependent on schema-v4 provider ingestion because split and
 dividend events are not derivable from OHLCV alone.
 
 ## Survivorship bias
@@ -109,12 +109,35 @@ Record whether each field is:
 Do not mix conventions silently.
 
 Execution prices, cash dividends, position quantities, and benchmark returns
-must use a coherent policy. QF-5 verifies split- and dividend-free unadjusted
-ranges from QF-3 schema-version-3 provenance and rejects every range with an
-observed corporate action until point-in-time factors and dividend cash-flow
-semantics are available. Tests cover both rejection boundaries; applying those
-events still requires dedicated accounting tests before broad equity-universe
-work is considered reliable.
+must use a coherent disclosed policy. QF-5 always uses raw OHLCV and point-in-
+time split factors for fills, marks, and both accounts. To prevent a split from
+appearing to price indicators as a crash or jump, strategy features use a
+causal forward-normalized view: effective and prior split factors scale the
+current OHLCV row, while later split factors never alter earlier rows.
+`CASH_DIVIDENDS` credits explicit ex-date
+cash, `PRICE_RETURN_ONLY` preserves events but excludes cash from all economics,
+and `REJECT_IF_DIVIDENDS` fails closed. It never uses Tiingo adjusted fields for
+fills or marks and rejects adjusted prices with any raw-price policy.
+
+Price return and total economic return answer different research questions.
+Price-only mode can isolate signal behavior during early research, but it
+understates long-period strategy and benchmark wealth and must carry the
+exported warning and return-basis label. Its estimated ignored cash is disclosure,
+not a correction to equity. Cash mode uses prior-close entitlement; splits apply
+before opening orders and dividends credit afterward. This prevents an ex-date
+opening purchase from earning or being funded by that dividend while preserving
+entitlement for an ex-date opening sale.
+
+Tiingo's `divCash` marks the ex-dividend date. Crediting it that session is a
+documented daily-model approximation, not the real payment date. Splits multiply
+shares by Tiingo's shares-after/shares-before factor, reconstructed as a bounded
+rational ratio only when it exactly round-trips through the provider's canonical
+float representation. Splits conserve aggregate basis and cash and create no
+realized P&L. A fractional result after reconstruction is rejected because
+cash-in-lieu is not modeled. Dividend selection never disables split handling.
+Tests cover all policy/data combinations, entitlement boundaries, exactly-once
+cash, ignored-cash non-effects, split continuity under every policy, benchmark
+parity, identity changes, and fail-closed adjustment/provenance validation.
 
 Because the buy-and-hold benchmark enters at the first open, its risk-return
 series includes the initial-capital-to-first-close return, including entry costs

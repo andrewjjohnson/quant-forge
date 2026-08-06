@@ -2,12 +2,15 @@
 
 QuantForge is a quantitative research and systematic-trading platform focused on
 reproducible, auditable experiments. The project is currently establishing the
-**MVP Quantitative Research Foundation (QF-1)**. Provider-agnostic adjusted daily
-market-data ingestion and reusable causal indicator and engine-neutral strategy
-contracts are available. Deterministic single-symbol, long-only daily-bar
-backtesting now provides explicit next-open execution, separate commission and
-transaction-fee policies, slippage, whole-share accounting, typed metrics, a
-buy-and-hold benchmark, and structured result export. Deterministic Cartesian
+**MVP Quantitative Research Foundation (QF-1)**. Provider-agnostic daily
+market-data ingestion now includes Tiingo EOD raw OHLCV, typed dividends and
+splits, immutable action provenance, and retained Alpha Vantage support.
+Reusable causal indicator and engine-neutral strategy contracts are available.
+Deterministic single-symbol, long-only daily-bar backtesting provides explicit
+next-open execution, separate commission and transaction-fee policies,
+slippage, corporate-action-aware whole-share accounting, typed metrics, a
+cost- and action-matched buy-and-hold benchmark, and structured export.
+Deterministic Cartesian
 parameter optimization adds typed search spaces, pre-execution constraints,
 sequential or bounded local process execution, incremental persistence, resume,
 hard-constrained metric ranking, neighborhood stability analysis, isolated-peak
@@ -56,8 +59,8 @@ uv run pytest -m integration
 ```
 
 Ordinary tests are deterministic and must not require network access. See
-[`docs/market-data.md`](docs/market-data.md) for adjusted daily data usage and
-the explicitly opted-in Alpha Vantage SPY verification. See
+[`docs/market-data.md`](docs/market-data.md) for Tiingo/Alpha Vantage data,
+immutable actions, and opt-in live verification. See
 [`docs/strategy-contracts.md`](docs/strategy-contracts.md) for indicator,
 strategy, signal-timing, and sizing-intent usage. See
 [`docs/backtesting.md`](docs/backtesting.md) for execution, accounting, metric,
@@ -87,7 +90,22 @@ cp .env.example .env
 
 The example contains names and empty placeholders only. `.env` files are ignored;
 never commit API keys, broker credentials, account identifiers, or market data.
-The initial package does not read environment variables at runtime.
+Providers receive credentials explicitly; maintained scripts read the named
+process environment variables without printing them.
+
+Run the fixed 2020-01-01 through 2025-12-31 Tiingo SPY example with:
+
+```bash
+TIINGO_API_KEY=... uv run python scripts/run_spy_backtest.py
+```
+
+It uses the existing moving-average strategy, nonzero commission and slippage,
+$100,000 initial capital, next-session-open execution, mandatory split
+accounting with causal split-normalized strategy features over raw execution
+prices, and an explicit `PRICE_RETURN_ONLY` dividend policy. Its performance
+therefore excludes dividends and is labeled `price_return`; the script prints
+ignored-event disclosures for both strategy and benchmark. `--fixture` runs a
+short synthetic offline flow and must not be interpreted as market performance.
 
 ## Contributing
 

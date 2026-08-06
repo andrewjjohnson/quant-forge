@@ -3,8 +3,18 @@
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from quantforge.data.corporate_actions import (
+    CashDividendSeed,
+    CorporateActionSeed,
+    StockSplitSeed,
+    validate_action_seeds,
+)
 from quantforge.data.exceptions import ValidationError
-from quantforge.data.models import AdjustmentMode, DailyBar, ProviderResponse
+from quantforge.data.models import (
+    AdjustmentMode,
+    DailyBar,
+    ProviderResponse,
+)
 
 _REQUIRED = (
     "session_date",
@@ -49,6 +59,26 @@ def normalize_response_with_split_sessions(
 def normalize_response_with_corporate_action_sessions(
     response: ProviderResponse, canonical_symbol: str
 ) -> tuple[tuple[DailyBar, ...], tuple[date, ...], tuple[date, ...]]:
+    """Compatibility view returning only effective action sessions."""
+    bars, action_seeds = normalize_response_with_corporate_actions(
+        response, canonical_symbol
+    )
+    split_sessions = tuple(
+        seed.effective_session
+        for seed in action_seeds
+        if isinstance(seed, StockSplitSeed)
+    )
+    dividend_sessions = tuple(
+        seed.ex_dividend_session
+        for seed in action_seeds
+        if isinstance(seed, CashDividendSeed)
+    )
+    return bars, split_sessions, dividend_sessions
+
+
+def normalize_response_with_corporate_actions(
+    response: ProviderResponse, canonical_symbol: str
+) -> tuple[tuple[DailyBar, ...], tuple[CorporateActionSeed, ...]]:
     """Convert lossless adapter records and apply a coherent split basis.
 
     ``split_coefficient`` is the shares-after/shares-before ratio effective on a
@@ -101,8 +131,16 @@ def normalize_response_with_corporate_action_sessions(
             raise ValidationError("dividend amount must be finite and nonnegative")
         parsed.append((session, open_price, high, low, close, volume, split, dividend))
     parsed.sort(key=lambda item: item[0])
-    split_sessions = tuple(item[0] for item in parsed if item[6] != Decimal(1))
-    dividend_sessions = tuple(item[0] for item in parsed if item[7] != Decimal(0))
+    action_seeds: list[CorporateActionSeed] = []
+    for session, *_prices, split, dividend in parsed:
+        if split != Decimal(1):
+            action_seeds.append(
+                StockSplitSeed(symbol, session, split, response.provider_name)
+            )
+        if dividend != Decimal(0):
+            action_seeds.append(
+                CashDividendSeed(symbol, session, dividend, response.provider_name)
+            )
     factor = Decimal(1)
     adjusted_reversed: list[DailyBar] = []
     for (
@@ -132,8 +170,6 @@ def normalize_response_with_corporate_action_sessions(
             adjusted_reversed.append(
                 DailyBar(symbol, session, open_price, high, low, close, volume)
             )
-    return (
-        tuple(reversed(adjusted_reversed)),
-        split_sessions,
-        dividend_sessions,
+    return tuple(reversed(adjusted_reversed)), validate_action_seeds(
+        tuple(action_seeds)
     )

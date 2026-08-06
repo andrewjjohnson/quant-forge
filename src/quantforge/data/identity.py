@@ -6,6 +6,11 @@ from dataclasses import asdict
 from datetime import UTC, date, datetime
 from typing import cast
 
+from quantforge.data.corporate_actions import (
+    action_seeds_from_records,
+    bind_corporate_actions,
+    corporate_action_snapshot_id,
+)
 from quantforge.data.models import AdjustmentMode, DailyBar, MarketDataset
 
 
@@ -82,6 +87,7 @@ def dataset_identity_matches(dataset: MarketDataset) -> bool:
             "data_sha256",
             "dataset_id",
             "schema_version",
+            "corporate_actions_location",
         ):
             del metadata_values[field]
         actual_data_sha256 = sha256_hex(serialize_bars_csv(dataset.bars))
@@ -95,15 +101,33 @@ def dataset_identity_matches(dataset: MarketDataset) -> bool:
             len(digest) == 64
             and digest == digest.lower()
             and all(character in "0123456789abcdef" for character in digest)
-            for digest in (metadata.raw_sha256, metadata.data_sha256)
+            for digest in (
+                metadata.raw_sha256,
+                metadata.data_sha256,
+                metadata.corporate_action_snapshot_id,
+            )
+        )
+        action_seeds = action_seeds_from_records(dataset.corporate_actions)
+        actions_are_canonical = (
+            corporate_action_snapshot_id(action_seeds)
+            == metadata.corporate_action_snapshot_id
+            and bind_corporate_actions(
+                action_seeds,
+                dataset_id=metadata.dataset_id,
+                snapshot_id=metadata.corporate_action_snapshot_id,
+            )
+            == dataset.corporate_actions
         )
         return (
             digests_are_canonical
+            and actions_are_canonical
             and actual_data_sha256 == metadata.data_sha256
             and expected_dataset_id == metadata.dataset_id
             and metadata.raw_location == f"raw/{metadata.raw_sha256}.json"
             and metadata.normalized_location
             == f"datasets/{metadata.dataset_id}/bars.csv"
+            and metadata.corporate_actions_location
+            == f"datasets/{metadata.dataset_id}/corporate_actions.json"
         )
     except (AttributeError, KeyError, TypeError, ValueError):
         return False

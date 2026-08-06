@@ -71,6 +71,33 @@ Run a focused test:
 uv run pytest tests/path/test_module.py -q
 ```
 
+Run the deterministic offline Tiingo/provider and corporate-action tests:
+
+```bash
+uv run pytest tests/unit/data/test_tiingo_provider.py \
+  tests/unit/backtesting/test_runner.py
+```
+
+Run the opt-in live Tiingo integration only with both the key and explicit flag:
+
+```bash
+TIINGO_API_KEY=... QUANTFORGE_RUN_LIVE_TIINGO=1 \
+  uv run pytest -m integration tests/integration/test_tiingo_market_data.py
+```
+
+Run the fixed 2020-2025 real SPY example, or its explicitly synthetic offline
+mode. The maintained example explicitly selects price-return-only dividend
+treatment and prints the corresponding exclusions:
+
+```bash
+TIINGO_API_KEY=... uv run python scripts/run_spy_backtest.py
+uv run python scripts/run_spy_backtest.py --fixture
+```
+
+Downloaded provider responses remain under ignored `data/`; structured results
+remain under ignored `reports/`. Use `--refresh` only when intentionally
+retrieving a new immutable provider revision. Never stage either directory.
+
 Run tests with coverage when configured:
 
 ```bash
