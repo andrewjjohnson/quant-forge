@@ -387,10 +387,10 @@ caller-selected ignored reports root:
 
 The manifest contains provenance, strategy and backtest configuration,
 performance, separate strategy and benchmark dividend-accounting summaries,
-record counts, warnings, and limitations. It therefore preserves the selected
-policy, return basis, credited/ignored disclosures, and action snapshot even
-when the price-only cashflow CSV is empty. CSV field and row order is stable;
-nested values use canonical
+record counts, warnings, limitations, and a SHA-256 digest for every CSV payload.
+It therefore preserves the selected policy, return basis, credited/ignored
+disclosures, and action snapshot even when the price-only cashflow CSV is empty.
+CSV field and row order is stable; nested values use canonical
 JSON. Empty record tables retain their complete headers, including the full fill
 schema when neither the strategy nor benchmark can afford a share. Dates are ISO
 `YYYY-MM-DD`; the optional initiation timestamp must be timezone-aware ISO 8601
@@ -398,7 +398,9 @@ with a defined UTC offset. A `tzinfo` object whose `utcoffset()` returns `None`
 is rejected as naive. Export builds a temporary directory and renames it into
 place only after every file is complete. `load_backtest_manifest` reloads the
 complete JSON object. `BACKTEST_ARTIFACT_FILENAMES` exposes the authoritative
-file set, and `validate_backtest_result_export(result, path)` regenerates the
+file set. `validate_backtest_result_artifact(path)` verifies the exact file set
+and every manifest-bound payload digest without requiring the in-memory result.
+`validate_backtest_result_export(result, path)` additionally regenerates the
 expected deterministic artifact in a temporary directory and byte-compares
 every required file before an existing export may be reported as reusable.
 

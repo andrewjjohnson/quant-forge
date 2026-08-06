@@ -248,6 +248,9 @@ def _metadata_to_dict(metadata: DatasetMetadata) -> dict[str, object]:
 
 
 def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
+    corporate_actions_complete = value["corporate_actions_complete"]
+    if not isinstance(corporate_actions_complete, bool):
+        raise ValueError("corporate_actions_complete must be a JSON boolean")
     return DatasetMetadata(
         canonical_symbol=str(value["canonical_symbol"]),
         provider_name=str(value["provider_name"]),
@@ -277,7 +280,7 @@ def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
         dividend_sessions=tuple(
             date.fromisoformat(item) for item in value["dividend_sessions"]
         ),
-        corporate_actions_complete=bool(value["corporate_actions_complete"]),
+        corporate_actions_complete=corporate_actions_complete,
         corporate_action_count=int(value["corporate_action_count"]),
         dividend_count=int(value["dividend_count"]),
         split_count=int(value["split_count"]),

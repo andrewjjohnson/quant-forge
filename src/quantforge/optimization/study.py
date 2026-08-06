@@ -18,6 +18,7 @@ from quantforge.backtesting import (
     fingerprint_market_bars,
     load_backtest_manifest,
     run_backtest,
+    validate_backtest_result_artifact,
 )
 from quantforge.configuration import (
     PrimitiveMapping,
@@ -531,6 +532,7 @@ class GridSearchStudy:
                 "successful persisted trial has an incomplete QF-5 artifact"
             )
         try:
+            validate_backtest_result_artifact(artifact_path)
             manifest = load_backtest_manifest(artifact_path / "manifest.json")
         except BacktestError as error:
             raise StudyPersistenceError(

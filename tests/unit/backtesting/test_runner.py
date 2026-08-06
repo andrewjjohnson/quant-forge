@@ -28,6 +28,7 @@ from quantforge.backtesting import (
     export_backtest_result,
     load_backtest_manifest,
     run_backtest,
+    validate_backtest_result_artifact,
     validate_backtest_result_export,
 )
 from quantforge.configuration import PrimitiveMapping, configuration_identity
@@ -988,9 +989,14 @@ def test_structured_export_is_stable_reloadable_and_never_overwrites(
         "split_adjustments.csv",
         "trades.csv",
     ]
-    assert load_backtest_manifest(exported / "manifest.json") == (
-        result.manifest_primitive()
-    )
+    manifest = load_backtest_manifest(exported / "manifest.json")
+    integrity = cast(PrimitiveMapping, manifest.pop("artifact_integrity"))
+    assert manifest == result.manifest_primitive()
+    assert integrity["algorithm"] == "sha256"
+    assert set(cast(PrimitiveMapping, integrity["files"])) == set(
+        BACKTEST_ARTIFACT_FILENAMES
+    ) - {"manifest.json"}
+    assert validate_backtest_result_artifact(exported) == exported
     assert validate_backtest_result_export(result, exported) == exported
     with pytest.raises(ResultExportError, match="already exists"):
         export_backtest_result(result, tmp_path / "reports")

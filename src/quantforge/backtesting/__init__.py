@@ -34,6 +34,7 @@ from quantforge.backtesting.export import (
     BACKTEST_ARTIFACT_FILENAMES,
     export_backtest_result,
     load_backtest_manifest,
+    validate_backtest_result_artifact,
     validate_backtest_result_export,
 )
 from quantforge.backtesting.metrics import CALENDAR_DAYS_PER_YEAR
@@ -102,5 +103,6 @@ __all__ = [
     "fingerprint_market_bars",
     "load_backtest_manifest",
     "run_backtest",
+    "validate_backtest_result_artifact",
     "validate_backtest_result_export",
 ]

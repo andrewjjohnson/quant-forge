@@ -1,11 +1,13 @@
 """Stable immutable structured backtest result export."""
 
 import csv
+import hmac
 import json
 import os
 import shutil
 import tempfile
 from collections.abc import Sequence
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -26,6 +28,10 @@ BACKTEST_ARTIFACT_FILENAMES = (
     "split_adjustments.csv",
     "benchmark_dividend_cashflows.csv",
     "benchmark_split_adjustments.csv",
+)
+
+_BACKTEST_PAYLOAD_FILENAMES = tuple(
+    filename for filename in BACKTEST_ARTIFACT_FILENAMES if filename != "manifest.json"
 )
 
 _FILL_CSV_FIELDS = (
@@ -109,6 +115,14 @@ def _write_csv(
         os.fsync(stream.fileno())
 
 
+def _file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
     """Atomically create ``output_root/run_id`` without overwriting a prior run."""
     destination = output_root / result.run_id
@@ -119,21 +133,6 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
         tempfile.mkdtemp(prefix=f".{result.run_id}.", dir=str(output_root))
     )
     try:
-        manifest_path = temporary / "manifest.json"
-        manifest_path.write_text(
-            json.dumps(
-                result.manifest_primitive(),
-                ensure_ascii=True,
-                allow_nan=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        with manifest_path.open("rb") as stream:
-            os.fsync(stream.fileno())
-
         signals = [item.to_primitive() for item in result.signals]
         orders = [item.to_primitive() for item in result.orders]
         fills = [item.to_primitive() for item in result.fills]
@@ -263,6 +262,28 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
             if benchmark_split_adjustments
             else _SPLIT_ADJUSTMENT_FIELDS,
         )
+        manifest = result.manifest_primitive()
+        manifest["artifact_integrity"] = {
+            "algorithm": "sha256",
+            "files": {
+                filename: _file_sha256(temporary / filename)
+                for filename in _BACKTEST_PAYLOAD_FILENAMES
+            },
+        }
+        manifest_path = temporary / "manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                manifest,
+                ensure_ascii=True,
+                allow_nan=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with manifest_path.open("rb") as stream:
+            os.fsync(stream.fileno())
         os.rename(temporary, destination)
     except (OSError, TypeError, ValueError) as error:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -270,20 +291,60 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
     return destination
 
 
-def validate_backtest_result_export(result: BacktestResult, path: Path) -> Path:
-    """Require an existing export to exactly match this immutable result."""
+def validate_backtest_result_artifact(path: Path) -> Path:
+    """Verify the exact file set and manifest-bound SHA-256 payload digests."""
     try:
-        if path.name != result.run_id or path.is_symlink() or not path.is_dir():
-            raise ResultExportError(
-                "backtest export does not match the expected immutable result"
-            )
+        if path.is_symlink() or not path.is_dir():
+            raise ResultExportError("invalid immutable backtest artifact")
         entries = {entry.name: entry for entry in path.iterdir()}
         if set(entries) != set(BACKTEST_ARTIFACT_FILENAMES) or any(
             entry.is_symlink() or not entry.is_file() for entry in entries.values()
         ):
+            raise ResultExportError("invalid immutable backtest artifact")
+        manifest = load_backtest_manifest(entries["manifest.json"])
+        integrity_value = cast(object, manifest.get("artifact_integrity"))
+        if not isinstance(integrity_value, dict):
+            raise ResultExportError("invalid backtest artifact integrity manifest")
+        integrity = cast(dict[object, object], integrity_value)
+        files_value = integrity.get("files")
+        if integrity.get("algorithm") != "sha256" or not isinstance(files_value, dict):
+            raise ResultExportError("invalid backtest artifact integrity manifest")
+        files = cast(dict[object, object], files_value)
+        if set(files) != set(_BACKTEST_PAYLOAD_FILENAMES) or any(
+            not isinstance(filename, str) or not isinstance(digest, str)
+            for filename, digest in files.items()
+        ):
+            raise ResultExportError("invalid backtest artifact integrity manifest")
+        if manifest.get("run_id") != path.name or any(
+            not hmac.compare_digest(
+                cast(str, files[filename]), _file_sha256(entries[filename])
+            )
+            for filename in _BACKTEST_PAYLOAD_FILENAMES
+        ):
+            raise ResultExportError("backtest artifact integrity validation failed")
+    except ResultExportError:
+        raise
+    except OSError as error:
+        raise ResultExportError(
+            "failed to validate immutable backtest artifact"
+        ) from error
+    return path
+
+
+def validate_backtest_result_export(result: BacktestResult, path: Path) -> Path:
+    """Require an existing export to exactly match this immutable result."""
+    try:
+        if path.name != result.run_id:
             raise ResultExportError(
                 "backtest export does not match the expected immutable result"
             )
+        try:
+            validate_backtest_result_artifact(path)
+        except ResultExportError as error:
+            raise ResultExportError(
+                "backtest export does not match the expected immutable result"
+            ) from error
+        entries = {entry.name: entry for entry in path.iterdir()}
         with tempfile.TemporaryDirectory(
             prefix="quantforge-export-validation-"
         ) as temporary_root:

@@ -741,6 +741,40 @@ def test_successful_trial_requires_complete_qf5_artifact(
         action()
 
 
+@pytest.mark.parametrize(
+    "artifact_name",
+    [
+        "dividend_cashflows.csv",
+        "split_adjustments.csv",
+        "benchmark_dividend_cashflows.csv",
+        "benchmark_split_adjustments.csv",
+    ],
+)
+@pytest.mark.parametrize("action_name", ["load_result", "resume"])
+def test_successful_trial_validates_qf5_action_ledger_contents(
+    tmp_path: Path,
+    artifact_name: str,
+    action_name: str,
+) -> None:
+    study = GridSearchStudy(
+        _dataset("modified-qf5-action-ledger"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    result = study.run()
+    successful = result.successful_trials[0]
+    artifact_path = study.study_path / cast(str, successful.artifact_location)
+    ledger_path = artifact_path / artifact_name
+    ledger_path.write_bytes(ledger_path.read_bytes() + b"modified\n")
+
+    action = study.load_result if action_name == "load_result" else study.resume
+    with pytest.raises(
+        StudyPersistenceError,
+        match="invalid QF-5 artifact",
+    ):
+        action()
+
+
 @pytest.mark.parametrize("resume", [False, True])
 def test_missing_manifest_rejects_a_nonempty_orphaned_study_directory(
     tmp_path: Path,
