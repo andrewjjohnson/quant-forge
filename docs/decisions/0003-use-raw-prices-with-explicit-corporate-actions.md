@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-05
-- Jira: Pending — an approved QF key is required before commit
+- Jira: QF-10
 
 ## Context
 
