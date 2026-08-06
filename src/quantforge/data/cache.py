@@ -351,21 +351,23 @@ def _corporate_actions_from_dict(
         if not isinstance(item, dict):
             raise ValueError("corporate-action record must be an object")
         record = cast(dict[object, object], item)
-        action_type = record.get("action_type")
+        action_type = _corporate_action_string(record, "action_type")
         common = {
-            "action_id": str(record["action_id"]),
-            "symbol": str(record["symbol"]),
-            "provider_name": str(record["provider_name"]),
-            "source_dataset_id": str(record["source_dataset_id"]),
+            "action_id": _corporate_action_string(record, "action_id"),
+            "symbol": _corporate_action_string(record, "symbol"),
+            "provider_name": _corporate_action_string(record, "provider_name"),
+            "source_dataset_id": _corporate_action_string(record, "source_dataset_id"),
         }
         if action_type == "cash_dividend":
             actions.append(
                 CashDividend(
                     **common,
                     ex_dividend_session=date.fromisoformat(
-                        str(record["ex_dividend_session"])
+                        _corporate_action_string(record, "ex_dividend_session")
                     ),
-                    amount_per_share=Decimal(str(record["amount_per_share"])),
+                    amount_per_share=Decimal(
+                        _corporate_action_string(record, "amount_per_share")
+                    ),
                 )
             )
         elif action_type == "stock_split":
@@ -373,11 +375,20 @@ def _corporate_actions_from_dict(
                 StockSplit(
                     **common,
                     effective_session=date.fromisoformat(
-                        str(record["effective_session"])
+                        _corporate_action_string(record, "effective_session")
                     ),
-                    split_factor=Decimal(str(record["split_factor"])),
+                    split_factor=Decimal(
+                        _corporate_action_string(record, "split_factor")
+                    ),
                 )
             )
         else:
             raise ValueError("unsupported corporate-action type")
     return tuple(actions)
+
+
+def _corporate_action_string(record: dict[object, object], field_name: str) -> str:
+    field_value = record.get(field_name)
+    if not isinstance(field_value, str):
+        raise ValueError(f"corporate-action {field_name} must be a JSON string")
+    return field_value

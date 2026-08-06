@@ -379,6 +379,42 @@ def test_cache_rejects_unknown_corporate_action_artifact_schema(
         cache.load(dataset.metadata.dataset_id)
 
 
+@pytest.mark.parametrize(
+    ("action_kind", "field_name", "invalid_value"),
+    [
+        ("cash_dividend", "amount_per_share", 0.75),
+        ("stock_split", "split_factor", 2),
+    ],
+)
+def test_cache_rejects_non_string_corporate_action_decimals(
+    tmp_path: Path,
+    action_kind: str,
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    action_record = (
+        record("2024-07-02", dividend="0.75")
+        if action_kind == "cash_dividend"
+        else record("2024-07-02", split="2")
+    )
+    cache = MarketDataCache(tmp_path)
+    dataset = MarketDataService(
+        FakeProvider((record("2024-07-01"), action_record)), cache
+    ).get_daily_bars(
+        "SPY",
+        date(2024, 7, 1),
+        date(2024, 7, 2),
+        AdjustmentMode.UNADJUSTED,
+    )
+    action_path = tmp_path / dataset.metadata.corporate_actions_location
+    action_snapshot = json.loads(action_path.read_text(encoding="utf-8"))
+    action_snapshot["actions"][0][field_name] = invalid_value
+    action_path.write_text(json.dumps(action_snapshot), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="incomplete or corrupt"):
+        cache.load(dataset.metadata.dataset_id)
+
+
 @pytest.mark.parametrize("invalid_value", ["false", 1])
 def test_cache_rejects_non_boolean_corporate_action_completeness(
     tmp_path: Path, invalid_value: object

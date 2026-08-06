@@ -775,6 +775,32 @@ def test_successful_trial_validates_qf5_action_ledger_contents(
         action()
 
 
+@pytest.mark.parametrize("action_name", ["load_result", "resume"])
+def test_successful_trial_validates_qf5_manifest_contents(
+    tmp_path: Path,
+    action_name: str,
+) -> None:
+    study = GridSearchStudy(
+        _dataset("modified-qf5-manifest"),
+        MovingAverageCrossoverFactory(),
+        _study_config(tmp_path, fast_values=(2,)),
+    )
+    result = study.run()
+    successful = result.successful_trials[0]
+    artifact_path = study.study_path / cast(str, successful.artifact_location)
+    manifest_path = artifact_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["corporate_action_accounting"] = "corrupt"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    action = study.load_result if action_name == "load_result" else study.resume
+    with pytest.raises(
+        StudyPersistenceError,
+        match="invalid QF-5 artifact",
+    ):
+        action()
+
+
 @pytest.mark.parametrize("resume", [False, True])
 def test_missing_manifest_rejects_a_nonempty_orphaned_study_directory(
     tmp_path: Path,

@@ -982,6 +982,7 @@ def test_structured_export_is_stable_reloadable_and_never_overwrites(
         "dividend_cashflows.csv",
         "equity.csv",
         "fills.csv",
+        "integrity.json",
         "manifest.json",
         "orders.csv",
         "positions.csv",
@@ -990,12 +991,16 @@ def test_structured_export_is_stable_reloadable_and_never_overwrites(
         "trades.csv",
     ]
     manifest = load_backtest_manifest(exported / "manifest.json")
-    integrity = cast(PrimitiveMapping, manifest.pop("artifact_integrity"))
+    integrity = cast(
+        PrimitiveMapping,
+        json.loads((exported / "integrity.json").read_text(encoding="utf-8")),
+    )
     assert manifest == result.manifest_primitive()
+    assert integrity["schema_version"] == "1"
     assert integrity["algorithm"] == "sha256"
     assert set(cast(PrimitiveMapping, integrity["files"])) == set(
         BACKTEST_ARTIFACT_FILENAMES
-    ) - {"manifest.json"}
+    ) - {"integrity.json"}
     assert validate_backtest_result_artifact(exported) == exported
     assert validate_backtest_result_export(result, exported) == exported
     with pytest.raises(ResultExportError, match="already exists"):
@@ -1028,6 +1033,24 @@ def test_export_validation_rejects_unexpected_artifacts(tmp_path: Path) -> None:
 
     with pytest.raises(ResultExportError, match="expected immutable result"):
         validate_backtest_result_export(result, exported)
+
+
+@pytest.mark.parametrize(
+    "manifest_field",
+    ["corporate_action_accounting", "benchmark", "record_counts", "warnings"],
+)
+def test_artifact_validation_binds_manifest_contents(
+    tmp_path: Path, manifest_field: str
+) -> None:
+    result = configured_result()
+    exported = export_backtest_result(result, tmp_path / "reports")
+    manifest_path = exported / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest[manifest_field] = "corrupt"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ResultExportError, match="integrity validation failed"):
+        validate_backtest_result_artifact(exported)
 
 
 def test_empty_fill_export_preserves_the_full_fill_schema(tmp_path: Path) -> None:

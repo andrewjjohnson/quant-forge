@@ -17,6 +17,7 @@ from quantforge.configuration import Primitive, PrimitiveMapping
 
 BACKTEST_ARTIFACT_FILENAMES = (
     "manifest.json",
+    "integrity.json",
     "signals.csv",
     "orders.csv",
     "fills.csv",
@@ -30,8 +31,8 @@ BACKTEST_ARTIFACT_FILENAMES = (
     "benchmark_split_adjustments.csv",
 )
 
-_BACKTEST_PAYLOAD_FILENAMES = tuple(
-    filename for filename in BACKTEST_ARTIFACT_FILENAMES if filename != "manifest.json"
+_BACKTEST_HASHED_FILENAMES = tuple(
+    filename for filename in BACKTEST_ARTIFACT_FILENAMES if filename != "integrity.json"
 )
 
 _FILL_CSV_FIELDS = (
@@ -262,18 +263,10 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
             if benchmark_split_adjustments
             else _SPLIT_ADJUSTMENT_FIELDS,
         )
-        manifest = result.manifest_primitive()
-        manifest["artifact_integrity"] = {
-            "algorithm": "sha256",
-            "files": {
-                filename: _file_sha256(temporary / filename)
-                for filename in _BACKTEST_PAYLOAD_FILENAMES
-            },
-        }
         manifest_path = temporary / "manifest.json"
         manifest_path.write_text(
             json.dumps(
-                manifest,
+                result.manifest_primitive(),
                 ensure_ascii=True,
                 allow_nan=False,
                 indent=2,
@@ -284,6 +277,27 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
         )
         with manifest_path.open("rb") as stream:
             os.fsync(stream.fileno())
+        integrity_path = temporary / "integrity.json"
+        integrity_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1",
+                    "algorithm": "sha256",
+                    "files": {
+                        filename: _file_sha256(temporary / filename)
+                        for filename in _BACKTEST_HASHED_FILENAMES
+                    },
+                },
+                ensure_ascii=True,
+                allow_nan=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with integrity_path.open("rb") as stream:
+            os.fsync(stream.fileno())
         os.rename(temporary, destination)
     except (OSError, TypeError, ValueError) as error:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -292,7 +306,7 @@ def export_backtest_result(result: BacktestResult, output_root: Path) -> Path:
 
 
 def validate_backtest_result_artifact(path: Path) -> Path:
-    """Verify the exact file set and manifest-bound SHA-256 payload digests."""
+    """Verify the exact file set and sidecar-bound SHA-256 artifact digests."""
     try:
         if path.is_symlink() or not path.is_dir():
             raise ResultExportError("invalid immutable backtest artifact")
@@ -301,27 +315,41 @@ def validate_backtest_result_artifact(path: Path) -> Path:
             entry.is_symlink() or not entry.is_file() for entry in entries.values()
         ):
             raise ResultExportError("invalid immutable backtest artifact")
-        manifest = load_backtest_manifest(entries["manifest.json"])
-        integrity_value = cast(object, manifest.get("artifact_integrity"))
+        try:
+            integrity_value: object = json.loads(
+                entries["integrity.json"].read_text(encoding="utf-8")
+            )
+        except json.JSONDecodeError as error:
+            raise ResultExportError(
+                "invalid backtest artifact integrity sidecar"
+            ) from error
         if not isinstance(integrity_value, dict):
             raise ResultExportError("invalid backtest artifact integrity manifest")
         integrity = cast(dict[object, object], integrity_value)
         files_value = integrity.get("files")
-        if integrity.get("algorithm") != "sha256" or not isinstance(files_value, dict):
+        if (
+            set(integrity) != {"schema_version", "algorithm", "files"}
+            or integrity.get("schema_version") != "1"
+            or integrity.get("algorithm") != "sha256"
+            or not isinstance(files_value, dict)
+        ):
             raise ResultExportError("invalid backtest artifact integrity manifest")
         files = cast(dict[object, object], files_value)
-        if set(files) != set(_BACKTEST_PAYLOAD_FILENAMES) or any(
+        if set(files) != set(_BACKTEST_HASHED_FILENAMES) or any(
             not isinstance(filename, str) or not isinstance(digest, str)
             for filename, digest in files.items()
         ):
             raise ResultExportError("invalid backtest artifact integrity manifest")
-        if manifest.get("run_id") != path.name or any(
+        if any(
             not hmac.compare_digest(
                 cast(str, files[filename]), _file_sha256(entries[filename])
             )
-            for filename in _BACKTEST_PAYLOAD_FILENAMES
+            for filename in _BACKTEST_HASHED_FILENAMES
         ):
             raise ResultExportError("backtest artifact integrity validation failed")
+        manifest = load_backtest_manifest(entries["manifest.json"])
+        if manifest.get("run_id") != path.name:
+            raise ResultExportError("backtest artifact run identity mismatch")
     except ResultExportError:
         raise
     except OSError as error:

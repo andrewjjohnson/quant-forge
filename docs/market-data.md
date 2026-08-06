@@ -169,8 +169,9 @@ requests/<request-sha256>.json
 
 Raw JSON is a lossless representation of the complete provider response and
 request metadata. Bars use exact decimal-text CSV. Corporate actions use stable
-canonical JSON. Raw, bar, action, and manifest artifacts are immutable and
-written with fsynced temporary files. Loads verify raw/bar hashes, canonical
+canonical JSON, including string-encoded decimal economics. Raw, bar, action,
+and manifest artifacts are immutable and written with fsynced temporary files.
+Loads verify raw/bar hashes, canonical
 paths, metadata, the exact supported corporate-action artifact schema, action
 snapshot/action IDs, dataset identity, calendar facts, and all complete-dataset
 invariants. Dataset hashes prove consistency, not provider authenticity.
