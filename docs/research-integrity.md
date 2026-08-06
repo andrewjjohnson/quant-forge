@@ -239,6 +239,15 @@ immediate next exchange session. The signal close is explicitly a label anchor,
 not a fabricated same-close fill, and exported accuracy is not labeled as trade
 performance. See `docs/prediction-analysis.md`.
 
+QF-11 comparison experiments preserve that original strategy as an immutable
+baseline and implement narrower hypotheses as separate strategy classes. Sparse
+rules are shown against always-UP both over the full eligible population and on
+their exact matched prediction sessions, making SPY's structural upward-gap
+bias visible. Threshold, range, weekday, year, and already-observed period rows
+retain small samples, weak periods, neutral outcomes, and adverse outliers. The
+2025 segment is labeled observed rather than pristine holdout, and no comparison
+output claims an executable close fill or options profitability.
+
 Use versioned schemas for both.
 
 ## Walk-forward testing

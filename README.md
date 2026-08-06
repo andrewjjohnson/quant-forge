@@ -116,6 +116,7 @@ SPY range with:
 
 ```bash
 TIINGO_API_KEY=... uv run python scripts/run_spy_gap_prediction.py
+TIINGO_API_KEY=... uv run python scripts/analyze_spy_gap_predictions.py
 ```
 
 This reports prediction accuracy and average absolute gap size for correct and

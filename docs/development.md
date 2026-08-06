@@ -106,6 +106,18 @@ The command prints direction accuracy and average gap sizes; it creates no
 orders or fills. Use `--refresh` only to intentionally retrieve a new immutable
 Tiingo snapshot.
 
+Run the QF-11 exploratory comparison study on the same request or a cached
+dataset. This preserves the original strategy and evaluates the focused,
+RSI-only, and always-UP configurations separately:
+
+```bash
+TIINGO_API_KEY=... uv run python scripts/analyze_spy_gap_predictions.py
+uv run python scripts/analyze_spy_gap_predictions.py --dataset-id <dataset-id>
+```
+
+The comparison creates no orders or fills. Its 2020–2025 periods have already
+been inspected and are not untouched holdout results.
+
 Downloaded provider responses remain under ignored `data/`; structured results
 remain under ignored `reports/`. Use `--refresh` only when intentionally
 retrieving a new immutable provider revision. Never stage either directory.
