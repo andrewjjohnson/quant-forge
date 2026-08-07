@@ -59,10 +59,13 @@ meaning of a result.
 
 The runner also verifies that a returned outcome session is exactly the
 labeler's declared number of future sessions after the signal within the
-validated QF-3 session sequence. Prediction and outcome primitives are captured
-before evaluation and checked afterward, preventing an evaluator from mutating
-the scientific inputs it receives. The complete fixed prediction payload,
-including contemporaneous features, participates in each generic row identity.
+validated QF-3 session sequence. A missing outcome is accepted only when that
+declared future session is beyond the dataset boundary, preventing a labeler
+from selectively censoring available outcomes. Prediction and outcome
+primitives are captured before evaluation and checked afterward, and complete
+rows are checked again after all evaluations, preventing immediate or delayed
+evaluator mutation. The complete fixed prediction payload, including
+contemporaneous features, participates in each generic row identity.
 
 To add a future prediction experiment, define a typed prediction record and
 rule when an existing one is unsuitable, define typed outcome values and an
@@ -249,14 +252,18 @@ The pre-merge schema-v2 integrity fix adds QF-3 retrieval time and provider
 timezone to prediction manifests. The legacy gap engine/result versions and the
 generic study engine therefore advance to `2`; the generic engine also enforces
 exact horizons, detects evaluator-input mutation, and creates feature-complete
-row identities. A subsequent comparison-only integrity correction advances the
-comparison engine/result versions to `3`: custom-period stability labels are
-chronology-neutral, and valid zero-prediction results export deterministic
-header-only CSV artifacts. These corrections intentionally change analysis,
-study, prediction, and row IDs even when numerical predictions and metrics are
-unchanged. Existing older immutable artifacts remain historical records at
-their original paths; current runs write new identity paths rather than reusing
-or overwriting them.
+row identities. The current generic integrity correction advances only the
+generic study engine to `3`: a labeler cannot omit an available declared
+outcome, and completed rows are revalidated after all evaluations to detect
+delayed mutation. A comparison-only integrity correction separately advances
+the comparison engine/result versions to `3`: custom-period stability labels
+are chronology-neutral, and valid zero-prediction results export deterministic
+header-only CSV artifacts. The provenance correction intentionally changed
+legacy analysis and prediction IDs; generic engine corrections change generic
+study and row IDs even when numerical predictions and metrics are unchanged.
+Existing older immutable artifacts remain historical records at their original
+paths; current runs write new identity paths rather than reusing or overwriting
+them.
 
 New experiments should use the generic composition API and add their own
 study-specific result summaries rather than widening the legacy gap schema:

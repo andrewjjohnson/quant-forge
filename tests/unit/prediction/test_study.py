@@ -194,6 +194,20 @@ class FutureCloseOutcomeLabeler:
         )
 
 
+class SelectivelyUnavailableFutureCloseOutcomeLabeler(FutureCloseOutcomeLabeler):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self.name = "selectively_unavailable_future_close"
+
+    def label(
+        self, dataset: MarketDataset, signal_session: date
+    ) -> OutcomeLabel[FutureCloseValues] | None:
+        if signal_session == dataset.bars[0].session_date:
+            self._events.append("outcome_label")
+            return None
+        return super().label(dataset, signal_session)
+
+
 @dataclass(frozen=True, slots=True)
 class FutureCloseChangeValues:
     close_change: Decimal
@@ -263,6 +277,61 @@ class OutcomeMutatingEvaluator(FutureCloseChangeEvaluator):
     ) -> FutureCloseChangeValues:
         object.__setattr__(outcome.values, "future_close", Decimal(999))
         return super().evaluate(signal, outcome)
+
+
+class DelayedMutatingEvaluator(FutureCloseChangeEvaluator):
+    name = "delayed_mutating_future_close_change"
+
+    def __init__(self, events: list[str], mutation_target: str) -> None:
+        super().__init__(events)
+        self._mutation_target = mutation_target
+        self._retained_signal: NumericPrediction | None = None
+        self._retained_outcome: PredictionOutcome[FutureCloseValues] | None = None
+        self._retained_evaluation: FutureCloseChangeValues | None = None
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "prediction_evaluator",
+            "contract_version": "1",
+            "implementation_version": self.implementation_version,
+            "parameters": {
+                "multiplier": decimal_to_primitive(self._multiplier),
+                "mutation_target": self._mutation_target,
+                "value": "future_close_minus_reference_close",
+            },
+            "result_schema_version": self.result_schema_version,
+        }
+
+    def evaluate(
+        self,
+        signal: NumericPrediction,
+        outcome: PredictionOutcome[FutureCloseValues],
+    ) -> FutureCloseChangeValues:
+        if (
+            self._retained_signal is not None
+            and self._retained_outcome is not None
+            and self._retained_evaluation is not None
+        ):
+            if self._mutation_target == "signal":
+                object.__setattr__(
+                    self._retained_signal, "predicted_change", Decimal(999)
+                )
+            elif self._mutation_target == "outcome":
+                object.__setattr__(
+                    self._retained_outcome.values, "future_close", Decimal(999)
+                )
+            else:
+                object.__setattr__(
+                    self._retained_evaluation, "close_change", Decimal(999)
+                )
+
+        evaluation = super().evaluate(signal, outcome)
+        if self._retained_signal is None:
+            self._retained_signal = signal
+            self._retained_outcome = outcome
+            self._retained_evaluation = evaluation
+        return evaluation
 
 
 def _study(
@@ -364,6 +433,22 @@ def test_label_session_must_match_declared_future_session_horizon() -> None:
         )
 
 
+def test_labeler_cannot_censor_an_available_declared_outcome() -> None:
+    events: list[str] = []
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        RecordingPredictionStrategy(events),
+        SelectivelyUnavailableFutureCloseOutcomeLabeler(events),
+        FutureCloseChangeEvaluator(events),
+    )
+
+    with pytest.raises(
+        InvalidPredictionOutputError, match=r"declared future session is available"
+    ):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
 @pytest.mark.parametrize(
     ("evaluator", "changed_component"),
     [
@@ -385,6 +470,23 @@ def test_evaluator_cannot_mutate_fixed_inputs(
     )
 
     with pytest.raises(InvalidPredictionOutputError, match=changed_component):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+@pytest.mark.parametrize("mutation_target", ["signal", "outcome", "evaluation"])
+def test_evaluator_cannot_mutate_an_earlier_completed_row(
+    mutation_target: str,
+) -> None:
+    events: list[str] = []
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        RecordingPredictionStrategy(events),
+        FutureCloseOutcomeLabeler(events),
+        DelayedMutatingEvaluator(events, mutation_target),
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match="prediction study row"):
         run_prediction_study(make_dataset(("100", "102", "101")), study)
 
 

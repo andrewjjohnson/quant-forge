@@ -32,7 +32,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "2"
+STUDY_ENGINE_VERSION = "3"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -211,12 +211,26 @@ def run_prediction_study(
     rows: list[
         PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     ] = []
+    row_snapshots: list[
+        tuple[
+            PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
+            PrimitiveMappingSnapshot,
+        ]
+    ] = []
     unavailable_outcome_count = 0
     available_sessions = {bar.session_date for bar in dataset.bars}
     bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
     for signal in output.signals:
+        expected_outcome_index = (
+            bar_indexes[signal.signal_session] + configuration.required_future_sessions
+        )
         label = study.outcome_labeler.label(dataset, signal.signal_session)
         if label is None:
+            if expected_outcome_index < len(dataset.bars):
+                raise InvalidPredictionOutputError(
+                    "outcome labeler returned no label although its declared future "
+                    "session is available"
+                )
             unavailable_outcome_count += 1
             continue
         if (
@@ -227,9 +241,6 @@ def run_prediction_study(
             raise InvalidPredictionOutputError(
                 "outcome labels require matching signal and later dataset sessions"
             )
-        expected_outcome_index = (
-            bar_indexes[signal.signal_session] + configuration.required_future_sessions
-        )
         if (
             expected_outcome_index >= len(dataset.bars)
             or label.outcome_session
@@ -273,16 +284,26 @@ def run_prediction_study(
                 "study_id": study_id,
             }
         )
-        rows.append(
-            PredictionStudyRow(
-                row_id,
-                study_id,
-                market_data.dataset_id,
-                market_data.bars_fingerprint,
-                signal,
-                outcome,
-                evaluation,
+        row = PredictionStudyRow(
+            row_id,
+            study_id,
+            market_data.dataset_id,
+            market_data.bars_fingerprint,
+            signal,
+            outcome,
+            evaluation,
+        )
+        rows.append(row)
+        row_snapshots.append(
+            (
+                row,
+                _capture_values_snapshot("prediction study row", row.to_primitive()),
             )
+        )
+
+    for row, expected_snapshot in row_snapshots:
+        _validate_unchanged_values(
+            "prediction study row", row.to_primitive(), expected_snapshot
         )
 
     _validate_unchanged_component(
