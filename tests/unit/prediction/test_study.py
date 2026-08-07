@@ -256,6 +256,47 @@ class SignalMutatingFutureCloseOutcomeLabeler(FutureCloseOutcomeLabeler):
 
 
 @dataclass(frozen=True, slots=True)
+class FirstSerializationMutatingFutureCloseValues:
+    reference_close: Decimal
+    future_close: Decimal
+    serialized: bool = False
+
+    def to_primitive(self) -> PrimitiveMapping:
+        primitive: PrimitiveMapping = {
+            "future_close": decimal_to_primitive(self.future_close),
+            "reference_close": decimal_to_primitive(self.reference_close),
+        }
+        if not self.serialized:
+            object.__setattr__(self, "future_close", Decimal(999))
+            object.__setattr__(self, "serialized", True)
+        return primitive
+
+
+class FirstSerializationMutatingOutcomeLabeler(FutureCloseOutcomeLabeler):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self.name = "first_serialization_mutating_future_close"
+
+    def label(
+        self, dataset: MarketDataset, signal_session: date
+    ) -> OutcomeLabel[FutureCloseValues] | None:
+        label = super().label(dataset, signal_session)
+        if label is None:
+            return None
+        return OutcomeLabel(
+            label.signal_session,
+            label.outcome_session,
+            cast(
+                FutureCloseValues,
+                FirstSerializationMutatingFutureCloseValues(
+                    label.values.reference_close,
+                    label.values.future_close,
+                ),
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FutureCloseChangeValues:
     close_change: Decimal
 
@@ -544,6 +585,20 @@ def test_labeler_cannot_mutate_signals_after_they_are_generated(
     )
 
     with pytest.raises(InvalidPredictionOutputError, match="prediction signal"):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+def test_outcome_identity_rejects_first_serialization_value_drift() -> None:
+    events: list[str] = []
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        RecordingPredictionStrategy(events),
+        FirstSerializationMutatingOutcomeLabeler(events),
+        FutureCloseChangeEvaluator(events),
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match="prediction outcome values"):
         run_prediction_study(make_dataset(("100", "102", "101")), study)
 
 

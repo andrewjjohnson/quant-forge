@@ -33,7 +33,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "5"
+STUDY_ENGINE_VERSION = "6"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -288,15 +288,27 @@ def run_prediction_study(
                 "outcome label session does not match its declared future-session "
                 "horizon"
             )
+        outcome_values_snapshot = _capture_values_snapshot(
+            "prediction outcome values", label.values.to_primitive()
+        )
         outcome = _prediction_outcome(
             market_data,
             configuration,
             label.signal_session,
             label.outcome_session,
             label.values,
+            outcome_values_snapshot,
         )
         outcome_snapshot = _capture_values_snapshot(
-            "prediction outcome", outcome.to_primitive()
+            "prediction outcome",
+            _prediction_outcome_primitive(
+                outcome, outcome_values_snapshot.to_primitive()
+            ),
+        )
+        _validate_unchanged_values(
+            "prediction outcome values",
+            label.values.to_primitive(),
+            outcome_values_snapshot,
         )
         evaluation_values = study.evaluator.evaluate(signal, outcome)
         _validate_unchanged_values(
@@ -311,7 +323,11 @@ def run_prediction_study(
             "prediction evaluation values", evaluation_values.to_primitive()
         )
         evaluation = _prediction_evaluation(
-            configuration, signal, outcome, evaluation_values
+            configuration,
+            signal_snapshot,
+            outcome,
+            evaluation_values,
+            evaluation_values_snapshot,
         )
         evaluation_snapshot = _capture_values_snapshot(
             "prediction evaluation", evaluation.to_primitive()
@@ -567,6 +583,7 @@ def _prediction_outcome(
     signal_session: date,
     outcome_session: date,
     values: OutcomeValuesT,
+    values_snapshot: PrimitiveMappingSnapshot,
 ) -> PredictionOutcome[OutcomeValuesT]:
     outcome_id = _stable_id(
         {
@@ -583,7 +600,7 @@ def _prediction_outcome(
             "outcome_session": outcome_session.isoformat(),
             "record_type": "prediction_outcome",
             "signal_session": signal_session.isoformat(),
-            "values": values.to_primitive(),
+            "values": values_snapshot.to_primitive(),
         }
     )
     return PredictionOutcome(
@@ -600,12 +617,35 @@ def _prediction_outcome(
     )
 
 
+def _prediction_outcome_primitive(
+    outcome: PredictionOutcome[OutcomeValuesT],
+    values: PrimitiveMapping,
+) -> PrimitiveMapping:
+    return {
+        "dataset_fingerprint": outcome.dataset_fingerprint,
+        "dataset_id": outcome.dataset_id,
+        "outcome_configuration_id": outcome.outcome_configuration_id,
+        "outcome_id": outcome.outcome_id,
+        "outcome_implementation_version": outcome.outcome_implementation_version,
+        "outcome_name": outcome.outcome_name,
+        "outcome_result_schema_version": outcome.outcome_result_schema_version,
+        "outcome_session": outcome.outcome_session.isoformat(),
+        "signal_session": outcome.signal_session.isoformat(),
+        "values": values,
+    }
+
+
 def _prediction_evaluation(
     configuration: PredictionStudyConfiguration,
-    signal: PredictionRecord,
+    signal_snapshot: PrimitiveMappingSnapshot,
     outcome: PredictionOutcome[OutcomeValuesT],
     values: EvaluationValuesT,
+    values_snapshot: PrimitiveMappingSnapshot,
 ) -> PredictionEvaluation[EvaluationValuesT]:
+    prediction = cast(
+        PrimitiveMapping,
+        cast(PrimitiveMapping, signal_snapshot.to_primitive()["prediction"])["values"],
+    )
     evaluation_id = _stable_id(
         {
             "evaluation_result_schema_version": (
@@ -617,9 +657,9 @@ def _prediction_evaluation(
             ),
             "evaluator_name": configuration.evaluator_name,
             "outcome_id": outcome.outcome_id,
-            "prediction": signal.prediction_primitive(),
+            "prediction": prediction,
             "record_type": "prediction_evaluation",
-            "values": values.to_primitive(),
+            "values": values_snapshot.to_primitive(),
         }
     )
     return PredictionEvaluation(

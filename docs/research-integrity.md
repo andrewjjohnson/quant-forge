@@ -247,9 +247,11 @@ records before the dataset is exposed to labeler validation and checks them
 after validation and around every label call. It also snapshots prediction and
 outcome primitives around evaluation, revalidates component-owned values after
 all evaluations to catch delayed mutation, and includes the complete
-contemporaneous feature payload in row identity. Returned rows use detached typed
-payloads and immutable primitive snapshots so later component reuse cannot
-change an earlier result's serialization or invalidate its identities.
+contemporaneous feature payload in row identity. Outcome and evaluation
+identities hash their already-captured canonical value snapshots rather than
+re-invoking component serializers. Returned rows use detached typed payloads and
+immutable primitive snapshots so later component reuse cannot change an earlier
+result's serialization or invalidate its identities.
 
 For the original overnight-gap study, the prediction strategy sees
 completed-session OHLC and causal Wilder indicator outputs but no next-open
