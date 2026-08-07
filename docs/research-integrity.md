@@ -251,7 +251,10 @@ contemporaneous feature payload in row identity. Outcome and evaluation
 identities hash their already-captured canonical value snapshots rather than
 re-invoking component serializers. Returned rows use detached typed payloads and
 immutable primitive snapshots so later component reuse cannot change an earlier
-result's serialization or invalidate its identities.
+result's serialization or invalidate its identities. The backward-compatible
+overnight-gap adapter likewise includes the complete fixed causal signal
+snapshot in each legacy prediction ID, preventing changed direction, reason, or
+features from aliasing an existing scientific record.
 
 For the original overnight-gap study, the prediction strategy sees
 completed-session OHLC and causal Wilder indicator outputs but no next-open

@@ -92,9 +92,29 @@ def load_dataset(arguments: argparse.Namespace) -> tuple[MarketDataset, str]:
             refresh=arguments.refresh,
         )
         source_label = "Tiingo End-of-Day"
-    if dataset.metadata.canonical_symbol != SYMBOL:
-        raise RequestError("the maintained baseline requires a SPY dataset")
+    _validate_maintained_dataset(dataset)
     return dataset, source_label
+
+
+def _validate_maintained_dataset(dataset: MarketDataset) -> None:
+    metadata = dataset.metadata
+    mismatches: list[str] = []
+    if metadata.canonical_symbol != SYMBOL:
+        mismatches.append(f"symbol={metadata.canonical_symbol}")
+    if metadata.provider_name != TiingoProvider.name:
+        mismatches.append(f"provider={metadata.provider_name}")
+    if metadata.requested_start != REQUESTED_START:
+        mismatches.append(f"requested_start={metadata.requested_start.isoformat()}")
+    if metadata.requested_end != REQUESTED_END:
+        mismatches.append(f"requested_end={metadata.requested_end.isoformat()}")
+    if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
+        mismatches.append(f"adjustment={metadata.adjustment_mode.value}")
+    if mismatches:
+        raise RequestError(
+            "dataset does not match the maintained unadjusted Tiingo SPY request "
+            f"from {REQUESTED_START.isoformat()} through {REQUESTED_END.isoformat()}: "
+            + ", ".join(mismatches)
+        )
 
 
 def export_result(

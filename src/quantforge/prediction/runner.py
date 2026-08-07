@@ -22,7 +22,7 @@ from quantforge.prediction.outcomes.overnight_gap import (
 )
 from quantforge.prediction.study import run_prediction_study
 
-ENGINE_VERSION = "2"
+ENGINE_VERSION = "3"
 RESULT_SCHEMA_VERSION = "2"
 LIMITATIONS = (
     "direction accuracy is descriptive and is not an executable trade backtest",
@@ -72,6 +72,11 @@ def run_prediction_analysis(
     rows: list[PredictionRow] = []
     for study_row in study_result.rows:
         signal = study_row.signal
+        study_row_snapshot = study_row.to_primitive()
+        fixed_signal_snapshot: PrimitiveMapping = {
+            "features": study_row_snapshot["features"],
+            "prediction": study_row_snapshot["prediction"],
+        }
         outcome = study_row.outcome
         outcome_values = outcome.values
         evaluation_values = study_row.evaluation.values
@@ -79,6 +84,7 @@ def run_prediction_analysis(
             {
                 "analysis_id": analysis_id,
                 "record_type": "prediction",
+                "signal": fixed_signal_snapshot,
                 "symbol": signal.symbol,
                 "signal_session": signal.signal_session.isoformat(),
                 "outcome_session": outcome.outcome_session.isoformat(),

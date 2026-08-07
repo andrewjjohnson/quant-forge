@@ -276,11 +276,14 @@ immutable primitive snapshots. The current generic-only correction advances
 the engine to `5`: signals are fixed and guarded before any labeler receives the
 future-bearing dataset. The latest generic-only correction advances the engine
 to `6`: outcome and evaluation identities derive directly from their canonical
-value snapshots. A comparison-only integrity correction
-separately advances the comparison engine/result versions to `3`: custom-period
-stability labels are chronology-neutral, and valid zero-prediction results
-export deterministic header-only CSV artifacts. The provenance correction
-intentionally changed legacy analysis and prediction IDs; generic engine
+value snapshots. A legacy-adapter identity correction advances only the legacy
+gap engine to `3`: each prediction ID includes the complete fixed causal signal
+snapshot, while its result schema remains at `2`. A comparison-only integrity
+correction separately advances the comparison engine/result versions to `3`:
+custom-period stability labels are chronology-neutral, and valid
+zero-prediction results export deterministic header-only CSV artifacts. The
+provenance correction intentionally changed legacy analysis and prediction IDs;
+generic engine
 corrections change generic study and row IDs even when numerical predictions
 and metrics are unchanged. Existing older immutable artifacts remain historical
 records at their original paths; current runs write new identity paths rather
@@ -342,12 +345,12 @@ TIINGO_API_KEY=... uv run python scripts/analyze_spy_gap_predictions.py
 uv run python scripts/analyze_spy_gap_predictions.py --dataset-id <dataset-id>
 ```
 
-For the maintained comparison script, a cached dataset must match the exact
-Tiingo SPY request: raw unadjusted prices requested from 2020-01-01 through
-2025-12-31. The command rejects cached IDs from another provider, adjustment
-basis, symbol, or requested range rather than silently running a different
-experiment. The provider-neutral Python API remains available for explicitly
-configured studies on other QF-3 datasets.
+For either maintained script, a cached dataset must match the exact Tiingo SPY
+request: raw unadjusted prices requested from 2020-01-01 through 2025-12-31.
+The commands reject cached IDs from another provider, adjustment basis, symbol,
+or requested range rather than silently running a different experiment. The
+provider-neutral Python APIs remain available for explicitly configured studies
+on other QF-3 datasets.
 
 The concise JSON output includes each configuration, matched always-UP results,
 strongest and weakest years and weekdays, the threshold table, and the export

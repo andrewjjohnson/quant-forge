@@ -15,6 +15,7 @@ from quantforge.prediction import (
     PredictionAnalysisResult,
     PredictionDirection,
     PredictionExportError,
+    PredictionFeature,
     PredictionParameter,
     PredictionSignal,
     PredictionStrategyOutput,
@@ -42,7 +43,9 @@ class FixedPredictionStrategy:
     warm_up_observations = 1
 
     def __init__(self, directions: tuple[PredictionDirection, ...]) -> None:
-        self._directions = directions
+        self.emitted_directions = directions
+        self.reason = "fixed test direction"
+        self.feature_values: tuple[PredictionFeature, ...] = ()
         self._parameters = FixedParameters(
             ",".join(direction.value for direction in directions)
         )
@@ -79,10 +82,12 @@ class FixedPredictionStrategy:
                 strategy_implementation_version=self.implementation_version,
                 strategy_configuration_id=self.configuration_id,
                 strategy_parameters=parameter_snapshot,
-                reason="fixed test direction",
-                feature_values=(),
+                reason=self.reason,
+                feature_values=self.feature_values,
             )
-            for bar, direction in zip(dataset.bars, self._directions, strict=True)
+            for bar, direction in zip(
+                dataset.bars, self.emitted_directions, strict=True
+            )
         )
         return PredictionStrategyOutput(
             self.name,
@@ -170,18 +175,49 @@ def test_repeated_inputs_are_deterministic_and_json_safe() -> None:
 
     assert first == second
     assert first.analysis_id == (
-        "349c8ec4ad441cf21f4329b2d2231040db056026fe80cb4eee6336ae19a1048c"
+        "773715d62241942d8bbf7f0e16d87a3e221478f5395b6f4eb8453df14f12b229"
     )
     assert tuple(row.prediction_id for row in first.rows) == (
-        "193ec1921b1a6567576e00dc3c716301afa53096392abaf732a5e5536eb77807",
-        "96271bc2dacb356bd4f3628372bf3bc3003b9b6ba59fee0019571df6a5efc216",
-        "3d73548c003b91e764353b39f77914d139507fe17d0d2ff4f7124a9641e981d5",
+        "8e8c3eb789975fa8884894653da6e18dba62554af3b9ea0b98e9698049191464",
+        "6f0eebfdfc4ded666cf6100d547f2a252b076a16a99d526b43a0f2dc35a22ecf",
+        "eeda2f9e221e6c8b64d807550814396796b291041ab73ca8185546c9355c6949",
     )
-    assert first.engine_version == "2"
+    assert first.engine_version == "3"
     assert first.result_schema_version == "2"
     assert first.analysis_id == second.analysis_id
     assert first.to_primitive() == second.to_primitive()
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
+
+
+@pytest.mark.parametrize("changed_signal_field", ["direction", "reason", "features"])
+def test_legacy_prediction_ids_include_the_fixed_signal_snapshot(
+    changed_signal_field: str,
+) -> None:
+    dataset = make_dataset(
+        ("100", "100"),
+        opens=("100", "102"),
+        highs=("101", "103"),
+        lows=("99", "99"),
+    )
+    strategy = FixedPredictionStrategy(
+        (PredictionDirection.UP, PredictionDirection.DOWN)
+    )
+    original = run_prediction_analysis(dataset, strategy)
+
+    if changed_signal_field == "direction":
+        strategy.emitted_directions = (
+            PredictionDirection.DOWN,
+            PredictionDirection.DOWN,
+        )
+    elif changed_signal_field == "reason":
+        strategy.reason = "changed without changing declared configuration"
+    else:
+        strategy.feature_values = (PredictionFeature("changed_feature", Decimal(1)),)
+
+    changed = run_prediction_analysis(dataset, strategy)
+
+    assert original.analysis_id == changed.analysis_id
+    assert original.rows[0].prediction_id != changed.rows[0].prediction_id
 
 
 def test_export_writes_manifest_and_labeled_prediction_csv(tmp_path: Path) -> None:
