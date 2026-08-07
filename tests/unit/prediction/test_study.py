@@ -192,6 +192,19 @@ class SharedSignalPredictionStrategy(RecordingPredictionStrategy):
         return output
 
 
+class SharedOutputPredictionStrategy(RecordingPredictionStrategy):
+    def __init__(
+        self, events: list[str], shared_outputs: list[NumericPredictionOutput]
+    ) -> None:
+        super().__init__(events)
+        self._shared_outputs = shared_outputs
+
+    def generate(self, dataset: MarketDataset) -> NumericPredictionOutput:
+        output = super().generate(dataset)
+        self._shared_outputs.append(output)
+        return output
+
+
 @dataclass(frozen=True, slots=True)
 class FutureCloseValues:
     reference_close: Decimal
@@ -442,6 +455,24 @@ class OutcomeMutatingEvaluator(FutureCloseChangeEvaluator):
         return super().evaluate(signal, outcome)
 
 
+class OutputSignalCollectionMutatingEvaluator(FutureCloseChangeEvaluator):
+    name = "output_signal_collection_mutating_future_close_change"
+
+    def __init__(
+        self, events: list[str], shared_outputs: list[NumericPredictionOutput]
+    ) -> None:
+        super().__init__(events)
+        self._shared_outputs = shared_outputs
+
+    def evaluate(
+        self,
+        signal: NumericPrediction,
+        outcome: PredictionOutcome[FutureCloseValues],
+    ) -> FutureCloseChangeValues:
+        object.__setattr__(self._shared_outputs[0], "signals", ())
+        return super().evaluate(signal, outcome)
+
+
 class DelayedMutatingEvaluator(FutureCloseChangeEvaluator):
     name = "delayed_mutating_future_close_change"
 
@@ -675,6 +706,24 @@ def test_signal_validation_rejects_first_serialization_parameter_drift() -> None
 
     with pytest.raises(InvalidPredictionOutputError, match="prediction signal"):
         run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+def test_generated_signal_collection_is_snapshotted_once() -> None:
+    events: list[str] = []
+    shared_outputs: list[NumericPredictionOutput] = []
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        SharedOutputPredictionStrategy(events, shared_outputs),
+        FutureCloseOutcomeLabeler(events),
+        OutputSignalCollectionMutatingEvaluator(events, shared_outputs),
+    )
+
+    result = run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+    assert result.generated_prediction_count == 3
+    assert len(result.rows) == 2
+    assert result.unavailable_outcome_count == 1
 
 
 @pytest.mark.parametrize("mutation_phase", ["strategy", "validation", "labeling"])

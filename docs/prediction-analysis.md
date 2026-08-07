@@ -280,7 +280,9 @@ value snapshots. The next generic-only correction advances the engine to `7`:
 signal primitives are captured before validation, and parameter validation reads
 from that canonical snapshot. The generic engine advances to `8` to execute
 components against an isolated dataset copy and reject any mutation relative to
-the validated pristine snapshot. A legacy-adapter identity correction advances only
+the validated pristine snapshot. The generic engine advances to `9` to capture
+the generated signal tuple once for validation, evaluation, and record counts.
+A legacy-adapter identity correction advances only
 the legacy gap engine to `3`: each prediction ID includes the complete fixed
 causal signal snapshot, while its result schema remains at `2`. A
 comparison-only integrity correction advances the comparison engine/result

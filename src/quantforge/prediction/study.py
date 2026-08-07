@@ -33,7 +33,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "8"
+STUDY_ENGINE_VERSION = "9"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -220,6 +220,7 @@ def run_prediction_study(
     )
 
     output = study.strategy.generate(component_dataset)
+    generated_signals = tuple(output.signals)
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     _validate_unchanged_component(
         "prediction strategy",
@@ -231,23 +232,24 @@ def run_prediction_study(
         _capture_values_snapshot(
             "prediction signal", _prediction_record_primitive(signal)
         )
-        for signal in output.signals
+        for signal in generated_signals
     )
     _validate_strategy_output(
         component_dataset,
         study.strategy,
         output,
+        generated_signals,
         signal_snapshots,
         configuration.strategy_configuration_id,
         configuration.strategy_warm_up_observations,
     )
-    _validate_signal_snapshots(output.signals, signal_snapshots)
+    _validate_signal_snapshots(generated_signals, signal_snapshots)
 
     # This is intentionally after signal generation. Dataset-specific future-label
     # checks must never run early enough to influence prediction generation.
     study.outcome_labeler.validate_dataset(component_dataset)
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
-    _validate_signal_snapshots(output.signals, signal_snapshots)
+    _validate_signal_snapshots(generated_signals, signal_snapshots)
     rows: list[
         PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     ] = []
@@ -259,7 +261,9 @@ def run_prediction_study(
     bar_indexes = {
         bar.session_date: index for index, bar in enumerate(component_dataset.bars)
     }
-    for signal, signal_snapshot in zip(output.signals, signal_snapshots, strict=True):
+    for signal, signal_snapshot in zip(
+        generated_signals, signal_snapshots, strict=True
+    ):
         _validate_unchanged_values(
             "prediction signal",
             _prediction_record_primitive(signal),
@@ -463,7 +467,7 @@ def run_prediction_study(
         STUDY_ENGINE_VERSION,
         market_data,
         configuration,
-        len(output.signals),
+        len(generated_signals),
         unavailable_outcome_count,
         tuple(rows),
     )
@@ -830,6 +834,7 @@ def _validate_strategy_output(
     dataset: MarketDataset,
     strategy: PredictionRule[PredictionRecordT],
     output: PredictionRuleOutput[PredictionRecordT],
+    signals: tuple[PredictionRecordT, ...],
     signal_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     expected_configuration_id: str,
     expected_warm_up_observations: int,
@@ -844,22 +849,20 @@ def _validate_strategy_output(
             "prediction output identity does not match its strategy and dataset"
         )
     expected_order = tuple(
-        sorted(
-            output.signals, key=lambda signal: (signal.signal_session, signal.symbol)
-        )
+        sorted(signals, key=lambda signal: (signal.signal_session, signal.symbol))
     )
-    if output.signals != expected_order:
+    if signals != expected_order:
         raise InvalidPredictionOutputError(
             "prediction signals must be deterministically ordered"
         )
-    sessions = tuple(signal.signal_session for signal in output.signals)
+    sessions = tuple(signal.signal_session for signal in signals)
     if len(sessions) != len(set(sessions)):
         raise InvalidPredictionOutputError(
             "a strategy may emit at most one prediction per session"
         )
     bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
     expected_parameters = strategy.parameters.to_primitive()
-    for signal, signal_snapshot in zip(output.signals, signal_snapshots, strict=True):
+    for signal, signal_snapshot in zip(signals, signal_snapshots, strict=True):
         signal_index = bar_indexes.get(signal.signal_session)
         if (
             signal.symbol != dataset.metadata.canonical_symbol

@@ -243,9 +243,11 @@ signal must follow at least that many completed dataset observations.
 Returned outcome sessions must match the labeler's exact declared session
 horizon, and a labeler may report an unavailable outcome only when that declared
 future session lies beyond the dataset boundary. The runner snapshots prediction
-records before validating their parameter payloads or exposing the dataset to
-labeler validation, reads configured parameters from the canonical snapshots,
-and checks them after validation and around every label call. It also snapshots
+records and their complete generated collection once before validating parameter
+payloads or exposing the dataset to labeler validation. The same fixed collection
+drives validation, evaluation, and reported record counts. The runner reads
+configured parameters from the canonical snapshots and checks them after
+validation and around every label call. It also snapshots
 prediction and outcome primitives around evaluation, revalidates component-owned
 values after all evaluations to catch delayed mutation, and includes the complete
 contemporaneous feature payload in row identity. Outcome and evaluation
