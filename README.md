@@ -122,7 +122,9 @@ TIINGO_API_KEY=... uv run python scripts/analyze_spy_gap_predictions.py
 This reports prediction accuracy and average absolute gap size for correct and
 incorrect guesses. It does not execute trades or claim a fill at the signal
 close. Pass `--dataset-id <id>` to reproduce the analysis from a cached QF-3
-dataset without contacting Tiingo.
+dataset without contacting Tiingo. The maintained comparison command verifies
+that a cached ID matches its exact raw, unadjusted Tiingo SPY 2020–2025 request;
+use the provider-neutral Python API for intentionally different datasets.
 
 ## Contributing
 

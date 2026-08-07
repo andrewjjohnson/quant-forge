@@ -115,6 +115,11 @@ TIINGO_API_KEY=... uv run python scripts/analyze_spy_gap_predictions.py
 uv run python scripts/analyze_spy_gap_predictions.py --dataset-id <dataset-id>
 ```
 
+The cached ID accepted by this maintained script must come from the exact raw,
+unadjusted Tiingo SPY request for 2020-01-01 through 2025-12-31. Use the public
+comparison API for intentionally different providers, price bases, symbols, or
+requested ranges.
+
 The comparison creates no orders or fills. Its 2020–2025 periods have already
 been inspected and are not untouched holdout results.
 

@@ -1,8 +1,12 @@
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal, localcontext
+from typing import cast
 
 import pytest
 
+import quantforge.prediction.comparison as comparison_module
 from quantforge.data import MarketDataset
 from quantforge.prediction import (
     ALL_REASONS,
@@ -10,6 +14,7 @@ from quantforge.prediction import (
     ComparisonPrediction,
     FeatureRangeBin,
     InvalidPredictionConfigurationError,
+    MetricSummary,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
     PredictionComparisonParameters,
@@ -147,6 +152,69 @@ def test_threshold_sensitivity_is_exact_ordered_monotonic_and_nonmutating() -> N
         "validation",
         "observed_2025",
     }
+
+
+def test_threshold_stability_label_is_neutral_for_custom_periods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty = comparison_module.summarize_predictions(())
+    period_metrics = iter(
+        (
+            replace(
+                empty,
+                prediction_count=1,
+                average_signed_prediction_return=Decimal("0.01"),
+            ),
+            replace(
+                empty,
+                prediction_count=1,
+                average_signed_prediction_return=Decimal("-0.01"),
+            ),
+        )
+    )
+
+    def next_period_metric(
+        predictions: tuple[ComparisonPrediction, ...],
+        *,
+        confidence_level: Decimal,
+    ) -> MetricSummary:
+        del predictions, confidence_level
+        return next(period_metrics)
+
+    monkeypatch.setattr(
+        comparison_module,
+        "summarize_predictions",
+        next_period_metric,
+    )
+    parameters = PredictionComparisonParameters(
+        minimum_sample_size=1,
+        periods=(
+            StudyPeriod(
+                "calibration",
+                date(2030, 1, 1),
+                date(2030, 1, 31),
+                "exploratory",
+            ),
+            StudyPeriod(
+                "confirmation",
+                date(2030, 2, 1),
+                date(2030, 2, 28),
+                "exploratory",
+            ),
+        ),
+    )
+
+    threshold_stability = cast(
+        Callable[
+            [tuple[ComparisonPrediction, ...], PredictionComparisonParameters], str
+        ],
+        getattr(comparison_module, "_threshold_stability"),
+    )
+    assessment = threshold_stability((), parameters)
+
+    assert assessment == "positive_first_period_with_later_nonpositive_period"
+    assert "2020" not in assessment
+    assert "2025" not in assessment
 
 
 def test_period_and_weekday_summaries_are_explicit_and_nonoverlapping() -> None:

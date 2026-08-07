@@ -64,8 +64,8 @@ from quantforge.prediction.overnight_gap import (
 )
 from quantforge.prediction.runner import run_prediction_analysis
 
-COMPARISON_ENGINE_VERSION = "2"
-COMPARISON_SCHEMA_VERSION = "2"
+COMPARISON_ENGINE_VERSION = "3"
+COMPARISON_SCHEMA_VERSION = "3"
 ALL_REASONS = "__all_reasons__"
 DEFAULT_RSI_THRESHOLDS = tuple(Decimal(value) for value in (5, 10, 15, 20, 25, 30))
 WEEKDAY_NAMES = (
@@ -836,7 +836,7 @@ def _threshold_stability(
         and averages[0] > 0
         and any(value is not None and value <= 0 for value in averages[1:])
     ):
-        return "concentrated_2020_2022_and_degraded_2023_2025"
+        return "positive_first_period_with_later_nonpositive_period"
     return "mixed_or_weak_across_periods"
 
 

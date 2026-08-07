@@ -8,7 +8,10 @@ import tempfile
 from pathlib import Path
 
 from quantforge.configuration import Primitive, PrimitiveMapping
-from quantforge.prediction.comparison_models import PredictionComparisonStudyResult
+from quantforge.prediction.comparison_models import (
+    COMPARISON_PREDICTION_FIELDNAMES,
+    PredictionComparisonStudyResult,
+)
 from quantforge.prediction.errors import PredictionExportError
 
 COMPARISON_ARTIFACT_FILENAMES = (
@@ -42,6 +45,7 @@ def export_prediction_comparison(
         tempfile.mkdtemp(prefix=f".{result.study_id}.", dir=str(output_root))
     )
     try:
+        rule_fieldnames, weekday_fieldnames = _possibly_empty_summary_fieldnames(result)
         _write_json(temporary / "manifest.json", result.manifest_primitive())
         _write_rows(
             temporary / "configuration_summary.csv",
@@ -50,14 +54,17 @@ def export_prediction_comparison(
         _write_rows(
             temporary / "predictions.csv",
             [item.to_primitive() for item in result.predictions],
+            fieldnames=COMPARISON_PREDICTION_FIELDNAMES,
         )
         _write_rows(
             temporary / "rule_summary.csv",
             [item.to_primitive() for item in result.rule_summaries],
+            fieldnames=rule_fieldnames,
         )
         _write_rows(
             temporary / "weekday_summary.csv",
             [item.to_primitive() for item in result.weekday_summaries],
+            fieldnames=weekday_fieldnames,
         )
         _write_rows(
             temporary / "annual_summary.csv",
@@ -82,13 +89,18 @@ def export_prediction_comparison(
         _write_rows(
             temporary / "best_outcomes.csv",
             [item.to_primitive() for item in result.best_outcomes],
+            fieldnames=COMPARISON_PREDICTION_FIELDNAMES,
         )
         _write_rows(
             temporary / "worst_outcomes.csv",
             [item.to_primitive() for item in result.worst_outcomes],
+            fieldnames=COMPARISON_PREDICTION_FIELDNAMES,
         )
         _write_json(temporary / "metrics.json", result.metrics_primitive())
         os.rename(temporary, destination)
+    except PredictionExportError:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
     except (OSError, TypeError, ValueError) as error:
         shutil.rmtree(temporary, ignore_errors=True)
         raise PredictionExportError(
@@ -147,10 +159,20 @@ def _write_json(path: Path, value: PrimitiveMapping) -> None:
         os.fsync(stream.fileno())
 
 
-def _write_rows(path: Path, rows: list[PrimitiveMapping]) -> None:
-    if not rows:
+def _write_rows(
+    path: Path,
+    rows: list[PrimitiveMapping],
+    *,
+    fieldnames: tuple[str, ...] | None = None,
+) -> None:
+    if fieldnames is None and not rows:
         raise PredictionExportError(f"comparison artifact has no rows: {path.name}")
-    fieldnames = tuple(rows[0])
+    if fieldnames is None:
+        fieldnames = tuple(rows[0])
+    if not fieldnames:
+        raise PredictionExportError(
+            f"comparison artifact has no explicit schema: {path.name}"
+        )
     if any(tuple(row) != fieldnames for row in rows):
         raise PredictionExportError(
             f"comparison artifact rows have inconsistent schemas: {path.name}"
@@ -162,6 +184,32 @@ def _write_rows(path: Path, rows: list[PrimitiveMapping]) -> None:
             writer.writerow({name: _csv_value(row[name]) for name in fieldnames})
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def _possibly_empty_summary_fieldnames(
+    result: PredictionComparisonStudyResult,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if not result.configuration_summaries:
+        raise PredictionExportError(
+            "comparison export requires configuration summary schema"
+        )
+    metric_fieldnames = tuple(result.configuration_summaries[0].metrics.to_primitive())
+    return (
+        (
+            "configuration_name",
+            "eligible_session_count",
+            "prediction_frequency",
+            "reason",
+            *metric_fieldnames,
+        ),
+        (
+            "configuration_name",
+            "reason",
+            "weekday",
+            "weekday_name",
+            *metric_fieldnames,
+        ),
+    )
 
 
 def _csv_value(value: Primitive) -> str | int | float | bool | None:

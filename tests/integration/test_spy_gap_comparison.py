@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 
+import quantforge.prediction.comparison_export as comparison_export_module
 from quantforge.prediction import (
     COMPARISON_ARTIFACT_FILENAMES,
+    PredictionComparisonParameters,
     PredictionExportError,
     export_prediction_comparison,
     run_prediction_comparison,
@@ -81,3 +83,45 @@ def test_comparison_export_validation_rejects_mutation(tmp_path: Path) -> None:
 
     with pytest.raises(PredictionExportError, match="expected immutable result"):
         validate_prediction_comparison_export(result, destination)
+
+
+def test_zero_prediction_comparison_exports_header_only_artifacts(
+    tmp_path: Path,
+) -> None:
+    closes = tuple("100" for _ in range(15))
+    result = run_prediction_comparison(
+        make_dataset(closes),
+        PredictionComparisonParameters(included_weekdays=(6,)),
+    )
+
+    destination = export_prediction_comparison(result, tmp_path)
+
+    assert not result.predictions
+    for filename in (
+        "predictions.csv",
+        "rule_summary.csv",
+        "weekday_summary.csv",
+        "best_outcomes.csv",
+        "worst_outcomes.csv",
+    ):
+        with (destination / filename).open(newline="") as stream:
+            rows = list(csv.reader(stream))
+        assert len(rows) == 1
+        assert rows[0]
+    assert validate_prediction_comparison_export(result, destination) == destination
+
+
+def test_comparison_export_removes_temporary_directory_on_domain_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = run_prediction_comparison(make_dataset(tuple("100" for _ in range(15))))
+
+    def fail_write(*args: object, **kwargs: object) -> None:
+        raise PredictionExportError("forced export failure")
+
+    monkeypatch.setattr(comparison_export_module, "_write_rows", fail_write)
+
+    with pytest.raises(PredictionExportError, match="forced export failure"):
+        export_prediction_comparison(result, tmp_path)
+
+    assert not tuple(tmp_path.iterdir())

@@ -1,5 +1,7 @@
 import argparse
 import json
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -7,6 +9,7 @@ import scripts.analyze_spy_gap_predictions as comparison_script
 
 from quantforge.data import (
     AdjustmentMode,
+    DatasetMetadata,
     MarketDataCache,
     MarketDataset,
     RequestError,
@@ -43,10 +46,24 @@ def _spy_dataset() -> MarketDataset:
     )
 
 
+def _maintained_spy_dataset() -> MarketDataset:
+    dataset = _spy_dataset()
+    return replace(
+        dataset,
+        metadata=replace(
+            dataset.metadata,
+            provider_name=TiingoProvider.name,
+            requested_start=comparison_script.REQUESTED_START,
+            requested_end=comparison_script.REQUESTED_END,
+            adjustment_mode=AdjustmentMode.UNADJUSTED,
+        ),
+    )
+
+
 def test_tiingo_is_the_default_fixed_comparison_source(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    expected = _spy_dataset()
+    expected = _maintained_spy_dataset()
 
     class FakeMarketDataService:
         def __init__(self, provider: object, cache: object) -> None:
@@ -82,6 +99,77 @@ def test_tiingo_is_the_default_fixed_comparison_source(
 
     assert dataset is expected
     assert source == "Tiingo End-of-Day"
+
+
+def test_cached_dataset_matching_the_maintained_request_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expected = _maintained_spy_dataset()
+
+    class FakeCache:
+        def __init__(self, root: Path) -> None:
+            assert root == tmp_path / "cache"
+
+        def load(self, dataset_id: str) -> MarketDataset:
+            assert dataset_id == "maintained-dataset"
+            return expected
+
+    monkeypatch.setattr(comparison_script, "MarketDataCache", FakeCache)
+    arguments = argparse.Namespace(
+        cache_root=tmp_path / "cache",
+        dataset_id="maintained-dataset",
+        output_root=tmp_path / "reports",
+        refresh=False,
+    )
+
+    dataset, source = comparison_script.load_dataset(arguments)
+
+    assert dataset is expected
+    assert source == "cached QF-3 dataset"
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        replace(_maintained_spy_dataset().metadata, provider_name="other"),
+        replace(
+            _maintained_spy_dataset().metadata,
+            adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+        ),
+        replace(
+            _maintained_spy_dataset().metadata,
+            requested_start=date(2021, 1, 1),
+        ),
+        replace(
+            _maintained_spy_dataset().metadata,
+            requested_end=date(2024, 12, 31),
+        ),
+    ],
+)
+def test_cached_dataset_must_match_the_maintained_request(
+    metadata: DatasetMetadata,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    expected = replace(_maintained_spy_dataset(), metadata=metadata)
+
+    class FakeCache:
+        def __init__(self, root: Path) -> None:
+            assert root == tmp_path / "cache"
+
+        def load(self, dataset_id: str) -> MarketDataset:
+            return expected
+
+    monkeypatch.setattr(comparison_script, "MarketDataCache", FakeCache)
+    arguments = argparse.Namespace(
+        cache_root=tmp_path / "cache",
+        dataset_id="different-experiment",
+        output_root=tmp_path / "reports",
+        refresh=False,
+    )
+
+    with pytest.raises(RequestError, match="does not match the maintained"):
+        comparison_script.load_dataset(arguments)
 
 
 def test_missing_tiingo_key_has_a_safe_actionable_error(

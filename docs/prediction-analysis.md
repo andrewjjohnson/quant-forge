@@ -246,14 +246,17 @@ directional evaluation back into that public result. Existing callers remain
 runnable and numerical results remain directly comparable.
 
 The pre-merge schema-v2 integrity fix adds QF-3 retrieval time and provider
-timezone to prediction manifests. Legacy gap and comparison engine/result
-versions therefore advance to `2`, and the generic study engine advances to
-`2` for exact horizon enforcement, evaluator-input mutation detection, and
-feature-complete row identities. These corrections intentionally change
-analysis, study, prediction, and row IDs even when numerical predictions and
-metrics are unchanged. Existing schema-v1 immutable artifacts remain historical
-records at their original paths; schema-v2 runs write new identity paths rather
-than reusing or overwriting them.
+timezone to prediction manifests. The legacy gap engine/result versions and the
+generic study engine therefore advance to `2`; the generic engine also enforces
+exact horizons, detects evaluator-input mutation, and creates feature-complete
+row identities. A subsequent comparison-only integrity correction advances the
+comparison engine/result versions to `3`: custom-period stability labels are
+chronology-neutral, and valid zero-prediction results export deterministic
+header-only CSV artifacts. These corrections intentionally change analysis,
+study, prediction, and row IDs even when numerical predictions and metrics are
+unchanged. Existing older immutable artifacts remain historical records at
+their original paths; current runs write new identity paths rather than reusing
+or overwriting them.
 
 New experiments should use the generic composition API and add their own
 study-specific result summaries rather than widening the legacy gap schema:
@@ -311,6 +314,13 @@ TIINGO_API_KEY=... uv run python scripts/analyze_spy_gap_predictions.py
 uv run python scripts/analyze_spy_gap_predictions.py --dataset-id <dataset-id>
 ```
 
+For the maintained comparison script, a cached dataset must match the exact
+Tiingo SPY request: raw unadjusted prices requested from 2020-01-01 through
+2025-12-31. The command rejects cached IDs from another provider, adjustment
+basis, symbol, or requested range rather than silently running a different
+experiment. The provider-neutral Python API remains available for explicitly
+configured studies on other QF-3 datasets.
+
 The concise JSON output includes each configuration, matched always-UP results,
 strongest and weakest years and weekdays, the threshold table, and the export
 location. It never prints the API key.
@@ -351,6 +361,9 @@ CSV files for configuration, prediction, rule, weekday, annual, period,
 threshold, feature-bin, baseline, best-outcome, and worst-outcome records.
 Configuration and dataset fingerprints participate in the study identity.
 Repeated runs validate exact bytes before reusing an existing directory.
+When a valid configuration produces no prediction rows, row-oriented artifacts
+retain their complete CSV headers and zero data rows. Failed exports remove
+their temporary directory before returning an error.
 
 Underlying close-to-next-open gaps do not model option spreads, implied
 volatility changes, strike selection, contract multipliers, theta, liquidity,
