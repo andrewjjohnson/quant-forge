@@ -33,6 +33,12 @@ SESSIONS = (
     date(2024, 7, 10),
     date(2024, 7, 11),
     date(2024, 7, 12),
+    date(2024, 7, 15),
+    date(2024, 7, 16),
+    date(2024, 7, 17),
+    date(2024, 7, 18),
+    date(2024, 7, 19),
+    date(2024, 7, 22),
 )
 
 
@@ -42,6 +48,7 @@ def make_dataset(
     sessions: tuple[date, ...] | None = None,
     dataset_id: str = "synthetic-dataset",
     adjustment_mode: AdjustmentMode = AdjustmentMode.UNADJUSTED,
+    adjusted_fields_used: bool = False,
     calendar: str = "XNYS",
     requested_start: date | None = None,
     requested_end: date | None = None,
@@ -51,25 +58,38 @@ def make_dataset(
     dividends: tuple[tuple[date, str], ...] = (),
     splits: tuple[tuple[date, str], ...] = (),
     corporate_actions_complete: bool = True,
+    opens: tuple[str, ...] | None = None,
+    highs: tuple[str, ...] | None = None,
+    lows: tuple[str, ...] | None = None,
 ) -> MarketDataset:
     """Build identity-bound daily bars; ``dataset_id`` is a raw-fixture seed."""
     selected_sessions = SESSIONS[: len(closes)] if sessions is None else sessions
     assert len(selected_sessions) == len(closes)
+    assert opens is None or len(opens) == len(closes)
+    assert highs is None or len(highs) == len(closes)
+    assert lows is None or len(lows) == len(closes)
     selected_start = (
         selected_sessions[0] if requested_start is None else requested_start
     )
     selected_end = selected_sessions[-1] if requested_end is None else requested_end
     bars: list[DailyBar] = []
-    for session, close_text in zip(selected_sessions, closes, strict=True):
+    for index, (session, close_text) in enumerate(
+        zip(selected_sessions, closes, strict=True)
+    ):
         close = Decimal(close_text)
         comparison_close = close if close.is_finite() else Decimal(100)
+        session_open = comparison_close if opens is None else Decimal(opens[index])
+        session_high = (
+            comparison_close + Decimal(1) if highs is None else Decimal(highs[index])
+        )
+        session_low = comparison_close if lows is None else Decimal(lows[index])
         bars.append(
             DailyBar(
                 "SPY",
                 session,
-                comparison_close,
-                comparison_close + Decimal(1),
-                comparison_close,
+                session_open,
+                session_high,
+                session_low,
                 close,
                 Decimal(1000),
             )
@@ -128,7 +148,7 @@ def make_dataset(
             if adjustment_mode is AdjustmentMode.UNADJUSTED
             else "split_adjusted"
         ),
-        "adjusted_fields_used": False,
+        "adjusted_fields_used": adjusted_fields_used,
         "corporate_action_policy": (
             "separate_provider_reported_cash_dividends_and_splits"
         ),
@@ -187,7 +207,7 @@ def make_dataset(
             if adjustment_mode is AdjustmentMode.UNADJUSTED
             else "split_adjusted"
         ),
-        adjusted_fields_used=False,
+        adjusted_fields_used=adjusted_fields_used,
         corporate_action_policy=(
             "separate_provider_reported_cash_dividends_and_splits"
         ),

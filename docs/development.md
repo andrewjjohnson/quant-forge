@@ -94,6 +94,39 @@ TIINGO_API_KEY=... uv run python scripts/run_spy_backtest.py
 uv run python scripts/run_spy_backtest.py --fixture
 ```
 
+Run the provider-neutral QF-11 overnight-gap analysis against the fixed
+2020-2025 Tiingo SPY request, or reproduce it from an existing cache entry:
+
+```bash
+TIINGO_API_KEY=... uv run python scripts/run_spy_gap_prediction.py
+uv run python scripts/run_spy_gap_prediction.py --dataset-id <dataset-id>
+```
+
+The command prints direction accuracy and average gap sizes; it creates no
+orders or fills. Use `--refresh` only to intentionally retrieve a new immutable
+Tiingo snapshot. A cached ID must come from the exact raw, unadjusted Tiingo SPY
+request for 2020-01-01 through 2025-12-31, use XNYS, include the expected first
+and last sessions, and contain no missing sessions. Use the provider-neutral
+prediction API for intentionally different datasets.
+
+Run the QF-11 exploratory comparison study on the same request or a cached
+dataset. This preserves the original strategy and evaluates the focused,
+RSI-only, and always-UP configurations separately:
+
+```bash
+TIINGO_API_KEY=... uv run python scripts/analyze_spy_gap_predictions.py
+uv run python scripts/analyze_spy_gap_predictions.py --dataset-id <dataset-id>
+```
+
+The cached ID accepted by this maintained script must come from the exact raw,
+unadjusted Tiingo SPY request for 2020-01-01 through 2025-12-31 with complete
+XNYS session coverage. Use the public comparison API for intentionally different
+providers, price bases, symbols, calendars, requested ranges, or incomplete
+samples.
+
+The comparison creates no orders or fills. Its 2020–2025 periods have already
+been inspected and are not untouched holdout results.
+
 Downloaded provider responses remain under ignored `data/`; structured results
 remain under ignored `reports/`. Use `--refresh` only when intentionally
 retrieving a new immutable provider revision. Never stage either directory.
@@ -246,6 +279,19 @@ Outcome labels may include:
 - bars to event.
 
 Outcome-label code must never be imported into live signal-generation paths.
+
+For prediction studies, use the generic `PredictionStudy` composition and
+contracts in [`prediction-analysis.md`](prediction-analysis.md). Implement a
+causal prediction rule, a typed outcome labeler with an explicit future-session
+horizon and required market fields, and a typed evaluator. Keep each component's
+configuration and result schema versioned, and test that they all participate in
+study identity. Include a non-gap contract fixture and append-future tests
+proving historical predictions do not change.
+
+For the concrete next-session gap study, require the immediate calendar
+successor and keep `run_prediction_analysis` and its legacy gap export schema
+backward compatible. Add new hypotheses as prediction strategies or new study
+compositions; do not change the original QF-11 baseline logic.
 
 ## Test organization
 

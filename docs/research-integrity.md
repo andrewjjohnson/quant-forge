@@ -232,6 +232,72 @@ Keep the two concepts separate:
 - **features:** information available at signal time;
 - **labels:** outcomes calculated using later observations.
 
+QF-11 enforces this split through generic typed study contracts. The orchestrator
+first fixes every causal prediction, then invokes the configured outcome
+labeler, then invokes the evaluator with only the fixed prediction and its typed
+outcome. Study identity includes the rule, outcome, evaluator, feature, horizon,
+market-field, schema, and dataset configurations. The generic core does not
+assume an outcome is a gap or an evaluation is directional correctness.
+Strategy warm-up declarations must be positive integers, and every emitted
+signal must follow at least that many completed dataset observations.
+Returned outcome sessions must match the labeler's exact declared session
+horizon, and a labeler may report an unavailable outcome only when that declared
+future session lies beyond the dataset boundary. The runner snapshots prediction
+records and their complete generated collection once before validating parameter
+payloads or exposing the dataset to labeler validation. The same fixed collection
+drives validation, evaluation, and reported record counts. The runner reads
+configured parameters from the canonical snapshots and checks them after
+validation and around every label call. It also snapshots
+prediction and outcome primitives around evaluation, revalidates component-owned
+values after all evaluations to catch delayed mutation, and includes the complete
+contemporaneous feature payload in row identity. Labeler configuration is checked
+immediately after dataset validation and every label callback, and evaluator
+configuration is checked after every evaluation callback, preventing temporary
+per-row semantic drift that is restored before the run ends. Outcome and evaluation
+identities hash their already-captured canonical value snapshots rather than
+re-invoking component serializers. Returned rows use detached typed payloads and
+immutable primitive snapshots so later component reuse cannot change an earlier
+result's serialization or invalidate its identities. Strategy, labeler, and
+evaluator execution uses a detached copy of the validated market dataset and
+checks it against a pristine snapshot after component calls, so custom component
+mutation cannot alter caller-owned data or desynchronize rows from dataset
+provenance. Prediction manifests preserve the QF-3 OHLC and volume bases,
+whether adjusted provider fields were used, and the corporate-action policy so
+volume-derived features and gap labels remain interpretable without an external
+cache lookup. They also retain the complete QF-3 missing-session tuple, including
+requested sessions outside the observed first/last boundaries that are permitted
+by the provider-neutral API. The backward-compatible
+overnight-gap adapter likewise includes the complete fixed causal signal
+snapshot in each legacy prediction ID, preventing changed direction, reason, or
+features from aliasing an existing scientific record.
+
+Comparison weekday summaries cover every day observed among eligible sessions
+after applying weekday filters. This leaves exchange-traded XNYS studies on
+their actual weekdays, preserves header-only summaries when no session matches,
+and prevents weekend observations in `24/7` datasets from disappearing from
+segmented reports.
+
+For the original overnight-gap study, the prediction strategy sees
+completed-session OHLC and causal Wilder indicator outputs but no next-open
+price. Its concrete labeler pairs an already-generated signal with the immediate
+next exchange session. The signal close is explicitly a label anchor, not a
+fabricated same-close fill, and exported accuracy is not labeled as trade
+performance. See `docs/prediction-analysis.md`.
+
+QF-11 comparison experiments preserve that original strategy as an immutable
+baseline and implement narrower hypotheses as separate strategy classes. Sparse
+rules are shown against always-UP both over the full eligible population and on
+their exact matched prediction sessions, making SPY's structural upward-gap
+bias visible. Threshold, range, weekday, year, and already-observed period rows
+retain small samples, weak periods, neutral outcomes, and adverse outliers. The
+2025 segment is labeled observed rather than pristine holdout, and no comparison
+output claims an executable close fill or options profitability.
+
+The maintained Tiingo SPY commands additionally require exact XNYS boundary
+sessions and an empty missing-session set for the declared 2020–2025 request.
+A non-strict cache with truncated edges or other missing sessions is a different
+experiment and cannot be presented as the maintained baseline.
+
 Use versioned schemas for both.
 
 ## Walk-forward testing
