@@ -33,7 +33,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "11"
+STUDY_ENGINE_VERSION = "12"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -248,6 +248,11 @@ def run_prediction_study(
     # This is intentionally after signal generation. Dataset-specific future-label
     # checks must never run early enough to influence prediction generation.
     study.outcome_labeler.validate_dataset(component_dataset)
+    _validate_unchanged_component(
+        "outcome labeler",
+        study.outcome_labeler.configuration(),
+        configuration.outcome_configuration_id,
+    )
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     _validate_signal_snapshots(generated_signals, signal_snapshots)
     rows: list[
@@ -273,6 +278,11 @@ def run_prediction_study(
             bar_indexes[signal.signal_session] + configuration.required_future_sessions
         )
         label = study.outcome_labeler.label(component_dataset, signal.signal_session)
+        _validate_unchanged_component(
+            "outcome labeler",
+            study.outcome_labeler.configuration(),
+            configuration.outcome_configuration_id,
+        )
         _validate_unchanged_dataset(component_dataset, dataset_snapshot)
         _validate_unchanged_values(
             "prediction signal",
@@ -327,6 +337,11 @@ def run_prediction_study(
             outcome_values_snapshot,
         )
         evaluation_values = study.evaluator.evaluate(signal, outcome)
+        _validate_unchanged_component(
+            "prediction evaluator",
+            study.evaluator.configuration(),
+            configuration.evaluator_configuration_id,
+        )
         _validate_unchanged_dataset(component_dataset, dataset_snapshot)
         _validate_unchanged_values(
             "prediction signal",

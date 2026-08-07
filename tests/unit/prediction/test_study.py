@@ -343,6 +343,43 @@ class DatasetMutatingFutureCloseOutcomeLabeler(FutureCloseOutcomeLabeler):
         object.__setattr__(dataset.bars[0], "close", Decimal(999))
 
 
+class CallbackConfigurationMutatingOutcomeLabeler(FutureCloseOutcomeLabeler):
+    def __init__(self, events: list[str], mutation_phase: str) -> None:
+        super().__init__(events)
+        self._mutation_phase = mutation_phase
+        self._configuration_state = "original"
+        self._label_call_count = 0
+        self.name = f"{mutation_phase}_configuration_mutating_future_close"
+
+    def configuration(self) -> PrimitiveMapping:
+        base = super().configuration()
+        parameters = cast(PrimitiveMapping, base["parameters"])
+        return {
+            **base,
+            "parameters": {
+                **parameters,
+                "callback_configuration_state": self._configuration_state,
+            },
+        }
+
+    def validate_dataset(self, dataset: MarketDataset) -> None:
+        super().validate_dataset(dataset)
+        if self._mutation_phase == "validation":
+            self._configuration_state = "changed"
+
+    def label(
+        self, dataset: MarketDataset, signal_session: date
+    ) -> OutcomeLabel[FutureCloseValues] | None:
+        self._label_call_count += 1
+        if self._mutation_phase == "validation" and self._label_call_count == 1:
+            self._configuration_state = "original"
+        elif self._mutation_phase == "labeling":
+            self._configuration_state = (
+                "changed" if self._label_call_count == 1 else "original"
+            )
+        return super().label(dataset, signal_session)
+
+
 @dataclass(frozen=True, slots=True)
 class FirstSerializationMutatingFutureCloseValues:
     reference_close: Decimal
@@ -470,6 +507,37 @@ class OutputSignalCollectionMutatingEvaluator(FutureCloseChangeEvaluator):
         outcome: PredictionOutcome[FutureCloseValues],
     ) -> FutureCloseChangeValues:
         object.__setattr__(self._shared_outputs[0], "signals", ())
+        return super().evaluate(signal, outcome)
+
+
+class CallbackConfigurationMutatingEvaluator(FutureCloseChangeEvaluator):
+    name = "callback_configuration_mutating_future_close_change"
+
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self._configuration_state = "original"
+        self._evaluation_call_count = 0
+
+    def configuration(self) -> PrimitiveMapping:
+        base = super().configuration()
+        parameters = cast(PrimitiveMapping, base["parameters"])
+        return {
+            **base,
+            "parameters": {
+                **parameters,
+                "callback_configuration_state": self._configuration_state,
+            },
+        }
+
+    def evaluate(
+        self,
+        signal: NumericPrediction,
+        outcome: PredictionOutcome[FutureCloseValues],
+    ) -> FutureCloseChangeValues:
+        self._evaluation_call_count += 1
+        self._configuration_state = (
+            "changed" if self._evaluation_call_count == 1 else "original"
+        )
         return super().evaluate(signal, outcome)
 
 
@@ -774,6 +842,41 @@ def test_components_cannot_mutate_the_caller_owned_market_dataset(
         run_prediction_study(dataset, study)
 
     assert dataset.bars[0].close == original_first_close
+
+
+@pytest.mark.parametrize(
+    ("mutation_phase", "changed_component"),
+    [
+        ("validation", "outcome labeler"),
+        ("labeling", "outcome labeler"),
+        ("evaluation", "prediction evaluator"),
+    ],
+)
+def test_component_configuration_is_checked_after_each_callback(
+    mutation_phase: str,
+    changed_component: str,
+) -> None:
+    events: list[str] = []
+    labeler = (
+        FutureCloseOutcomeLabeler(events)
+        if mutation_phase == "evaluation"
+        else CallbackConfigurationMutatingOutcomeLabeler(events, mutation_phase)
+    )
+    evaluator = (
+        CallbackConfigurationMutatingEvaluator(events)
+        if mutation_phase == "evaluation"
+        else FutureCloseChangeEvaluator(events)
+    )
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        RecordingPredictionStrategy(events),
+        labeler,
+        evaluator,
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match=changed_component):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
 
 
 def test_outcome_identity_rejects_first_serialization_value_drift() -> None:

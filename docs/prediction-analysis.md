@@ -54,8 +54,8 @@ and configuration, labeler identity and configuration, future-session horizon,
 required market fields, evaluator identity and configuration, feature
 configuration, and result-schema versions. Changing any of these inputs creates
 a distinct study identity. Component configurations are captured before the run
-and checked again afterward so a mutable component cannot silently change the
-meaning of a result.
+and checked immediately after every callback, as well as afterward, so a mutable
+component cannot temporarily change and restore the meaning of individual rows.
 
 The runner requires each strategy's warm-up declaration to be a positive
 integer and rejects any signal emitted before that many dataset observations
@@ -297,7 +297,9 @@ to every prediction manifest. It advances the legacy gap engine/result to
 to `10` so the identity and schema changes are explicit. The subsequent
 coverage-provenance correction includes the complete requested-range
 missing-session tuple and advances those versions to legacy `5`/`4`, comparison
-`6`/`5`, and generic engine `11`. The provenance
+`6`/`5`, and generic engine `11`. The generic engine advances to `12` to verify
+labeler configuration after dataset validation and every label callback and
+evaluator configuration after every evaluation callback. The provenance
 corrections intentionally changed legacy analysis and prediction IDs; generic
 engine corrections change generic study and row IDs even when numerical
 predictions and metrics are unchanged. Existing older immutable artifacts remain
