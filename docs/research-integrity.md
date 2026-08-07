@@ -261,7 +261,9 @@ mutation cannot alter caller-owned data or desynchronize rows from dataset
 provenance. Prediction manifests preserve the QF-3 OHLC and volume bases,
 whether adjusted provider fields were used, and the corporate-action policy so
 volume-derived features and gap labels remain interpretable without an external
-cache lookup. The backward-compatible
+cache lookup. They also retain the complete QF-3 missing-session tuple, including
+requested sessions outside the observed first/last boundaries that are permitted
+by the provider-neutral API. The backward-compatible
 overnight-gap adapter likewise includes the complete fixed causal signal
 snapshot in each legacy prediction ID, preventing changed direction, reason, or
 features from aliasing an existing scientific record.

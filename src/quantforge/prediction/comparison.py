@@ -64,8 +64,8 @@ from quantforge.prediction.overnight_gap import (
 )
 from quantforge.prediction.runner import run_prediction_analysis
 
-COMPARISON_ENGINE_VERSION = "5"
-COMPARISON_SCHEMA_VERSION = "4"
+COMPARISON_ENGINE_VERSION = "6"
+COMPARISON_SCHEMA_VERSION = "5"
 ALL_REASONS = "__all_reasons__"
 DEFAULT_RSI_THRESHOLDS = tuple(Decimal(value) for value in (5, 10, 15, 20, 25, 30))
 WEEKDAY_NAMES = (

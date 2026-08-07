@@ -138,6 +138,7 @@ class PredictionMarketData:
     calendar: str
     adjustment_mode: str
     bar_count: int
+    missing_sessions: tuple[date, ...]
     corporate_actions_complete: bool
     corporate_action_count: int
     dividend_count: int
@@ -165,6 +166,7 @@ class PredictionMarketData:
             calendar=metadata.calendar,
             adjustment_mode=metadata.adjustment_mode.value,
             bar_count=metadata.bar_count,
+            missing_sessions=metadata.missing_sessions,
             corporate_actions_complete=metadata.corporate_actions_complete,
             corporate_action_count=metadata.corporate_action_count,
             dividend_count=metadata.dividend_count,
@@ -192,6 +194,9 @@ class PredictionMarketData:
             "calendar": self.calendar,
             "adjustment_mode": self.adjustment_mode,
             "bar_count": self.bar_count,
+            "missing_sessions": [
+                session.isoformat() for session in self.missing_sessions
+            ],
             "corporate_actions_complete": self.corporate_actions_complete,
             "corporate_action_count": self.corporate_action_count,
             "dividend_count": self.dividend_count,

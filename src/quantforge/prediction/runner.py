@@ -22,8 +22,8 @@ from quantforge.prediction.outcomes.overnight_gap import (
 )
 from quantforge.prediction.study import run_prediction_study
 
-ENGINE_VERSION = "4"
-RESULT_SCHEMA_VERSION = "3"
+ENGINE_VERSION = "5"
+RESULT_SCHEMA_VERSION = "4"
 LIMITATIONS = (
     "direction accuracy is descriptive and is not an executable trade backtest",
     "the signal close is a prediction anchor, not a claimed fill price",

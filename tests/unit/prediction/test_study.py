@@ -575,6 +575,25 @@ def test_generic_runner_executes_non_gap_outcome_without_gap_fields() -> None:
     assert "direction" not in rendered
 
 
+def test_market_data_provenance_preserves_boundary_missing_sessions() -> None:
+    missing_sessions = (date(2024, 7, 1), date(2024, 7, 5))
+    dataset = make_dataset(
+        ("100", "102"),
+        sessions=(date(2024, 7, 2), date(2024, 7, 3)),
+        requested_start=missing_sessions[0],
+        requested_end=missing_sessions[-1],
+        missing_sessions=missing_sessions,
+    )
+
+    result = run_prediction_study(dataset, _study([]))
+
+    assert result.market_data.missing_sessions == missing_sessions
+    assert result.market_data.to_primitive()["missing_sessions"] == [
+        "2024-07-01",
+        "2024-07-05",
+    ]
+
+
 def test_prediction_label_evaluation_order_and_contract_are_causal() -> None:
     events: list[str] = []
     result = run_prediction_study(make_dataset(("100", "102", "101")), _study(events))

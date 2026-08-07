@@ -294,7 +294,10 @@ filters, including weekends on `24/7` calendars. The market-data provenance
 correction adds volume basis, adjusted-field usage, and corporate-action policy
 to every prediction manifest. It advances the legacy gap engine/result to
 `4`/`3`, the comparison engine/result to `5`/`4`, and the generic study engine
-to `10` so the identity and schema changes are explicit. The provenance
+to `10` so the identity and schema changes are explicit. The subsequent
+coverage-provenance correction includes the complete requested-range
+missing-session tuple and advances those versions to legacy `5`/`4`, comparison
+`6`/`5`, and generic engine `11`. The provenance
 corrections intentionally changed legacy analysis and prediction IDs; generic
 engine corrections change generic study and row IDs even when numerical
 predictions and metrics are unchanged. Existing older immutable artifacts remain
@@ -385,14 +388,15 @@ Each legacy overnight-gap analysis exports atomically to
 - `manifest.json` records engine and schema versions, complete strategy and
   indicator configuration, QF-3 dataset identity, bar fingerprint, retrieval
   timestamp, provider timezone, OHLC and volume bases, adjusted-field usage,
-  corporate-action policy, counts, metrics, and limitations.
+  corporate-action policy, missing requested sessions, counts, metrics, and
+  limitations.
 - `predictions.csv` contains one labeled row per evaluable signal.
 
 Prediction rows record:
 
 - stable prediction, dataset, strategy, and strategy-configuration identities;
 - QF-3 provider, OHLC and volume bases, adjusted-field usage, and
-  corporate-action snapshot/policy provenance;
+  corporate-action snapshot/policy and missing-session provenance;
 - symbol, signal session, and outcome session;
 - direction, originating rule, full parameter set, and contemporaneous feature
   values;

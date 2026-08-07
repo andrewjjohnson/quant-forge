@@ -175,15 +175,15 @@ def test_repeated_inputs_are_deterministic_and_json_safe() -> None:
 
     assert first == second
     assert first.analysis_id == (
-        "852e7c5f18fe1b144ffe367c01152b545e6177b2c925c122c36afcfdbc1813c0"
+        "10ae28f6b24c77382da3d6303ac044f8e61a4191850dee8c077aa4c800d8e974"
     )
     assert tuple(row.prediction_id for row in first.rows) == (
-        "4e151cb94aa5148ce350fc5d7c7fb6a47f2af6aadaec619408adb4e88d3e5209",
-        "b99c7f342776ae0a055483fe6c2edd47ddcda7421bcc0d080f695f8faffdfb2c",
-        "00cf07c12f847c88b98a7808623290d1885e594b23cf53cbd2aad15179113c80",
+        "5bb97b8b64d1cbd0ea93fe2a819d7a8d231678236b632b8f8fa60845de115fbd",
+        "00657471c607907970150f6861c6765eec723002b3104b58725a23cb1e15ba5a",
+        "339a441ed11e6431b46d1b988ef94c2a4309eda719be1f006be0170be742d8f1",
     )
-    assert first.engine_version == "4"
-    assert first.result_schema_version == "3"
+    assert first.engine_version == "5"
+    assert first.result_schema_version == "4"
     assert first.analysis_id == second.analysis_id
     assert first.to_primitive() == second.to_primitive()
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
