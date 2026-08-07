@@ -243,10 +243,11 @@ signal must follow at least that many completed dataset observations.
 Returned outcome sessions must match the labeler's exact declared session
 horizon, and a labeler may report an unavailable outcome only when that declared
 future session lies beyond the dataset boundary. The runner snapshots prediction
-records before the dataset is exposed to labeler validation and checks them
-after validation and around every label call. It also snapshots prediction and
-outcome primitives around evaluation, revalidates component-owned values after
-all evaluations to catch delayed mutation, and includes the complete
+records before validating their parameter payloads or exposing the dataset to
+labeler validation, reads configured parameters from the canonical snapshots,
+and checks them after validation and around every label call. It also snapshots
+prediction and outcome primitives around evaluation, revalidates component-owned
+values after all evaluations to catch delayed mutation, and includes the complete
 contemporaneous feature payload in row identity. Outcome and evaluation
 identities hash their already-captured canonical value snapshots rather than
 re-invoking component serializers. Returned rows use detached typed payloads and
@@ -255,6 +256,12 @@ result's serialization or invalidate its identities. The backward-compatible
 overnight-gap adapter likewise includes the complete fixed causal signal
 snapshot in each legacy prediction ID, preventing changed direction, reason, or
 features from aliasing an existing scientific record.
+
+Comparison weekday summaries cover every day observed among eligible sessions
+after applying weekday filters. This leaves exchange-traded XNYS studies on
+their actual weekdays, preserves header-only summaries when no session matches,
+and prevents weekend observations in `24/7` datasets from disappearing from
+segmented reports.
 
 For the original overnight-gap study, the prediction strategy sees
 completed-session OHLC and causal Wilder indicator outputs but no next-open

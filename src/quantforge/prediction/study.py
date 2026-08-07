@@ -33,7 +33,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "6"
+STUDY_ENGINE_VERSION = "7"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -221,19 +221,21 @@ def run_prediction_study(
         study.strategy.configuration(),
         configuration.strategy_configuration_id,
     )
-    _validate_strategy_output(
-        dataset,
-        study.strategy,
-        output,
-        configuration.strategy_configuration_id,
-        configuration.strategy_warm_up_observations,
-    )
     signal_snapshots = tuple(
         _capture_values_snapshot(
             "prediction signal", _prediction_record_primitive(signal)
         )
         for signal in output.signals
     )
+    _validate_strategy_output(
+        dataset,
+        study.strategy,
+        output,
+        signal_snapshots,
+        configuration.strategy_configuration_id,
+        configuration.strategy_warm_up_observations,
+    )
+    _validate_signal_snapshots(output.signals, signal_snapshots)
 
     # This is intentionally after signal generation. Dataset-specific future-label
     # checks must never run early enough to influence prediction generation.
@@ -806,6 +808,7 @@ def _validate_strategy_output(
     dataset: MarketDataset,
     strategy: PredictionRule[PredictionRecordT],
     output: PredictionRuleOutput[PredictionRecordT],
+    signal_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     expected_configuration_id: str,
     expected_warm_up_observations: int,
 ) -> None:
@@ -834,7 +837,7 @@ def _validate_strategy_output(
         )
     bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
     expected_parameters = strategy.parameters.to_primitive()
-    for signal in output.signals:
+    for signal, signal_snapshot in zip(output.signals, signal_snapshots, strict=True):
         signal_index = bar_indexes.get(signal.signal_session)
         if (
             signal.symbol != dataset.metadata.canonical_symbol
@@ -843,7 +846,8 @@ def _validate_strategy_output(
             or signal.strategy_implementation_version != strategy.implementation_version
             or signal.strategy_configuration_id != expected_configuration_id
             or not _parameter_snapshots_match(
-                signal.parameters_primitive(), expected_parameters
+                _signal_parameters_from_snapshot(signal_snapshot),
+                expected_parameters,
             )
         ):
             raise InvalidPredictionOutputError(
@@ -854,6 +858,23 @@ def _validate_strategy_output(
                 "prediction signal was emitted before the strategy's declared "
                 "warm-up completed"
             )
+
+
+def _signal_parameters_from_snapshot(
+    signal_snapshot: PrimitiveMappingSnapshot,
+) -> PrimitiveMapping:
+    signal = signal_snapshot.to_primitive()
+    prediction = signal.get("prediction")
+    if not isinstance(prediction, dict):
+        raise InvalidPredictionOutputError(
+            "prediction signal requires a canonical prediction record"
+        )
+    parameters = prediction.get("strategy_parameters")
+    if not isinstance(parameters, dict):
+        raise InvalidPredictionOutputError(
+            "prediction signal requires a canonical parameter snapshot"
+        )
+    return cast(PrimitiveMapping, parameters)
 
 
 def _validate_unchanged_component(

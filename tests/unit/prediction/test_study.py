@@ -64,6 +64,22 @@ class NumericPrediction:
 
 
 @dataclass(frozen=True, slots=True)
+class FirstSerializationMutatingNumericPrediction(NumericPrediction):
+    serialized_parameters: bool = False
+
+    def parameters_primitive(self) -> PrimitiveMapping:
+        primitive = super().parameters_primitive()
+        if not self.serialized_parameters:
+            object.__setattr__(
+                self,
+                "strategy_parameters",
+                (PredictionParameter("mode", "changed_after_serialization"),),
+            )
+            object.__setattr__(self, "serialized_parameters", True)
+        return primitive
+
+
+@dataclass(frozen=True, slots=True)
 class NumericPredictionOutput:
     strategy_id: str
     strategy_configuration_id: str
@@ -124,6 +140,32 @@ class RecordingPredictionStrategy:
             self.name,
             self.configuration_id,
             dataset.metadata.dataset_id,
+            signals,
+        )
+
+
+class FirstSerializationMutatingPredictionStrategy(RecordingPredictionStrategy):
+    name = "first_serialization_mutating_prediction_rule"
+
+    def generate(self, dataset: MarketDataset) -> NumericPredictionOutput:
+        output = super().generate(dataset)
+        signals = tuple(
+            FirstSerializationMutatingNumericPrediction(
+                signal.symbol,
+                signal.signal_session,
+                signal.predicted_change,
+                signal.strategy_id,
+                signal.strategy_implementation_version,
+                signal.strategy_configuration_id,
+                signal.strategy_parameters,
+                signal.feature_values,
+            )
+            for signal in output.signals
+        )
+        return NumericPredictionOutput(
+            output.strategy_id,
+            output.strategy_configuration_id,
+            output.dataset_id,
             signals,
         )
 
@@ -581,6 +623,20 @@ def test_labeler_cannot_mutate_signals_after_they_are_generated(
     ].create(
         SharedSignalPredictionStrategy(events, shared_signals),
         SignalMutatingFutureCloseOutcomeLabeler(events, shared_signals, mutation_phase),
+        FutureCloseChangeEvaluator(events),
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match="prediction signal"):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+def test_signal_validation_rejects_first_serialization_parameter_drift() -> None:
+    events: list[str] = []
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        FirstSerializationMutatingPredictionStrategy(events),
+        FutureCloseOutcomeLabeler(events),
         FutureCloseChangeEvaluator(events),
     )
 

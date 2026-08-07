@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, localcontext
 from typing import cast
 
@@ -242,6 +242,32 @@ def test_period_and_weekday_summaries_are_explicit_and_nonoverlapping() -> None:
                 ),
             )
         )
+
+
+def test_weekday_summaries_include_observed_24_7_weekend_sessions() -> None:
+    sessions = tuple(date(2024, 7, 1) + timedelta(days=index) for index in range(15))
+    dataset = make_dataset(
+        ("100",) * len(sessions),
+        sessions=sessions,
+        calendar="24/7",
+    )
+
+    result = run_prediction_comparison(
+        dataset,
+        PredictionComparisonParameters(excluded_weekdays=(), minimum_sample_size=1),
+    )
+    always_up = tuple(
+        item
+        for item in result.weekday_summaries
+        if item.configuration_name == "always_up" and item.reason == ALL_REASONS
+    )
+
+    assert {item.weekday for item in always_up} == set(range(7))
+    assert {
+        item.weekday: item.metrics.prediction_count
+        for item in always_up
+        if item.weekday in {5, 6}
+    } == {5: 2, 6: 2}
 
 
 def test_feature_bins_have_half_open_boundaries_and_sample_flags() -> None:

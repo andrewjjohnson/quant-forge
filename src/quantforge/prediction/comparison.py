@@ -64,7 +64,7 @@ from quantforge.prediction.overnight_gap import (
 )
 from quantforge.prediction.runner import run_prediction_analysis
 
-COMPARISON_ENGINE_VERSION = "3"
+COMPARISON_ENGINE_VERSION = "4"
 COMPARISON_SCHEMA_VERSION = "3"
 ALL_REASONS = "__all_reasons__"
 DEFAULT_RSI_THRESHOLDS = tuple(Decimal(value) for value in (5, 10, 15, 20, 25, 30))
@@ -424,7 +424,9 @@ def run_prediction_comparison(
     rule_summaries = _rule_summaries(
         primary_predictions, eligible_session_count, parameters
     )
-    weekday_summaries = _weekday_summaries(primary_predictions, parameters)
+    weekday_summaries = _weekday_summaries(
+        primary_predictions, tuple(always_rows), parameters
+    )
     annual_summaries = _annual_summaries(dataset, primary_predictions, parameters)
     period_summaries = _period_summaries(primary_predictions, parameters)
     threshold_summaries = _threshold_summaries(
@@ -639,17 +641,11 @@ def _rule_summaries(
 
 def _weekday_summaries(
     predictions: dict[str, tuple[ComparisonPrediction, ...]],
+    eligible_sessions: tuple[date, ...],
     parameters: PredictionComparisonParameters,
 ) -> tuple[WeekdaySummary, ...]:
     rows: list[WeekdaySummary] = []
-    weekdays = tuple(
-        day
-        for day in range(5)
-        if day not in parameters.excluded_weekdays
-        and (
-            parameters.included_weekdays is None or day in parameters.included_weekdays
-        )
-    )
+    weekdays = tuple(sorted({session.weekday() for session in eligible_sessions}))
     for configuration_name, values in predictions.items():
         reasons = (ALL_REASONS, *sorted({item.prediction.reason for item in values}))
         for reason in reasons:
