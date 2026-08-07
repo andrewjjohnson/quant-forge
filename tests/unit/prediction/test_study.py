@@ -128,6 +128,19 @@ class RecordingPredictionStrategy:
         )
 
 
+class SharedSignalPredictionStrategy(RecordingPredictionStrategy):
+    def __init__(
+        self, events: list[str], shared_signals: list[NumericPrediction]
+    ) -> None:
+        super().__init__(events)
+        self._shared_signals = shared_signals
+
+    def generate(self, dataset: MarketDataset) -> NumericPredictionOutput:
+        output = super().generate(dataset)
+        self._shared_signals.extend(output.signals)
+        return output
+
+
 @dataclass(frozen=True, slots=True)
 class FutureCloseValues:
     reference_close: Decimal
@@ -208,6 +221,38 @@ class SelectivelyUnavailableFutureCloseOutcomeLabeler(FutureCloseOutcomeLabeler)
             self._events.append("outcome_label")
             return None
         return super().label(dataset, signal_session)
+
+
+class SignalMutatingFutureCloseOutcomeLabeler(FutureCloseOutcomeLabeler):
+    def __init__(
+        self,
+        events: list[str],
+        shared_signals: list[NumericPrediction],
+        mutation_phase: str,
+    ) -> None:
+        super().__init__(events)
+        self._shared_signals = shared_signals
+        self._mutation_phase = mutation_phase
+        self.name = f"{mutation_phase}_signal_mutating_future_close"
+
+    def validate_dataset(self, dataset: MarketDataset) -> None:
+        super().validate_dataset(dataset)
+        if self._mutation_phase == "validation":
+            self._mutate_signal(dataset)
+
+    def label(
+        self, dataset: MarketDataset, signal_session: date
+    ) -> OutcomeLabel[FutureCloseValues] | None:
+        if self._mutation_phase == "labeling":
+            self._mutate_signal(dataset)
+        return super().label(dataset, signal_session)
+
+    def _mutate_signal(self, dataset: MarketDataset) -> None:
+        object.__setattr__(
+            self._shared_signals[0],
+            "predicted_change",
+            dataset.bars[-1].close,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,6 +526,24 @@ def test_labeler_cannot_censor_an_available_declared_outcome() -> None:
     with pytest.raises(
         InvalidPredictionOutputError, match=r"declared future session is available"
     ):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+@pytest.mark.parametrize("mutation_phase", ["validation", "labeling"])
+def test_labeler_cannot_mutate_signals_after_they_are_generated(
+    mutation_phase: str,
+) -> None:
+    events: list[str] = []
+    shared_signals: list[NumericPrediction] = []
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        SharedSignalPredictionStrategy(events, shared_signals),
+        SignalMutatingFutureCloseOutcomeLabeler(events, shared_signals, mutation_phase),
+        FutureCloseChangeEvaluator(events),
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match="prediction signal"):
         run_prediction_study(make_dataset(("100", "102", "101")), study)
 
 

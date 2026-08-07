@@ -33,7 +33,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "4"
+STUDY_ENGINE_VERSION = "5"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -228,10 +228,17 @@ def run_prediction_study(
         configuration.strategy_configuration_id,
         configuration.strategy_warm_up_observations,
     )
+    signal_snapshots = tuple(
+        _capture_values_snapshot(
+            "prediction signal", _prediction_record_primitive(signal)
+        )
+        for signal in output.signals
+    )
 
     # This is intentionally after signal generation. Dataset-specific future-label
     # checks must never run early enough to influence prediction generation.
     study.outcome_labeler.validate_dataset(dataset)
+    _validate_signal_snapshots(output.signals, signal_snapshots)
     rows: list[
         PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     ] = []
@@ -241,11 +248,21 @@ def run_prediction_study(
     unavailable_outcome_count = 0
     available_sessions = {bar.session_date for bar in dataset.bars}
     bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
-    for signal in output.signals:
+    for signal, signal_snapshot in zip(output.signals, signal_snapshots, strict=True):
+        _validate_unchanged_values(
+            "prediction signal",
+            _prediction_record_primitive(signal),
+            signal_snapshot,
+        )
         expected_outcome_index = (
             bar_indexes[signal.signal_session] + configuration.required_future_sessions
         )
         label = study.outcome_labeler.label(dataset, signal.signal_session)
+        _validate_unchanged_values(
+            "prediction signal",
+            _prediction_record_primitive(signal),
+            signal_snapshot,
+        )
         if label is None:
             if expected_outcome_index < len(dataset.bars):
                 raise InvalidPredictionOutputError(
@@ -271,9 +288,6 @@ def run_prediction_study(
                 "outcome label session does not match its declared future-session "
                 "horizon"
             )
-        signal_snapshot = _capture_values_snapshot(
-            "prediction signal", _prediction_record_primitive(signal)
-        )
         outcome = _prediction_outcome(
             market_data,
             configuration,
@@ -684,6 +698,16 @@ def _validate_component_values(
         evaluation_values,
         evaluation_values_snapshot,
     )
+
+
+def _validate_signal_snapshots(
+    signals: tuple[PredictionRecordT, ...],
+    snapshots: tuple[PrimitiveMappingSnapshot, ...],
+) -> None:
+    for signal, snapshot in zip(signals, snapshots, strict=True):
+        _validate_unchanged_values(
+            "prediction signal", _prediction_record_primitive(signal), snapshot
+        )
 
 
 def _capture_values_snapshot(

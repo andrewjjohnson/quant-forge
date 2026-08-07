@@ -66,8 +66,10 @@ The runner also verifies that a returned outcome session is exactly the
 labeler's declared number of future sessions after the signal within the
 validated QF-3 session sequence. A missing outcome is accepted only when that
 declared future session is beyond the dataset boundary, preventing a labeler
-from selectively censoring available outcomes. Prediction and outcome
-primitives are captured before evaluation and checked afterward, and
+from selectively censoring available outcomes. Every prediction is snapshotted
+before the future-bearing dataset is exposed to labeler validation, then
+rechecked after validation and around each label call. Prediction and outcome
+primitives are also checked around evaluation, and
 component-owned values are checked again after all evaluations, preventing
 immediate or delayed evaluator mutation. Returned rows contain detached typed
 payloads for adapter compatibility, while their authoritative serialization is
@@ -268,7 +270,9 @@ generic study engine to `3`: a labeler cannot omit an available declared
 outcome, and component values are revalidated after all evaluations to detect
 delayed mutation. The latest generic-only correction advances that engine to
 `4`: warm-up declarations are enforced and returned rows are detached with
-immutable primitive snapshots. A comparison-only integrity correction
+immutable primitive snapshots. The current generic-only correction advances
+the engine to `5`: signals are fixed and guarded before any labeler receives the
+future-bearing dataset. A comparison-only integrity correction
 separately advances the comparison engine/result versions to `3`: custom-period
 stability labels are chronology-neutral, and valid zero-prediction results
 export deterministic header-only CSV artifacts. The provenance correction
