@@ -33,7 +33,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "7"
+STUDY_ENGINE_VERSION = "8"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -204,8 +204,12 @@ def run_prediction_study(
 ) -> PredictionStudyResult[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]:
     """Run prediction, labeling, then evaluation as three ordered stages."""
     _validate_dataset(dataset)
+    dataset_snapshot = _detached_copy("prediction market dataset snapshot", dataset)
+    component_dataset = _detached_copy(
+        "prediction component market dataset", dataset_snapshot
+    )
     configuration = _capture_study_configuration(study)
-    market_data = PredictionMarketData.from_qf3(dataset.metadata)
+    market_data = PredictionMarketData.from_qf3(dataset_snapshot.metadata)
     study_id = _stable_id(
         {
             "component": "quantforge_prediction_study",
@@ -215,12 +219,14 @@ def run_prediction_study(
         }
     )
 
-    output = study.strategy.generate(dataset)
+    output = study.strategy.generate(component_dataset)
+    _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     _validate_unchanged_component(
         "prediction strategy",
         study.strategy.configuration(),
         configuration.strategy_configuration_id,
     )
+    _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     signal_snapshots = tuple(
         _capture_values_snapshot(
             "prediction signal", _prediction_record_primitive(signal)
@@ -228,7 +234,7 @@ def run_prediction_study(
         for signal in output.signals
     )
     _validate_strategy_output(
-        dataset,
+        component_dataset,
         study.strategy,
         output,
         signal_snapshots,
@@ -239,7 +245,8 @@ def run_prediction_study(
 
     # This is intentionally after signal generation. Dataset-specific future-label
     # checks must never run early enough to influence prediction generation.
-    study.outcome_labeler.validate_dataset(dataset)
+    study.outcome_labeler.validate_dataset(component_dataset)
+    _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     _validate_signal_snapshots(output.signals, signal_snapshots)
     rows: list[
         PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
@@ -248,8 +255,10 @@ def run_prediction_study(
         _ComponentValueState[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     ] = []
     unavailable_outcome_count = 0
-    available_sessions = {bar.session_date for bar in dataset.bars}
-    bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
+    available_sessions = {bar.session_date for bar in component_dataset.bars}
+    bar_indexes = {
+        bar.session_date: index for index, bar in enumerate(component_dataset.bars)
+    }
     for signal, signal_snapshot in zip(output.signals, signal_snapshots, strict=True):
         _validate_unchanged_values(
             "prediction signal",
@@ -259,14 +268,15 @@ def run_prediction_study(
         expected_outcome_index = (
             bar_indexes[signal.signal_session] + configuration.required_future_sessions
         )
-        label = study.outcome_labeler.label(dataset, signal.signal_session)
+        label = study.outcome_labeler.label(component_dataset, signal.signal_session)
+        _validate_unchanged_dataset(component_dataset, dataset_snapshot)
         _validate_unchanged_values(
             "prediction signal",
             _prediction_record_primitive(signal),
             signal_snapshot,
         )
         if label is None:
-            if expected_outcome_index < len(dataset.bars):
+            if expected_outcome_index < len(component_dataset.bars):
                 raise InvalidPredictionOutputError(
                     "outcome labeler returned no label although its declared future "
                     "session is available"
@@ -282,9 +292,9 @@ def run_prediction_study(
                 "outcome labels require matching signal and later dataset sessions"
             )
         if (
-            expected_outcome_index >= len(dataset.bars)
+            expected_outcome_index >= len(component_dataset.bars)
             or label.outcome_session
-            != dataset.bars[expected_outcome_index].session_date
+            != component_dataset.bars[expected_outcome_index].session_date
         ):
             raise InvalidPredictionOutputError(
                 "outcome label session does not match its declared future-session "
@@ -313,6 +323,7 @@ def run_prediction_study(
             outcome_values_snapshot,
         )
         evaluation_values = study.evaluator.evaluate(signal, outcome)
+        _validate_unchanged_dataset(component_dataset, dataset_snapshot)
         _validate_unchanged_values(
             "prediction signal",
             _prediction_record_primitive(signal),
@@ -440,11 +451,13 @@ def run_prediction_study(
         study.outcome_labeler.configuration(),
         configuration.outcome_configuration_id,
     )
+    _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     _validate_unchanged_component(
         "prediction evaluator",
         study.evaluator.configuration(),
         configuration.evaluator_configuration_id,
     )
+    _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     return PredictionStudyResult(
         study_id,
         STUDY_ENGINE_VERSION,
@@ -801,6 +814,15 @@ def _validate_dataset(dataset: MarketDataset) -> None:
         raise InvalidPredictionDataError(
             "prediction analysis does not permit missing sessions inside the "
             "observed range"
+        )
+
+
+def _validate_unchanged_dataset(
+    dataset: MarketDataset, expected: MarketDataset
+) -> None:
+    if dataset != expected:
+        raise InvalidPredictionOutputError(
+            "prediction component mutated the market dataset"
         )
 
 

@@ -105,8 +105,9 @@ uv run python scripts/run_spy_gap_prediction.py --dataset-id <dataset-id>
 The command prints direction accuracy and average gap sizes; it creates no
 orders or fills. Use `--refresh` only to intentionally retrieve a new immutable
 Tiingo snapshot. A cached ID must come from the exact raw, unadjusted Tiingo SPY
-request for 2020-01-01 through 2025-12-31; use the provider-neutral prediction
-API for intentionally different datasets.
+request for 2020-01-01 through 2025-12-31, use XNYS, include the expected first
+and last sessions, and contain no missing sessions. Use the provider-neutral
+prediction API for intentionally different datasets.
 
 Run the QF-11 exploratory comparison study on the same request or a cached
 dataset. This preserves the original strategy and evaluates the focused,
@@ -118,9 +119,10 @@ uv run python scripts/analyze_spy_gap_predictions.py --dataset-id <dataset-id>
 ```
 
 The cached ID accepted by this maintained script must come from the exact raw,
-unadjusted Tiingo SPY request for 2020-01-01 through 2025-12-31. Use the public
-comparison API for intentionally different providers, price bases, symbols, or
-requested ranges.
+unadjusted Tiingo SPY request for 2020-01-01 through 2025-12-31 with complete
+XNYS session coverage. Use the public comparison API for intentionally different
+providers, price bases, symbols, calendars, requested ranges, or incomplete
+samples.
 
 The comparison creates no orders or fills. Its 2020–2025 periods have already
 been inspected and are not untouched holdout results.

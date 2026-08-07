@@ -170,6 +170,15 @@ class FirstSerializationMutatingPredictionStrategy(RecordingPredictionStrategy):
         )
 
 
+class DatasetMutatingPredictionStrategy(RecordingPredictionStrategy):
+    name = "dataset_mutating_prediction_rule"
+
+    def generate(self, dataset: MarketDataset) -> NumericPredictionOutput:
+        output = super().generate(dataset)
+        object.__setattr__(dataset.bars[0], "close", Decimal(999))
+        return output
+
+
 class SharedSignalPredictionStrategy(RecordingPredictionStrategy):
     def __init__(
         self, events: list[str], shared_signals: list[NumericPrediction]
@@ -295,6 +304,30 @@ class SignalMutatingFutureCloseOutcomeLabeler(FutureCloseOutcomeLabeler):
             "predicted_change",
             dataset.bars[-1].close,
         )
+
+
+class DatasetMutatingFutureCloseOutcomeLabeler(FutureCloseOutcomeLabeler):
+    def __init__(self, events: list[str], mutation_phase: str) -> None:
+        super().__init__(events)
+        self._mutation_phase = mutation_phase
+        self.name = f"{mutation_phase}_dataset_mutating_future_close"
+
+    def validate_dataset(self, dataset: MarketDataset) -> None:
+        super().validate_dataset(dataset)
+        if self._mutation_phase == "validation":
+            self._mutate_dataset(dataset)
+
+    def label(
+        self, dataset: MarketDataset, signal_session: date
+    ) -> OutcomeLabel[FutureCloseValues] | None:
+        label = super().label(dataset, signal_session)
+        if self._mutation_phase == "labeling":
+            self._mutate_dataset(dataset)
+        return label
+
+    @staticmethod
+    def _mutate_dataset(dataset: MarketDataset) -> None:
+        object.__setattr__(dataset.bars[0], "close", Decimal(999))
 
 
 @dataclass(frozen=True, slots=True)
@@ -642,6 +675,37 @@ def test_signal_validation_rejects_first_serialization_parameter_drift() -> None
 
     with pytest.raises(InvalidPredictionOutputError, match="prediction signal"):
         run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+@pytest.mark.parametrize("mutation_phase", ["strategy", "validation", "labeling"])
+def test_components_cannot_mutate_the_caller_owned_market_dataset(
+    mutation_phase: str,
+) -> None:
+    events: list[str] = []
+    dataset = make_dataset(("100", "102", "101"))
+    original_first_close = dataset.bars[0].close
+    strategy = (
+        DatasetMutatingPredictionStrategy(events)
+        if mutation_phase == "strategy"
+        else RecordingPredictionStrategy(events)
+    )
+    labeler = (
+        FutureCloseOutcomeLabeler(events)
+        if mutation_phase == "strategy"
+        else DatasetMutatingFutureCloseOutcomeLabeler(events, mutation_phase)
+    )
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        strategy,
+        labeler,
+        FutureCloseChangeEvaluator(events),
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match="market dataset"):
+        run_prediction_study(dataset, study)
+
+    assert dataset.bars[0].close == original_first_close
 
 
 def test_outcome_identity_rejects_first_serialization_value_drift() -> None:

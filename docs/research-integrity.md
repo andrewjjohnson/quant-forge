@@ -252,7 +252,11 @@ contemporaneous feature payload in row identity. Outcome and evaluation
 identities hash their already-captured canonical value snapshots rather than
 re-invoking component serializers. Returned rows use detached typed payloads and
 immutable primitive snapshots so later component reuse cannot change an earlier
-result's serialization or invalidate its identities. The backward-compatible
+result's serialization or invalidate its identities. Strategy, labeler, and
+evaluator execution uses a detached copy of the validated market dataset and
+checks it against a pristine snapshot after component calls, so custom component
+mutation cannot alter caller-owned data or desynchronize rows from dataset
+provenance. The backward-compatible
 overnight-gap adapter likewise includes the complete fixed causal signal
 snapshot in each legacy prediction ID, preventing changed direction, reason, or
 features from aliasing an existing scientific record.
@@ -278,6 +282,11 @@ bias visible. Threshold, range, weekday, year, and already-observed period rows
 retain small samples, weak periods, neutral outcomes, and adverse outliers. The
 2025 segment is labeled observed rather than pristine holdout, and no comparison
 output claims an executable close fill or options profitability.
+
+The maintained Tiingo SPY commands additionally require exact XNYS boundary
+sessions and an empty missing-session set for the declared 2020–2025 request.
+A non-strict cache with truncated edges or other missing sessions is a different
+experiment and cannot be presented as the maintained baseline.
 
 Use versioned schemas for both.
 

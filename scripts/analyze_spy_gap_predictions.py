@@ -19,6 +19,7 @@ from quantforge.data import (
     MarketDataset,
     RequestError,
 )
+from quantforge.data.calendar import NYSE_CALENDAR, expected_sessions
 from quantforge.data.providers import TiingoProvider
 from quantforge.prediction import (
     ALL_REASONS,
@@ -36,6 +37,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SYMBOL = "SPY"
 REQUESTED_START = date(2020, 1, 1)
 REQUESTED_END = date(2025, 12, 31)
+MAINTAINED_SESSIONS = expected_sessions(REQUESTED_START, REQUESTED_END, NYSE_CALENDAR)
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -101,6 +103,18 @@ def _validate_maintained_dataset(dataset: MarketDataset) -> None:
         mismatches.append(f"requested_start={metadata.requested_start.isoformat()}")
     if metadata.requested_end != REQUESTED_END:
         mismatches.append(f"requested_end={metadata.requested_end.isoformat()}")
+    if metadata.calendar != NYSE_CALENDAR:
+        mismatches.append(f"calendar={metadata.calendar}")
+    if metadata.actual_first_session != MAINTAINED_SESSIONS[0]:
+        mismatches.append(
+            f"actual_first_session={metadata.actual_first_session.isoformat()}"
+        )
+    if metadata.actual_last_session != MAINTAINED_SESSIONS[-1]:
+        mismatches.append(
+            f"actual_last_session={metadata.actual_last_session.isoformat()}"
+        )
+    if metadata.missing_sessions:
+        mismatches.append(f"missing_sessions={len(metadata.missing_sessions)}")
     if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
         mismatches.append(f"adjustment={metadata.adjustment_mode.value}")
     if mismatches:

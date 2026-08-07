@@ -55,6 +55,8 @@ def _maintained_spy_dataset() -> MarketDataset:
             provider_name=TiingoProvider.name,
             requested_start=comparison_script.REQUESTED_START,
             requested_end=comparison_script.REQUESTED_END,
+            actual_first_session=comparison_script.MAINTAINED_SESSIONS[0],
+            actual_last_session=comparison_script.MAINTAINED_SESSIONS[-1],
             adjustment_mode=AdjustmentMode.UNADJUSTED,
         ),
     )
@@ -131,6 +133,7 @@ def test_cached_dataset_matching_the_maintained_request_is_accepted(
 @pytest.mark.parametrize(
     "metadata",
     [
+        replace(_maintained_spy_dataset().metadata, canonical_symbol="QQQ"),
         replace(_maintained_spy_dataset().metadata, provider_name="other"),
         replace(
             _maintained_spy_dataset().metadata,
@@ -143,6 +146,19 @@ def test_cached_dataset_matching_the_maintained_request_is_accepted(
         replace(
             _maintained_spy_dataset().metadata,
             requested_end=date(2024, 12, 31),
+        ),
+        replace(_maintained_spy_dataset().metadata, calendar="24/7"),
+        replace(
+            _maintained_spy_dataset().metadata,
+            actual_first_session=comparison_script.MAINTAINED_SESSIONS[1],
+        ),
+        replace(
+            _maintained_spy_dataset().metadata,
+            actual_last_session=comparison_script.MAINTAINED_SESSIONS[-2],
+        ),
+        replace(
+            _maintained_spy_dataset().metadata,
+            missing_sessions=(comparison_script.MAINTAINED_SESSIONS[10],),
         ),
     ],
 )

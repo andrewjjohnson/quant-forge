@@ -278,7 +278,9 @@ future-bearing dataset. The latest generic-only correction advances the engine
 to `6`: outcome and evaluation identities derive directly from their canonical
 value snapshots. The next generic-only correction advances the engine to `7`:
 signal primitives are captured before validation, and parameter validation reads
-from that canonical snapshot. A legacy-adapter identity correction advances only
+from that canonical snapshot. The generic engine advances to `8` to execute
+components against an isolated dataset copy and reject any mutation relative to
+the validated pristine snapshot. A legacy-adapter identity correction advances only
 the legacy gap engine to `3`: each prediction ID includes the complete fixed
 causal signal snapshot, while its result schema remains at `2`. A
 comparison-only integrity correction advances the comparison engine/result
@@ -352,9 +354,11 @@ uv run python scripts/analyze_spy_gap_predictions.py --dataset-id <dataset-id>
 For either maintained script, a cached dataset must match the exact Tiingo SPY
 request: raw unadjusted prices requested from 2020-01-01 through 2025-12-31.
 The commands reject cached IDs from another provider, adjustment basis, symbol,
-or requested range rather than silently running a different experiment. The
-provider-neutral Python APIs remain available for explicitly configured studies
-on other QF-3 datasets.
+calendar, requested range, or actual coverage rather than silently running a
+different experiment. The first and last bars must match the expected XNYS
+boundary sessions and no expected session may be missing. The provider-neutral
+Python APIs remain available for explicitly configured studies on other QF-3
+datasets.
 
 Weekday summaries use the weekdays observed among eligible outcome-bearing
 sessions after applying `included_weekdays` and `excluded_weekdays`. XNYS SPY
