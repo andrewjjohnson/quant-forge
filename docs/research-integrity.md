@@ -258,7 +258,10 @@ result's serialization or invalidate its identities. Strategy, labeler, and
 evaluator execution uses a detached copy of the validated market dataset and
 checks it against a pristine snapshot after component calls, so custom component
 mutation cannot alter caller-owned data or desynchronize rows from dataset
-provenance. The backward-compatible
+provenance. Prediction manifests preserve the QF-3 OHLC and volume bases,
+whether adjusted provider fields were used, and the corporate-action policy so
+volume-derived features and gap labels remain interpretable without an external
+cache lookup. The backward-compatible
 overnight-gap adapter likewise includes the complete fixed causal signal
 snapshot in each legacy prediction ID, preventing changed direction, reason, or
 features from aliasing an existing scientific record.

@@ -33,7 +33,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "9"
+STUDY_ENGINE_VERSION = "10"
 STUDY_CONTRACT_VERSION = "1"
 
 

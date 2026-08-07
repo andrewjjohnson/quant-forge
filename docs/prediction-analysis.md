@@ -290,12 +290,16 @@ versions to `3`: custom-period stability labels are chronology-neutral, and
 valid zero-prediction results export deterministic header-only CSV artifacts.
 The comparison engine then advances to `4` while retaining result schema `3` so
 weekday summaries include every observed eligible session day after configured
-filters, including weekends on `24/7` calendars. The provenance correction intentionally
-changed legacy analysis and prediction IDs; generic engine
-corrections change generic study and row IDs even when numerical predictions
-and metrics are unchanged. Existing older immutable artifacts remain historical
-records at their original paths; current runs write new identity paths rather
-than reusing or overwriting them.
+filters, including weekends on `24/7` calendars. The market-data provenance
+correction adds volume basis, adjusted-field usage, and corporate-action policy
+to every prediction manifest. It advances the legacy gap engine/result to
+`4`/`3`, the comparison engine/result to `5`/`4`, and the generic study engine
+to `10` so the identity and schema changes are explicit. The provenance
+corrections intentionally changed legacy analysis and prediction IDs; generic
+engine corrections change generic study and row IDs even when numerical
+predictions and metrics are unchanged. Existing older immutable artifacts remain
+historical records at their original paths; current runs write new identity
+paths rather than reusing or overwriting them.
 
 New experiments should use the generic composition API and add their own
 study-specific result summaries rather than widening the legacy gap schema:
@@ -380,13 +384,15 @@ Each legacy overnight-gap analysis exports atomically to
 
 - `manifest.json` records engine and schema versions, complete strategy and
   indicator configuration, QF-3 dataset identity, bar fingerprint, retrieval
-  timestamp, provider timezone, counts, metrics, and limitations.
+  timestamp, provider timezone, OHLC and volume bases, adjusted-field usage,
+  corporate-action policy, counts, metrics, and limitations.
 - `predictions.csv` contains one labeled row per evaluable signal.
 
 Prediction rows record:
 
 - stable prediction, dataset, strategy, and strategy-configuration identities;
-- QF-3 provider, raw-price basis, and corporate-action snapshot provenance;
+- QF-3 provider, OHLC and volume bases, adjusted-field usage, and
+  corporate-action snapshot/policy provenance;
 - symbol, signal session, and outcome session;
 - direction, originating rule, full parameter set, and contemporaneous feature
   values;

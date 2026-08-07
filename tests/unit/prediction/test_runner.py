@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.data.models import MarketDataset
+from quantforge.data.models import AdjustmentMode, MarketDataset
 from quantforge.indicators import Indicator
 from quantforge.prediction import (
     InvalidPredictionDataError,
@@ -175,18 +175,42 @@ def test_repeated_inputs_are_deterministic_and_json_safe() -> None:
 
     assert first == second
     assert first.analysis_id == (
-        "773715d62241942d8bbf7f0e16d87a3e221478f5395b6f4eb8453df14f12b229"
+        "852e7c5f18fe1b144ffe367c01152b545e6177b2c925c122c36afcfdbc1813c0"
     )
     assert tuple(row.prediction_id for row in first.rows) == (
-        "8e8c3eb789975fa8884894653da6e18dba62554af3b9ea0b98e9698049191464",
-        "6f0eebfdfc4ded666cf6100d547f2a252b076a16a99d526b43a0f2dc35a22ecf",
-        "eeda2f9e221e6c8b64d807550814396796b291041ab73ca8185546c9355c6949",
+        "4e151cb94aa5148ce350fc5d7c7fb6a47f2af6aadaec619408adb4e88d3e5209",
+        "b99c7f342776ae0a055483fe6c2edd47ddcda7421bcc0d080f695f8faffdfb2c",
+        "00cf07c12f847c88b98a7808623290d1885e594b23cf53cbd2aad15179113c80",
     )
-    assert first.engine_version == "3"
-    assert first.result_schema_version == "2"
+    assert first.engine_version == "4"
+    assert first.result_schema_version == "3"
     assert first.analysis_id == second.analysis_id
     assert first.to_primitive() == second.to_primitive()
     json.dumps(first.to_primitive(), allow_nan=False, sort_keys=True)
+
+
+def test_market_data_provenance_preserves_adjustment_and_volume_policy() -> None:
+    dataset = make_dataset(
+        ("100", "102"),
+        adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+        adjusted_fields_used=True,
+    )
+    result = run_prediction_analysis(
+        dataset,
+        FixedPredictionStrategy((PredictionDirection.UP, PredictionDirection.DOWN)),
+    )
+
+    assert result.market_data.ohlc_basis == "split_adjusted"
+    assert result.market_data.volume_basis == "split_adjusted"
+    assert result.market_data.adjusted_fields_used is True
+    assert result.market_data.corporate_action_policy == (
+        "separate_provider_reported_cash_dividends_and_splits"
+    )
+    assert result.market_data.to_primitive()["volume_basis"] == "split_adjusted"
+    assert result.market_data.to_primitive()["adjusted_fields_used"] is True
+    assert result.market_data.to_primitive()["corporate_action_policy"] == (
+        "separate_provider_reported_cash_dividends_and_splits"
+    )
 
 
 @pytest.mark.parametrize("changed_signal_field", ["direction", "reason", "features"])

@@ -48,6 +48,7 @@ def make_dataset(
     sessions: tuple[date, ...] | None = None,
     dataset_id: str = "synthetic-dataset",
     adjustment_mode: AdjustmentMode = AdjustmentMode.UNADJUSTED,
+    adjusted_fields_used: bool = False,
     calendar: str = "XNYS",
     requested_start: date | None = None,
     requested_end: date | None = None,
@@ -147,7 +148,7 @@ def make_dataset(
             if adjustment_mode is AdjustmentMode.UNADJUSTED
             else "split_adjusted"
         ),
-        "adjusted_fields_used": False,
+        "adjusted_fields_used": adjusted_fields_used,
         "corporate_action_policy": (
             "separate_provider_reported_cash_dividends_and_splits"
         ),
@@ -206,7 +207,7 @@ def make_dataset(
             if adjustment_mode is AdjustmentMode.UNADJUSTED
             else "split_adjusted"
         ),
-        adjusted_fields_used=False,
+        adjusted_fields_used=adjusted_fields_used,
         corporate_action_policy=(
             "separate_provider_reported_cash_dividends_and_splits"
         ),

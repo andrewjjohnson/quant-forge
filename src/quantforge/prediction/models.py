@@ -144,6 +144,9 @@ class PredictionMarketData:
     split_count: int
     corporate_action_snapshot_id: str
     ohlc_basis: str
+    volume_basis: str
+    adjusted_fields_used: bool
+    corporate_action_policy: str
 
     @classmethod
     def from_qf3(cls, metadata: DatasetMetadata) -> "PredictionMarketData":
@@ -168,6 +171,9 @@ class PredictionMarketData:
             split_count=metadata.split_count,
             corporate_action_snapshot_id=metadata.corporate_action_snapshot_id,
             ohlc_basis=metadata.ohlc_basis,
+            volume_basis=metadata.volume_basis,
+            adjusted_fields_used=metadata.adjusted_fields_used,
+            corporate_action_policy=metadata.corporate_action_policy,
         )
 
     def to_primitive(self) -> PrimitiveMapping:
@@ -192,6 +198,9 @@ class PredictionMarketData:
             "split_count": self.split_count,
             "corporate_action_snapshot_id": self.corporate_action_snapshot_id,
             "ohlc_basis": self.ohlc_basis,
+            "volume_basis": self.volume_basis,
+            "adjusted_fields_used": self.adjusted_fields_used,
+            "corporate_action_policy": self.corporate_action_policy,
         }
 
 
