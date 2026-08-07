@@ -16,7 +16,11 @@ class PredictionRuleParameters(Protocol):
 
 
 class PredictionRecord(Protocol):
-    """One causal prediction without any required classification payload."""
+    """One causal prediction without any required classification payload.
+
+    Implementations must support a component-independent ``copy.deepcopy`` so a
+    completed study row never retains the strategy's owned instance.
+    """
 
     @property
     def symbol(self) -> str: ...
@@ -41,7 +45,11 @@ class PredictionRecord(Protocol):
 
 
 class PredictionValues(Protocol):
-    """Typed study-specific values with deterministic primitive serialization."""
+    """Typed study-specific values with deterministic primitive serialization.
+
+    Implementations must support a component-independent ``copy.deepcopy`` for
+    immutable study-row capture.
+    """
 
     def to_primitive(self) -> PrimitiveMapping: ...
 

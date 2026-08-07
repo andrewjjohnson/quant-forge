@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -16,6 +17,7 @@ from quantforge.indicators import Indicator
 from quantforge.prediction import (
     AlwaysUpParameters,
     AlwaysUpPredictionStrategy,
+    InvalidPredictionConfigurationError,
     InvalidPredictionOutputError,
     OutcomeLabel,
     PredictionEvaluation,
@@ -423,6 +425,39 @@ def test_study_identity_includes_outcome_configuration() -> None:
     assert two_sessions.configuration.required_future_sessions == 2
 
 
+@pytest.mark.parametrize("warm_up", [0, -1, True, "1"])
+def test_strategy_warm_up_must_be_a_positive_integer(warm_up: object) -> None:
+    events: list[str] = []
+    strategy = RecordingPredictionStrategy(events)
+    strategy.warm_up_observations = cast(int, warm_up)
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        strategy,
+        FutureCloseOutcomeLabeler(events),
+        FutureCloseChangeEvaluator(events),
+    )
+
+    with pytest.raises(InvalidPredictionConfigurationError, match="warm-up"):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+def test_signal_cannot_precede_the_declared_strategy_warm_up() -> None:
+    events: list[str] = []
+    strategy = RecordingPredictionStrategy(events)
+    strategy.warm_up_observations = 2
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        strategy,
+        FutureCloseOutcomeLabeler(events),
+        FutureCloseChangeEvaluator(events),
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match="warm-up completed"):
+        run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
 def test_label_session_must_match_declared_future_session_horizon() -> None:
     dataset = make_dataset(("100", "102", "101", "104"))
 
@@ -473,9 +508,17 @@ def test_evaluator_cannot_mutate_fixed_inputs(
         run_prediction_study(make_dataset(("100", "102", "101")), study)
 
 
-@pytest.mark.parametrize("mutation_target", ["signal", "outcome", "evaluation"])
+@pytest.mark.parametrize(
+    ("mutation_target", "changed_component"),
+    [
+        ("signal", "prediction signal"),
+        ("outcome", "prediction outcome"),
+        ("evaluation", "prediction evaluation values"),
+    ],
+)
 def test_evaluator_cannot_mutate_an_earlier_completed_row(
     mutation_target: str,
+    changed_component: str,
 ) -> None:
     events: list[str] = []
     study = PredictionStudy[
@@ -486,8 +529,40 @@ def test_evaluator_cannot_mutate_an_earlier_completed_row(
         DelayedMutatingEvaluator(events, mutation_target),
     )
 
-    with pytest.raises(InvalidPredictionOutputError, match="prediction study row"):
+    with pytest.raises(InvalidPredictionOutputError, match=changed_component):
         run_prediction_study(make_dataset(("100", "102", "101")), study)
+
+
+@pytest.mark.parametrize("mutation_target", ["signal", "outcome", "evaluation"])
+def test_returned_rows_are_detached_from_values_retained_across_runs(
+    mutation_target: str,
+) -> None:
+    events: list[str] = []
+    study = PredictionStudy[
+        NumericPrediction, FutureCloseValues, FutureCloseChangeValues
+    ].create(
+        RecordingPredictionStrategy(events),
+        FutureCloseOutcomeLabeler(events),
+        DelayedMutatingEvaluator(events, mutation_target),
+    )
+    dataset = make_dataset(("100", "102"))
+
+    first = run_prediction_study(dataset, study)
+    first_primitive = first.to_primitive()
+    first_typed_values = (
+        first.rows[0].signal.predicted_change,
+        first.rows[0].outcome.values.future_close,
+        first.rows[0].evaluation.values.close_change,
+    )
+
+    run_prediction_study(dataset, study)
+
+    assert first.to_primitive() == first_primitive
+    assert (
+        first.rows[0].signal.predicted_change,
+        first.rows[0].outcome.values.future_close,
+        first.rows[0].evaluation.values.close_change,
+    ) == first_typed_values
 
 
 def test_row_identity_includes_fixed_feature_values() -> None:

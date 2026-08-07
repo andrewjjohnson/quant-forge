@@ -1,5 +1,6 @@
 """Generic orchestration for causal prediction, outcome, and evaluation stages."""
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
 from typing import cast
@@ -32,7 +33,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.models import PredictionMarketData
 
-STUDY_ENGINE_VERSION = "3"
+STUDY_ENGINE_VERSION = "4"
 STUDY_CONTRACT_VERSION = "1"
 
 
@@ -108,28 +109,50 @@ class PredictionStudyRow[
     signal: PredictionRecordT
     outcome: PredictionOutcome[OutcomeValuesT]
     evaluation: PredictionEvaluation[EvaluationValuesT]
+    primitive_snapshot: PrimitiveMappingSnapshot | None = None
+
+    def __post_init__(self) -> None:
+        expected_snapshot = _capture_values_snapshot(
+            "prediction study row",
+            _prediction_study_row_primitive(
+                self.row_id,
+                self.study_id,
+                self.dataset_id,
+                self.dataset_fingerprint,
+                _prediction_record_primitive(self.signal),
+                self.outcome.to_primitive(),
+                self.evaluation.to_primitive(),
+            ),
+        )
+        if self.primitive_snapshot is None:
+            object.__setattr__(self, "primitive_snapshot", expected_snapshot)
+        elif self.primitive_snapshot != expected_snapshot:
+            raise InvalidPredictionOutputError(
+                "prediction study row does not match its immutable snapshot"
+            )
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {
-            "dataset_fingerprint": self.dataset_fingerprint,
-            "dataset_id": self.dataset_id,
-            "evaluation": self.evaluation.to_primitive(),
-            "features": self.signal.features_primitive(),
-            "outcome": self.outcome.to_primitive(),
-            "prediction": {
-                "signal_session": self.signal.signal_session.isoformat(),
-                "strategy_configuration_id": (self.signal.strategy_configuration_id),
-                "strategy_id": self.signal.strategy_id,
-                "strategy_implementation_version": (
-                    self.signal.strategy_implementation_version
-                ),
-                "strategy_parameters": self.signal.parameters_primitive(),
-                "symbol": self.signal.symbol,
-                "values": self.signal.prediction_primitive(),
-            },
-            "row_id": self.row_id,
-            "study_id": self.study_id,
-        }
+        if self.primitive_snapshot is None:
+            raise InvalidPredictionOutputError(
+                "prediction study row requires an immutable snapshot"
+            )
+        return self.primitive_snapshot.to_primitive()
+
+
+@dataclass(frozen=True, slots=True)
+class _ComponentValueState[
+    PredictionRecordT: PredictionRecord,
+    OutcomeValuesT: PredictionValues,
+    EvaluationValuesT: PredictionValues,
+]:
+    """Original component-owned values retained only for run-time validation."""
+
+    signal: PredictionRecordT
+    signal_snapshot: PrimitiveMappingSnapshot
+    outcome: PredictionOutcome[OutcomeValuesT]
+    outcome_snapshot: PrimitiveMappingSnapshot
+    evaluation_values: EvaluationValuesT
+    evaluation_values_snapshot: PrimitiveMappingSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +226,7 @@ def run_prediction_study(
         study.strategy,
         output,
         configuration.strategy_configuration_id,
+        configuration.strategy_warm_up_observations,
     )
 
     # This is intentionally after signal generation. Dataset-specific future-label
@@ -211,11 +235,8 @@ def run_prediction_study(
     rows: list[
         PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     ] = []
-    row_snapshots: list[
-        tuple[
-            PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
-            PrimitiveMappingSnapshot,
-        ]
+    component_value_states: list[
+        _ComponentValueState[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     ] = []
     unavailable_outcome_count = 0
     available_sessions = {bar.session_date for bar in dataset.bars}
@@ -272,8 +293,22 @@ def run_prediction_study(
         _validate_unchanged_values(
             "prediction outcome", outcome.to_primitive(), outcome_snapshot
         )
+        evaluation_values_snapshot = _capture_values_snapshot(
+            "prediction evaluation values", evaluation_values.to_primitive()
+        )
         evaluation = _prediction_evaluation(
             configuration, signal, outcome, evaluation_values
+        )
+        evaluation_snapshot = _capture_values_snapshot(
+            "prediction evaluation", evaluation.to_primitive()
+        )
+        _validate_component_values(
+            _prediction_record_primitive(signal),
+            signal_snapshot,
+            outcome.to_primitive(),
+            outcome_snapshot,
+            evaluation_values.to_primitive(),
+            evaluation_values_snapshot,
         )
         row_id = _stable_id(
             {
@@ -284,26 +319,88 @@ def run_prediction_study(
                 "study_id": study_id,
             }
         )
+        detached_signal = _detached_copy("prediction signal", signal)
+        detached_outcome = PredictionOutcome(
+            outcome.outcome_id,
+            outcome.outcome_name,
+            outcome.outcome_implementation_version,
+            outcome.outcome_configuration_id,
+            outcome.outcome_result_schema_version,
+            outcome.dataset_id,
+            outcome.dataset_fingerprint,
+            outcome.signal_session,
+            outcome.outcome_session,
+            _detached_copy("prediction outcome values", outcome.values),
+        )
+        detached_evaluation = PredictionEvaluation(
+            evaluation.evaluation_id,
+            evaluation.evaluator_name,
+            evaluation.evaluator_implementation_version,
+            evaluation.evaluator_configuration_id,
+            evaluation.evaluation_result_schema_version,
+            evaluation.outcome_id,
+            _detached_copy("prediction evaluation values", evaluation.values),
+        )
+        detached_signal_primitive = _prediction_record_primitive(detached_signal)
+        detached_outcome_primitive = detached_outcome.to_primitive()
+        detached_evaluation_primitive = detached_evaluation.to_primitive()
+        _validate_unchanged_values(
+            "detached prediction signal",
+            detached_signal_primitive,
+            signal_snapshot,
+        )
+        _validate_unchanged_values(
+            "detached prediction outcome",
+            detached_outcome_primitive,
+            outcome_snapshot,
+        )
+        _validate_unchanged_values(
+            "detached prediction evaluation",
+            detached_evaluation_primitive,
+            evaluation_snapshot,
+        )
+        row_snapshot = _capture_values_snapshot(
+            "prediction study row",
+            _prediction_study_row_primitive(
+                row_id,
+                study_id,
+                market_data.dataset_id,
+                market_data.bars_fingerprint,
+                detached_signal_primitive,
+                detached_outcome_primitive,
+                detached_evaluation_primitive,
+            ),
+        )
         row = PredictionStudyRow(
             row_id,
             study_id,
             market_data.dataset_id,
             market_data.bars_fingerprint,
-            signal,
-            outcome,
-            evaluation,
+            detached_signal,
+            detached_outcome,
+            detached_evaluation,
+            row_snapshot,
         )
         rows.append(row)
-        row_snapshots.append(
-            (
-                row,
-                _capture_values_snapshot("prediction study row", row.to_primitive()),
+        component_value_states.append(
+            _ComponentValueState(
+                signal,
+                signal_snapshot,
+                outcome,
+                outcome_snapshot,
+                evaluation_values,
+                evaluation_values_snapshot,
             )
         )
 
-    for row, expected_snapshot in row_snapshots:
-        _validate_unchanged_values(
-            "prediction study row", row.to_primitive(), expected_snapshot
+    for state in component_value_states:
+        _validate_component_values(
+            _prediction_record_primitive(state.signal),
+            state.signal_snapshot,
+            state.outcome.to_primitive(),
+            state.outcome_snapshot,
+            state.evaluation_values.to_primitive(),
+            state.evaluation_values_snapshot,
         )
 
     _validate_unchanged_component(
@@ -333,6 +430,15 @@ def _capture_study_configuration(
     if not study.result_schema_version:
         raise InvalidPredictionConfigurationError(
             "prediction study result schema version is required"
+        )
+    warm_up_value = cast(object, study.strategy.warm_up_observations)
+    if (
+        isinstance(warm_up_value, bool)
+        or not isinstance(warm_up_value, int)
+        or warm_up_value < 1
+    ):
+        raise InvalidPredictionConfigurationError(
+            "prediction strategies require a positive integer warm-up"
         )
     strategy_snapshot, strategy_id = _component_snapshot(
         "prediction strategy",
@@ -391,7 +497,7 @@ def _capture_study_configuration(
         strategy_implementation_version=study.strategy.implementation_version,
         strategy_configuration_id=strategy_id,
         strategy_configuration_snapshot=strategy_snapshot,
-        strategy_warm_up_observations=study.strategy.warm_up_observations,
+        strategy_warm_up_observations=warm_up_value,
         outcome_name=study.outcome_labeler.name,
         outcome_implementation_version=(study.outcome_labeler.implementation_version),
         outcome_configuration_id=outcome_id,
@@ -528,6 +634,58 @@ def _prediction_record_primitive(signal: PredictionRecord) -> PrimitiveMapping:
     }
 
 
+def _prediction_study_row_primitive(
+    row_id: str,
+    study_id: str,
+    dataset_id: str,
+    dataset_fingerprint: str,
+    signal: PrimitiveMapping,
+    outcome: PrimitiveMapping,
+    evaluation: PrimitiveMapping,
+) -> PrimitiveMapping:
+    return {
+        "dataset_fingerprint": dataset_fingerprint,
+        "dataset_id": dataset_id,
+        "evaluation": evaluation,
+        "features": signal["features"],
+        "outcome": outcome,
+        "prediction": signal["prediction"],
+        "row_id": row_id,
+        "study_id": study_id,
+    }
+
+
+def _detached_copy[ValueT](label: str, value: ValueT) -> ValueT:
+    try:
+        detached = deepcopy(value)
+    except Exception as error:
+        raise InvalidPredictionOutputError(
+            f"{label} could not be detached from component-owned state"
+        ) from error
+    if detached is value:
+        raise InvalidPredictionOutputError(
+            f"{label} did not produce a detached component-independent copy"
+        )
+    return detached
+
+
+def _validate_component_values(
+    signal: PrimitiveMapping,
+    signal_snapshot: PrimitiveMappingSnapshot,
+    outcome: PrimitiveMapping,
+    outcome_snapshot: PrimitiveMappingSnapshot,
+    evaluation_values: PrimitiveMapping,
+    evaluation_values_snapshot: PrimitiveMappingSnapshot,
+) -> None:
+    _validate_unchanged_values("prediction signal", signal, signal_snapshot)
+    _validate_unchanged_values("prediction outcome", outcome, outcome_snapshot)
+    _validate_unchanged_values(
+        "prediction evaluation values",
+        evaluation_values,
+        evaluation_values_snapshot,
+    )
+
+
 def _capture_values_snapshot(
     label: str, values: PrimitiveMapping
 ) -> PrimitiveMappingSnapshot:
@@ -585,6 +743,7 @@ def _validate_strategy_output(
     strategy: PredictionRule[PredictionRecordT],
     output: PredictionRuleOutput[PredictionRecordT],
     expected_configuration_id: str,
+    expected_warm_up_observations: int,
 ) -> None:
     if (
         output.contract_version != "1"
@@ -609,12 +768,13 @@ def _validate_strategy_output(
         raise InvalidPredictionOutputError(
             "a strategy may emit at most one prediction per session"
         )
-    available_sessions = {bar.session_date for bar in dataset.bars}
+    bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
     expected_parameters = strategy.parameters.to_primitive()
     for signal in output.signals:
+        signal_index = bar_indexes.get(signal.signal_session)
         if (
             signal.symbol != dataset.metadata.canonical_symbol
-            or signal.signal_session not in available_sessions
+            or signal_index is None
             or signal.strategy_id != strategy.name
             or signal.strategy_implementation_version != strategy.implementation_version
             or signal.strategy_configuration_id != expected_configuration_id
@@ -624,6 +784,11 @@ def _validate_strategy_output(
         ):
             raise InvalidPredictionOutputError(
                 "prediction signal identity or parameter snapshot is invalid"
+            )
+        if signal_index + 1 < expected_warm_up_observations:
+            raise InvalidPredictionOutputError(
+                "prediction signal was emitted before the strategy's declared "
+                "warm-up completed"
             )
 
 

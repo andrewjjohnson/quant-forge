@@ -57,15 +57,26 @@ a distinct study identity. Component configurations are captured before the run
 and checked again afterward so a mutable component cannot silently change the
 meaning of a result.
 
+The runner requires each strategy's warm-up declaration to be a positive
+integer and rejects any signal emitted before that many dataset observations
+have completed. The declaration and its enforced semantics therefore agree with
+the study provenance.
+
 The runner also verifies that a returned outcome session is exactly the
 labeler's declared number of future sessions after the signal within the
 validated QF-3 session sequence. A missing outcome is accepted only when that
 declared future session is beyond the dataset boundary, preventing a labeler
 from selectively censoring available outcomes. Prediction and outcome
-primitives are captured before evaluation and checked afterward, and complete
-rows are checked again after all evaluations, preventing immediate or delayed
-evaluator mutation. The complete fixed prediction payload, including
-contemporaneous features, participates in each generic row identity.
+primitives are captured before evaluation and checked afterward, and
+component-owned values are checked again after all evaluations, preventing
+immediate or delayed evaluator mutation. Returned rows contain detached typed
+payloads for adapter compatibility, while their authoritative serialization is
+an immutable primitive snapshot. Reusing a stateful component therefore cannot
+rewrite an earlier result. Prediction records and typed outcome/evaluation
+values must support a component-independent `copy.deepcopy`; the runner rejects
+copies that alias their top-level component-owned object or serialize
+differently. The complete fixed prediction payload, including contemporaneous
+features, participates in each generic row identity.
 
 To add a future prediction experiment, define a typed prediction record and
 rule when an existing one is unsuitable, define typed outcome values and an
@@ -254,16 +265,18 @@ generic study engine therefore advance to `2`; the generic engine also enforces
 exact horizons, detects evaluator-input mutation, and creates feature-complete
 row identities. The current generic integrity correction advances only the
 generic study engine to `3`: a labeler cannot omit an available declared
-outcome, and completed rows are revalidated after all evaluations to detect
-delayed mutation. A comparison-only integrity correction separately advances
-the comparison engine/result versions to `3`: custom-period stability labels
-are chronology-neutral, and valid zero-prediction results export deterministic
-header-only CSV artifacts. The provenance correction intentionally changed
-legacy analysis and prediction IDs; generic engine corrections change generic
-study and row IDs even when numerical predictions and metrics are unchanged.
-Existing older immutable artifacts remain historical records at their original
-paths; current runs write new identity paths rather than reusing or overwriting
-them.
+outcome, and component values are revalidated after all evaluations to detect
+delayed mutation. The latest generic-only correction advances that engine to
+`4`: warm-up declarations are enforced and returned rows are detached with
+immutable primitive snapshots. A comparison-only integrity correction
+separately advances the comparison engine/result versions to `3`: custom-period
+stability labels are chronology-neutral, and valid zero-prediction results
+export deterministic header-only CSV artifacts. The provenance correction
+intentionally changed legacy analysis and prediction IDs; generic engine
+corrections change generic study and row IDs even when numerical predictions
+and metrics are unchanged. Existing older immutable artifacts remain historical
+records at their original paths; current runs write new identity paths rather
+than reusing or overwriting them.
 
 New experiments should use the generic composition API and add their own
 study-specific result summaries rather than widening the legacy gap schema:
