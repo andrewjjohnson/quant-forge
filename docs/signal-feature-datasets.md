@@ -350,7 +350,9 @@ returned by custom `ConfiguredOutcome` implementations. Before checkpointing,
 it also validates every identity, disposition, feature, and outcome value
 against the complete row schema. Each configured outcome must return a
 canonical lowercase SHA-256 QF-11 study ID; invalid provenance is rejected
-before any row is persisted. The builder also normalizes the
+before any row is persisted. Returned outcome session keys must belong to the
+current candidate chunk; unknown keys fail closed instead of silently
+censoring a candidate's available outcome. The builder also normalizes the
 protocol's public namespace, fields, and unavailable defaults into dataset
 configuration, so downstream analysis does not depend on a concrete outcome
 implementation's private configuration shape. Outcome configuration identity is

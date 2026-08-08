@@ -1,7 +1,7 @@
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -427,6 +427,14 @@ class DirectConfiguredOutcome:
         if self._malformed_source == "study_id":
             return feature_dataset_module.OutcomeRun(
                 "not-a-canonical-study-id", outcome_run.values_by_session
+            )
+        if self._malformed_source == "session" and outcome_run.values_by_session:
+            values_by_session = dict(outcome_run.values_by_session)
+            first_session = next(iter(values_by_session))
+            first_values = values_by_session.pop(first_session)
+            values_by_session[first_session + timedelta(days=1)] = first_values
+            return feature_dataset_module.OutcomeRun(
+                outcome_run.study_id, values_by_session
             )
         if self._malformed_source != "run" or not outcome_run.values_by_session:
             return outcome_run
@@ -1086,6 +1094,32 @@ def test_builder_rejects_noncanonical_direct_outcome_study_id(
 
     with pytest.raises(
         InvalidPredictionOutputError, match=r"non-canonical QF-11 study ID"
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
+
+    assert not tuple(tmp_path.rglob("rows/*.json"))
+
+
+def test_builder_rejects_direct_outcome_sessions_outside_chunk(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "session")
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match=r"sessions outside the current candidate chunk",
     ):
         build_signal_feature_dataset(
             dataset=dataset,

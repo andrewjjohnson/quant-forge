@@ -470,6 +470,21 @@ def _validated_study_id(namespace: str, study_id: object) -> str:
     return cast(str, study_id)
 
 
+def _validate_outcome_session_keys(
+    namespace: str,
+    expected_sessions: frozenset[date],
+    values_by_session: dict[date, PrimitiveMapping],
+) -> None:
+    unexpected_sessions = tuple(
+        sorted(set(values_by_session).difference(expected_sessions))
+    )
+    if unexpected_sessions:
+        raise InvalidPredictionOutputError(
+            f"outcome {namespace} returned values for sessions outside the current "
+            f"candidate chunk: {unexpected_sessions}"
+        )
+
+
 class _SignalFeatureRule(Protocol):
     """QF-11 candidate rule with documented strategy-input fields."""
 
@@ -819,6 +834,9 @@ def build_signal_feature_dataset[
 
     for chunk_start in range(0, len(missing_candidates), chunk_size):
         chunk = missing_candidates[chunk_start : chunk_start + chunk_size]
+        chunk_signal_sessions = frozenset(
+            candidate.signal_session for candidate in chunk
+        )
         fixed_rule = _FixedCandidateRule(strategy, chunk)
         outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
         chunk_study_ids: dict[str, str] = {}
@@ -834,6 +852,11 @@ def build_signal_feature_dataset[
                 prepared_outcome_dataset,
                 fixed_rule,
                 feature_configuration,
+            )
+            _validate_outcome_session_keys(
+                configured_outcome.namespace,
+                chunk_signal_sessions,
+                outcome_run.values_by_session,
             )
             outcome_values[configured_outcome.namespace] = {
                 signal_session: _validated_flattened_outcome_values(
@@ -889,6 +912,11 @@ def build_signal_feature_dataset[
                 prepared_outcome_dataset,
                 empty_rule,
                 feature_configuration,
+            )
+            _validate_outcome_session_keys(
+                configured_outcome.namespace,
+                frozenset(),
+                outcome_run.values_by_session,
             )
             study_ids_by_namespace[configured_outcome.namespace] = _validated_study_id(
                 configured_outcome.namespace, outcome_run.study_id
@@ -1820,13 +1848,16 @@ def _empty_dataset_study_ids(
     outcomes: tuple[ConfiguredOutcome, ...],
 ) -> tuple[str, ...]:
     empty_rule = _FixedCandidateRule(strategy, ())
-    return tuple(
-        _validated_study_id(
+    study_ids: list[str] = []
+    for outcome in outcomes:
+        outcome_run = outcome.run(dataset, empty_rule, feature_configuration)
+        _validate_outcome_session_keys(
             outcome.namespace,
-            outcome.run(dataset, empty_rule, feature_configuration).study_id,
+            frozenset(),
+            outcome_run.values_by_session,
         )
-        for outcome in outcomes
-    )
+        study_ids.append(_validated_study_id(outcome.namespace, outcome_run.study_id))
+    return tuple(study_ids)
 
 
 def _render_csv(result: SignalFeatureDatasetResult) -> str:
