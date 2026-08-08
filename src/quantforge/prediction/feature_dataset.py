@@ -891,6 +891,13 @@ def _strategy_fields(strategy: _SignalFeatureRule) -> tuple[SchemaField, ...]:
         raise SignalFeatureDatasetError(
             "strategy input feature definitions must be a sorted typed tuple"
         )
+    if any(
+        field.category is not SchemaFieldCategory.CONTEMPORANEOUS_FEATURE
+        for field in fields
+    ):
+        raise SignalFeatureDatasetError(
+            "strategy input feature definitions must be contemporaneous features"
+        )
     return fields
 
 

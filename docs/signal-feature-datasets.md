@@ -127,8 +127,10 @@ Every candidate contains all baseline decision inputs:
 - the selected direction and complete reason trace.
 
 Candidate strategy-feature names must match their declared schema exactly.
-Missing or undeclared inputs fail closed instead of being omitted from the
-flattened artifact.
+Every strategy input field must use the `contemporaneous_feature` category;
+missing, undeclared, or temporally miscategorized inputs fail closed instead of
+being omitted from or contradicting the flattened artifact, even when the rule
+produces no candidates.
 
 The documented unused baseline context is:
 

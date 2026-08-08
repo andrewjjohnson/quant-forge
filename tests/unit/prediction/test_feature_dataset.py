@@ -247,6 +247,15 @@ class ExtraFeatureCandidateRule(FixtureCandidateRule):
         return replace(output, signals=signals)
 
 
+class MiscategorizedFeatureRule(FixtureCandidateRule):
+    @property
+    def strategy_feature_definitions(self) -> tuple[SchemaField, ...]:
+        return tuple(
+            replace(field, category=SchemaFieldCategory.FUTURE_OUTCOME)
+            for field in super().strategy_feature_definitions
+        )
+
+
 class InvalidFeatureCandidateRule(FixtureCandidateRule):
     def __init__(
         self,
@@ -1000,6 +1009,16 @@ def test_candidate_feature_names_must_match_declared_schema(tmp_path: Path) -> N
     rule = ExtraFeatureCandidateRule((SignalDisposition.ACCEPTED,))
 
     with pytest.raises(InvalidPredictionOutputError, match="candidate feature names"):
+        _build_fixture(dataset, rule, tmp_path)
+
+
+def test_strategy_fields_must_be_contemporaneous_with_no_candidates(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = MiscategorizedFeatureRule(())
+
+    with pytest.raises(SignalFeatureDatasetError, match="contemporaneous features"):
         _build_fixture(dataset, rule, tmp_path)
 
 
