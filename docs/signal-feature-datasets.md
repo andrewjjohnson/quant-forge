@@ -168,7 +168,10 @@ optimization requires an explicit reviewed integration into the bundled context
 set; merely exposing `values_for_dataset()` does not grant access to future bars.
 Candidate rules must leave `SignalFeatureCandidate.contextual_features` empty;
 the builder exclusively owns contextual enrichment and rejects pre-populated
-values rather than silently replacing them.
+values rather than silently replacing them. Each contextual component
+configuration is snapshotted for identity and rehashed from the actual
+`configuration()` mapping immediately after every callback; a cached
+self-reported ID cannot conceal mutated parameters.
 
 ## Forward returns
 
@@ -387,7 +390,12 @@ implementation's private configuration shape. Outcome configuration identity is
 rechecked immediately after every execution callback so chunk rows cannot be
 persisted under transient or restored undeclared settings. Direct protocol
 implementations must expose sorted, unique fields categorized exclusively as
-future outcomes, including when the candidate population is empty.
+future outcomes, including when the candidate population is empty. They must
+return a flattened row for every candidate session, using explicit
+`available=false` values at genuine end-of-data boundaries; missing mappings are
+rejected rather than silently converted into unavailable labels. Typed QF-11
+compositions retain their native omission semantics because their declared
+horizon is independently enforced by the QF-11 engine.
 For typed `PredictionStudyOutcome` compositions, the persisted study ID is the
 ID independently produced by the QF-11 engine. A direct `ConfiguredOutcome` ID
 is treated as a reported input and replaced with a deterministic binding over

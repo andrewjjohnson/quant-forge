@@ -510,7 +510,7 @@ def _bound_outcome_study_id(
 
 
 def _validate_outcome_session_keys(
-    namespace: str,
+    configured_outcome: ConfiguredOutcome,
     expected_sessions: frozenset[date],
     values_by_session: dict[date, PrimitiveMapping],
 ) -> None:
@@ -519,9 +519,20 @@ def _validate_outcome_session_keys(
     )
     if unexpected_sessions:
         raise InvalidPredictionOutputError(
-            f"outcome {namespace} returned values for sessions outside the current "
+            f"outcome {configured_outcome.namespace} returned values for sessions "
+            "outside the current "
             f"candidate chunk: {unexpected_sessions}"
         )
+    if not isinstance(configured_outcome, PredictionStudyOutcome):
+        missing_sessions = tuple(
+            sorted(expected_sessions.difference(values_by_session))
+        )
+        if missing_sessions:
+            raise InvalidPredictionOutputError(
+                f"direct outcome {configured_outcome.namespace} omitted candidate "
+                f"sessions instead of returning explicit availability: "
+                f"{missing_sessions}"
+            )
 
 
 class _SignalFeatureRule(Protocol):
@@ -816,12 +827,17 @@ def build_signal_feature_dataset[
     strategy_fields = _strategy_fields(strategy)
     sorted_features = tuple(sorted(contextual_features, key=lambda item: item.name))
     contextual_definitions = tuple(feature.definition for feature in sorted_features)
+    contextual_configuration_snapshots = tuple(
+        PrimitiveMappingSnapshot.capture(feature.configuration())
+        for feature in sorted_features
+    )
     sorted_outcomes = tuple(sorted(outcomes, key=lambda item: item.namespace))
     outcome_field_snapshots = tuple(outcome.fields for outcome in sorted_outcomes)
     _validate_feature_configuration(
         strategy_fields,
         sorted_features,
         contextual_definitions,
+        contextual_configuration_snapshots,
         sorted_outcomes,
         outcome_field_snapshots,
     )
@@ -849,8 +865,8 @@ def build_signal_feature_dataset[
         market_data,
         prediction_study,
         strategy_fields,
-        sorted_features,
         contextual_definitions,
+        contextual_configuration_snapshots,
         sorted_outcomes,
         outcome_field_snapshots,
         unavailable_outcome_values,
@@ -868,8 +884,8 @@ def build_signal_feature_dataset[
     )
     feature_configuration = _feature_configuration(
         strategy_fields,
-        sorted_features,
         contextual_definitions,
+        contextual_configuration_snapshots,
     )
     destination = output_root / feature_dataset_id
 
@@ -917,6 +933,7 @@ def build_signal_feature_dataset[
         bar_indexes,
         sorted_features,
         contextual_definitions,
+        contextual_configuration_snapshots,
     )
     _validate_regenerated_completed_rows(
         feature_dataset_id,
@@ -971,7 +988,7 @@ def build_signal_feature_dataset[
                 feature_configuration,
             )
             _validate_outcome_session_keys(
-                configured_outcome.namespace,
+                configured_outcome,
                 chunk_signal_sessions,
                 outcome_run.values_by_session,
             )
@@ -1039,7 +1056,7 @@ def build_signal_feature_dataset[
                 feature_configuration,
             )
             _validate_outcome_session_keys(
-                configured_outcome.namespace,
+                configured_outcome,
                 frozenset(),
                 outcome_run.values_by_session,
             )
@@ -1182,6 +1199,7 @@ def _validate_feature_configuration(
     strategy_fields: tuple[SchemaField, ...],
     contextual_features: tuple[ContextualFeature, ...],
     contextual_definitions: tuple[SchemaField, ...],
+    contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
 ) -> None:
@@ -1198,8 +1216,11 @@ def _validate_feature_configuration(
         raise SignalFeatureDatasetError(
             "strategy, contextual, and outcome names must be unique"
         )
-    for feature, definition in zip(
-        contextual_features, contextual_definitions, strict=True
+    for feature, definition, configuration_snapshot in zip(
+        contextual_features,
+        contextual_definitions,
+        contextual_configuration_snapshots,
+        strict=True,
     ):
         if definition.name != feature.name:
             raise SignalFeatureDatasetError(
@@ -1209,7 +1230,10 @@ def _validate_feature_configuration(
             raise SignalFeatureDatasetError(
                 "contextual feature definitions must be contemporaneous features"
             )
-        if configuration_identity(feature.configuration()) != feature.configuration_id:
+        if (
+            configuration_identity(configuration_snapshot.to_primitive())
+            != feature.configuration_id
+        ):
             raise SignalFeatureDatasetError(
                 "contextual feature configuration identity is invalid"
             )
@@ -1243,8 +1267,8 @@ def _dataset_configuration[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
     strategy_fields: tuple[SchemaField, ...],
-    contextual_features: tuple[ContextualFeature, ...],
     contextual_definitions: tuple[SchemaField, ...],
+    contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
@@ -1264,9 +1288,11 @@ def _dataset_configuration[
         "source_data": market_data.to_primitive(),
         "strategy_feature_fields": [field.to_primitive() for field in strategy_fields],
         "contextual_features": [
-            _contextual_feature_configuration(feature, definition)
-            for feature, definition in zip(
-                contextual_features, contextual_definitions, strict=True
+            _contextual_feature_configuration(definition, configuration_snapshot)
+            for definition, configuration_snapshot in zip(
+                contextual_definitions,
+                contextual_configuration_snapshots,
+                strict=True,
             )
         ],
         "outcomes": [
@@ -1296,14 +1322,16 @@ def _normalized_outcome_configuration(
 
 def _feature_configuration(
     strategy_fields: tuple[SchemaField, ...],
-    contextual_features: tuple[ContextualFeature, ...],
     contextual_definitions: tuple[SchemaField, ...],
+    contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
 ) -> PrimitiveMapping:
     return {
         "candidate_context_features": [
-            _contextual_feature_configuration(feature, definition)
-            for feature, definition in zip(
-                contextual_features, contextual_definitions, strict=True
+            _contextual_feature_configuration(definition, configuration_snapshot)
+            for definition, configuration_snapshot in zip(
+                contextual_definitions,
+                contextual_configuration_snapshots,
+                strict=True,
             )
         ],
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
@@ -1315,11 +1343,11 @@ def _feature_configuration(
 
 
 def _contextual_feature_configuration(
-    feature: ContextualFeature,
     definition: SchemaField,
+    configuration_snapshot: PrimitiveMappingSnapshot,
 ) -> PrimitiveMapping:
     return {
-        "configuration": feature.configuration(),
+        "configuration": configuration_snapshot.to_primitive(),
         "definition": definition.to_primitive(),
     }
 
@@ -1478,6 +1506,7 @@ def _enrich_candidates(
     bar_indexes: dict[date, int],
     contextual_features: tuple[ContextualFeature, ...],
     contextual_definitions: tuple[SchemaField, ...],
+    contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
 ) -> tuple[SignalFeatureCandidate, ...]:
     if any(candidate.contextual_features for candidate in candidates):
         raise InvalidPredictionOutputError(
@@ -1488,10 +1517,15 @@ def _enrich_candidates(
     values_by_session: dict[date, list[SignalFeatureValue]] = {
         candidate.signal_session: [] for candidate in candidates
     }
-    for feature, definition in zip(
-        contextual_features, contextual_definitions, strict=True
+    for feature, definition, configuration_snapshot in zip(
+        contextual_features,
+        contextual_definitions,
+        contextual_configuration_snapshots,
+        strict=True,
     ):
-        expected_configuration_id = feature.configuration_id
+        expected_configuration_id = configuration_identity(
+            configuration_snapshot.to_primitive()
+        )
         if feature.__class__ not in _TRUSTED_ALIGNED_CONTEXT_TYPES:
             values: dict[date, Decimal | None] = {}
             for candidate in candidates:
@@ -1502,7 +1536,11 @@ def _enrich_candidates(
                         candidate.signal_session,
                     )
                 )
-                if feature.configuration_id != expected_configuration_id:
+                if (
+                    feature.configuration_id != expected_configuration_id
+                    or configuration_identity(feature.configuration())
+                    != expected_configuration_id
+                ):
                     raise InvalidPredictionOutputError(
                         "contextual feature configuration changed during calculation"
                     )
@@ -1535,7 +1573,11 @@ def _enrich_candidates(
                 ]
                 for candidate in candidates
             }
-        if feature.configuration_id != expected_configuration_id:
+        if (
+            feature.configuration_id != expected_configuration_id
+            or configuration_identity(feature.configuration())
+            != expected_configuration_id
+        ):
             raise InvalidPredictionOutputError(
                 "contextual feature configuration changed during calculation"
             )
@@ -2067,7 +2109,7 @@ def _empty_dataset_study_ids(
             feature_configuration,
         )
         _validate_outcome_session_keys(
-            outcome.namespace,
+            outcome,
             frozenset(),
             outcome_run.values_by_session,
         )

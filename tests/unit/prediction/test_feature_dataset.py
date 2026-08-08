@@ -329,6 +329,28 @@ class RestoringConfigurationContext:
         return history.bars[-1].close
 
 
+class CachedConfigurationContext(LastCloseContext):
+    __slots__ = ("_cached_configuration_id",)
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "version", 1)
+        object.__setattr__(self, "unit", "price_per_share")
+        object.__setattr__(self, "name", "cached_configuration_context")
+        object.__setattr__(
+            self,
+            "_cached_configuration_id",
+            configuration_identity(self.configuration()),
+        )
+
+    @property
+    def configuration_id(self) -> str:
+        return self._cached_configuration_id
+
+    def value_from_history(self, history: MarketDataset) -> Decimal:
+        object.__setattr__(self, "version", 2)
+        return history.bars[-1].close
+
+
 @dataclass(frozen=True, slots=True)
 class MiscategorizedContext(LastCloseContext):
     name: str = "miscategorized_context"
@@ -572,6 +594,12 @@ class DirectConfiguredOutcome:
         feature_configuration: PrimitiveMapping,
     ) -> feature_dataset_module.OutcomeRun:
         outcome_run = self._delegate.run(dataset, strategy, feature_configuration)
+        values_by_session = dict(outcome_run.values_by_session)
+        for signal in strategy.generate(dataset).signals:
+            values_by_session.setdefault(signal.signal_session, self.unavailable_row())
+        outcome_run = feature_dataset_module.OutcomeRun(
+            outcome_run.study_id, values_by_session
+        )
         if self._malformed_source == "configuration":
             self._run_count += 1
             self._implementation_version = 2 if self._run_count == 1 else 1
@@ -592,6 +620,11 @@ class DirectConfiguredOutcome:
             first_session = next(iter(values_by_session))
             first_values = values_by_session.pop(first_session)
             values_by_session[first_session + timedelta(days=1)] = first_values
+            return feature_dataset_module.OutcomeRun(
+                outcome_run.study_id, values_by_session
+            )
+        if self._malformed_source == "missing_session" and values_by_session:
+            values_by_session.pop(next(iter(values_by_session)))
             return feature_dataset_module.OutcomeRun(
                 outcome_run.study_id, values_by_session
             )
@@ -1440,6 +1473,30 @@ def test_builder_rejects_direct_outcome_sessions_outside_chunk(
     assert not tuple(tmp_path.rglob("rows/*.json"))
 
 
+def test_builder_rejects_missing_direct_outcome_sessions(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "missing_session")
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match=r"direct outcome.*omitted candidate sessions.*explicit availability",
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
+
+    assert not tuple(tmp_path.rglob("rows/*.json"))
+
+
 def test_builder_normalizes_direct_configured_outcome_metadata(tmp_path: Path) -> None:
     dataset = make_dataset(("100", "102"))
     rule = FixtureCandidateRule(
@@ -1799,6 +1856,26 @@ def test_contextual_configuration_is_checked_after_each_candidate(
             tmp_path,
             context=RestoringConfigurationContext(),
         )
+
+
+def test_contextual_configuration_is_rehashed_after_each_callback(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="contextual feature configuration changed during calculation",
+    ):
+        _build_fixture(
+            dataset,
+            rule,
+            tmp_path,
+            context=CachedConfigurationContext(),
+        )
+
+    assert not tuple(tmp_path.rglob("rows/*.json"))
 
 
 def test_non_nullable_contextual_feature_rejects_null_value(tmp_path: Path) -> None:
