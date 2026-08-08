@@ -7,11 +7,12 @@ from typing import cast
 import pytest
 
 from quantforge.configuration import PrimitiveMappingSnapshot
-from quantforge.data import MarketDataset
+from quantforge.data import AdjustmentMode, MarketDataset
 from quantforge.prediction import (
     DirectionalExcursionEvaluator,
     ExcursionOutcomeLabeler,
     ForwardReturnOutcomeLabeler,
+    InvalidPredictionDataError,
     PredictionDirection,
     PredictionOutcome,
     SameSessionConflictPolicy,
@@ -92,6 +93,37 @@ def test_outcome_labeler_builds_one_session_index_per_dataset(
     assert labeler.label(dataset, dataset.bars[0].session_date) is not None
     assert labeler.label(dataset, dataset.bars[1].session_date) is not None
     assert build_calls == 1
+
+
+@pytest.mark.parametrize(
+    "labeler",
+    [
+        ForwardReturnOutcomeLabeler(1),
+        ExcursionOutcomeLabeler(1),
+        TargetStopOutcomeLabeler(1, Decimal("0.01"), Decimal("0.005")),
+    ],
+    ids=("forward-return", "excursion", "target-stop"),
+)
+def test_raw_outcomes_require_complete_corporate_action_provenance(
+    labeler: (
+        ForwardReturnOutcomeLabeler | ExcursionOutcomeLabeler | TargetStopOutcomeLabeler
+    ),
+) -> None:
+    incomplete_raw = make_dataset(("100", "50"), corporate_actions_complete=False)
+
+    with pytest.raises(
+        InvalidPredictionDataError,
+        match=r"require complete corporate-action provenance",
+    ):
+        labeler.validate_dataset(incomplete_raw)
+
+    incomplete_adjusted = make_dataset(
+        ("100", "50"),
+        adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+        adjusted_fields_used=True,
+        corporate_actions_complete=False,
+    )
+    labeler.validate_dataset(incomplete_adjusted)
 
 
 def test_forward_return_skips_holiday_and_weekend_as_one_session() -> None:

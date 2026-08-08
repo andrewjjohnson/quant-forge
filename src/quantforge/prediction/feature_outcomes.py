@@ -72,7 +72,7 @@ class ForwardReturnOutcomeLabeler(_SessionIndexedOutcomeLabeler):
     """Label close-to-future-close arithmetic return in trading sessions."""
 
     name = "forward_close_return"
-    implementation_version = "2"
+    implementation_version = "3"
     result_schema_version = "1"
     required_market_fields = ("close",)
 
@@ -212,7 +212,7 @@ class ExcursionOutcomeLabeler(_SessionIndexedOutcomeLabeler):
     """Capture direction-neutral future high/low extremes over exact sessions."""
 
     name = "future_high_low_excursion_path"
-    implementation_version = "2"
+    implementation_version = "3"
     result_schema_version = "1"
     required_market_fields = ("close", "high", "low")
 
@@ -428,7 +428,7 @@ class TargetStopOutcomeLabeler(_SessionIndexedOutcomeLabeler):
     """Capture the exact daily ranges needed for target/stop classification."""
 
     name = "future_target_stop_path"
-    implementation_version = "2"
+    implementation_version = "3"
     result_schema_version = "1"
     required_market_fields = ("close", "high", "low")
 
@@ -732,7 +732,14 @@ def _build_session_indexes(dataset: MarketDataset) -> dict[date, int]:
 
 def _validate_price_basis(dataset: MarketDataset) -> None:
     metadata = dataset.metadata
-    if metadata.adjustment_mode is AdjustmentMode.UNADJUSTED and metadata.split_count:
+    if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
+        return
+    if not metadata.corporate_actions_complete:
+        raise InvalidPredictionDataError(
+            "raw unadjusted datasets require complete corporate-action provenance "
+            "for multi-session price outcomes"
+        )
+    if metadata.split_count:
         raise InvalidPredictionDataError(
             "raw unadjusted datasets containing stock splits cannot produce "
             "multi-session price outcomes without a conversion policy"

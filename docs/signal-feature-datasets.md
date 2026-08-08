@@ -177,7 +177,10 @@ The flattened values include availability, horizon, actual outcome session,
 reference close, outcome close, and arithmetic return. A missing `t+H` session
 beyond the dataset boundary produces explicit unavailable fields. The same
 adjustment/basis provenance applies to both prices. Raw unadjusted datasets with
-stock splits fail closed because a mechanical split is not a research return.
+incomplete corporate-action provenance or recorded stock splits fail closed
+because an unknown or mechanical split is not a research return. Split-adjusted
+datasets do not require a complete raw corporate-action snapshot for these
+labels.
 The default supported composition uses 1, 2, 5, 10, and 20 sessions; arbitrary
 positive session horizons are configurable.
 
