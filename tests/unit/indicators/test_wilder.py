@@ -4,7 +4,10 @@ from quantforge.indicators import (
     AVERAGE_DIRECTIONAL_INDEX_OUTPUT,
     NEGATIVE_DIRECTIONAL_INDICATOR_OUTPUT,
     POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT,
+    WILDER_AVERAGE_TRUE_RANGE_OUTPUT,
     WILDER_RSI_OUTPUT,
+    WilderAverageTrueRange,
+    WilderAverageTrueRangeParameters,
     WilderDirectionalMovement,
     WilderDirectionalMovementParameters,
     WilderRelativeStrengthIndex,
@@ -78,3 +81,40 @@ def test_appended_future_bars_do_not_change_wilder_history() -> None:
         assert dmi_future.values_for(field_name)[:5] == dmi_cutoff.values_for(
             field_name
         )
+
+
+def test_wilder_atr_is_aligned_causal_and_hand_auditable() -> None:
+    dataset = make_dataset(
+        ("10", "11", "10", "12"),
+        highs=("11", "12", "12", "13"),
+        lows=("9", "10", "9", "10"),
+    )
+    indicator = WilderAverageTrueRange(WilderAverageTrueRangeParameters(2))
+
+    values = indicator.calculate(dataset).values_for(WILDER_AVERAGE_TRUE_RANGE_OUTPUT)
+
+    assert values == (None, None, Decimal("2.5"), Decimal("2.75"))
+    assert indicator.warm_up_observations == 3
+
+
+def test_wilder_atr_does_not_change_when_future_bars_are_appended() -> None:
+    original = make_dataset(
+        ("10", "11", "10"),
+        highs=("11", "12", "12"),
+        lows=("9", "10", "9"),
+    )
+    extended = make_dataset(
+        ("10", "11", "10", "999"),
+        highs=("11", "12", "12", "1000"),
+        lows=("9", "10", "9", "1"),
+    )
+    indicator = WilderAverageTrueRange(WilderAverageTrueRangeParameters(2))
+
+    original_values = indicator.calculate(original).values_for(
+        WILDER_AVERAGE_TRUE_RANGE_OUTPUT
+    )
+    extended_values = indicator.calculate(extended).values_for(
+        WILDER_AVERAGE_TRUE_RANGE_OUTPUT
+    )
+
+    assert original_values == extended_values[: len(original_values)]

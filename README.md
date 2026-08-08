@@ -17,7 +17,10 @@ hard-constrained metric ranking, neighborhood stability analysis, isolated-peak
 detection, and complete exports. Paper trading and live trading are not yet
 implemented. A separate causal prediction-analysis boundary can evaluate
 completed-session RSI, DMI, and ADX rules against next-session opening gaps
-without fabricating close-price fills.
+without fabricating close-price fills. QF-7 builds on those generic prediction
+contracts with versioned signal dispositions, causal contextual snapshots,
+session-based returns, MFE/MAE, honest daily target/stop ambiguity, and
+deterministic resumable CSV feature datasets.
 
 ## Prerequisites
 
@@ -71,6 +74,9 @@ benchmark, and export semantics. See
 resume, stability, scale safeguards, and the cached SPY moving-average example.
 See [`docs/prediction-analysis.md`](docs/prediction-analysis.md) for overnight-gap
 direction rules, forward-label alignment, metrics, and deterministic exports.
+See [`docs/signal-feature-datasets.md`](docs/signal-feature-datasets.md) for QF-7
+candidate identity, schemas, outcome formulas, persistence/resume, and the
+exploratory three-feature analysis.
 
 ## Repository layout
 
@@ -125,6 +131,18 @@ close. Pass `--dataset-id <id>` to reproduce the analysis from a cached QF-3
 dataset without contacting Tiingo. The maintained comparison command verifies
 that a cached ID matches its exact raw, unadjusted Tiingo SPY 2020–2025 request;
 use the provider-neutral Python API for intentionally different datasets.
+
+Build/resume the QF-7 signal-feature dataset and compare ATR percentage, volume
+ratio, and trend distance across positive/negative five-session outcomes using
+an existing immutable cache entry:
+
+```bash
+uv run python scripts/analyze_signal_features.py --dataset-id <dataset-id>
+```
+
+The report shows all disclosed bins and sample counts and remains exploratory.
+It neither changes the baseline signal rule nor establishes a validated trading
+filter.
 
 ## Contributing
 

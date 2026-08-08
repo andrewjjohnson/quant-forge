@@ -127,6 +127,19 @@ samples.
 The comparison creates no orders or fills. Its 2020–2025 periods have already
 been inspected and are not untouched holdout results.
 
+Build/resume the QF-7 signal-feature dataset from an existing immutable QF-3
+cache entry and run the documented three-feature exploratory comparison:
+
+```bash
+uv run python scripts/analyze_signal_features.py --dataset-id <dataset-id>
+```
+
+This command performs no provider retrieval. It writes the analytics dataset to
+ignored `reports/features/` and the deterministic descriptive analysis to
+ignored `reports/feature-analysis/`. See
+[`signal-feature-datasets.md`](signal-feature-datasets.md) for schemas, formulas,
+resume behavior, and research limitations.
+
 Downloaded provider responses remain under ignored `data/`; structured results
 remain under ignored `reports/`. Use `--refresh` only when intentionally
 retrieving a new immutable provider revision. Never stage either directory.
@@ -292,6 +305,14 @@ For the concrete next-session gap study, require the immediate calendar
 successor and keep `run_prediction_analysis` and its legacy gap export schema
 backward compatible. Add new hypotheses as prediction strategies or new study
 compositions; do not change the original QF-11 baseline logic.
+
+For QF-7 datasets, use `SignalFeatureCandidate` as the QF-11 prediction record,
+register causal `ContextualFeature` implementations, and wrap each typed QF-11
+labeler/evaluator pair with `PredictionStudyOutcome`. Do not call outcome code
+from a candidate rule. The builder supplies context features only a prefix
+through the signal session, checkpoints complete rows atomically, and validates
+all persisted scientific configuration on resume. Add append-future, explicit
+unavailable, deterministic identity, and interrupted/resumed equivalence tests.
 
 ## Test organization
 

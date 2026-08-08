@@ -631,6 +631,7 @@ def test_generic_runner_executes_non_gap_outcome_without_gap_fields() -> None:
     rendered = str(primitive)
 
     assert len(result.rows) == 3
+    assert len(result.signals) == 4
     assert result.unavailable_outcome_count == 1
     assert [row.evaluation.values.close_change for row in result.rows] == [
         Decimal(2),
