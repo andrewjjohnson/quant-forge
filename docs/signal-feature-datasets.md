@@ -97,7 +97,8 @@ vetoes and directionless dojis as `rejected`, and never fabricates
 forward returns remain available for it; direction-dependent MFE/MAE and
 target/stop evaluations explicitly report `candidate_direction_unavailable`.
 Every accepted candidate must carry both its selected direction and selected
-rule reason; contradictory accepted records fail at model construction.
+rule reason, and that selected reason must be first in the matched-rule trace;
+contradictory accepted records fail at model construction.
 
 The adapter calls the same `evaluate_overnight_gap_rules()` decision trace used
 by the original QF-11 baseline. It records the selected highest-priority reason
@@ -278,8 +279,11 @@ schema-only checkpoint-free destination is safely reinitialized. Manifest-less
 state containing row checkpoints or unknown artifacts fails closed instead.
 `features.csv`, `summary.json`, and the final `complete` manifest are written
 atomically; the manifest is last. A complete resume validates exact deterministic
-CSV/JSON bytes and returns without rerunning the prediction rule or outcomes.
-Corrupt or incompatible state fails clearly and is never silently reconciled.
+CSV/JSON bytes and returns without rerunning the prediction rule or per-candidate
+outcomes. For an empty dataset, it independently recomputes QF-11 study identities
+from the configured outcome compositions so manifest corruption cannot replace
+their provenance. Corrupt or incompatible state fails clearly and is never
+silently reconciled.
 
 CSV is required and implemented. Parquet is intentionally not emitted because
 the repository has no existing Parquet dependency; QF-7 does not add one solely

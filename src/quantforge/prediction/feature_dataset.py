@@ -661,6 +661,7 @@ def build_signal_feature_dataset[
     configuration_snapshot = PrimitiveMappingSnapshot.capture(configuration)
     feature_dataset_id = configuration_identity(configuration)
     schema = _schema(strategy_fields, sorted_features, sorted_outcomes)
+    feature_configuration = _feature_configuration(strategy_fields, sorted_features)
     destination = output_root / feature_dataset_id
 
     if destination.exists() and _manifest_status(destination) == "complete":
@@ -670,6 +671,10 @@ def build_signal_feature_dataset[
             market_data,
             configuration_snapshot,
             schema,
+            dataset,
+            strategy,
+            feature_configuration,
+            sorted_outcomes,
         )
     _initialize_or_validate_progress(
         destination,
@@ -714,7 +719,6 @@ def build_signal_feature_dataset[
         if (candidate_id := _candidate_id(market_data, candidate))
         if candidate_id not in completed_rows
     )
-    feature_configuration = _feature_configuration(strategy_fields, sorted_features)
     study_ids_by_namespace = _study_ids_from_rows(completed_rows.values())
 
     for chunk_start in range(0, len(missing_candidates), chunk_size):
@@ -1538,6 +1542,10 @@ def _load_completed_result(
     market_data: PredictionMarketData,
     configuration: PrimitiveMappingSnapshot,
     schema: SignalFeatureSchema,
+    dataset: MarketDataset,
+    strategy: _SignalFeatureRule,
+    feature_configuration: PrimitiveMapping,
+    outcomes: tuple[ConfiguredOutcome, ...],
 ) -> SignalFeatureDatasetResult:
     manifest = _read_mapping(destination / "manifest.json")
     rows_by_candidate = _load_progress_rows(destination, feature_dataset_id, schema)
@@ -1546,14 +1554,9 @@ def _load_completed_result(
     if rows:
         prediction_study_ids = tuple(study_ids[name] for name in sorted(study_ids))
     else:
-        raw_study_ids = manifest.get("prediction_study_ids")
-        if not isinstance(raw_study_ids, list) or any(
-            not isinstance(study_id, str) for study_id in raw_study_ids
-        ):
-            raise SignalFeaturePersistenceError(
-                "completed empty dataset has invalid QF-11 study identities"
-            )
-        prediction_study_ids = tuple(cast(list[str], raw_study_ids))
+        prediction_study_ids = _empty_dataset_study_ids(
+            dataset, strategy, feature_configuration, outcomes
+        )
     result = SignalFeatureDatasetResult(
         feature_dataset_id,
         FEATURE_DATASET_ENGINE_VERSION,
@@ -1584,6 +1587,19 @@ def _load_completed_result(
             "completed signal-feature CSV does not match deterministic rows"
         )
     return result
+
+
+def _empty_dataset_study_ids(
+    dataset: MarketDataset,
+    strategy: _SignalFeatureRule,
+    feature_configuration: PrimitiveMapping,
+    outcomes: tuple[ConfiguredOutcome, ...],
+) -> tuple[str, ...]:
+    empty_rule = _FixedCandidateRule(strategy, ())
+    return tuple(
+        outcome.run(dataset, empty_rule, feature_configuration).study_id
+        for outcome in outcomes
+    )
 
 
 def _render_csv(result: SignalFeatureDatasetResult) -> str:

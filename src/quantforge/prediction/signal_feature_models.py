@@ -21,7 +21,7 @@ from quantforge.prediction.models import PredictionDirection, PredictionMarketDa
 
 FEATURE_SCHEMA_VERSION = "1"
 OUTCOME_SCHEMA_VERSION = "1"
-FEATURE_DATASET_ENGINE_VERSION = "9"
+FEATURE_DATASET_ENGINE_VERSION = "10"
 
 
 class SignalDisposition(StrEnum):
@@ -191,6 +191,14 @@ class SignalFeatureCandidate:
             raise InvalidPredictionOutputError(
                 "accepted signal-feature candidates require a direction and selected "
                 "rule reason"
+            )
+        if self.disposition is SignalDisposition.ACCEPTED and (
+            not self.matched_rule_reasons
+            or self.matched_rule_reasons[0] != self.selected_rule_reason
+        ):
+            raise InvalidPredictionOutputError(
+                "accepted signal-feature candidates require the selected rule reason "
+                "to be first in the matched rule trace"
             )
         strategy_names = tuple(feature.name for feature in self.strategy_features)
         contextual_names = tuple(feature.name for feature in self.contextual_features)

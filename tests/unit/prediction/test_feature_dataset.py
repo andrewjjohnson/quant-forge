@@ -521,6 +521,23 @@ def test_empty_candidate_dataset_exports_and_resumes(tmp_path: Path) -> None:
     assert second.to_primitive() == first.to_primitive()
 
 
+def test_empty_candidate_resume_rejects_corrupt_manifest_study_ids(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(())
+    result = _build_fixture(dataset, rule, tmp_path)
+    manifest_path = tmp_path / result.dataset_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["prediction_study_ids"] = ["corrupt-study-id"]
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SignalFeaturePersistenceError, match="metadata does not match"):
+        _build_fixture(dataset, rule, tmp_path)
+
+
 def test_interrupted_generation_resumes_to_uninterrupted_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -822,6 +839,13 @@ def test_accepted_candidate_requires_direction_and_selected_rule_reason() -> Non
         replace(candidate, direction=None)
     with pytest.raises(InvalidPredictionOutputError, match="require a direction"):
         replace(candidate, selected_rule_reason=None)
+    with pytest.raises(InvalidPredictionOutputError, match="first in the matched"):
+        replace(candidate, matched_rule_reasons=("different_rule",))
+    with pytest.raises(InvalidPredictionOutputError, match="first in the matched"):
+        replace(
+            candidate,
+            matched_rule_reasons=("lower_priority_rule", "fixture_up"),
+        )
 
 
 def test_future_changes_affect_outcomes_but_not_earlier_features(
