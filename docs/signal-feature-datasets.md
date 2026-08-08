@@ -349,4 +349,6 @@ available and unavailable value against these declarations, including values
 returned by custom `ConfiguredOutcome` implementations. It also normalizes the
 protocol's public namespace, fields, and unavailable defaults into dataset
 configuration, so downstream analysis does not depend on a concrete outcome
-implementation's private configuration shape.
+implementation's private configuration shape. Outcome configuration identity is
+rechecked immediately after every execution callback so chunk rows cannot be
+persisted under transient or restored undeclared settings.

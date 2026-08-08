@@ -21,7 +21,7 @@ from quantforge.prediction.models import PredictionDirection, PredictionMarketDa
 
 FEATURE_SCHEMA_VERSION = "1"
 OUTCOME_SCHEMA_VERSION = "1"
-FEATURE_DATASET_ENGINE_VERSION = "18"
+FEATURE_DATASET_ENGINE_VERSION = "19"
 _SUPPORTED_SCHEMA_DATA_TYPES = frozenset(
     ("array", "boolean", "date", "decimal", "integer", "object", "string")
 )

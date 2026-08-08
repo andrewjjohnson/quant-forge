@@ -400,16 +400,27 @@ class PredictionStudyOutcome[
 
 def _run_configured_outcome(
     configured_outcome: ConfiguredOutcome,
+    expected_configuration_id: str,
     dataset: MarketDataset,
     prepared_dataset: PredictionStudyDatasetSession,
     strategy: PredictionRule[SignalFeatureCandidate],
     feature_configuration: PrimitiveMapping,
 ) -> OutcomeRun:
     if isinstance(configured_outcome, PredictionStudyOutcome):
-        return configured_outcome.run_prepared(
+        outcome_run = configured_outcome.run_prepared(
             prepared_dataset, strategy, feature_configuration
         )
-    return configured_outcome.run(dataset, strategy, feature_configuration)
+    else:
+        outcome_run = configured_outcome.run(dataset, strategy, feature_configuration)
+    if (
+        configured_outcome.configuration_id != expected_configuration_id
+        or configuration_identity(configured_outcome.configuration())
+        != expected_configuration_id
+    ):
+        raise InvalidPredictionOutputError(
+            "configured outcome configuration changed during execution"
+        )
+    return outcome_run
 
 
 def _schema_value_matches(field: SchemaField, value: Primitive) -> bool:
@@ -718,6 +729,9 @@ def build_signal_feature_dataset[
         unavailable_outcome_values,
     )
     configuration_snapshot = PrimitiveMappingSnapshot.capture(configuration)
+    outcome_configuration_ids = {
+        outcome.namespace: outcome.configuration_id for outcome in sorted_outcomes
+    }
     feature_dataset_id = configuration_identity(configuration)
     schema = _schema(strategy_fields, sorted_features, sorted_outcomes)
     feature_configuration = _feature_configuration(strategy_fields, sorted_features)
@@ -798,6 +812,7 @@ def build_signal_feature_dataset[
                 )
             outcome_run = _run_configured_outcome(
                 configured_outcome,
+                outcome_configuration_ids[configured_outcome.namespace],
                 dataset,
                 prepared_outcome_dataset,
                 fixed_rule,
@@ -849,6 +864,7 @@ def build_signal_feature_dataset[
                 )
             outcome_run = _run_configured_outcome(
                 configured_outcome,
+                outcome_configuration_ids[configured_outcome.namespace],
                 dataset,
                 prepared_outcome_dataset,
                 empty_rule,

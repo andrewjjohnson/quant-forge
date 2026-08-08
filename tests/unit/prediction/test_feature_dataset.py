@@ -369,6 +369,8 @@ class DirectConfiguredOutcome:
     ) -> None:
         self._delegate = delegate
         self._malformed_source = malformed_source
+        self._implementation_version = 1
+        self._run_count = 0
 
     @property
     def namespace(self) -> str:
@@ -393,7 +395,7 @@ class DirectConfiguredOutcome:
     def configuration(self) -> PrimitiveMapping:
         return {
             "component": "direct_configured_outcome_fixture",
-            "implementation_version": "1",
+            "implementation_version": str(self._implementation_version),
             "namespace": self.namespace,
         }
 
@@ -410,6 +412,9 @@ class DirectConfiguredOutcome:
         feature_configuration: PrimitiveMapping,
     ) -> feature_dataset_module.OutcomeRun:
         outcome_run = self._delegate.run(dataset, strategy, feature_configuration)
+        if self._malformed_source == "configuration":
+            self._run_count += 1
+            self._implementation_version = 2 if self._run_count == 1 else 1
         if self._malformed_source != "run" or not outcome_run.values_by_session:
             return outcome_run
         values_by_session = {
@@ -1073,6 +1078,36 @@ def test_builder_normalizes_direct_configured_outcome_metadata(tmp_path: Path) -
     assert normalized["component_configuration"] == configured_outcome.configuration()
     assert normalized["fields"]
     assert normalized["unavailable_values"] == configured_outcome.unavailable_row()
+
+
+def test_builder_rechecks_direct_outcome_configuration_after_each_run(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "configuration")
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="configured outcome configuration changed during execution",
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+            chunk_size=1,
+        )
+
+    destination = next(path for path in tmp_path.iterdir() if path.is_dir())
+    assert not tuple((destination / "rows").glob("*.json"))
 
 
 def test_unavailable_outcome_defaults_obey_declared_field_types() -> None:
