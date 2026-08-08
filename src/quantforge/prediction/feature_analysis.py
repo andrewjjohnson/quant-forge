@@ -24,7 +24,7 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "8"
+FEATURE_ANALYSIS_ENGINE_VERSION = "9"
 
 _NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
 _SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
@@ -243,7 +243,9 @@ def analyze_signal_features(
             "value-equals winner definition requires winner_value"
         )
     value_equals_winner_value = cast(str, winner_value)
-    outcome_availability_name = _outcome_availability_name(result, outcome_name)
+    outcome_availability_name, outcome_unavailable_value = _outcome_eligibility(
+        result, outcome_name
+    )
     if outcome_availability_name == outcome_name:
         raise SignalFeatureDatasetError(
             "outcome availability fields cannot be analysis outcomes"
@@ -312,6 +314,7 @@ def analyze_signal_features(
         "feature_names": list(feature_names),
         "outcome_availability_name": outcome_availability_name,
         "outcome_name": outcome_name,
+        "outcome_unavailable_value": outcome_unavailable_value,
         "winner_definition": winner_definition.value,
         "winner_value": normalized_winner_value,
     }
@@ -329,6 +332,16 @@ def analyze_signal_features(
         if (
             outcome_availability_name is not None
             and primitive.get(outcome_availability_name) is not True
+        ):
+            continue
+        if (
+            outcome_availability_name is None
+            and outcome_unavailable_value is not None
+            and _outcome_value_matches_default(
+                primitive.get(outcome_name),
+                outcome_unavailable_value,
+                outcome_data_type,
+            )
         ):
             continue
         classification = _winner_classification(
@@ -510,12 +523,12 @@ def _winner_classification(
     return str(value) == winner_value
 
 
-def _outcome_availability_name(
+def _outcome_eligibility(
     result: SignalFeatureDatasetResult, outcome_name: str
-) -> str | None:
+) -> tuple[str | None, Primitive | None]:
     configured_outcomes = result.configuration.get("outcomes")
     if not isinstance(configured_outcomes, list):
-        return None
+        return None, None
     for raw_outcome in configured_outcomes:
         if not isinstance(raw_outcome, dict):
             continue
@@ -532,12 +545,35 @@ def _outcome_availability_name(
                 field_name := cast(PrimitiveMapping, raw_field).get("field_name"), str
             )
         )
-        if outcome_name not in {
-            f"outcome_{namespace}_{field_name}" for field_name in field_names
-        }:
+        prefix = f"outcome_{namespace}_"
+        if not outcome_name.startswith(prefix):
             continue
-        return f"outcome_{namespace}_available" if "available" in field_names else None
-    return None
+        field_name = outcome_name.removeprefix(prefix)
+        if field_name not in field_names:
+            continue
+        availability_name = (
+            f"outcome_{namespace}_available" if "available" in field_names else None
+        )
+        raw_unavailable_values = outcome.get("unavailable_values")
+        unavailable_value = (
+            raw_unavailable_values.get(field_name)
+            if availability_name is None and isinstance(raw_unavailable_values, dict)
+            else None
+        )
+        return availability_name, cast(Primitive | None, unavailable_value)
+    return None, None
+
+
+def _outcome_value_matches_default(
+    value: Primitive | None,
+    unavailable_value: Primitive,
+    outcome_data_type: str,
+) -> bool:
+    if outcome_data_type == "decimal":
+        parsed_value = _decimal_value(value)
+        parsed_default = _decimal_value(unavailable_value)
+        return parsed_value is not None and parsed_value == parsed_default
+    return value == unavailable_value
 
 
 def _decimal_value(value: Primitive | None) -> Decimal | None:

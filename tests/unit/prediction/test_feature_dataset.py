@@ -199,6 +199,42 @@ class FutureAlignedContext(LastCloseContext):
         )
 
 
+class RestoringConfigurationContext:
+    name = "restoring_configuration_context"
+
+    def __init__(self) -> None:
+        self.version = 1
+        self.calculation_count = 0
+
+    @property
+    def definition(self) -> SchemaField:
+        return SchemaField(
+            self.name,
+            SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
+            "decimal",
+            "price_per_share",
+            False,
+            "last close after a mutable configuration callback",
+            "after the signal-session close",
+        )
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "signal_contextual_feature",
+            "implementation_version": str(self.version),
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def value_from_history(self, history: MarketDataset) -> Decimal:
+        self.calculation_count += 1
+        self.version = 2 if self.calculation_count == 1 else 1
+        return history.bars[-1].close
+
+
 @dataclass(frozen=True, slots=True)
 class MiscategorizedContext(LastCloseContext):
     name: str = "miscategorized_context"
@@ -1004,6 +1040,26 @@ def test_contextual_feature_cannot_read_a_future_bar(tmp_path: Path) -> None:
 
     with pytest.raises(IndexError):
         _build_fixture(dataset, rule, tmp_path, context=FutureReadingContext())
+
+
+def test_contextual_configuration_is_checked_after_each_candidate(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="contextual feature configuration changed during calculation",
+    ):
+        _build_fixture(
+            dataset,
+            rule,
+            tmp_path,
+            context=RestoringConfigurationContext(),
+        )
 
 
 def test_non_nullable_contextual_feature_rejects_null_value(tmp_path: Path) -> None:

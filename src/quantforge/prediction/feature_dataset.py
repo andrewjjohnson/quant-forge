@@ -1159,16 +1159,20 @@ def _enrich_candidates(
         expected_configuration_id = feature.configuration_id
         definition = feature.definition
         if feature.__class__ not in _TRUSTED_ALIGNED_CONTEXT_TYPES:
-            values = {
-                candidate.signal_session: feature.value_from_history(
+            values: dict[date, Decimal | None] = {}
+            for candidate in candidates:
+                value = feature.value_from_history(
                     _causal_history(
                         dataset,
                         bar_indexes[candidate.signal_session],
                         candidate.signal_session,
                     )
                 )
-                for candidate in candidates
-            }
+                if feature.configuration_id != expected_configuration_id:
+                    raise InvalidPredictionOutputError(
+                        "contextual feature configuration changed during calculation"
+                    )
+                values[candidate.signal_session] = value
         else:
             aligned_callback = getattr(feature, "values_for_dataset", None)
             if not callable(aligned_callback):

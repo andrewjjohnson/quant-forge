@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from quantforge.configuration import PrimitiveMappingSnapshot
 from quantforge.prediction import (
     AtrPercentageContext,
     OvernightGapPredictionParameters,
@@ -355,6 +356,83 @@ def test_analysis_excludes_rows_with_an_unavailable_outcome(tmp_path: Path) -> N
     assert available_rows < len(feature_dataset.rows)
     assert analysis.eligible_row_count == available_rows
     assert analysis.winner_count + analysis.loser_count == available_rows
+
+
+def test_analysis_excludes_configured_sentinel_without_availability_flag(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    target_stop = target_stop_outcome(2, Decimal("0.01"), Decimal("0.005"))
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary, target_stop),
+        output_root=tmp_path,
+    )
+    availability_name = "outcome_target_stop_2_available"
+    configuration = feature_dataset.configuration
+    configured_outcomes = configuration["outcomes"]
+    assert isinstance(configured_outcomes, list)
+    configured_target_stop = next(
+        outcome
+        for outcome in configured_outcomes
+        if isinstance(outcome, dict) and outcome.get("namespace") == "target_stop_2"
+    )
+    configured_fields = configured_target_stop["fields"]
+    assert isinstance(configured_fields, list)
+    configured_target_stop["fields"] = [
+        field
+        for field in configured_fields
+        if isinstance(field, dict) and field.get("field_name") != "available"
+    ]
+    configured_unavailable_values = configured_target_stop["unavailable_values"]
+    assert isinstance(configured_unavailable_values, dict)
+    configured_unavailable_values.pop("available")
+    rows_without_availability: list[SignalFeatureRow] = []
+    for row in feature_dataset.rows:
+        primitive = row.to_primitive()
+        primitive.pop(availability_name)
+        rows_without_availability.append(SignalFeatureRow.capture(primitive))
+    result_without_availability = replace(
+        feature_dataset,
+        configuration_snapshot=PrimitiveMappingSnapshot.capture(configuration),
+        schema=replace(
+            feature_dataset.schema,
+            fields=tuple(
+                field
+                for field in feature_dataset.schema.fields
+                if field.name != availability_name
+            ),
+        ),
+        rows=tuple(rows_without_availability),
+    )
+    feature_name = "feature_atr_percentage_of_close"
+    label_name = "outcome_target_stop_2_label"
+
+    analysis = analyze_signal_features(
+        result_without_availability,
+        feature_names=(feature_name,),
+        outcome_name=label_name,
+        winner_definition=WinnerDefinition.VALUE_EQUALS,
+        winner_value="target_first",
+        bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
+    )
+    eligible_rows = sum(
+        row.to_primitive()[label_name] != "unavailable"
+        for row in result_without_availability.rows
+    )
+
+    assert eligible_rows < len(result_without_availability.rows)
+    assert analysis.eligible_row_count == eligible_rows
+    assert analysis.configuration["outcome_unavailable_value"] == "unavailable"
 
 
 def test_analysis_rejects_an_availability_flag_as_the_outcome(tmp_path: Path) -> None:

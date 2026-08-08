@@ -320,7 +320,10 @@ normalizes integer text; date equality requires canonical ISO `YYYY-MM-DD` text.
 When an outcome namespace declares an `available` flag, rows where that flag is
 false are excluded before winner/loser classification, including non-null
 sentinel labels such as `unavailable`. Availability flags are eligibility
-metadata and cannot themselves be selected as analysis outcomes.
+metadata and cannot themselves be selected as analysis outcomes. When a custom
+outcome omits that flag, rows matching the analyzed field's configured
+end-of-data default are excluded instead; custom outcomes should prefer an
+explicit availability flag when a sentinel can also be a valid observed value.
 
 The output is explicitly exploratory. It does not cherry-pick bins, select a
 filter, modify the rule, claim causality, or establish tradability. Any candidate
