@@ -328,6 +328,15 @@ class InvalidFeatureCandidateRule(FixtureCandidateRule):
         return replace(output, signals=signals)
 
 
+class InvalidDispositionMetadataRule(FixtureCandidateRule):
+    def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        output = super().generate(dataset)
+        signals = tuple(
+            replace(signal, explanation=cast(str, 123)) for signal in output.signals
+        )
+        return replace(output, signals=signals)
+
+
 class RegeneratingCandidateRule(FixtureCandidateRule):
     regenerate_differently = False
 
@@ -415,6 +424,10 @@ class DirectConfiguredOutcome:
         if self._malformed_source == "configuration":
             self._run_count += 1
             self._implementation_version = 2 if self._run_count == 1 else 1
+        if self._malformed_source == "study_id":
+            return feature_dataset_module.OutcomeRun(
+                "not-a-canonical-study-id", outcome_run.values_by_session
+            )
         if self._malformed_source != "run" or not outcome_run.values_by_session:
             return outcome_run
         values_by_session = {
@@ -1060,6 +1073,31 @@ def test_builder_validates_custom_flattened_outcome_values(
         )
 
 
+def test_builder_rejects_noncanonical_direct_outcome_study_id(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "study_id")
+
+    with pytest.raises(
+        InvalidPredictionOutputError, match=r"non-canonical QF-11 study ID"
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
+
+    assert not tuple(tmp_path.rglob("rows/*.json"))
+
+
 def test_builder_normalizes_direct_configured_outcome_metadata(tmp_path: Path) -> None:
     dataset = make_dataset(("100", "102"))
     rule = FixtureCandidateRule(
@@ -1370,6 +1408,19 @@ def test_candidate_feature_values_must_match_declared_schema(
 
     with pytest.raises(InvalidPredictionOutputError, match="candidate feature values"):
         _build_fixture(dataset, rule, tmp_path)
+
+
+def test_complete_row_values_must_match_declared_schema(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = InvalidDispositionMetadataRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match=r"signal-feature row values.*disposition_explanation",
+    ):
+        _build_fixture(dataset, rule, tmp_path)
+
+    assert not tuple(tmp_path.rglob("rows/*.json"))
 
 
 def test_material_configuration_changes_create_distinct_dataset_ids(

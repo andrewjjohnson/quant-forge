@@ -453,6 +453,23 @@ def _schema_value_matches(field: SchemaField, value: Primitive) -> bool:
     return False
 
 
+def _is_canonical_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and value == value.lower()
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _validated_study_id(namespace: str, study_id: object) -> str:
+    if not _is_canonical_sha256(study_id):
+        raise InvalidPredictionOutputError(
+            f"outcome {namespace} returned a non-canonical QF-11 study ID"
+        )
+    return cast(str, study_id)
+
+
 class _SignalFeatureRule(Protocol):
     """QF-11 candidate rule with documented strategy-input fields."""
 
@@ -824,13 +841,16 @@ def build_signal_feature_dataset[
                 )
                 for signal_session, values in outcome_run.values_by_session.items()
             }
-            chunk_study_ids[configured_outcome.namespace] = outcome_run.study_id
+            study_id = _validated_study_id(
+                configured_outcome.namespace, outcome_run.study_id
+            )
+            chunk_study_ids[configured_outcome.namespace] = study_id
             previous_study_id = study_ids_by_namespace.get(configured_outcome.namespace)
-            if previous_study_id not in (None, outcome_run.study_id):
+            if previous_study_id not in (None, study_id):
                 raise InvalidPredictionOutputError(
                     "QF-11 study identity changed across deterministic chunks"
                 )
-            study_ids_by_namespace[configured_outcome.namespace] = outcome_run.study_id
+            study_ids_by_namespace[configured_outcome.namespace] = study_id
         for candidate in chunk:
             candidate_id = _candidate_id(market_data, candidate)
             row = _build_row(
@@ -870,7 +890,9 @@ def build_signal_feature_dataset[
                 empty_rule,
                 feature_configuration,
             )
-            study_ids_by_namespace[configured_outcome.namespace] = outcome_run.study_id
+            study_ids_by_namespace[configured_outcome.namespace] = _validated_study_id(
+                configured_outcome.namespace, outcome_run.study_id
+            )
     result = SignalFeatureDatasetResult(
         feature_dataset_id,
         FEATURE_DATASET_ENGINE_VERSION,
@@ -1515,6 +1537,19 @@ def _build_row(
         raise InvalidPredictionOutputError(
             "signal-feature row values do not match their complete schema"
         )
+    fields_by_name = {field.name: field for field in schema.fields}
+    invalid_value_names = tuple(
+        sorted(
+            field_name
+            for field_name, field_value in values.items()
+            if not _schema_value_matches(fields_by_name[field_name], field_value)
+        )
+    )
+    if invalid_value_names:
+        raise InvalidPredictionOutputError(
+            "signal-feature row values do not match their declared schema types or "
+            f"nullability: {invalid_value_names}"
+        )
     values = {name: values[name] for name in schema.column_names}
     return SignalFeatureRow.capture(values)
 
@@ -1692,7 +1727,7 @@ def _study_ids_from_rows(rows: Iterable[SignalFeatureRow]) -> dict[str, str]:
     for row in rows:
         raw = row.to_primitive().get("prediction_study_ids")
         if not isinstance(raw, dict) or any(
-            not isinstance(value, str) for value in raw.values()
+            not _is_canonical_sha256(value) for value in raw.values()
         ):
             raise SignalFeaturePersistenceError(
                 "persisted row has invalid QF-11 study identities"
@@ -1786,7 +1821,10 @@ def _empty_dataset_study_ids(
 ) -> tuple[str, ...]:
     empty_rule = _FixedCandidateRule(strategy, ())
     return tuple(
-        outcome.run(dataset, empty_rule, feature_configuration).study_id
+        _validated_study_id(
+            outcome.namespace,
+            outcome.run(dataset, empty_rule, feature_configuration).study_id,
+        )
         for outcome in outcomes
     )
 

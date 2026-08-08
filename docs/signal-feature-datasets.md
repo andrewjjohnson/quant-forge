@@ -346,7 +346,11 @@ explicit end-of-data defaults, and add the composition to `outcomes`. When an
 end-of-data default must be `false`. The QF-7 builder does not need
 outcome-specific branches. The builder independently validates every flattened
 available and unavailable value against these declarations, including values
-returned by custom `ConfiguredOutcome` implementations. It also normalizes the
+returned by custom `ConfiguredOutcome` implementations. Before checkpointing,
+it also validates every identity, disposition, feature, and outcome value
+against the complete row schema. Each configured outcome must return a
+canonical lowercase SHA-256 QF-11 study ID; invalid provenance is rejected
+before any row is persisted. The builder also normalizes the
 protocol's public namespace, fields, and unavailable defaults into dataset
 configuration, so downstream analysis does not depend on a concrete outcome
 implementation's private configuration shape. Outcome configuration identity is
