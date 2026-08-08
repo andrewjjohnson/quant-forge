@@ -149,12 +149,15 @@ These features are exploratory; none changes the baseline rule. Every
 an explicit optimized integration that provides one full-dataset aligned series
 calculated through causal QF-4 indicators; the builder computes each series once
 and selects the value at the candidate session. Changing a later bar cannot
-change an earlier aligned value. Custom
-features always receive only a market-history prefix ending at the candidate
-session, even if they expose a similarly named aligned-series method, so they
-cannot inspect a later bar or later corporate action. Warm-up values remain
-`null`; they are never backfilled. A contextual feature declared non-nullable
-must return a value; schema/value contradictions fail closed.
+change an earlier aligned value. Custom features always receive only a
+market-history prefix ending at the candidate session, even if they expose a
+similarly named aligned-series method, so they cannot inspect a later bar or
+later corporate action. Prefix metadata replaces full-response hashes,
+locations, retrieval identity, adapter identity, and corporate-action source
+identity with deterministic causal sentinels, preventing extensions from
+recovering future-dependent provenance outside the sliced bars. Warm-up values
+remain `null`; they are never backfilled. A contextual feature declared
+non-nullable must return a value; schema/value contradictions fail closed.
 
 To add a context feature, implement `ContextualFeature`, preferably by composing
 a reusable QF-4 `Indicator`, document its type/unit/source/timing in

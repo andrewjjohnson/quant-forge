@@ -223,6 +223,57 @@ class AlternatingDefinitionContext:
         return history.bars[-1].close
 
 
+class ProvenanceReadingContext:
+    name = "provenance_reading_context"
+
+    @property
+    def definition(self) -> SchemaField:
+        return SchemaField(
+            self.name,
+            SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
+            "decimal",
+            "deterministic_test_signature",
+            False,
+            "signature of provenance visible to a custom causal callback",
+            "after the signal-session close",
+        )
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "signal_contextual_feature",
+            "implementation_version": "1",
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def value_from_history(self, history: MarketDataset) -> Decimal:
+        metadata = history.metadata
+        provenance = (
+            metadata.retrieved_at.isoformat(),
+            metadata.raw_location,
+            metadata.normalized_location,
+            metadata.corporate_actions_location,
+            metadata.raw_sha256,
+            metadata.data_sha256,
+            metadata.dataset_id,
+            metadata.corporate_action_snapshot_id,
+            str(metadata.corporate_actions_complete),
+            metadata.adapter_version,
+            *(
+                value
+                for action in history.corporate_actions
+                for value in (action.action_id, action.source_dataset_id)
+            ),
+        )
+        encoded = "|".join(provenance)
+        return Decimal(
+            sum((index + 1) * ord(character) for index, character in enumerate(encoded))
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class FutureReadingContext(LastCloseContext):
     name: str = "future_reading_context"
@@ -1524,6 +1575,39 @@ def test_future_changes_affect_outcomes_but_not_earlier_features(
     assert (
         first["outcome_forward_return_1_raw_return"]
         != changed["outcome_forward_return_1_raw_return"]
+    )
+
+
+def test_causal_history_scrubs_full_dataset_provenance(tmp_path: Path) -> None:
+    dividend = ((date(2024, 7, 1), "1"),)
+    first_dataset = make_dataset(
+        ("100", "102"),
+        dataset_id="first-provider-response",
+        dividends=dividend,
+    )
+    appended_dataset = make_dataset(
+        ("100", "102", "104"),
+        dataset_id="appended-provider-response",
+        dividends=dividend,
+    )
+    dispositions = (SignalDisposition.ACCEPTED,)
+
+    first = _build_fixture(
+        first_dataset,
+        FixtureCandidateRule(dispositions),
+        tmp_path / "first",
+        context=ProvenanceReadingContext(),
+    ).rows[0]
+    appended = _build_fixture(
+        appended_dataset,
+        FixtureCandidateRule(dispositions),
+        tmp_path / "appended",
+        context=ProvenanceReadingContext(),
+    ).rows[0]
+
+    assert (
+        first.to_primitive()["feature_provenance_reading_context"]
+        == (appended.to_primitive()["feature_provenance_reading_context"])
     )
 
 

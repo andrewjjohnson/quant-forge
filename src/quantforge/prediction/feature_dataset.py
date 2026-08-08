@@ -7,7 +7,7 @@ import os
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal, DecimalException
 from pathlib import Path
 from typing import Protocol, cast
@@ -96,6 +96,7 @@ _LIMITATIONS = (
     "CSV is the supported analytics artifact; Parquet is not emitted because the "
     "repository has no existing Parquet dependency",
 )
+_CAUSAL_PROVENANCE_SENTINEL = "causal-prefix-not-persisted"
 
 _TRUSTED_ALIGNED_CONTEXT_TYPES = (
     AtrPercentageContext,
@@ -1488,14 +1489,22 @@ def _causal_history(
     dataset: MarketDataset, final_index: int, final_session: date
 ) -> MarketDataset:
     actions = tuple(
-        action
-        for action in dataset.corporate_actions
-        if _action_session(action) <= final_session
+        replace(
+            action,
+            action_id=f"causal-prefix-action-{index}",
+            source_dataset_id=_CAUSAL_PROVENANCE_SENTINEL,
+        )
+        for index, action in enumerate(
+            action
+            for action in dataset.corporate_actions
+            if _action_session(action) <= final_session
+        )
     )
     dividends = tuple(action for action in actions if isinstance(action, CashDividend))
     splits = tuple(action for action in actions if not isinstance(action, CashDividend))
     metadata = replace(
         dataset.metadata,
+        retrieved_at=datetime(1970, 1, 1, tzinfo=UTC),
         requested_end=min(dataset.metadata.requested_end, final_session),
         actual_last_session=final_session,
         bar_count=final_index + 1,
@@ -1517,11 +1526,15 @@ def _causal_history(
         corporate_action_count=len(actions),
         dividend_count=len(dividends),
         split_count=len(splits),
-        corporate_action_snapshot_id="causal-prefix-not-persisted",
-        data_sha256="causal-prefix-not-persisted",
-        dataset_id="causal-prefix-not-persisted",
-        normalized_location="causal-prefix-not-persisted",
-        corporate_actions_location="causal-prefix-not-persisted",
+        corporate_actions_complete=False,
+        corporate_action_snapshot_id=_CAUSAL_PROVENANCE_SENTINEL,
+        raw_sha256=_CAUSAL_PROVENANCE_SENTINEL,
+        data_sha256=_CAUSAL_PROVENANCE_SENTINEL,
+        dataset_id=_CAUSAL_PROVENANCE_SENTINEL,
+        raw_location=_CAUSAL_PROVENANCE_SENTINEL,
+        normalized_location=_CAUSAL_PROVENANCE_SENTINEL,
+        corporate_actions_location=_CAUSAL_PROVENANCE_SENTINEL,
+        adapter_version=_CAUSAL_PROVENANCE_SENTINEL,
     )
     return MarketDataset(dataset.bars[: final_index + 1], metadata, actions)
 
