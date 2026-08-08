@@ -358,7 +358,7 @@ def test_analysis_excludes_rows_with_an_unavailable_outcome(tmp_path: Path) -> N
     assert analysis.winner_count + analysis.loser_count == available_rows
 
 
-def test_analysis_excludes_configured_sentinel_without_availability_flag(
+def test_analysis_requires_availability_flag_for_a_non_null_sentinel(
     tmp_path: Path,
 ) -> None:
     dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
@@ -417,22 +417,18 @@ def test_analysis_excludes_configured_sentinel_without_availability_flag(
     feature_name = "feature_atr_percentage_of_close"
     label_name = "outcome_target_stop_2_label"
 
-    analysis = analyze_signal_features(
-        result_without_availability,
-        feature_names=(feature_name,),
-        outcome_name=label_name,
-        winner_definition=WinnerDefinition.VALUE_EQUALS,
-        winner_value="target_first",
-        bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
-    )
-    eligible_rows = sum(
-        row.to_primitive()[label_name] != "unavailable"
-        for row in result_without_availability.rows
-    )
-
-    assert eligible_rows < len(result_without_availability.rows)
-    assert analysis.eligible_row_count == eligible_rows
-    assert analysis.configuration["outcome_unavailable_value"] == "unavailable"
+    with pytest.raises(
+        SignalFeatureDatasetError,
+        match="non-null unavailable defaults require an availability flag",
+    ):
+        analyze_signal_features(
+            result_without_availability,
+            feature_names=(feature_name,),
+            outcome_name=label_name,
+            winner_definition=WinnerDefinition.VALUE_EQUALS,
+            winner_value="target_first",
+            bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
+        )
 
 
 def test_analysis_rejects_an_availability_flag_as_the_outcome(tmp_path: Path) -> None:

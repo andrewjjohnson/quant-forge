@@ -321,9 +321,11 @@ When an outcome namespace declares an `available` flag, rows where that flag is
 false are excluded before winner/loser classification, including non-null
 sentinel labels such as `unavailable`. Availability flags are eligibility
 metadata and cannot themselves be selected as analysis outcomes. When a custom
-outcome omits that flag, rows matching the analyzed field's configured
-end-of-data default are excluded instead; custom outcomes should prefer an
-explicit availability flag when a sentinel can also be a valid observed value.
+outcome omits that flag, a non-null end-of-data default is ambiguous with a
+legitimate matching value, so analysis rejects the configuration rather than
+silently filtering rows. Such outcomes must provide an explicit boolean
+`available` field; nullable outcomes whose unavailable value is null remain
+unambiguous because null values are never classified.
 
 The output is explicitly exploratory. It does not cherry-pick bins, select a
 filter, modify the rule, claim causality, or establish tradability. Any candidate

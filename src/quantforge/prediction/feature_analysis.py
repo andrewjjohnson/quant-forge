@@ -24,7 +24,7 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "9"
+FEATURE_ANALYSIS_ENGINE_VERSION = "10"
 
 _NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
 _SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
@@ -259,6 +259,11 @@ def analyze_signal_features(
         raise SignalFeatureDatasetError(
             "analysis outcome availability field must be a boolean future outcome"
         )
+    if outcome_availability_name is None and outcome_unavailable_value is not None:
+        raise SignalFeatureDatasetError(
+            "analysis outcomes with non-null unavailable defaults require an "
+            "availability flag"
+        )
     normalized_winner_value = winner_value
     if (
         winner_definition is WinnerDefinition.VALUE_EQUALS
@@ -314,7 +319,6 @@ def analyze_signal_features(
         "feature_names": list(feature_names),
         "outcome_availability_name": outcome_availability_name,
         "outcome_name": outcome_name,
-        "outcome_unavailable_value": outcome_unavailable_value,
         "winner_definition": winner_definition.value,
         "winner_value": normalized_winner_value,
     }
@@ -332,16 +336,6 @@ def analyze_signal_features(
         if (
             outcome_availability_name is not None
             and primitive.get(outcome_availability_name) is not True
-        ):
-            continue
-        if (
-            outcome_availability_name is None
-            and outcome_unavailable_value is not None
-            and _outcome_value_matches_default(
-                primitive.get(outcome_name),
-                outcome_unavailable_value,
-                outcome_data_type,
-            )
         ):
             continue
         classification = _winner_classification(
@@ -562,18 +556,6 @@ def _outcome_eligibility(
         )
         return availability_name, cast(Primitive | None, unavailable_value)
     return None, None
-
-
-def _outcome_value_matches_default(
-    value: Primitive | None,
-    unavailable_value: Primitive,
-    outcome_data_type: str,
-) -> bool:
-    if outcome_data_type == "decimal":
-        parsed_value = _decimal_value(value)
-        parsed_default = _decimal_value(unavailable_value)
-        return parsed_value is not None and parsed_value == parsed_default
-    return value == unavailable_value
 
 
 def _decimal_value(value: Primitive | None) -> Decimal | None:
