@@ -23,7 +23,7 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "6"
+FEATURE_ANALYSIS_ENGINE_VERSION = "7"
 
 _NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
 _SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
@@ -241,18 +241,6 @@ def analyze_signal_features(
         raise SignalFeatureDatasetError(
             "value-equals winner definition requires winner_value"
         )
-    normalized_winner_value = winner_value
-    if (
-        winner_definition is WinnerDefinition.VALUE_EQUALS
-        and outcome_data_type == "decimal"
-    ):
-        parsed_winner_value = _decimal_value(winner_value)
-        if parsed_winner_value is None:
-            raise SignalFeatureDatasetError(
-                "value-equals requires a finite decimal winner_value for a decimal "
-                "outcome"
-            )
-        normalized_winner_value = decimal_to_primitive(parsed_winner_value)
     outcome_availability_name = _outcome_availability_name(result, outcome_name)
     if outcome_availability_name == outcome_name:
         raise SignalFeatureDatasetError(
@@ -266,6 +254,26 @@ def analyze_signal_features(
     ):
         raise SignalFeatureDatasetError(
             "analysis outcome availability field must be a boolean future outcome"
+        )
+    normalized_winner_value = winner_value
+    if (
+        winner_definition is WinnerDefinition.VALUE_EQUALS
+        and outcome_data_type == "decimal"
+    ):
+        parsed_winner_value = _decimal_value(winner_value)
+        if parsed_winner_value is None:
+            raise SignalFeatureDatasetError(
+                "value-equals requires a finite decimal winner_value for a decimal "
+                "outcome"
+            )
+        normalized_winner_value = decimal_to_primitive(parsed_winner_value)
+    if (
+        winner_definition is WinnerDefinition.VALUE_EQUALS
+        and outcome_data_type == "boolean"
+        and winner_value not in ("false", "true")
+    ):
+        raise SignalFeatureDatasetError(
+            "value-equals requires winner_value true or false for a boolean outcome"
         )
     configuration: PrimitiveMapping = {
         "bins": {
@@ -445,6 +453,10 @@ def _winner_classification(
             if decimal_value is None or decimal_winner_value is None
             else decimal_value == decimal_winner_value
         )
+    if outcome_data_type == "boolean":
+        if not isinstance(value, bool) or winner_value not in ("false", "true"):
+            return None
+        return value is (winner_value == "true")
     if not isinstance(value, (str, int, float, bool)):
         return None
     return str(value) == winner_value

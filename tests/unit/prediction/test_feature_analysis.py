@@ -174,6 +174,72 @@ def test_value_equals_compares_decimal_outcomes_numerically(tmp_path: Path) -> N
     assert integer_scale.analysis_id == fractional_scale.analysis_id
 
 
+def test_value_equals_parses_boolean_winner_values_from_schema(tmp_path: Path) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    outcome_name = "outcome_forward_return_1_raw_return"
+    boolean_schema = replace(
+        feature_dataset.schema,
+        fields=tuple(
+            replace(field, data_type="boolean", unit="flag")
+            if field.name == outcome_name
+            else field
+            for field in feature_dataset.schema.fields
+        ),
+    )
+    row_values = feature_dataset.rows[0].to_primitive()
+    row_values[outcome_name] = True
+    boolean_dataset = replace(
+        feature_dataset,
+        schema=boolean_schema,
+        rows=(SignalFeatureRow.capture(row_values),),
+    )
+    feature_name = "feature_atr_percentage_of_close"
+    bins = {feature_name: (FeatureAnalysisBin("all", None, None),)}
+
+    true_analysis = analyze_signal_features(
+        boolean_dataset,
+        feature_names=(feature_name,),
+        outcome_name=outcome_name,
+        winner_definition=WinnerDefinition.VALUE_EQUALS,
+        winner_value="true",
+        bins=bins,
+    )
+    false_analysis = analyze_signal_features(
+        boolean_dataset,
+        feature_names=(feature_name,),
+        outcome_name=outcome_name,
+        winner_definition=WinnerDefinition.VALUE_EQUALS,
+        winner_value="false",
+        bins=bins,
+    )
+
+    assert true_analysis.winner_count == 1
+    assert false_analysis.loser_count == 1
+    with pytest.raises(SignalFeatureDatasetError, match="true or false"):
+        analyze_signal_features(
+            boolean_dataset,
+            feature_names=(feature_name,),
+            outcome_name=outcome_name,
+            winner_definition=WinnerDefinition.VALUE_EQUALS,
+            winner_value="True",
+            bins=bins,
+        )
+
+
 def test_analysis_excludes_rows_with_an_unavailable_outcome(tmp_path: Path) -> None:
     dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
     rule = OvernightGapSignalFeatureRule(

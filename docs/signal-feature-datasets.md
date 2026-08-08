@@ -311,7 +311,9 @@ features and a future-outcome schema field as the outcome, preserving the causal
 feature/outcome boundary. Analyzed features must declare numeric `decimal` or
 `integer` types. `DECIMAL_GREATER_THAN_ZERO` likewise requires a numeric outcome;
 `VALUE_EQUALS` accepts only scalar outcome types and compares decimal outcomes by
-numeric value rather than serialization scale.
+numeric value rather than serialization scale. Boolean equality requires the
+canonical `true` or `false` winner value and compares against the declared
+boolean value rather than Python string casing.
 When an outcome namespace declares an `available` flag, rows where that flag is
 false are excluded before winner/loser classification, including non-null
 sentinel labels such as `unavailable`. Availability flags are eligibility
