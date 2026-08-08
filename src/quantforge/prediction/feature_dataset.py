@@ -521,9 +521,13 @@ class _FixedCandidateRule:
         self,
         source: _SignalFeatureRule,
         signals: tuple[SignalFeatureCandidate, ...],
+        population_id: str,
+        population_count: int,
     ) -> None:
         self._source = source
         self._signals = signals
+        self._population_id = population_id
+        self._population_count = population_count
 
     @property
     def name(self) -> str:
@@ -547,18 +551,56 @@ class _FixedCandidateRule:
 
     @property
     def configuration_id(self) -> str:
-        return self._source.configuration_id
+        return configuration_identity(self.configuration())
 
     def configuration(self) -> PrimitiveMapping:
-        return self._source.configuration()
+        return {
+            "component_name": self.name,
+            "component_type": "qf7_fixed_candidate_replay",
+            "fixed_candidate_population_count": self._population_count,
+            "fixed_candidate_population_id": self._population_id,
+            "implementation_version": self.implementation_version,
+            "replay_semantics": "operational chunks are parts of one fixed population",
+            "source_configuration": self._source.configuration(),
+            "source_configuration_id": self._source.configuration_id,
+        }
 
     def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        configuration_id = self.configuration_id
         return SignalFeatureCandidateOutput(
             self.name,
-            self.configuration_id,
+            configuration_id,
             dataset.metadata.dataset_id,
-            self._signals,
+            tuple(
+                replace(signal, strategy_configuration_id=configuration_id)
+                for signal in self._signals
+            ),
         )
+
+
+def _fixed_candidate_population_id(
+    signals: tuple[SignalFeatureCandidate, ...],
+) -> str:
+    return configuration_identity(
+        {
+            "component": "qf7_fixed_candidate_population",
+            "signals": [
+                {
+                    "features": signal.features_primitive(),
+                    "prediction": signal.prediction_primitive(),
+                    "signal_session": signal.signal_session.isoformat(),
+                    "strategy_configuration_id": signal.strategy_configuration_id,
+                    "strategy_id": signal.strategy_id,
+                    "strategy_implementation_version": (
+                        signal.strategy_implementation_version
+                    ),
+                    "strategy_parameters": signal.parameters_primitive(),
+                    "symbol": signal.symbol,
+                }
+                for signal in signals
+            ],
+        }
+    )
 
 
 def forward_return_outcome(
@@ -734,8 +776,14 @@ def build_signal_feature_dataset[
     strategy = cast(_SignalFeatureRule, prediction_study.strategy)
     strategy_fields = _strategy_fields(strategy)
     sorted_features = tuple(sorted(contextual_features, key=lambda item: item.name))
+    contextual_definitions = tuple(feature.definition for feature in sorted_features)
     sorted_outcomes = tuple(sorted(outcomes, key=lambda item: item.namespace))
-    _validate_feature_configuration(strategy_fields, sorted_features, sorted_outcomes)
+    _validate_feature_configuration(
+        strategy_fields,
+        sorted_features,
+        contextual_definitions,
+        sorted_outcomes,
+    )
     if not any(
         item.labeler_configuration_id
         == prediction_study.outcome_labeler.configuration_id
@@ -757,6 +805,7 @@ def build_signal_feature_dataset[
         prediction_study,
         strategy_fields,
         sorted_features,
+        contextual_definitions,
         sorted_outcomes,
         unavailable_outcome_values,
     )
@@ -765,8 +814,12 @@ def build_signal_feature_dataset[
         outcome.namespace: outcome.configuration_id for outcome in sorted_outcomes
     }
     feature_dataset_id = configuration_identity(configuration)
-    schema = _schema(strategy_fields, sorted_features, sorted_outcomes)
-    feature_configuration = _feature_configuration(strategy_fields, sorted_features)
+    schema = _schema(strategy_fields, contextual_definitions, sorted_outcomes)
+    feature_configuration = _feature_configuration(
+        strategy_fields,
+        sorted_features,
+        contextual_definitions,
+    )
     destination = output_root / feature_dataset_id
 
     if destination.exists() and _manifest_status(destination) == "complete":
@@ -810,6 +863,7 @@ def build_signal_feature_dataset[
         candidates,
         bar_indexes,
         sorted_features,
+        contextual_definitions,
     )
     _validate_regenerated_completed_rows(
         feature_dataset_id,
@@ -826,6 +880,7 @@ def build_signal_feature_dataset[
         if (candidate_id := _candidate_id(market_data, candidate))
         if candidate_id not in completed_rows
     )
+    candidate_population_id = _fixed_candidate_population_id(enriched_candidates)
     study_ids_by_namespace = _study_ids_from_rows(completed_rows.values())
     prepared_outcome_dataset = (
         prepare_prediction_study_dataset(dataset)
@@ -838,7 +893,12 @@ def build_signal_feature_dataset[
         chunk_signal_sessions = frozenset(
             candidate.signal_session for candidate in chunk
         )
-        fixed_rule = _FixedCandidateRule(strategy, chunk)
+        fixed_rule = _FixedCandidateRule(
+            strategy,
+            chunk,
+            candidate_population_id,
+            len(enriched_candidates),
+        )
         outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
         chunk_study_ids: dict[str, str] = {}
         for configured_outcome in sorted_outcomes:
@@ -900,7 +960,7 @@ def build_signal_feature_dataset[
             "completed signal-feature rows contain duplicate candidates"
         )
     if not enriched_candidates:
-        empty_rule = _FixedCandidateRule(strategy, ())
+        empty_rule = _FixedCandidateRule(strategy, (), candidate_population_id, 0)
         for configured_outcome in sorted_outcomes:
             if prepared_outcome_dataset is None:
                 raise InvalidPredictionOutputError(
@@ -1048,6 +1108,7 @@ def _strategy_fields(strategy: _SignalFeatureRule) -> tuple[SchemaField, ...]:
 def _validate_feature_configuration(
     strategy_fields: tuple[SchemaField, ...],
     contextual_features: tuple[ContextualFeature, ...],
+    contextual_definitions: tuple[SchemaField, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
 ) -> None:
     if not outcomes:
@@ -1063,15 +1124,14 @@ def _validate_feature_configuration(
         raise SignalFeatureDatasetError(
             "strategy, contextual, and outcome names must be unique"
         )
-    for feature in contextual_features:
-        if feature.definition.name != feature.name:
+    for feature, definition in zip(
+        contextual_features, contextual_definitions, strict=True
+    ):
+        if definition.name != feature.name:
             raise SignalFeatureDatasetError(
                 "contextual feature definition does not match its name"
             )
-        if (
-            feature.definition.category
-            is not SchemaFieldCategory.CONTEMPORANEOUS_FEATURE
-        ):
+        if definition.category is not SchemaFieldCategory.CONTEMPORANEOUS_FEATURE:
             raise SignalFeatureDatasetError(
                 "contextual feature definitions must be contemporaneous features"
             )
@@ -1111,6 +1171,7 @@ def _dataset_configuration[
     ],
     strategy_fields: tuple[SchemaField, ...],
     contextual_features: tuple[ContextualFeature, ...],
+    contextual_definitions: tuple[SchemaField, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> PrimitiveMapping:
@@ -1129,8 +1190,10 @@ def _dataset_configuration[
         "source_data": market_data.to_primitive(),
         "strategy_feature_fields": [field.to_primitive() for field in strategy_fields],
         "contextual_features": [
-            _contextual_feature_configuration(feature)
-            for feature in contextual_features
+            _contextual_feature_configuration(feature, definition)
+            for feature, definition in zip(
+                contextual_features, contextual_definitions, strict=True
+            )
         ],
         "outcomes": [
             _normalized_outcome_configuration(
@@ -1157,11 +1220,14 @@ def _normalized_outcome_configuration(
 def _feature_configuration(
     strategy_fields: tuple[SchemaField, ...],
     contextual_features: tuple[ContextualFeature, ...],
+    contextual_definitions: tuple[SchemaField, ...],
 ) -> PrimitiveMapping:
     return {
         "candidate_context_features": [
-            _contextual_feature_configuration(feature)
-            for feature in contextual_features
+            _contextual_feature_configuration(feature, definition)
+            for feature, definition in zip(
+                contextual_features, contextual_definitions, strict=True
+            )
         ],
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "required_strategy_features": [
@@ -1173,22 +1239,23 @@ def _feature_configuration(
 
 def _contextual_feature_configuration(
     feature: ContextualFeature,
+    definition: SchemaField,
 ) -> PrimitiveMapping:
     return {
         "configuration": feature.configuration(),
-        "definition": feature.definition.to_primitive(),
+        "definition": definition.to_primitive(),
     }
 
 
 def _schema(
     strategy_fields: tuple[SchemaField, ...],
-    contextual_features: tuple[ContextualFeature, ...],
+    contextual_definitions: tuple[SchemaField, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
 ) -> SignalFeatureSchema:
     feature_fields = tuple(
         replace(field, name=f"feature_{field.name}")
         for field in sorted(
-            (*strategy_fields, *(item.definition for item in contextual_features)),
+            (*strategy_fields, *contextual_definitions),
             key=lambda field: field.name,
         )
     )
@@ -1332,6 +1399,7 @@ def _enrich_candidates(
     candidates: tuple[SignalFeatureCandidate, ...],
     bar_indexes: dict[date, int],
     contextual_features: tuple[ContextualFeature, ...],
+    contextual_definitions: tuple[SchemaField, ...],
 ) -> tuple[SignalFeatureCandidate, ...]:
     if any(candidate.contextual_features for candidate in candidates):
         raise InvalidPredictionOutputError(
@@ -1342,9 +1410,10 @@ def _enrich_candidates(
     values_by_session: dict[date, list[SignalFeatureValue]] = {
         candidate.signal_session: [] for candidate in candidates
     }
-    for feature in contextual_features:
+    for feature, definition in zip(
+        contextual_features, contextual_definitions, strict=True
+    ):
         expected_configuration_id = feature.configuration_id
-        definition = feature.definition
         if feature.__class__ not in _TRUSTED_ALIGNED_CONTEXT_TYPES:
             values: dict[date, Decimal | None] = {}
             for candidate in candidates:
@@ -1881,7 +1950,12 @@ def _empty_dataset_study_ids(
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_configuration_ids: dict[str, str],
 ) -> tuple[str, ...]:
-    empty_rule = _FixedCandidateRule(strategy, ())
+    empty_rule = _FixedCandidateRule(
+        strategy,
+        (),
+        _fixed_candidate_population_id(()),
+        0,
+    )
     prepared_dataset = prepare_prediction_study_dataset(dataset)
     study_ids: list[str] = []
     for outcome in outcomes:

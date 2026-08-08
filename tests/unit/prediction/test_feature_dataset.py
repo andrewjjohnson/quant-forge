@@ -188,6 +188,41 @@ class LastCloseContext:
         return history.bars[-1].close
 
 
+class AlternatingDefinitionContext:
+    name = "alternating_definition_context"
+
+    def __init__(self) -> None:
+        self.definition_reads = 0
+
+    @property
+    def definition(self) -> SchemaField:
+        self.definition_reads += 1
+        unit = "price_per_share" if self.definition_reads == 1 else "ratio"
+        return SchemaField(
+            self.name,
+            SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
+            "decimal",
+            unit,
+            False,
+            "last close with a definition that changes on repeated access",
+            "after the signal-session close",
+        )
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "signal_contextual_feature",
+            "implementation_version": "1",
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def value_from_history(self, history: MarketDataset) -> Decimal:
+        return history.bars[-1].close
+
+
 @dataclass(frozen=True, slots=True)
 class FutureReadingContext(LastCloseContext):
     name: str = "future_reading_context"
@@ -769,6 +804,43 @@ def test_outcome_study_setup_is_reused_across_checkpoint_chunks(
     assert len(result.rows) == 4
     assert labeler.validate_calls == 1
     assert labeler.label_calls == 4
+
+
+def test_fixed_candidate_replay_identity_binds_full_population(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    first_rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+    second_rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.BLOCKED)
+    )
+    first_study, first_outcome = _fixture_study(first_rule)
+    second_study, second_outcome = _fixture_study(second_rule)
+
+    first = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=first_study,
+        contextual_features=(),
+        outcomes=(first_outcome,),
+        output_root=tmp_path / "first",
+        chunk_size=1,
+    )
+    second = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=second_study,
+        contextual_features=(),
+        outcomes=(second_outcome,),
+        output_root=tmp_path / "second",
+        chunk_size=1,
+    )
+
+    assert first_rule.configuration_id == second_rule.configuration_id
+    assert first.prediction_study_ids != second.prediction_study_ids
+    assert all(
+        row.to_primitive()["prediction_study_ids"]
+        == {"forward_return_1": first.prediction_study_ids[0]}
+        for row in first.rows
+    )
 
 
 def test_complete_resume_performs_no_new_generation(tmp_path: Path) -> None:
@@ -1714,6 +1786,36 @@ def test_contextual_field_definition_changes_dataset_identity(tmp_path: Path) ->
     assert price_result.dataset_id != ratio_result.dataset_id
     assert (tmp_path / price_result.dataset_id).is_dir()
     assert (tmp_path / ratio_result.dataset_id).is_dir()
+
+
+def test_contextual_definition_is_snapshotted_once_for_identity_and_schema(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    context = AlternatingDefinitionContext()
+
+    result = _build_fixture(
+        dataset,
+        FixtureCandidateRule((SignalDisposition.ACCEPTED,)),
+        tmp_path,
+        context=context,
+    )
+
+    field = next(
+        field
+        for field in result.schema.fields
+        if field.name == "feature_alternating_definition_context"
+    )
+    contextual_configuration = result.configuration["contextual_features"]
+    assert isinstance(contextual_configuration, list)
+    configured_feature = contextual_configuration[0]
+    assert isinstance(configured_feature, dict)
+    configured_definition = configured_feature["definition"]
+    assert isinstance(configured_definition, dict)
+
+    assert context.definition_reads == 1
+    assert field.unit == "price_per_share"
+    assert configured_definition["unit"] == field.unit
 
 
 def test_exact_qf3_dataset_identity_changes_feature_dataset_identity(

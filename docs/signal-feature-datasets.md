@@ -262,6 +262,12 @@ also hashes the complete prediction-study template, rule and parameter
 configuration, strategy-feature schema, contextual feature configurations,
 complete contextual field definitions, every QF-11 labeler/evaluator
 configuration, and feature/outcome/engine versions.
+Each contextual definition is captured once and reused for configuration,
+schema, and value validation, so a mutable property cannot split identity from
+the exported schema. QF-11 outcome replay binds the complete fixed candidate
+population fingerprint into its rule configuration; operational chunks are
+parts of that one logical population and therefore retain a stable,
+population-specific study identity across fresh and resumed builds.
 Chunk size does not participate. Equivalent configurations over the same exact
 QF-3 cache entry receive the same identity; a refreshed cache entry or any
 material feature or outcome change receives a new one.
