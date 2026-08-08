@@ -218,12 +218,15 @@ values are exact decimal text in CSV and can be inferred or explicitly parsed
 by pandas/Polars without decoding a feature JSON object. Parameter and reason
 collections remain canonical JSON columns.
 
-The QF-7 dataset ID hashes the source bar fingerprint and basis, complete
-prediction-study template, rule and parameter configuration, strategy-feature
-schema, contextual feature configurations, every QF-11 labeler/evaluator
-configuration, and feature/outcome/engine versions. Chunk size and runtime
-timestamps do not participate. Equivalent independent configurations receive
-the same identity; any material feature or outcome change receives a new one.
+The QF-7 dataset ID hashes the exact immutable QF-3 dataset ID and complete
+prediction provenance, including retrieval timestamp, requested and actual
+ranges, corporate-action snapshot, bar fingerprint, and price/volume basis. It
+also hashes the complete prediction-study template, rule and parameter
+configuration, strategy-feature schema, contextual feature configurations,
+every QF-11 labeler/evaluator configuration, and feature/outcome/engine versions.
+Chunk size does not participate. Equivalent configurations over the same exact
+QF-3 cache entry receive the same identity; a refreshed cache entry or any
+material feature or outcome change receives a new one.
 
 ## Incremental persistence and resume
 

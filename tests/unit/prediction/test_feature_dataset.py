@@ -1,6 +1,6 @@
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -19,10 +19,12 @@ from quantforge.prediction import (
     ForwardReturnEvaluator,
     ForwardReturnOutcomeLabeler,
     ForwardReturnValues,
+    InvalidPredictionOutputError,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
     OvernightGapSignalFeatureRule,
     PredictionDirection,
+    PredictionOutcome,
     PredictionStudy,
     PredictionStudyOutcome,
     SchemaField,
@@ -180,6 +182,42 @@ class FutureReadingContext(LastCloseContext):
 
     def value_from_history(self, history: MarketDataset) -> Decimal:
         return history.bars[1].close
+
+
+@dataclass(frozen=True, slots=True)
+class NullRawReturnValues:
+    source: ForwardReturnValues
+
+    def to_primitive(self) -> PrimitiveMapping:
+        values = self.source.to_primitive()
+        values["raw_return"] = None
+        return values
+
+
+class NullRawReturnEvaluator:
+    name = "null_raw_return_fixture_evaluator"
+    implementation_version = "1"
+    result_schema_version = "1"
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "prediction_evaluator",
+            "implementation_version": self.implementation_version,
+            "result_schema_version": self.result_schema_version,
+        }
+
+    def evaluate(
+        self,
+        signal: SignalFeatureCandidate,
+        outcome: PredictionOutcome[ForwardReturnValues],
+    ) -> NullRawReturnValues:
+        del signal
+        return NullRawReturnValues(outcome.values)
 
 
 def _fixture_study(
@@ -449,6 +487,32 @@ def test_outcome_requires_non_null_defaults_for_non_nullable_fields(
         )
 
 
+def test_available_outcome_values_obey_declared_nullability(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    fields = tuple(
+        replace(field, nullable=False) if field.name == "raw_return" else field
+        for field in primary.fields
+    )
+    outcome = PredictionStudyOutcome[ForwardReturnValues, NullRawReturnValues].create(
+        "null_raw_return",
+        primary.labeler,
+        NullRawReturnEvaluator(),
+        fields,
+        unavailable_values={
+            "available": False,
+            "horizon_sessions": 1,
+            "raw_return": "0",
+        },
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match=r"null.*non-nullable"):
+        outcome.run(dataset, rule, {"feature_schema_version": "1"})
+
+
 def test_future_changes_affect_outcomes_but_not_earlier_features(
     tmp_path: Path,
 ) -> None:
@@ -530,6 +594,31 @@ def test_material_configuration_changes_create_distinct_dataset_ids(
         len({first.dataset_id, changed_feature.dataset_id, changed_outcome.dataset_id})
         == 3
     )
+
+
+def test_exact_qf3_dataset_identity_changes_feature_dataset_identity(
+    tmp_path: Path,
+) -> None:
+    original = make_dataset(("100", "102", "101"), dataset_id="original-cache")
+    refreshed = make_dataset(("100", "102", "101"), dataset_id="refreshed-cache")
+
+    assert original.metadata.data_sha256 == refreshed.metadata.data_sha256
+    assert original.metadata.dataset_id != refreshed.metadata.dataset_id
+
+    original_result = _build_fixture(
+        original,
+        FixtureCandidateRule((SignalDisposition.ACCEPTED,)),
+        tmp_path,
+    )
+    refreshed_result = _build_fixture(
+        refreshed,
+        FixtureCandidateRule((SignalDisposition.ACCEPTED,)),
+        tmp_path,
+    )
+
+    assert original_result.dataset_id != refreshed_result.dataset_id
+    assert (tmp_path / original_result.dataset_id).is_dir()
+    assert (tmp_path / refreshed_result.dataset_id).is_dir()
 
 
 def test_incompatible_progress_manifest_fails_clearly(

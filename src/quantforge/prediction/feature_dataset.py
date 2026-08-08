@@ -230,6 +230,9 @@ class PredictionStudyOutcome[
         )
         result = run_prediction_study(dataset, study)
         field_names = {field.name for field in self.fields}
+        non_nullable_field_names = {
+            field.name for field in self.fields if not field.nullable
+        }
         values_by_session: dict[date, PrimitiveMapping] = {}
         for row in result.rows:
             values = row.evaluation.values.to_primitive()
@@ -238,6 +241,12 @@ class PredictionStudyOutcome[
             if set(values) != field_names:
                 raise InvalidPredictionOutputError(
                     f"outcome {self.namespace} values do not match their schema"
+                )
+            if any(
+                values[field_name] is None for field_name in non_nullable_field_names
+            ):
+                raise InvalidPredictionOutputError(
+                    f"outcome {self.namespace} produced null for a non-nullable field"
                 )
             values_by_session[row.signal.signal_session] = values
         return OutcomeRun(result.study_id, values_by_session)
@@ -505,7 +514,7 @@ def build_signal_feature_dataset[
             "configured outcomes must include the supplied PredictionStudy composition"
         )
     configuration = _dataset_configuration(
-        dataset,
+        market_data,
         prediction_study,
         strategy_fields,
         sorted_features,
@@ -696,7 +705,7 @@ def _dataset_configuration[
     InitialOutcomeT: PredictionValues,
     InitialEvaluationT: PredictionValues,
 ](
-    dataset: MarketDataset,
+    market_data: PredictionMarketData,
     prediction_study: PredictionStudy[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
@@ -704,7 +713,6 @@ def _dataset_configuration[
     contextual_features: tuple[ContextualFeature, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
 ) -> PrimitiveMapping:
-    metadata = dataset.metadata
     return {
         "component": "quantforge_signal_feature_dataset",
         "engine_version": FEATURE_DATASET_ENGINE_VERSION,
@@ -717,18 +725,7 @@ def _dataset_configuration[
             "result_schema_version": prediction_study.result_schema_version,
             "strategy": prediction_study.strategy.configuration(),
         },
-        "source_data": {
-            "actual_first_session": metadata.actual_first_session.isoformat(),
-            "actual_last_session": metadata.actual_last_session.isoformat(),
-            "adjustment_mode": metadata.adjustment_mode.value,
-            "bars_fingerprint": metadata.data_sha256,
-            "calendar": metadata.calendar,
-            "ohlc_basis": metadata.ohlc_basis,
-            "provider_name": metadata.provider_name,
-            "schema_version": metadata.schema_version,
-            "symbol": metadata.canonical_symbol,
-            "volume_basis": metadata.volume_basis,
-        },
+        "source_data": market_data.to_primitive(),
         "strategy_feature_fields": [field.to_primitive() for field in strategy_fields],
         "contextual_features": [
             feature.configuration() for feature in contextual_features
