@@ -369,7 +369,10 @@ does not need outcome-specific branches. The builder independently validates
 every flattened available and unavailable value against these declarations,
 including values returned by custom `ConfiguredOutcome` implementations. Before
 checkpointing, it also validates every identity, disposition, feature, and
-outcome value against the complete row schema. Each configured outcome must
+outcome value against the complete row schema. Each outcome field tuple is
+captured once and reused for validation, dataset identity, schema construction,
+resume checks, and row handling, so mutable properties cannot split the
+artifact's identity from its published schema. Each configured outcome must
 return a canonical lowercase SHA-256 QF-11 study ID; invalid provenance is
 rejected before any row is persisted. Returned outcome session keys must belong
 to the current candidate chunk; unknown keys fail closed instead of silently

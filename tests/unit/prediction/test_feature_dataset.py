@@ -613,6 +613,28 @@ class MiscategorizedDirectOutcome(DirectConfiguredOutcome):
         )
 
 
+class AlternatingFieldsDirectOutcome(DirectConfiguredOutcome):
+    def __init__(
+        self,
+        delegate: PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues],
+    ) -> None:
+        super().__init__(delegate, "valid")
+        self.field_reads = 0
+
+    @property
+    def fields(self) -> tuple[SchemaField, ...]:
+        self.field_reads += 1
+        fields = super().fields
+        if self.field_reads == 1:
+            return fields
+        return tuple(
+            replace(field, unit="percentage_points")
+            if field.name == "raw_return"
+            else field
+            for field in fields
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class NullRawReturnValues:
     source: ForwardReturnValues
@@ -1410,6 +1432,46 @@ def test_builder_normalizes_direct_configured_outcome_metadata(tmp_path: Path) -
     assert normalized["component_configuration"] == configured_outcome.configuration()
     assert normalized["fields"]
     assert normalized["unavailable_values"] == configured_outcome.unavailable_row()
+
+
+def test_direct_outcome_fields_are_snapshotted_once_for_identity_and_schema(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = AlternatingFieldsDirectOutcome(primary)
+
+    result = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(configured_outcome,),
+        output_root=tmp_path,
+    )
+
+    configured_outcomes = result.configuration["outcomes"]
+    assert isinstance(configured_outcomes, list)
+    normalized = configured_outcomes[0]
+    assert isinstance(normalized, dict)
+    normalized_fields = normalized["fields"]
+    assert isinstance(normalized_fields, list)
+    normalized_raw_return = next(
+        field
+        for field in normalized_fields
+        if isinstance(field, dict) and field["field_name"] == "raw_return"
+    )
+    schema_raw_return = next(
+        field
+        for field in result.schema.fields
+        if field.name == "outcome_forward_return_1_raw_return"
+    )
+
+    assert configured_outcome.field_reads == 1
+    assert normalized_raw_return["unit"] == schema_raw_return.unit == "ratio"
 
 
 def test_builder_rechecks_direct_outcome_configuration_after_each_run(

@@ -779,11 +779,13 @@ def build_signal_feature_dataset[
     sorted_features = tuple(sorted(contextual_features, key=lambda item: item.name))
     contextual_definitions = tuple(feature.definition for feature in sorted_features)
     sorted_outcomes = tuple(sorted(outcomes, key=lambda item: item.namespace))
+    outcome_field_snapshots = tuple(outcome.fields for outcome in sorted_outcomes)
     _validate_feature_configuration(
         strategy_fields,
         sorted_features,
         contextual_definitions,
         sorted_outcomes,
+        outcome_field_snapshots,
     )
     if not any(
         item.labeler_configuration_id
@@ -797,9 +799,13 @@ def build_signal_feature_dataset[
         )
     unavailable_outcome_values = {
         outcome.namespace: _validated_unavailable_outcome_values(
-            outcome, outcome.unavailable_row()
+            outcome,
+            fields,
+            outcome.unavailable_row(),
         )
-        for outcome in sorted_outcomes
+        for outcome, fields in zip(
+            sorted_outcomes, outcome_field_snapshots, strict=True
+        )
     }
     configuration = _dataset_configuration(
         market_data,
@@ -808,6 +814,7 @@ def build_signal_feature_dataset[
         sorted_features,
         contextual_definitions,
         sorted_outcomes,
+        outcome_field_snapshots,
         unavailable_outcome_values,
     )
     configuration_snapshot = PrimitiveMappingSnapshot.capture(configuration)
@@ -815,7 +822,12 @@ def build_signal_feature_dataset[
         outcome.namespace: outcome.configuration_id for outcome in sorted_outcomes
     }
     feature_dataset_id = configuration_identity(configuration)
-    schema = _schema(strategy_fields, contextual_definitions, sorted_outcomes)
+    schema = _schema(
+        strategy_fields,
+        contextual_definitions,
+        sorted_outcomes,
+        outcome_field_snapshots,
+    )
     feature_configuration = _feature_configuration(
         strategy_fields,
         sorted_features,
@@ -873,6 +885,7 @@ def build_signal_feature_dataset[
         enriched_candidates,
         completed_rows,
         sorted_outcomes,
+        outcome_field_snapshots,
         unavailable_outcome_values,
     )
     missing_candidates = tuple(
@@ -902,7 +915,9 @@ def build_signal_feature_dataset[
         )
         outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
         chunk_study_ids: dict[str, str] = {}
-        for configured_outcome in sorted_outcomes:
+        for configured_outcome, fields in zip(
+            sorted_outcomes, outcome_field_snapshots, strict=True
+        ):
             if prepared_outcome_dataset is None:
                 raise InvalidPredictionOutputError(
                     "missing candidates require a prepared outcome dataset"
@@ -922,7 +937,7 @@ def build_signal_feature_dataset[
             )
             outcome_values[configured_outcome.namespace] = {
                 signal_session: _validated_flattened_outcome_values(
-                    configured_outcome, values
+                    configured_outcome, fields, values
                 )
                 for signal_session, values in outcome_run.values_by_session.items()
             }
@@ -1028,6 +1043,7 @@ def _validate_regenerated_completed_rows(
     candidates: tuple[SignalFeatureCandidate, ...],
     completed_rows: dict[str, SignalFeatureRow],
     outcomes: tuple[ConfiguredOutcome, ...],
+    outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> None:
     for candidate in candidates:
@@ -1042,10 +1058,10 @@ def _validate_regenerated_completed_rows(
                     field.name: completed_values[
                         f"outcome_{outcome.namespace}_{field.name}"
                     ]
-                    for field in outcome.fields
+                    for field in fields
                 }
             }
-            for outcome in outcomes
+            for outcome, fields in zip(outcomes, outcome_field_snapshots, strict=True)
         }
         regenerated_row = _build_row(
             feature_dataset_id,
@@ -1111,6 +1127,7 @@ def _validate_feature_configuration(
     contextual_features: tuple[ContextualFeature, ...],
     contextual_definitions: tuple[SchemaField, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
+    outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
 ) -> None:
     if not outcomes:
         raise SignalFeatureDatasetError("at least one QF-11 outcome is required")
@@ -1140,8 +1157,7 @@ def _validate_feature_configuration(
             raise SignalFeatureDatasetError(
                 "contextual feature configuration identity is invalid"
             )
-    for outcome in outcomes:
-        fields = outcome.fields
+    for outcome, fields in zip(outcomes, outcome_field_snapshots, strict=True):
         field_names = tuple(field.name for field in fields)
         if (
             not field_names
@@ -1174,6 +1190,7 @@ def _dataset_configuration[
     contextual_features: tuple[ContextualFeature, ...],
     contextual_definitions: tuple[SchemaField, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
+    outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> PrimitiveMapping:
     return {
@@ -1198,21 +1215,24 @@ def _dataset_configuration[
         ],
         "outcomes": [
             _normalized_outcome_configuration(
-                outcome, unavailable_outcome_values[outcome.namespace]
+                outcome,
+                fields,
+                unavailable_outcome_values[outcome.namespace],
             )
-            for outcome in outcomes
+            for outcome, fields in zip(outcomes, outcome_field_snapshots, strict=True)
         ],
     }
 
 
 def _normalized_outcome_configuration(
     outcome: ConfiguredOutcome,
+    fields: tuple[SchemaField, ...],
     unavailable_values: PrimitiveMapping,
 ) -> PrimitiveMapping:
     return {
         "component_configuration": outcome.configuration(),
         "configuration_id": outcome.configuration_id,
-        "fields": [field.to_primitive() for field in outcome.fields],
+        "fields": [field.to_primitive() for field in fields],
         "namespace": outcome.namespace,
         "unavailable_values": unavailable_values,
     }
@@ -1252,6 +1272,7 @@ def _schema(
     strategy_fields: tuple[SchemaField, ...],
     contextual_definitions: tuple[SchemaField, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
+    outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
 ) -> SignalFeatureSchema:
     feature_fields = tuple(
         replace(field, name=f"feature_{field.name}")
@@ -1262,8 +1283,8 @@ def _schema(
     )
     outcome_fields = tuple(
         replace(field, name=f"outcome_{outcome.namespace}_{field.name}")
-        for outcome in outcomes
-        for field in outcome.fields
+        for outcome, fields in zip(outcomes, outcome_field_snapshots, strict=True)
+        for field in fields
     )
     return SignalFeatureSchema(
         FEATURE_SCHEMA_VERSION,
@@ -1675,9 +1696,10 @@ def _build_row(
 
 def _validated_flattened_outcome_values(
     configured_outcome: ConfiguredOutcome,
+    fields: tuple[SchemaField, ...],
     values: PrimitiveMapping,
 ) -> PrimitiveMapping:
-    fields_by_name = {field.name: field for field in configured_outcome.fields}
+    fields_by_name = {field.name: field for field in fields}
     if set(values) != set(fields_by_name):
         raise InvalidPredictionOutputError(
             f"outcome {configured_outcome.namespace} flattened values do not match "
@@ -1701,10 +1723,11 @@ def _validated_flattened_outcome_values(
 
 def _validated_unavailable_outcome_values(
     configured_outcome: ConfiguredOutcome,
+    fields: tuple[SchemaField, ...],
     values: PrimitiveMapping,
 ) -> PrimitiveMapping:
-    validated = _validated_flattened_outcome_values(configured_outcome, values)
-    fields_by_name = {field.name: field for field in configured_outcome.fields}
+    validated = _validated_flattened_outcome_values(configured_outcome, fields, values)
+    fields_by_name = {field.name: field for field in fields}
     availability_field = fields_by_name.get("available")
     if availability_field is not None and (
         availability_field.data_type != "boolean"
