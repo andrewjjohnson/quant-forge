@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal, DecimalException
 from enum import StrEnum
 from pathlib import Path
@@ -23,7 +24,7 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "7"
+FEATURE_ANALYSIS_ENGINE_VERSION = "8"
 
 _NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
 _SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
@@ -241,6 +242,7 @@ def analyze_signal_features(
         raise SignalFeatureDatasetError(
             "value-equals winner definition requires winner_value"
         )
+    value_equals_winner_value = cast(str, winner_value)
     outcome_availability_name = _outcome_availability_name(result, outcome_name)
     if outcome_availability_name == outcome_name:
         raise SignalFeatureDatasetError(
@@ -260,7 +262,7 @@ def analyze_signal_features(
         winner_definition is WinnerDefinition.VALUE_EQUALS
         and outcome_data_type == "decimal"
     ):
-        parsed_winner_value = _decimal_value(winner_value)
+        parsed_winner_value = _decimal_value(value_equals_winner_value)
         if parsed_winner_value is None:
             raise SignalFeatureDatasetError(
                 "value-equals requires a finite decimal winner_value for a decimal "
@@ -270,11 +272,38 @@ def analyze_signal_features(
     if (
         winner_definition is WinnerDefinition.VALUE_EQUALS
         and outcome_data_type == "boolean"
-        and winner_value not in ("false", "true")
+        and value_equals_winner_value not in ("false", "true")
     ):
         raise SignalFeatureDatasetError(
             "value-equals requires winner_value true or false for a boolean outcome"
         )
+    if (
+        winner_definition is WinnerDefinition.VALUE_EQUALS
+        and outcome_data_type == "integer"
+    ):
+        try:
+            normalized_winner_value = str(int(value_equals_winner_value))
+        except ValueError as error:
+            raise SignalFeatureDatasetError(
+                "value-equals requires an integer winner_value for an integer outcome"
+            ) from error
+    if (
+        winner_definition is WinnerDefinition.VALUE_EQUALS
+        and outcome_data_type == "date"
+    ):
+        try:
+            parsed_winner_date = date.fromisoformat(value_equals_winner_value)
+        except ValueError as error:
+            raise SignalFeatureDatasetError(
+                "value-equals requires a canonical ISO date winner_value for a date "
+                "outcome"
+            ) from error
+        if parsed_winner_date.isoformat() != value_equals_winner_value:
+            raise SignalFeatureDatasetError(
+                "value-equals requires a canonical ISO date winner_value for a date "
+                "outcome"
+            )
+        normalized_winner_value = parsed_winner_date.isoformat()
     configuration: PrimitiveMapping = {
         "bins": {
             name: [item.to_primitive() for item in bins[name]] for name in feature_names
@@ -457,6 +486,25 @@ def _winner_classification(
         if not isinstance(value, bool) or winner_value not in ("false", "true"):
             return None
         return value is (winner_value == "true")
+    if outcome_data_type == "integer":
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not isinstance(winner_value, str)
+        ):
+            return None
+        try:
+            return value == int(winner_value)
+        except ValueError:
+            return None
+    if outcome_data_type == "date":
+        if not isinstance(value, str) or not isinstance(winner_value, str):
+            return None
+        try:
+            parsed_value = date.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed_value.isoformat() == value == winner_value
     if not isinstance(value, (str, int, float, bool)):
         return None
     return str(value) == winner_value

@@ -240,6 +240,86 @@ def test_value_equals_parses_boolean_winner_values_from_schema(tmp_path: Path) -
         )
 
 
+@pytest.mark.parametrize(
+    ("data_type", "row_value", "winner_value", "normalized", "invalid", "error"),
+    [
+        ("integer", 1, "01", "1", "not-an-integer", "integer winner_value"),
+        (
+            "date",
+            "2026-08-08",
+            "2026-08-08",
+            "2026-08-08",
+            "not-a-date",
+            "canonical ISO date",
+        ),
+    ],
+)
+def test_value_equals_validates_integer_and_date_winner_values(
+    tmp_path: Path,
+    data_type: str,
+    row_value: int | str,
+    winner_value: str,
+    normalized: str,
+    invalid: str,
+    error: str,
+) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    outcome_name = "outcome_forward_return_1_raw_return"
+    typed_schema = replace(
+        feature_dataset.schema,
+        fields=tuple(
+            replace(field, data_type=data_type, unit="fixture_unit")
+            if field.name == outcome_name
+            else field
+            for field in feature_dataset.schema.fields
+        ),
+    )
+    row_values = feature_dataset.rows[0].to_primitive()
+    row_values[outcome_name] = row_value
+    typed_dataset = replace(
+        feature_dataset,
+        schema=typed_schema,
+        rows=(SignalFeatureRow.capture(row_values),),
+    )
+    feature_name = "feature_atr_percentage_of_close"
+    bins = {feature_name: (FeatureAnalysisBin("all", None, None),)}
+
+    analysis = analyze_signal_features(
+        typed_dataset,
+        feature_names=(feature_name,),
+        outcome_name=outcome_name,
+        winner_definition=WinnerDefinition.VALUE_EQUALS,
+        winner_value=winner_value,
+        bins=bins,
+    )
+
+    assert analysis.winner_count == 1
+    assert analysis.configuration["winner_value"] == normalized
+    with pytest.raises(SignalFeatureDatasetError, match=error):
+        analyze_signal_features(
+            typed_dataset,
+            feature_names=(feature_name,),
+            outcome_name=outcome_name,
+            winner_definition=WinnerDefinition.VALUE_EQUALS,
+            winner_value=invalid,
+            bins=bins,
+        )
+
+
 def test_analysis_excludes_rows_with_an_unavailable_outcome(tmp_path: Path) -> None:
     dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
     rule = OvernightGapSignalFeatureRule(

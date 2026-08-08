@@ -200,6 +200,18 @@ class FutureAlignedContext(LastCloseContext):
 
 
 @dataclass(frozen=True, slots=True)
+class MiscategorizedContext(LastCloseContext):
+    name: str = "miscategorized_context"
+
+    @property
+    def definition(self) -> SchemaField:
+        return replace(
+            super().definition,
+            category=SchemaFieldCategory.FUTURE_OUTCOME,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class NullNonNullableContext:
     name: str = "null_non_nullable_context"
 
@@ -1002,6 +1014,16 @@ def test_non_nullable_contextual_feature_rejects_null_value(tmp_path: Path) -> N
         InvalidPredictionOutputError, match=r"contextual feature.*non-nullable"
     ):
         _build_fixture(dataset, rule, tmp_path, context=NullNonNullableContext())
+
+
+def test_contextual_fields_must_be_contemporaneous_with_no_candidates(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(())
+
+    with pytest.raises(SignalFeatureDatasetError, match="contemporaneous features"):
+        _build_fixture(dataset, rule, tmp_path, context=MiscategorizedContext())
 
 
 def test_candidate_feature_names_must_match_declared_schema(tmp_path: Path) -> None:

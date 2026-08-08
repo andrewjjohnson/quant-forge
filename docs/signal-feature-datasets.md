@@ -157,10 +157,10 @@ must return a value; schema/value contradictions fail closed.
 To add a context feature, implement `ContextualFeature`, preferably by composing
 a reusable QF-4 `Indicator`, document its type/unit/source/timing in
 `SchemaField`, and add the object to `contextual_features`. Custom contexts are
-evaluated through `value_from_history()` against a causal prefix. A full-dataset
-aligned optimization requires an explicit reviewed integration into the bundled
-context set; merely exposing `values_for_dataset()` does not grant access to
-future bars.
+required to declare the `contemporaneous_feature` category and are evaluated
+through `value_from_history()` against a causal prefix. A full-dataset aligned
+optimization requires an explicit reviewed integration into the bundled context
+set; merely exposing `values_for_dataset()` does not grant access to future bars.
 
 ## Forward returns
 
@@ -315,7 +315,8 @@ feature/outcome boundary. Analyzed features must declare numeric `decimal` or
 `VALUE_EQUALS` accepts only scalar outcome types and compares decimal outcomes by
 numeric value rather than serialization scale. Boolean equality requires the
 canonical `true` or `false` winner value and compares against the declared
-boolean value rather than Python string casing.
+boolean value rather than Python string casing. Integer equality parses and
+normalizes integer text; date equality requires canonical ISO `YYYY-MM-DD` text.
 When an outcome namespace declares an `available` flag, rows where that flag is
 false are excluded before winner/loser classification, including non-null
 sentinel labels such as `unavailable`. Availability flags are eligibility

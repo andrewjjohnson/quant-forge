@@ -924,6 +924,13 @@ def _validate_feature_configuration(
             raise SignalFeatureDatasetError(
                 "contextual feature definition does not match its name"
             )
+        if (
+            feature.definition.category
+            is not SchemaFieldCategory.CONTEMPORANEOUS_FEATURE
+        ):
+            raise SignalFeatureDatasetError(
+                "contextual feature definitions must be contemporaneous features"
+            )
         if configuration_identity(feature.configuration()) != feature.configuration_id:
             raise SignalFeatureDatasetError(
                 "contextual feature configuration identity is invalid"
