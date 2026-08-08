@@ -60,7 +60,12 @@ from quantforge.prediction.feature_outcomes import (
     TargetStopPathValues,
 )
 from quantforge.prediction.models import PredictionMarketData
-from quantforge.prediction.signal_feature_context import ContextualFeature
+from quantforge.prediction.signal_feature_context import (
+    AtrPercentageContext,
+    ContextualFeature,
+    TrendDistanceContext,
+    VolumeRatioContext,
+)
 from quantforge.prediction.signal_feature_models import (
     FEATURE_DATASET_ENGINE_VERSION,
     FEATURE_SCHEMA_VERSION,
@@ -85,6 +90,12 @@ _LIMITATIONS = (
     "a prediction rule has no overlap concept",
     "CSV is the supported analytics artifact; Parquet is not emitted because the "
     "repository has no existing Parquet dependency",
+)
+
+_TRUSTED_ALIGNED_CONTEXT_TYPES = (
+    AtrPercentageContext,
+    TrendDistanceContext,
+    VolumeRatioContext,
 )
 
 
@@ -1133,8 +1144,7 @@ def _enrich_candidates(
     for feature in contextual_features:
         expected_configuration_id = feature.configuration_id
         definition = feature.definition
-        aligned_callback = getattr(feature, "values_for_dataset", None)
-        if aligned_callback is None:
+        if feature.__class__ not in _TRUSTED_ALIGNED_CONTEXT_TYPES:
             values = {
                 candidate.signal_session: feature.value_from_history(
                     _causal_history(
@@ -1146,6 +1156,7 @@ def _enrich_candidates(
                 for candidate in candidates
             }
         else:
+            aligned_callback = getattr(feature, "values_for_dataset", None)
             if not callable(aligned_callback):
                 raise InvalidPredictionOutputError(
                     f"contextual feature {feature.name} has an invalid aligned "

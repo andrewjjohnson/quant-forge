@@ -189,6 +189,17 @@ class FutureReadingContext(LastCloseContext):
 
 
 @dataclass(frozen=True, slots=True)
+class FutureAlignedContext(LastCloseContext):
+    name: str = "future_aligned_context"
+
+    def values_for_dataset(self, dataset: MarketDataset) -> tuple[Decimal, ...]:
+        return tuple(
+            dataset.bars[min(index + 1, len(dataset.bars) - 1)].close
+            for index in range(len(dataset.bars))
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class NullNonNullableContext:
     name: str = "null_non_nullable_context"
 
@@ -935,6 +946,22 @@ def test_aligned_contextual_series_do_not_change_prior_values(
         context.values_for_dataset(first)[:2]
         == context.values_for_dataset(changed_future)[:2]
     )
+
+
+def test_custom_aligned_callback_cannot_read_a_future_bar(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    context = FutureAlignedContext()
+
+    assert context.values_for_dataset(dataset)[0] == Decimal("102")
+
+    result = _build_fixture(
+        dataset,
+        FixtureCandidateRule((SignalDisposition.ACCEPTED,)),
+        tmp_path,
+        context=context,
+    )
+
+    assert result.rows[0].to_primitive()["feature_future_aligned_context"] == "100"
 
 
 def test_contextual_feature_cannot_read_a_future_bar(tmp_path: Path) -> None:
