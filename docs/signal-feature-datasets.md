@@ -246,6 +246,9 @@ dates must be canonical ISO dates, and primitive boolean, integer, string,
 object, and array types must match their declarations. Any schema data type
 outside `boolean`, `integer`, `decimal`, `date`, `string`, `object`, and `array`
 is rejected when the field is constructed, including for an empty dataset.
+Nullable string fields reject empty-string values because CSV represents both an
+empty string and null as an empty field; producers must use null for absence and
+a nonempty string for a present value so the flat artifact remains unambiguous.
 
 Causal columns use `feature_`; future fields use `outcome_<namespace>_`. Decimal
 values are exact decimal text in CSV and can be inferred or explicitly parsed

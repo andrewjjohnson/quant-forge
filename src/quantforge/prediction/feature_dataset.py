@@ -445,7 +445,7 @@ def _schema_value_matches(field: SchemaField, value: Primitive) -> bool:
         except ValueError:
             return False
     if field.data_type == "string":
-        return isinstance(value, str)
+        return isinstance(value, str) and (not field.nullable or value != "")
     if field.data_type == "object":
         return isinstance(value, dict)
     if field.data_type == "array":

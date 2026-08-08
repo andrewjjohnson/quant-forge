@@ -335,6 +335,37 @@ class InvalidFeatureCandidateRule(FixtureCandidateRule):
         return replace(output, signals=signals)
 
 
+class EmptyNullableStringFeatureRule(FixtureCandidateRule):
+    @property
+    def strategy_feature_definitions(self) -> tuple[SchemaField, ...]:
+        return (
+            *super().strategy_feature_definitions,
+            SchemaField(
+                "optional_note",
+                SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
+                "string",
+                "text",
+                True,
+                "optional fixture note",
+                "after the signal-session close",
+            ),
+        )
+
+    def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        output = super().generate(dataset)
+        signals = tuple(
+            replace(
+                signal,
+                strategy_features=(
+                    *signal.strategy_features,
+                    SignalFeatureValue("optional_note", ""),
+                ),
+            )
+            for signal in output.signals
+        )
+        return replace(output, signals=signals)
+
+
 class PrepopulatedContextCandidateRule(FixtureCandidateRule):
     def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
         output = super().generate(dataset)
@@ -1566,6 +1597,21 @@ def test_candidate_feature_values_must_match_declared_schema(
 
     with pytest.raises(InvalidPredictionOutputError, match="candidate feature values"):
         _build_fixture(dataset, rule, tmp_path)
+
+
+def test_nullable_string_feature_rejects_empty_string_for_csv_fidelity(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = EmptyNullableStringFeatureRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match=r"candidate feature values.*feature_optional_note",
+    ):
+        _build_fixture(dataset, rule, tmp_path)
+
+    assert not tuple(tmp_path.rglob("rows/*.json"))
 
 
 def test_complete_row_values_must_match_declared_schema(tmp_path: Path) -> None:
