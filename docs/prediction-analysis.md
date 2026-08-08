@@ -29,6 +29,12 @@ evaluator receives a fixed prediction and a typed outcome; it does not receive
 the dataset. Generic study rows and manifests do not require a direction,
 correctness flag, next-open value, or gap field.
 
+`PredictionStudyResult.signals` exposes detached copies of the complete fixed
+prediction tuple, including end-of-data predictions without an available label.
+This runtime extension supports QF-7 candidate datasets without changing QF-11
+study identities or the serialized generic result. See
+`docs/signal-feature-datasets.md`.
+
 The concrete overnight-gap study composes an existing directional prediction
 strategy with `NextSessionOpenGapOutcomeLabeler` and
 `OvernightGapDirectionEvaluator`. For that study, the signal close is a label

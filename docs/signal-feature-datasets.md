@@ -1,0 +1,281 @@
+# Signal-level feature datasets and outcome labels
+
+QF-7 extends the generic QF-11 prediction-study contracts. It does not add a
+second prediction engine, feature store, backtester, or execution model.
+
+```text
+QF-3 MarketDataset
+        |
+        v
+QF-4 trailing indicators and completed-session context
+        |
+        v
+QF-11 PredictionRule -> fixed SignalFeatureCandidate disposition
+        |
+        +------ causal feature/outcome boundary ------+
+                                                     |
+                                                     v
+                                     QF-11 OutcomeLabeler + evaluator
+                                                     |
+                                                     v
+                              QF-7 flattened, resumable analytics rows
+```
+
+The first `PredictionStudy` run fixes and guards the complete candidate tuple
+before a future-bearing labeler runs. `PredictionStudyResult.signals` exposes a
+detached copy of that already-guarded tuple, including candidates whose declared
+outcome is unavailable at the end of the dataset. It is an additive runtime
+property: QF-11 study identities and serialized study output are unchanged.
+QF-7 replays fixed, context-enriched candidates through one generic QF-11 study
+per configured labeler/evaluator pair and joins the results by logical candidate
+identity.
+
+## Public composition
+
+```python
+from decimal import Decimal
+from pathlib import Path
+
+from quantforge.prediction import (
+    OvernightGapPredictionParameters,
+    OvernightGapSignalFeatureRule,
+    PredictionStudy,
+    SignalFeatureCandidate,
+    build_signal_feature_dataset,
+    default_overnight_gap_contextual_features,
+    excursion_outcome,
+    forward_return_outcome,
+    target_stop_outcome,
+)
+from quantforge.prediction.feature_outcomes import ForwardReturnValues
+
+rule = OvernightGapSignalFeatureRule(OvernightGapPredictionParameters())
+primary = forward_return_outcome(1)
+study = PredictionStudy[
+    SignalFeatureCandidate,
+    ForwardReturnValues,
+    ForwardReturnValues,
+].create(rule, primary.labeler, primary.evaluator)
+
+result = build_signal_feature_dataset(
+    dataset=dataset,
+    prediction_study=study,
+    contextual_features=default_overnight_gap_contextual_features(),
+    outcomes=(
+        primary,
+        forward_return_outcome(2),
+        forward_return_outcome(5),
+        forward_return_outcome(10),
+        forward_return_outcome(20),
+        excursion_outcome(5),
+        target_stop_outcome(5, Decimal("0.01"), Decimal("0.005")),
+    ),
+    output_root=Path("reports/features"),
+)
+```
+
+The supplied outcome list must contain the labeler/evaluator composition used
+by the initial `PredictionStudy`. This makes the study a real composition rather
+than a prediction-only shortcut. The builder is provider neutral and consumes
+only a validated QF-3 `MarketDataset`.
+
+## Candidate identity and disposition
+
+`SignalFeatureCandidate` is a QF-11 `PredictionRecord`. It contains no future
+price, return, excursion, threshold touch, or correctness value. Its stable
+dispositions are:
+
+- `accepted`: the source rule selected a direction;
+- `rejected`: an identifiable rule veto or no directional rule match;
+- `blocked`: a known eligibility filter prevented acceptance;
+- `overlapping`: available for rules that genuinely identify an occupied
+  study-defined slot.
+
+The overnight-gap adapter records Friday exclusions as `blocked`, ADX-above-max
+vetoes and directionless dojis as `rejected`, and never fabricates
+`overlapping`. A rejected or blocked candidate may have no direction. Raw
+forward returns remain available for it; direction-dependent MFE/MAE and
+target/stop evaluations explicitly report `candidate_direction_unavailable`.
+
+The adapter calls the same `evaluate_overnight_gap_rules()` decision trace used
+by the original QF-11 baseline. It records the selected highest-priority reason
+and every matched rule in documented priority order. The original
+`OvernightGapPredictionStrategy` output is unchanged.
+
+One `candidate_id` is derived from the bar fingerprint, symbol, session, source
+rule/configuration/version, candidate-rule configuration, and complete parameter
+snapshot. One `row_id` combines that candidate with the QF-7 dataset identity.
+Accepted and rejected views of the same opportunity therefore cannot become two
+rows. Row order follows the fixed QF-11 candidate order. Summary counts expose
+candidate, accepted, rejected, blocked, and overlapping totals separately.
+
+## Contemporaneous feature schema
+
+Every candidate contains all baseline decision inputs:
+
+- current and previous RSI;
+- current and previous ADX;
+- current and previous +DI and -DI;
+- completed-session open and close;
+- Python weekday (`Monday=0`);
+- the selected direction and complete reason trace.
+
+The documented unused baseline context is:
+
+- `atr_percentage_of_close`: QF-4 Wilder ATR(14) divided by completed close,
+  chosen to describe prevailing range/volatility scale;
+- `volume_ratio`: completed volume divided by its trailing 20-session QF-4 SMA,
+  chosen to describe unusual participation;
+- `trend_distance_percentage`: completed close divided by its trailing
+  20-session QF-4 SMA minus one, chosen to describe trend location.
+
+These features are exploratory; none changes the baseline rule. Every
+`ContextualFeature` owns a stable configuration, schema definition, and
+`value_from_history()` implementation. The orchestration layer contains no
+overnight-gap-specific feature branches. It passes only a market-history prefix
+ending at the candidate session, so a contextual feature cannot inspect a later
+bar or later corporate action. Warm-up values remain `null`; they are never
+backfilled.
+
+To add a context feature, implement `ContextualFeature`, preferably by composing
+a reusable QF-4 `Indicator`, document its type/unit/source/timing in
+`SchemaField`, and add the object to `contextual_features`. No dataset-builder
+change is needed.
+
+## Forward returns
+
+`ForwardReturnOutcomeLabeler(H)` declares an exact QF-11 horizon of `H` exchange
+trading sessions. It uses the dataset's chronological session sequence, not
+calendar-day arithmetic:
+
+```text
+forward_return(H) = close[t+H] / close[t] - 1
+```
+
+The flattened values include availability, horizon, actual outcome session,
+reference close, outcome close, and arithmetic return. A missing `t+H` session
+beyond the dataset boundary produces explicit unavailable fields. The same
+adjustment/basis provenance applies to both prices. Raw unadjusted datasets with
+stock splits fail closed because a mechanical split is not a research return.
+The default supported composition uses 1, 2, 5, 10, and 20 sessions; arbitrary
+positive session horizons are configurable.
+
+## MFE and MAE
+
+`ExcursionOutcomeLabeler(H)` captures the maximum high and minimum low from
+sessions `t+1` through `t+H`, inclusive. The evaluator then orients them using
+the already-fixed candidate direction and reference close `P`:
+
+```text
+UP:   MFE = maximum_high / P - 1
+      MAE = minimum_low / P - 1
+
+DOWN: MFE = 1 - minimum_low / P
+      MAE = 1 - maximum_high / P
+```
+
+The exact sessions of both extrema are retained. Ties use the earliest session.
+MFE and MAE are descriptive research labels. A daily high or low does not imply
+that an order could have executed there.
+
+## Target versus stop
+
+`TargetStopOutcomeLabeler` retains every future daily high/low through its
+configured horizon. `TargetStopEvaluator` applies inclusive percentage levels:
+
+```text
+UP:   target = P * (1 + target_percentage)
+      stop   = P * (1 - stop_percentage)
+
+DOWN: target = P * (1 - target_percentage)
+      stop   = P * (1 + stop_percentage)
+```
+
+Labels are `target_first`, `stop_first`, `neither`, `both_same_session`, and
+`unavailable`. The default `ambiguous` policy records `both_same_session` if one
+daily bar contains both levels. It preserves that session, high, low, target,
+and stop and makes no intraday-order assumption. The optional explicit
+`conservative_stop_first` policy labels the event `stop_first` while still
+preserving the ambiguity fields. Threshold equality counts as a touch.
+
+This is not an execution engine. It creates no order, fill, position, fee,
+slippage, or P&L record and does not modify QF-5 behavior.
+
+## Flattened schema and identity
+
+`schema.json` defines every column with semantic category, data type, unit,
+nullability, calculation/source, and temporal availability. Identity columns
+include deterministic row/candidate/study IDs, exact QF-3 dataset ID and bar
+fingerprint, provider and adjustment provenance, source and candidate rule
+identities, implementation version, full parameters and their identity, and
+feature/outcome schema versions.
+
+Causal columns use `feature_`; future fields use `outcome_<namespace>_`. Decimal
+values are exact decimal text in CSV and can be inferred or explicitly parsed
+by pandas/Polars without decoding a feature JSON object. Parameter and reason
+collections remain canonical JSON columns.
+
+The QF-7 dataset ID hashes the source bar fingerprint and basis, complete
+prediction-study template, rule and parameter configuration, strategy-feature
+schema, contextual feature configurations, every QF-11 labeler/evaluator
+configuration, and feature/outcome/engine versions. Chunk size and runtime
+timestamps do not participate. Equivalent independent configurations receive
+the same identity; any material feature or outcome change receives a new one.
+
+## Incremental persistence and resume
+
+Artifacts are written below `<output-root>/<feature-dataset-id>/`:
+
+```text
+manifest.json
+schema.json
+summary.json
+features.csv
+rows/
+  <row-id>.json
+```
+
+Generation begins with an `in_progress` manifest and fixed schema. Each complete
+row checkpoint is written to a temporary file, flushed, and atomically renamed.
+Temporary/partial files are not checkpoints, and the row ID path prevents
+duplicates. On resume, the builder validates the source dataset, complete
+configuration, schema, row IDs, candidate population, and QF-11 study IDs. It
+skips completed candidates and processes only missing deterministic chunks.
+`features.csv`, `summary.json`, and the final `complete` manifest are written
+atomically; the manifest is last. A complete resume validates exact deterministic
+CSV/JSON bytes and returns without rerunning the prediction rule or outcomes.
+Corrupt or incompatible state fails clearly and is never silently reconciled.
+
+CSV is required and implemented. Parquet is intentionally not emitted because
+the repository has no existing Parquet dependency; QF-7 does not add one solely
+for a duplicate representation.
+
+## Exploratory three-feature example
+
+Run the cached, provider-neutral example with an immutable QF-3 dataset ID:
+
+```bash
+uv run python scripts/analyze_signal_features.py --dataset-id <dataset-id>
+```
+
+It builds/resumes the baseline candidate dataset, then defines a winner as a
+strictly positive five-session raw close return. It compares ATR/close, volume
+ratio, and trend distance for winners and losers using sample count, mean,
+median, population standard deviation, first/third quartiles, and disclosed
+fixed bins with winner rates. Empty bins remain present. The split is
+configurable through `WinnerDefinition`; it is not a universal definition of a
+winner.
+
+The output is explicitly exploratory. It does not cherry-pick bins, select a
+filter, modify the rule, claim causality, or establish tradability. Any candidate
+relationship requires untouched out-of-sample validation and appropriate
+multiple-comparison controls.
+
+## Adding an outcome
+
+Implement a typed QF-11 `OutcomeLabeler` with an exact positive session horizon
+and sorted required market fields, then a typed evaluator that receives only the
+fixed candidate and typed outcome. Wrap them with
+`PredictionStudyOutcome.create()`, supply sorted `SchemaField` definitions and
+explicit end-of-data defaults, and add the composition to `outcomes`. The QF-7
+builder does not need outcome-specific branches.

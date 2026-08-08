@@ -19,3 +19,11 @@ class InvalidPredictionOutputError(PredictionAnalysisError, ValueError):
 
 class PredictionExportError(PredictionAnalysisError):
     """A prediction result could not be exported or loaded."""
+
+
+class SignalFeatureDatasetError(PredictionAnalysisError):
+    """A signal-feature dataset could not be generated or resumed safely."""
+
+
+class SignalFeaturePersistenceError(SignalFeatureDatasetError):
+    """Persisted signal-feature state is missing, corrupt, or incompatible."""

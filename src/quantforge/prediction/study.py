@@ -169,6 +169,7 @@ class PredictionStudyResult[
     configuration: PredictionStudyConfiguration
     generated_prediction_count: int
     unavailable_outcome_count: int
+    signals: tuple[PredictionRecordT, ...]
     rows: tuple[
         PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT], ...
     ]
@@ -465,6 +466,11 @@ def run_prediction_study(
             state.evaluation_values_snapshot,
         )
 
+    detached_signals = tuple(
+        _detached_copy("prediction signal", signal) for signal in generated_signals
+    )
+    _validate_signal_snapshots(detached_signals, signal_snapshots)
+
     _validate_unchanged_component(
         "outcome labeler",
         study.outcome_labeler.configuration(),
@@ -484,6 +490,7 @@ def run_prediction_study(
         configuration,
         len(generated_signals),
         unavailable_outcome_count,
+        detached_signals,
         tuple(rows),
     )
 

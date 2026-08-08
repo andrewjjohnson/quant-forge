@@ -1,0 +1,415 @@
+"""Exploratory descriptive analysis for completed QF-7 feature datasets."""
+
+import json
+import os
+import tempfile
+from dataclasses import dataclass
+from decimal import Decimal, DecimalException
+from enum import StrEnum
+from pathlib import Path
+
+from quantforge.configuration import (
+    Primitive,
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+    decimal_to_primitive,
+)
+from quantforge.prediction._arithmetic import arithmetic
+from quantforge.prediction.errors import SignalFeatureDatasetError
+from quantforge.prediction.signal_feature_models import SignalFeatureDatasetResult
+
+FEATURE_ANALYSIS_ENGINE_VERSION = "1"
+
+
+class WinnerDefinition(StrEnum):
+    """Configurable rule for splitting eligible rows into two outcome groups."""
+
+    DECIMAL_GREATER_THAN_ZERO = "decimal_greater_than_zero"
+    VALUE_EQUALS = "value_equals"
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureAnalysisBin:
+    """One deterministic left-inclusive, right-exclusive numeric interval."""
+
+    label: str
+    lower_inclusive: Decimal | None
+    upper_exclusive: Decimal | None
+
+    def __post_init__(self) -> None:
+        if not self.label:
+            raise SignalFeatureDatasetError("feature analysis bin labels are required")
+        if (
+            self.lower_inclusive is not None
+            and self.upper_exclusive is not None
+            and self.lower_inclusive >= self.upper_exclusive
+        ):
+            raise SignalFeatureDatasetError(
+                "feature analysis bin lower bound must be below its upper bound"
+            )
+
+    def contains(self, value: Decimal) -> bool:
+        return (self.lower_inclusive is None or value >= self.lower_inclusive) and (
+            self.upper_exclusive is None or value < self.upper_exclusive
+        )
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "label": self.label,
+            "lower_inclusive": _optional_decimal(self.lower_inclusive),
+            "upper_exclusive": _optional_decimal(self.upper_exclusive),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DistributionSummary:
+    """Descriptive statistics retaining sample count and dispersion."""
+
+    sample_count: int
+    mean: Decimal | None
+    median: Decimal | None
+    population_standard_deviation: Decimal | None
+    first_quartile: Decimal | None
+    third_quartile: Decimal | None
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "first_quartile": _optional_decimal(self.first_quartile),
+            "mean": _optional_decimal(self.mean),
+            "median": _optional_decimal(self.median),
+            "population_standard_deviation": _optional_decimal(
+                self.population_standard_deviation
+            ),
+            "sample_count": self.sample_count,
+            "third_quartile": _optional_decimal(self.third_quartile),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureGroupAnalysis:
+    """One feature's distribution within winners or losers."""
+
+    feature_name: str
+    outcome_group: str
+    statistics: DistributionSummary
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "feature_name": self.feature_name,
+            "outcome_group": self.outcome_group,
+            "statistics": self.statistics.to_primitive(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureBinAnalysis:
+    """Outcome rate and honest count for one configured feature interval."""
+
+    feature_name: str
+    bin_label: str
+    lower_inclusive: Decimal | None
+    upper_exclusive: Decimal | None
+    sample_count: int
+    winner_count: int
+    loser_count: int
+    winner_rate: Decimal | None
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "bin_label": self.bin_label,
+            "feature_name": self.feature_name,
+            "loser_count": self.loser_count,
+            "lower_inclusive": _optional_decimal(self.lower_inclusive),
+            "sample_count": self.sample_count,
+            "upper_exclusive": _optional_decimal(self.upper_exclusive),
+            "winner_count": self.winner_count,
+            "winner_rate": _optional_decimal(self.winner_rate),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SignalFeatureAnalysisResult:
+    """Exploratory winner/loser comparison with no automatic filter selection."""
+
+    analysis_id: str
+    feature_dataset_id: str
+    configuration_snapshot: PrimitiveMappingSnapshot
+    eligible_row_count: int
+    winner_count: int
+    loser_count: int
+    group_summaries: tuple[FeatureGroupAnalysis, ...]
+    bin_summaries: tuple[FeatureBinAnalysis, ...]
+
+    @property
+    def configuration(self) -> PrimitiveMapping:
+        return self.configuration_snapshot.to_primitive()
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "analysis_id": self.analysis_id,
+            "component": "quantforge_signal_feature_analysis",
+            "configuration": self.configuration,
+            "feature_dataset_id": self.feature_dataset_id,
+            "group_summaries": [
+                summary.to_primitive() for summary in self.group_summaries
+            ],
+            "bin_summaries": [summary.to_primitive() for summary in self.bin_summaries],
+            "record_counts": {
+                "eligible_rows": self.eligible_row_count,
+                "losers": self.loser_count,
+                "winners": self.winner_count,
+            },
+            "warning": (
+                "exploratory descriptive analysis only; observed associations are "
+                "candidate hypotheses, not causal or validated trading filters"
+            ),
+        }
+
+
+def analyze_signal_features(
+    result: SignalFeatureDatasetResult,
+    *,
+    feature_names: tuple[str, ...],
+    outcome_name: str,
+    winner_definition: WinnerDefinition,
+    bins: dict[str, tuple[FeatureAnalysisBin, ...]],
+    winner_value: str | None = None,
+) -> SignalFeatureAnalysisResult:
+    """Compare configured features across an explicit outcome split and bins."""
+    if (
+        not feature_names
+        or feature_names != tuple(sorted(feature_names))
+        or len(feature_names) != len(set(feature_names))
+    ):
+        raise SignalFeatureDatasetError(
+            "analysis feature names must be a sorted unique tuple"
+        )
+    schema_names = set(result.schema.column_names)
+    if outcome_name not in schema_names or any(
+        feature_name not in schema_names for feature_name in feature_names
+    ):
+        raise SignalFeatureDatasetError(
+            "analysis fields must exist in the signal-feature schema"
+        )
+    if set(bins) != set(feature_names) or any(not bins[name] for name in feature_names):
+        raise SignalFeatureDatasetError(
+            "every analyzed feature requires explicit nonempty bins"
+        )
+    if winner_definition is WinnerDefinition.VALUE_EQUALS and winner_value is None:
+        raise SignalFeatureDatasetError(
+            "value-equals winner definition requires winner_value"
+        )
+    configuration: PrimitiveMapping = {
+        "bins": {
+            name: [item.to_primitive() for item in bins[name]] for name in feature_names
+        },
+        "engine_version": FEATURE_ANALYSIS_ENGINE_VERSION,
+        "feature_names": list(feature_names),
+        "outcome_name": outcome_name,
+        "winner_definition": winner_definition.value,
+        "winner_value": winner_value,
+    }
+    configuration_snapshot = PrimitiveMappingSnapshot.capture(configuration)
+    analysis_id = configuration_identity(
+        {
+            "component": "quantforge_signal_feature_analysis",
+            "configuration": configuration,
+            "feature_dataset_id": result.dataset_id,
+        }
+    )
+    classified: list[tuple[PrimitiveMapping, bool]] = []
+    for row in result.rows:
+        primitive = row.to_primitive()
+        classification = _winner_classification(
+            primitive.get(outcome_name), winner_definition, winner_value
+        )
+        if classification is not None:
+            classified.append((primitive, classification))
+
+    group_summaries: list[FeatureGroupAnalysis] = []
+    bin_summaries: list[FeatureBinAnalysis] = []
+    for feature_name in feature_names:
+        for outcome_group, is_winner in (("winner", True), ("loser", False)):
+            values = tuple(
+                parsed
+                for primitive, classification in classified
+                if classification is is_winner
+                and (parsed := _decimal_value(primitive.get(feature_name))) is not None
+            )
+            group_summaries.append(
+                FeatureGroupAnalysis(feature_name, outcome_group, _distribution(values))
+            )
+        for feature_bin in bins[feature_name]:
+            classifications = tuple(
+                classification
+                for primitive, classification in classified
+                if (value := _decimal_value(primitive.get(feature_name))) is not None
+                and feature_bin.contains(value)
+            )
+            winner_count = sum(classifications)
+            sample_count = len(classifications)
+            with arithmetic():
+                winner_rate = (
+                    None
+                    if sample_count == 0
+                    else Decimal(winner_count) / Decimal(sample_count)
+                )
+            bin_summaries.append(
+                FeatureBinAnalysis(
+                    feature_name,
+                    feature_bin.label,
+                    feature_bin.lower_inclusive,
+                    feature_bin.upper_exclusive,
+                    sample_count,
+                    winner_count,
+                    sample_count - winner_count,
+                    winner_rate,
+                )
+            )
+    winner_count = sum(classification for _, classification in classified)
+    return SignalFeatureAnalysisResult(
+        analysis_id,
+        result.dataset_id,
+        configuration_snapshot,
+        len(classified),
+        winner_count,
+        len(classified) - winner_count,
+        tuple(group_summaries),
+        tuple(bin_summaries),
+    )
+
+
+def export_signal_feature_analysis(
+    result: SignalFeatureAnalysisResult, output_root: Path
+) -> Path:
+    """Atomically write one deterministic exploratory analysis JSON artifact."""
+    output_root.mkdir(parents=True, exist_ok=True)
+    destination = output_root / f"{result.analysis_id}.json"
+    expected = (
+        json.dumps(
+            result.to_primitive(),
+            ensure_ascii=True,
+            allow_nan=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    if destination.exists():
+        try:
+            if destination.read_text(encoding="utf-8") != expected:
+                raise SignalFeatureDatasetError(
+                    "existing feature analysis conflicts with deterministic output"
+                )
+        except OSError as error:
+            raise SignalFeatureDatasetError(
+                "failed to validate existing feature analysis"
+            ) from error
+        return destination
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{result.analysis_id}.", suffix=".tmp", dir=output_root
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(expected)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, destination)
+    except OSError as error:
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise SignalFeatureDatasetError(
+            "failed to export signal-feature analysis"
+        ) from error
+    return destination
+
+
+def default_overnight_gap_feature_bins() -> dict[str, tuple[FeatureAnalysisBin, ...]]:
+    """Return disclosed baseline bins for ATR, volume, and trend context."""
+    return {
+        "feature_atr_percentage_of_close": (
+            FeatureAnalysisBin("below_1pct", None, Decimal("0.01")),
+            FeatureAnalysisBin("1pct_to_2pct", Decimal("0.01"), Decimal("0.02")),
+            FeatureAnalysisBin("2pct_and_above", Decimal("0.02"), None),
+        ),
+        "feature_trend_distance_percentage": (
+            FeatureAnalysisBin("below_minus_1pct", None, Decimal("-0.01")),
+            FeatureAnalysisBin(
+                "minus_1pct_to_plus_1pct", Decimal("-0.01"), Decimal("0.01")
+            ),
+            FeatureAnalysisBin("plus_1pct_and_above", Decimal("0.01"), None),
+        ),
+        "feature_volume_ratio": (
+            FeatureAnalysisBin("below_0_75", None, Decimal("0.75")),
+            FeatureAnalysisBin("0_75_to_1_25", Decimal("0.75"), Decimal("1.25")),
+            FeatureAnalysisBin("1_25_and_above", Decimal("1.25"), None),
+        ),
+    }
+
+
+def _winner_classification(
+    value: Primitive | None,
+    winner_definition: WinnerDefinition,
+    winner_value: str | None,
+) -> bool | None:
+    if value is None:
+        return None
+    if winner_definition is WinnerDefinition.DECIMAL_GREATER_THAN_ZERO:
+        decimal_value = _decimal_value(value)
+        return None if decimal_value is None else decimal_value > 0
+    if not isinstance(value, (str, int, float, bool)):
+        return None
+    return str(value) == winner_value
+
+
+def _decimal_value(value: Primitive | None) -> Decimal | None:
+    if value is None or isinstance(value, (dict, list, bool)):
+        return None
+    try:
+        parsed = Decimal(str(value))
+    except (DecimalException, ValueError):
+        return None
+    return parsed if parsed.is_finite() else None
+
+
+def _distribution(values: tuple[Decimal, ...]) -> DistributionSummary:
+    if not values:
+        return DistributionSummary(0, None, None, None, None, None)
+    ordered = tuple(sorted(values))
+    try:
+        with arithmetic():
+            mean = sum(ordered, Decimal(0)) / Decimal(len(ordered))
+            variance = sum(
+                ((value - mean) ** 2 for value in ordered), Decimal(0)
+            ) / Decimal(len(ordered))
+            standard_deviation = variance.sqrt()
+            first_quartile = _quantile(ordered, Decimal("0.25"))
+            median = _quantile(ordered, Decimal("0.5"))
+            third_quartile = _quantile(ordered, Decimal("0.75"))
+    except DecimalException as error:
+        raise SignalFeatureDatasetError(
+            "feature distribution arithmetic failed"
+        ) from error
+    return DistributionSummary(
+        len(ordered),
+        mean,
+        median,
+        standard_deviation,
+        first_quartile,
+        third_quartile,
+    )
+
+
+def _quantile(values: tuple[Decimal, ...], quantile: Decimal) -> Decimal:
+    position = Decimal(len(values) - 1) * quantile
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(values) - 1)
+    fraction = position - Decimal(lower_index)
+    return values[lower_index] + (values[upper_index] - values[lower_index]) * fraction
+
+
+def _optional_decimal(value: Decimal | None) -> str | None:
+    return None if value is None else decimal_to_primitive(value)

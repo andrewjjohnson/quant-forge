@@ -1,0 +1,554 @@
+import json
+from collections.abc import Callable
+from dataclasses import dataclass
+from decimal import Decimal
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
+from quantforge.data import MarketDataset
+from quantforge.indicators import Indicator
+from quantforge.prediction import (
+    AtrPercentageContext,
+    ForwardReturnEvaluator,
+    ForwardReturnOutcomeLabeler,
+    ForwardReturnValues,
+    OvernightGapPredictionParameters,
+    OvernightGapPredictionStrategy,
+    OvernightGapSignalFeatureRule,
+    PredictionDirection,
+    PredictionStudy,
+    PredictionStudyOutcome,
+    SchemaField,
+    SchemaFieldCategory,
+    SignalDisposition,
+    SignalFeatureCandidate,
+    SignalFeatureCandidateOutput,
+    SignalFeatureDatasetResult,
+    SignalFeaturePersistenceError,
+    SignalFeatureRow,
+    SignalFeatureValue,
+    TrendDistanceContext,
+    VolumeRatioContext,
+    build_signal_feature_dataset,
+    excursion_outcome,
+    forward_return_outcome,
+    target_stop_outcome,
+)
+from quantforge.prediction import feature_dataset as feature_dataset_module
+
+from ..helpers import make_dataset
+
+
+@dataclass(frozen=True, slots=True)
+class FixtureParameters:
+    mode: str = "fixture"
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {"mode": self.mode}
+
+
+class FixtureCandidateRule:
+    name = "fixture_candidates"
+    implementation_version = "1"
+    required_indicators: tuple[Indicator, ...] = ()
+    warm_up_observations = 1
+
+    def __init__(self, dispositions: tuple[SignalDisposition, ...]) -> None:
+        self._dispositions = dispositions
+        self._parameters = FixtureParameters()
+        self.generate_calls = 0
+
+    @property
+    def parameters(self) -> FixtureParameters:
+        return self._parameters
+
+    @property
+    def strategy_feature_definitions(self) -> tuple[SchemaField, ...]:
+        return (
+            SchemaField(
+                "decision_close",
+                SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
+                "decimal",
+                "price_per_share",
+                False,
+                "fixture completed close",
+                "after the signal-session close",
+            ),
+        )
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "prediction_strategy",
+            "contract_version": "1",
+            "implementation_version": self.implementation_version,
+            "parameters": self.parameters.to_primitive(),
+            "required_indicators": [],
+            "warm_up_observations": self.warm_up_observations,
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        self.generate_calls += 1
+        signals = tuple(
+            SignalFeatureCandidate(
+                symbol=dataset.metadata.canonical_symbol,
+                signal_session=bar.session_date,
+                strategy_id=self.name,
+                strategy_implementation_version=self.implementation_version,
+                strategy_configuration_id=self.configuration_id,
+                source_rule_id="fixture_source_rule",
+                source_rule_implementation_version="1",
+                source_rule_configuration_id="fixture-source-config",
+                strategy_parameters=PrimitiveMappingSnapshot.capture(
+                    self.parameters.to_primitive()
+                ),
+                disposition=disposition,
+                reason_codes=(f"{disposition.value}_reason",),
+                explanation=f"fixture {disposition.value}",
+                direction=(
+                    None
+                    if disposition is SignalDisposition.REJECTED
+                    else PredictionDirection.UP
+                ),
+                selected_rule_reason=(
+                    None if disposition is SignalDisposition.REJECTED else "fixture_up"
+                ),
+                matched_rule_reasons=(
+                    () if disposition is SignalDisposition.REJECTED else ("fixture_up",)
+                ),
+                strategy_features=(SignalFeatureValue("decision_close", bar.close),),
+            )
+            for bar, disposition in zip(dataset.bars, self._dispositions, strict=False)
+        )
+        return SignalFeatureCandidateOutput(
+            self.name,
+            self.configuration_id,
+            dataset.metadata.dataset_id,
+            signals,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LastCloseContext:
+    version: int = 1
+    name: str = "last_close_context"
+
+    @property
+    def definition(self) -> SchemaField:
+        return SchemaField(
+            self.name,
+            SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
+            "decimal",
+            "price_per_share",
+            False,
+            "last close in the supplied causal history",
+            "after the signal-session close",
+        )
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "signal_contextual_feature",
+            "implementation_version": str(self.version),
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def value_from_history(self, history: MarketDataset) -> Decimal:
+        assert history.metadata.actual_last_session == history.bars[-1].session_date
+        assert history.metadata.requested_end == history.bars[-1].session_date
+        return history.bars[-1].close
+
+
+@dataclass(frozen=True, slots=True)
+class FutureReadingContext(LastCloseContext):
+    name: str = "future_reading_context"
+
+    def value_from_history(self, history: MarketDataset) -> Decimal:
+        return history.bars[1].close
+
+
+def _fixture_study(
+    rule: FixtureCandidateRule,
+) -> tuple[
+    PredictionStudy[SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues],
+    PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues],
+]:
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(
+        rule,
+        primary.labeler,
+        primary.evaluator,
+        feature_configuration={"feature_schema_version": "1"},
+    )
+    return study, primary
+
+
+def _build_fixture(
+    dataset: MarketDataset,
+    rule: FixtureCandidateRule,
+    output_root: Path,
+    *,
+    context: LastCloseContext | None = None,
+) -> SignalFeatureDatasetResult:
+    study, primary = _fixture_study(rule)
+    return build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=() if context is None else (context,),
+        outcomes=(primary,),
+        output_root=output_root,
+        chunk_size=2,
+    )
+
+
+def test_dataset_preserves_all_dispositions_and_labels_rejected_rows(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101", "104"))
+    rule = FixtureCandidateRule(
+        (
+            SignalDisposition.ACCEPTED,
+            SignalDisposition.REJECTED,
+            SignalDisposition.BLOCKED,
+            SignalDisposition.OVERLAPPING,
+        )
+    )
+
+    result = _build_fixture(dataset, rule, tmp_path)
+    rows = tuple(row.to_primitive() for row in result.rows)
+
+    assert result.summary.to_primitive() == {
+        "accepted_count": 1,
+        "blocked_count": 1,
+        "candidate_count": 4,
+        "overlapping_count": 1,
+        "rejected_count": 1,
+    }
+    row_candidate_ids = tuple(row["candidate_id"] for row in rows)
+    assert all(isinstance(value, str) for value in row_candidate_ids)
+    assert len(set(cast(tuple[str, ...], row_candidate_ids))) == 4
+    assert rows[1]["signal_disposition"] == "rejected"
+    assert rows[1]["outcome_forward_return_1_available"] is True
+    assert rows[1]["outcome_forward_return_1_raw_return"] == (
+        "-0.0098039215686274509803921568627451"
+    )
+    assert rows[-1]["outcome_forward_return_1_available"] is False
+    assert rows[-1]["outcome_forward_return_1_raw_return"] is None
+
+
+def test_schema_documents_every_column_and_exports_flat_features(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    parameters = OvernightGapPredictionParameters(excluded_weekdays=(4,))
+    rule = OvernightGapSignalFeatureRule(parameters)
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+
+    result = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(
+            AtrPercentageContext(2),
+            TrendDistanceContext(2),
+            VolumeRatioContext(2),
+        ),
+        outcomes=(
+            primary,
+            excursion_outcome(2),
+            target_stop_outcome(2, Decimal("0.01"), Decimal("0.005")),
+        ),
+        output_root=tmp_path,
+        chunk_size=2,
+    )
+    destination = tmp_path / result.dataset_id
+
+    assert all(
+        field.name
+        and field.unit
+        and field.calculation_or_source
+        and field.temporal_availability
+        for field in result.schema.fields
+    )
+    assert result.schema.column_names == tuple(
+        field.name for field in result.schema.fields
+    )
+    assert {
+        "feature_atr_percentage_of_close",
+        "feature_volume_ratio",
+        "feature_trend_distance_percentage",
+        "feature_rsi",
+        "feature_previous_rsi",
+        "feature_adx",
+        "feature_previous_adx",
+        "feature_plus_di",
+        "feature_previous_plus_di",
+        "feature_minus_di",
+        "feature_previous_minus_di",
+        "feature_signal_weekday",
+        "feature_open",
+        "feature_close",
+    }.issubset(result.schema.column_names)
+    assert (destination / "manifest.json").is_file()
+    assert (destination / "features.csv").is_file()
+    assert (destination / "schema.json").is_file()
+    assert (destination / "summary.json").is_file()
+    assert (destination / "rows").is_dir()
+
+
+def test_complete_resume_performs_no_new_generation(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+
+    first = _build_fixture(dataset, rule, tmp_path, context=LastCloseContext())
+    calls_after_first = rule.generate_calls
+    second = _build_fixture(dataset, rule, tmp_path, context=LastCloseContext())
+
+    assert rule.generate_calls == calls_after_first
+    assert first.to_primitive() == second.to_primitive()
+
+
+def test_empty_candidate_dataset_exports_and_resumes(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(())
+
+    first = _build_fixture(dataset, rule, tmp_path)
+    calls_after_first = rule.generate_calls
+    second = _build_fixture(dataset, rule, tmp_path)
+
+    assert not first.rows
+    assert first.summary.candidate_count == 0
+    assert first.prediction_study_ids
+    assert rule.generate_calls == calls_after_first
+    assert second.to_primitive() == first.to_primitive()
+
+
+def test_interrupted_generation_resumes_to_uninterrupted_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = make_dataset(("100", "102", "101", "104"))
+    dispositions = (
+        SignalDisposition.ACCEPTED,
+        SignalDisposition.REJECTED,
+        SignalDisposition.BLOCKED,
+        SignalDisposition.OVERLAPPING,
+    )
+    rule = FixtureCandidateRule(dispositions)
+    original_persist = cast(
+        Callable[[Path, SignalFeatureRow], None],
+        getattr(feature_dataset_module, "_persist_progress_row"),
+    )
+    persisted = 0
+
+    def interrupt_after_first(destination: Path, row: SignalFeatureRow) -> None:
+        nonlocal persisted
+        original_persist(destination, row)
+        persisted += 1
+        if persisted == 1:
+            raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", interrupt_after_first
+    )
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        _build_fixture(dataset, rule, tmp_path / "resumed")
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", original_persist
+    )
+
+    resumed = _build_fixture(dataset, rule, tmp_path / "resumed")
+    uninterrupted = _build_fixture(
+        dataset, FixtureCandidateRule(dispositions), tmp_path / "uninterrupted"
+    )
+
+    assert resumed.to_primitive() == uninterrupted.to_primitive()
+    assert (
+        tmp_path / "resumed" / resumed.dataset_id / "features.csv"
+    ).read_bytes() == (
+        tmp_path / "uninterrupted" / uninterrupted.dataset_id / "features.csv"
+    ).read_bytes()
+
+
+def test_future_changes_affect_outcomes_but_not_earlier_features(
+    tmp_path: Path,
+) -> None:
+    first_dataset = make_dataset(("100", "102", "101"), dataset_id="first")
+    changed_future = make_dataset(("100", "150", "101"), dataset_id="changed")
+    dispositions = (SignalDisposition.ACCEPTED,)
+
+    first = (
+        _build_fixture(
+            first_dataset,
+            FixtureCandidateRule(dispositions),
+            tmp_path / "first",
+            context=LastCloseContext(),
+        )
+        .rows[0]
+        .to_primitive()
+    )
+    changed = (
+        _build_fixture(
+            changed_future,
+            FixtureCandidateRule(dispositions),
+            tmp_path / "changed",
+            context=LastCloseContext(),
+        )
+        .rows[0]
+        .to_primitive()
+    )
+
+    assert first["feature_decision_close"] == changed["feature_decision_close"] == "100"
+    assert (
+        first["feature_last_close_context"]
+        == changed["feature_last_close_context"]
+        == "100"
+    )
+    assert (
+        first["outcome_forward_return_1_raw_return"]
+        != changed["outcome_forward_return_1_raw_return"]
+    )
+
+
+def test_contextual_feature_cannot_read_a_future_bar(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(IndexError):
+        _build_fixture(dataset, rule, tmp_path, context=FutureReadingContext())
+
+
+def test_material_configuration_changes_create_distinct_dataset_ids(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    dispositions = (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    first = _build_fixture(
+        dataset,
+        FixtureCandidateRule(dispositions),
+        tmp_path,
+        context=LastCloseContext(1),
+    )
+    changed_feature = _build_fixture(
+        dataset,
+        FixtureCandidateRule(dispositions),
+        tmp_path,
+        context=LastCloseContext(2),
+    )
+    rule = FixtureCandidateRule(dispositions)
+    primary = forward_return_outcome(2)
+    changed_outcome = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=PredictionStudy[
+            SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+        ].create(rule, primary.labeler, primary.evaluator),
+        contextual_features=(LastCloseContext(1),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+
+    assert (
+        len({first.dataset_id, changed_feature.dataset_id, changed_outcome.dataset_id})
+        == 3
+    )
+
+
+def test_incompatible_progress_manifest_fails_clearly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+    original_persist = cast(
+        Callable[[Path, SignalFeatureRow], None],
+        getattr(feature_dataset_module, "_persist_progress_row"),
+    )
+
+    def interrupt(destination: Path, row: SignalFeatureRow) -> None:
+        original_persist(destination, row)
+        raise RuntimeError("interrupt")
+
+    monkeypatch.setattr(feature_dataset_module, "_persist_progress_row", interrupt)
+    with pytest.raises(RuntimeError):
+        _build_fixture(dataset, rule, tmp_path)
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", original_persist
+    )
+    destination = next(path for path in tmp_path.iterdir() if path.is_dir())
+    manifest_path = destination / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["market_data"]["dataset_id"] = "incompatible-source"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SignalFeaturePersistenceError, match="incompatible"):
+        _build_fixture(dataset, rule, tmp_path)
+
+
+def test_candidate_adapter_preserves_original_qf11_accepted_predictions() -> None:
+    dataset = make_dataset(tuple(str(100 + index % 4) for index in range(15)))
+    parameters = OvernightGapPredictionParameters(excluded_weekdays=(4,))
+
+    original = OvernightGapPredictionStrategy(parameters).generate(dataset)
+    candidates = OvernightGapSignalFeatureRule(parameters).generate(dataset)
+    accepted = tuple(
+        candidate
+        for candidate in candidates.signals
+        if candidate.disposition is SignalDisposition.ACCEPTED
+    )
+
+    assert tuple(
+        (signal.signal_session, signal.direction, signal.reason)
+        for signal in original.signals
+    ) == tuple(
+        (
+            candidate.signal_session,
+            candidate.direction,
+            candidate.selected_rule_reason,
+        )
+        for candidate in accepted
+    )
+
+
+def test_qf11_components_are_used_for_dataset_outcomes(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, ForwardReturnOutcomeLabeler(1), ForwardReturnEvaluator())
+
+    result = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+
+    row = result.rows[0].to_primitive()
+    assert result.prediction_study_ids
+    assert row["prediction_study_ids"] == {
+        "forward_return_1": result.prediction_study_ids[0]
+    }

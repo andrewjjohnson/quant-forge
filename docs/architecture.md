@@ -63,6 +63,13 @@ configured evaluator. The original QF-11 study supplies the concrete
 next-session-open gap label and directional evaluator. Prediction studies never
 create orders, fills, or portfolio results. See `docs/prediction-analysis.md`.
 
+QF-7 extends that branch after causal candidate classification. It enriches
+already-fixed QF-11 prediction records with configurable QF-4 context, reuses
+QF-11 labeler/evaluator compositions for multi-session outcomes, and exports a
+versioned deterministic signal-feature dataset. It does not create a parallel
+prediction framework or feed future outcomes back into rule execution. See
+`docs/signal-feature-datasets.md`.
+
 ## Module boundaries
 
 ### Data acquisition
@@ -309,6 +316,36 @@ Must not:
 - expose future outcome values to prediction generation;
 - assume every prediction is directional or every evaluation is classification;
 - describe direction accuracy as executable performance.
+
+### Signal-feature datasets
+
+QF-7 implements this boundary in `quantforge.prediction.feature_dataset`. A
+candidate rule emits one stable `SignalFeatureCandidate` for every identifiable
+opportunity and fixes its accepted, rejected, blocked, or genuinely supported
+overlapping disposition. Contextual features receive only history through the
+completed signal session. The builder then composes and runs configured QF-11
+outcome labelers/evaluators, flattens their typed values, and checkpoints rows
+atomically for resume.
+
+Responsibilities:
+
+- capture every strategy input and configured unused contextual feature;
+- retain rejected and blocked candidates without duplicate opportunities;
+- calculate explicit session-based returns, MFE/MAE, and target/stop labels
+  only after dispositions are fixed;
+- preserve daily-bar target/stop ambiguity;
+- document every flattened field's type, unit, source, and timing;
+- bind QF-3, rule, feature, labeler, evaluator, and schema configuration into a
+  deterministic identity;
+- produce resumable CSV and machine-readable schema/manifest artifacts.
+
+Must not:
+
+- expose any forward label to prediction generation or contextual features;
+- invent overlap semantics for stateless rules;
+- represent excursions as executable prices;
+- place orders or alter QF-5 execution/accounting;
+- turn exploratory feature differences into production filters.
 
 ### Reporting and experiment manifests
 
