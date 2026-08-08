@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal, DecimalException
 from enum import StrEnum
 from pathlib import Path
+from typing import cast
 
 from quantforge.configuration import (
     Primitive,
@@ -22,7 +23,7 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "3"
+FEATURE_ANALYSIS_ENGINE_VERSION = "4"
 
 _NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
 _SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
@@ -240,12 +241,23 @@ def analyze_signal_features(
         raise SignalFeatureDatasetError(
             "value-equals winner definition requires winner_value"
         )
+    outcome_availability_name = _outcome_availability_name(result, outcome_name)
+    if outcome_availability_name is not None and (
+        outcome_availability_name not in schema_fields
+        or schema_fields[outcome_availability_name].category
+        is not SchemaFieldCategory.FUTURE_OUTCOME
+        or schema_fields[outcome_availability_name].data_type != "boolean"
+    ):
+        raise SignalFeatureDatasetError(
+            "analysis outcome availability field must be a boolean future outcome"
+        )
     configuration: PrimitiveMapping = {
         "bins": {
             name: [item.to_primitive() for item in bins[name]] for name in feature_names
         },
         "engine_version": FEATURE_ANALYSIS_ENGINE_VERSION,
         "feature_names": list(feature_names),
+        "outcome_availability_name": outcome_availability_name,
         "outcome_name": outcome_name,
         "winner_definition": winner_definition.value,
         "winner_value": winner_value,
@@ -261,6 +273,11 @@ def analyze_signal_features(
     classified: list[tuple[PrimitiveMapping, bool]] = []
     for row in result.rows:
         primitive = row.to_primitive()
+        if (
+            outcome_availability_name is not None
+            and primitive.get(outcome_availability_name) is not True
+        ):
+            continue
         classification = _winner_classification(
             primitive.get(outcome_name), winner_definition, winner_value
         )
@@ -403,6 +420,36 @@ def _winner_classification(
     if not isinstance(value, (str, int, float, bool)):
         return None
     return str(value) == winner_value
+
+
+def _outcome_availability_name(
+    result: SignalFeatureDatasetResult, outcome_name: str
+) -> str | None:
+    configured_outcomes = result.configuration.get("outcomes")
+    if not isinstance(configured_outcomes, list):
+        return None
+    for raw_outcome in configured_outcomes:
+        if not isinstance(raw_outcome, dict):
+            continue
+        outcome = cast(PrimitiveMapping, raw_outcome)
+        namespace = outcome.get("namespace")
+        raw_fields = outcome.get("fields")
+        if not isinstance(namespace, str) or not isinstance(raw_fields, list):
+            continue
+        field_names = tuple(
+            field_name
+            for raw_field in raw_fields
+            if isinstance(raw_field, dict)
+            and isinstance(
+                field_name := cast(PrimitiveMapping, raw_field).get("field_name"), str
+            )
+        )
+        if outcome_name not in {
+            f"outcome_{namespace}_{field_name}" for field_name in field_names
+        }:
+            continue
+        return f"outcome_{namespace}_available" if "available" in field_names else None
+    return None
 
 
 def _decimal_value(value: Primitive | None) -> Decimal | None:

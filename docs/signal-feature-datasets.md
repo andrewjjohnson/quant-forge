@@ -243,7 +243,8 @@ prediction provenance, including retrieval timestamp, requested and actual
 ranges, corporate-action snapshot, bar fingerprint, and price/volume basis. It
 also hashes the complete prediction-study template, rule and parameter
 configuration, strategy-feature schema, contextual feature configurations,
-every QF-11 labeler/evaluator configuration, and feature/outcome/engine versions.
+complete contextual field definitions, every QF-11 labeler/evaluator
+configuration, and feature/outcome/engine versions.
 Chunk size does not participate. Equivalent configurations over the same exact
 QF-3 cache entry receive the same identity; a refreshed cache entry or any
 material feature or outcome change receives a new one.
@@ -272,6 +273,9 @@ any checkpoint is skipped, so one artifact cannot combine two generations. A
 candidate-only QF-11 boundary fixes and validates the population without running
 the configured future outcome over completed rows; only missing deterministic
 chunks are labeled and evaluated.
+If startup is interrupted before the manifest is created, an empty or
+schema-only checkpoint-free destination is safely reinitialized. Manifest-less
+state containing row checkpoints or unknown artifacts fails closed instead.
 `features.csv`, `summary.json`, and the final `complete` manifest are written
 atomically; the manifest is last. A complete resume validates exact deterministic
 CSV/JSON bytes and returns without rerunning the prediction rule or outcomes.
@@ -300,6 +304,9 @@ features and a future-outcome schema field as the outcome, preserving the causal
 feature/outcome boundary. Analyzed features must declare numeric `decimal` or
 `integer` types. `DECIMAL_GREATER_THAN_ZERO` likewise requires a numeric outcome;
 `VALUE_EQUALS` accepts only scalar outcome types.
+When an outcome namespace declares an `available` flag, rows where that flag is
+false are excluded before winner/loser classification, including non-null
+sentinel labels such as `unavailable`.
 
 The output is explicitly exploratory. It does not cherry-pick bins, select a
 filter, modify the rule, claim causality, or establish tradability. Any candidate

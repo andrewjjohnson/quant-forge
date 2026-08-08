@@ -935,7 +935,8 @@ def _dataset_configuration[
         "source_data": market_data.to_primitive(),
         "strategy_feature_fields": [field.to_primitive() for field in strategy_fields],
         "contextual_features": [
-            feature.configuration() for feature in contextual_features
+            _contextual_feature_configuration(feature)
+            for feature in contextual_features
         ],
         "outcomes": [outcome.configuration() for outcome in outcomes],
     }
@@ -947,13 +948,23 @@ def _feature_configuration(
 ) -> PrimitiveMapping:
     return {
         "candidate_context_features": [
-            feature.configuration() for feature in contextual_features
+            _contextual_feature_configuration(feature)
+            for feature in contextual_features
         ],
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "required_strategy_features": [
             field.to_primitive() for field in strategy_fields
         ],
         "temporal_policy": "context_features_receive_signal_session_prefix_only",
+    }
+
+
+def _contextual_feature_configuration(
+    feature: ContextualFeature,
+) -> PrimitiveMapping:
+    return {
+        "configuration": feature.configuration(),
+        "definition": feature.definition.to_primitive(),
     }
 
 
@@ -1369,6 +1380,27 @@ def _initialize_or_validate_progress(
         "status": "in_progress",
     }
     if destination.exists():
+        if not (destination / "manifest.json").exists():
+            temporary_paths = _validate_manifestless_staging_destination(destination)
+            existing_schema_path = destination / "schema.json"
+            if existing_schema_path.exists():
+                if _read_mapping(existing_schema_path) != schema.to_primitive():
+                    raise SignalFeaturePersistenceError(
+                        "manifest-less signal-feature schema is incompatible with "
+                        "this run"
+                    )
+            else:
+                _atomic_json(existing_schema_path, schema.to_primitive())
+            (destination / "rows").mkdir(exist_ok=True)
+            for temporary_path in temporary_paths:
+                try:
+                    temporary_path.unlink()
+                except OSError as error:
+                    raise SignalFeaturePersistenceError(
+                        "failed to remove an incomplete startup artifact"
+                    ) from error
+            _atomic_json(destination / "manifest.json", manifest)
+            return
         try:
             existing = _read_mapping(destination / "manifest.json")
             existing_schema = _read_mapping(destination / "schema.json")
@@ -1388,11 +1420,50 @@ def _initialize_or_validate_progress(
 def _manifest_status(destination: Path) -> str | None:
     manifest_path = destination / "manifest.json"
     if not manifest_path.exists():
-        raise SignalFeaturePersistenceError(
-            "signal-feature destination exists without a manifest"
-        )
+        _validate_manifestless_staging_destination(destination)
+        return None
     status = _read_mapping(manifest_path).get("status")
     return status if isinstance(status, str) else None
+
+
+def _validate_manifestless_staging_destination(destination: Path) -> tuple[Path, ...]:
+    if not destination.is_dir():
+        raise SignalFeaturePersistenceError(
+            "signal-feature destination without a manifest must be a directory"
+        )
+    rows_directory = destination / "rows"
+    try:
+        if rows_directory.exists() and (
+            not rows_directory.is_dir() or any(rows_directory.iterdir())
+        ):
+            raise SignalFeaturePersistenceError(
+                "manifest-less signal-feature state contains row checkpoints"
+            )
+        temporary_paths = tuple(
+            child
+            for child in destination.iterdir()
+            if child.is_file()
+            and (
+                child.name.startswith(".schema.json.")
+                or child.name.startswith(".manifest.json.")
+            )
+            and child.name.endswith(".tmp")
+        )
+        allowed_paths = {
+            destination / "schema.json",
+            rows_directory,
+            *temporary_paths,
+        }
+        if any(child not in allowed_paths for child in destination.iterdir()):
+            raise SignalFeaturePersistenceError(
+                "signal-feature destination exists without a manifest and contains "
+                "non-restartable state"
+            )
+    except OSError as error:
+        raise SignalFeaturePersistenceError(
+            "failed to inspect manifest-less signal-feature state"
+        ) from error
+    return temporary_paths
 
 
 def _load_progress_rows(

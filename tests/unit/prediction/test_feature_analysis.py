@@ -15,6 +15,7 @@ from quantforge.prediction import (
     VolumeRatioContext,
     build_signal_feature_dataset,
     forward_return_outcome,
+    target_stop_outcome,
 )
 from quantforge.prediction.feature_analysis import (
     FeatureAnalysisBin,
@@ -123,6 +124,43 @@ def test_analysis_winner_definition_is_configurable(tmp_path: Path) -> None:
 
     assert greater_than_zero.analysis_id != equals_zero.analysis_id
     assert greater_than_zero.winner_count != equals_zero.winner_count
+
+
+def test_analysis_excludes_rows_with_an_unavailable_outcome(tmp_path: Path) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    target_stop = target_stop_outcome(2, Decimal("0.01"), Decimal("0.005"))
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary, target_stop),
+        output_root=tmp_path,
+    )
+    feature_name = "feature_atr_percentage_of_close"
+
+    analysis = analyze_signal_features(
+        feature_dataset,
+        feature_names=(feature_name,),
+        outcome_name="outcome_target_stop_2_label",
+        winner_definition=WinnerDefinition.VALUE_EQUALS,
+        winner_value="target_first",
+        bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
+    )
+    available_rows = sum(
+        row.to_primitive()["outcome_target_stop_2_available"] is True
+        for row in feature_dataset.rows
+    )
+
+    assert available_rows < len(feature_dataset.rows)
+    assert analysis.eligible_row_count == available_rows
+    assert analysis.winner_count + analysis.loser_count == available_rows
 
 
 def test_analysis_enforces_feature_outcome_schema_categories(tmp_path: Path) -> None:

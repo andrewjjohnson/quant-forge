@@ -148,6 +148,7 @@ class FixtureCandidateRule:
 @dataclass(frozen=True, slots=True)
 class LastCloseContext:
     version: int = 1
+    unit: str = "price_per_share"
     name: str = "last_close_context"
 
     @property
@@ -156,7 +157,7 @@ class LastCloseContext:
             self.name,
             SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
             "decimal",
-            "price_per_share",
+            self.unit,
             False,
             "last close in the supplied causal history",
             "after the signal-session close",
@@ -566,6 +567,42 @@ def test_interrupted_generation_resumes_to_uninterrupted_bytes(
     ).read_bytes()
 
 
+def test_interrupted_startup_without_manifest_restarts_safely(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+    original_atomic_json = cast(
+        Callable[[Path, PrimitiveMapping], None],
+        getattr(feature_dataset_module, "_atomic_json"),
+    )
+
+    def interrupt_before_manifest(path: Path, values: PrimitiveMapping) -> None:
+        if path.name == "manifest.json" and values.get("status") == "in_progress":
+            raise RuntimeError("simulated startup interruption")
+        original_atomic_json(path, values)
+
+    monkeypatch.setattr(
+        feature_dataset_module, "_atomic_json", interrupt_before_manifest
+    )
+    with pytest.raises(RuntimeError, match="simulated startup interruption"):
+        _build_fixture(dataset, rule, tmp_path)
+    monkeypatch.setattr(feature_dataset_module, "_atomic_json", original_atomic_json)
+
+    result = _build_fixture(dataset, rule, tmp_path)
+    destination = tmp_path / result.dataset_id
+
+    assert len(result.rows) == 2
+    assert (
+        json.loads((destination / "manifest.json").read_text(encoding="utf-8"))[
+            "status"
+        ]
+        == "complete"
+    )
+
+
 def test_resume_rejects_a_different_regenerated_causal_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -946,6 +983,32 @@ def test_material_configuration_changes_create_distinct_dataset_ids(
         len({first.dataset_id, changed_feature.dataset_id, changed_outcome.dataset_id})
         == 3
     )
+
+
+def test_contextual_field_definition_changes_dataset_identity(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    dispositions = (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    price_feature = LastCloseContext(unit="price_per_share")
+    ratio_feature = LastCloseContext(unit="ratio")
+
+    assert price_feature.configuration_id == ratio_feature.configuration_id
+
+    price_result = _build_fixture(
+        dataset,
+        FixtureCandidateRule(dispositions),
+        tmp_path,
+        context=price_feature,
+    )
+    ratio_result = _build_fixture(
+        dataset,
+        FixtureCandidateRule(dispositions),
+        tmp_path,
+        context=ratio_feature,
+    )
+
+    assert price_result.dataset_id != ratio_result.dataset_id
+    assert (tmp_path / price_result.dataset_id).is_dir()
+    assert (tmp_path / ratio_result.dataset_id).is_dir()
 
 
 def test_exact_qf3_dataset_identity_changes_feature_dataset_identity(
