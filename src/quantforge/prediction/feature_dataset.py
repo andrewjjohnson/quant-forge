@@ -407,12 +407,22 @@ def _run_configured_outcome(
     strategy: PredictionRule[SignalFeatureCandidate],
     feature_configuration: PrimitiveMapping,
 ) -> OutcomeRun:
+    feature_configuration_snapshot = PrimitiveMappingSnapshot.capture(
+        feature_configuration
+    )
+    outcome_feature_configuration = feature_configuration_snapshot.to_primitive()
     if isinstance(configured_outcome, PredictionStudyOutcome):
         outcome_run = configured_outcome.run_prepared(
-            prepared_dataset, strategy, feature_configuration
+            prepared_dataset, strategy, outcome_feature_configuration
         )
     else:
-        outcome_run = configured_outcome.run(dataset, strategy, feature_configuration)
+        outcome_run = configured_outcome.run(
+            dataset, strategy, outcome_feature_configuration
+        )
+    if outcome_feature_configuration != feature_configuration_snapshot.to_primitive():
+        raise InvalidPredictionOutputError(
+            "configured outcome mutated feature configuration during execution"
+        )
     if (
         configured_outcome.configuration_id != expected_configuration_id
         or configuration_identity(configured_outcome.configuration())
@@ -473,6 +483,7 @@ def _validated_study_id(namespace: str, study_id: object) -> str:
 
 def _bound_outcome_study_id(
     configured_outcome: ConfiguredOutcome,
+    expected_configuration_id: str,
     reported_study_id: object,
     market_data: PredictionMarketData,
     strategy: PredictionRule[SignalFeatureCandidate],
@@ -492,7 +503,7 @@ def _bound_outcome_study_id(
             "feature_configuration": feature_configuration,
             "market_data": market_data.to_primitive(),
             "outcome": {
-                "configuration_id": configured_outcome.configuration_id,
+                "configuration_id": expected_configuration_id,
                 "evaluator_configuration_id": (
                     configured_outcome.evaluator_configuration_id
                 ),
@@ -833,6 +844,10 @@ def build_signal_feature_dataset[
     )
     sorted_outcomes = tuple(sorted(outcomes, key=lambda item: item.namespace))
     outcome_field_snapshots = tuple(outcome.fields for outcome in sorted_outcomes)
+    outcome_configuration_snapshots = tuple(
+        PrimitiveMappingSnapshot.capture(outcome.configuration())
+        for outcome in sorted_outcomes
+    )
     _validate_feature_configuration(
         strategy_fields,
         sorted_features,
@@ -840,6 +855,7 @@ def build_signal_feature_dataset[
         contextual_configuration_snapshots,
         sorted_outcomes,
         outcome_field_snapshots,
+        outcome_configuration_snapshots,
     )
     if not any(
         item.labeler_configuration_id
@@ -869,11 +885,15 @@ def build_signal_feature_dataset[
         contextual_configuration_snapshots,
         sorted_outcomes,
         outcome_field_snapshots,
+        outcome_configuration_snapshots,
         unavailable_outcome_values,
     )
     configuration_snapshot = PrimitiveMappingSnapshot.capture(configuration)
     outcome_configuration_ids = {
-        outcome.namespace: outcome.configuration_id for outcome in sorted_outcomes
+        outcome.namespace: configuration_identity(snapshot.to_primitive())
+        for outcome, snapshot in zip(
+            sorted_outcomes, outcome_configuration_snapshots, strict=True
+        )
     }
     feature_dataset_id = configuration_identity(configuration)
     schema = _schema(
@@ -1000,6 +1020,7 @@ def build_signal_feature_dataset[
             }
             study_id = _bound_outcome_study_id(
                 configured_outcome,
+                outcome_configuration_ids[configured_outcome.namespace],
                 outcome_run.study_id,
                 market_data,
                 fixed_rule,
@@ -1063,6 +1084,7 @@ def build_signal_feature_dataset[
             study_ids_by_namespace[configured_outcome.namespace] = (
                 _bound_outcome_study_id(
                     configured_outcome,
+                    outcome_configuration_ids[configured_outcome.namespace],
                     outcome_run.study_id,
                     market_data,
                     empty_rule,
@@ -1202,6 +1224,7 @@ def _validate_feature_configuration(
     contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
+    outcome_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
 ) -> None:
     if not outcomes:
         raise SignalFeatureDatasetError("at least one QF-11 outcome is required")
@@ -1237,7 +1260,12 @@ def _validate_feature_configuration(
             raise SignalFeatureDatasetError(
                 "contextual feature configuration identity is invalid"
             )
-    for outcome, fields in zip(outcomes, outcome_field_snapshots, strict=True):
+    for outcome, fields, configuration_snapshot in zip(
+        outcomes,
+        outcome_field_snapshots,
+        outcome_configuration_snapshots,
+        strict=True,
+    ):
         field_names = tuple(field.name for field in fields)
         if (
             not field_names
@@ -1252,7 +1280,10 @@ def _validate_feature_configuration(
                 "configured outcome fields must be sorted, unique future-outcome "
                 "definitions"
             )
-        if configuration_identity(outcome.configuration()) != outcome.configuration_id:
+        if (
+            configuration_identity(configuration_snapshot.to_primitive())
+            != outcome.configuration_id
+        ):
             raise SignalFeatureDatasetError(
                 "configured outcome configuration identity is invalid"
             )
@@ -1271,6 +1302,7 @@ def _dataset_configuration[
     contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
+    outcome_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> PrimitiveMapping:
     return {
@@ -1299,9 +1331,15 @@ def _dataset_configuration[
             _normalized_outcome_configuration(
                 outcome,
                 fields,
+                configuration_snapshot,
                 unavailable_outcome_values[outcome.namespace],
             )
-            for outcome, fields in zip(outcomes, outcome_field_snapshots, strict=True)
+            for outcome, fields, configuration_snapshot in zip(
+                outcomes,
+                outcome_field_snapshots,
+                outcome_configuration_snapshots,
+                strict=True,
+            )
         ],
     }
 
@@ -1309,11 +1347,14 @@ def _dataset_configuration[
 def _normalized_outcome_configuration(
     outcome: ConfiguredOutcome,
     fields: tuple[SchemaField, ...],
+    configuration_snapshot: PrimitiveMappingSnapshot,
     unavailable_values: PrimitiveMapping,
 ) -> PrimitiveMapping:
     return {
-        "component_configuration": outcome.configuration(),
-        "configuration_id": outcome.configuration_id,
+        "component_configuration": configuration_snapshot.to_primitive(),
+        "configuration_id": configuration_identity(
+            configuration_snapshot.to_primitive()
+        ),
         "fields": [field.to_primitive() for field in fields],
         "namespace": outcome.namespace,
         "unavailable_values": unavailable_values,
@@ -2116,6 +2157,7 @@ def _empty_dataset_study_ids(
         study_ids.append(
             _bound_outcome_study_id(
                 outcome,
+                outcome_configuration_ids[outcome.namespace],
                 outcome_run.study_id,
                 market_data,
                 empty_rule,

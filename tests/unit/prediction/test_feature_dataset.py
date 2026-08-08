@@ -607,6 +607,8 @@ class DirectConfiguredOutcome:
             self._run_count += 1
             if self._run_count == 2:
                 self._implementation_version = 2
+        if self._malformed_source == "feature_configuration":
+            feature_configuration["feature_schema_version"] = "mutated"
         if self._malformed_source == "study_id":
             return feature_dataset_module.OutcomeRun(
                 "not-a-canonical-study-id", outcome_run.values_by_session
@@ -670,6 +672,31 @@ class AlternatingFieldsDirectOutcome(DirectConfiguredOutcome):
             else field
             for field in fields
         )
+
+
+class AlternatingConfigurationDirectOutcome(DirectConfiguredOutcome):
+    def __init__(
+        self,
+        delegate: PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues],
+    ) -> None:
+        super().__init__(delegate, "valid")
+        self.configuration_reads = 0
+        self._declared_configuration: PrimitiveMapping = {
+            "component": "alternating_configuration_outcome_fixture",
+            "implementation_version": "1",
+            "namespace": self.namespace,
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self._declared_configuration)
+
+    def configuration(self) -> PrimitiveMapping:
+        self.configuration_reads += 1
+        configuration = dict(self._declared_configuration)
+        if self.configuration_reads == 2:
+            configuration["implementation_version"] = "2"
+        return configuration
 
 
 @dataclass(frozen=True, slots=True)
@@ -1592,6 +1619,61 @@ def test_builder_rechecks_direct_outcome_configuration_after_each_run(
             chunk_size=1,
         )
 
+    destination = next(path for path in tmp_path.iterdir() if path.is_dir())
+    assert not tuple((destination / "rows").glob("*.json"))
+
+
+def test_builder_rejects_direct_outcome_feature_configuration_mutation(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "feature_configuration")
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="configured outcome mutated feature configuration during execution",
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
+
+    destination = next(path for path in tmp_path.iterdir() if path.is_dir())
+    assert not tuple((destination / "rows").glob("*.json"))
+
+
+def test_builder_snapshots_outcome_configuration_before_dataset_identity(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = AlternatingConfigurationDirectOutcome(primary)
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="configured outcome configuration changed during execution",
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
+
+    assert configured_outcome.configuration_reads == 2
     destination = next(path for path in tmp_path.iterdir() if path.is_dir())
     assert not tuple((destination / "rows").glob("*.json"))
 

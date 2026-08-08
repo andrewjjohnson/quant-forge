@@ -376,6 +376,11 @@ outcome value against the complete row schema. Each outcome field tuple is
 captured once and reused for validation, dataset identity, schema construction,
 resume checks, and row handling, so mutable properties cannot split the
 artifact's identity from its published schema. Each configured outcome must
+also have its component configuration captured once, identity-checked, and
+reused for dataset and study provenance; later reads are reserved for the
+post-callback mutation guard. Every outcome receives a detached feature-
+configuration snapshot, and mutation of that callback-owned copy fails closed
+before any row is checkpointed. Each configured outcome must
 return a canonical lowercase SHA-256 QF-11 study ID; invalid provenance is
 rejected before any row is persisted. Returned outcome session keys must belong
 to the current candidate chunk; unknown keys fail closed instead of silently
