@@ -52,6 +52,13 @@ from quantforge.prediction import feature_dataset as feature_dataset_module
 
 from ..helpers import make_dataset
 
+_FIXTURE_SOURCE_CONFIG_ID = configuration_identity(
+    {
+        "component_name": "fixture_source_rule",
+        "implementation_version": "1",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class FixtureParameters:
@@ -116,7 +123,7 @@ class FixtureCandidateRule:
                 strategy_configuration_id=self.configuration_id,
                 source_rule_id="fixture_source_rule",
                 source_rule_implementation_version="1",
-                source_rule_configuration_id="fixture-source-config",
+                source_rule_configuration_id=_FIXTURE_SOURCE_CONFIG_ID,
                 strategy_parameters=PrimitiveMappingSnapshot.capture(
                     self.parameters.to_primitive()
                 ),
@@ -328,6 +335,16 @@ class InvalidFeatureCandidateRule(FixtureCandidateRule):
         return replace(output, signals=signals)
 
 
+class InvalidSourceConfigurationCandidateRule(FixtureCandidateRule):
+    def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        output = super().generate(dataset)
+        signals = tuple(
+            replace(signal, source_rule_configuration_id="not-a-sha256")
+            for signal in output.signals
+        )
+        return replace(output, signals=signals)
+
+
 class InvalidDispositionMetadataRule(FixtureCandidateRule):
     def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
         output = super().generate(dataset)
@@ -424,6 +441,10 @@ class DirectConfiguredOutcome:
         if self._malformed_source == "configuration":
             self._run_count += 1
             self._implementation_version = 2 if self._run_count == 1 else 1
+        if self._malformed_source == "resume_configuration":
+            self._run_count += 1
+            if self._run_count == 2:
+                self._implementation_version = 2
         if self._malformed_source == "study_id":
             return feature_dataset_module.OutcomeRun(
                 "not-a-canonical-study-id", outcome_run.values_by_session
@@ -729,6 +750,39 @@ def test_empty_candidate_dataset_exports_and_resumes(tmp_path: Path) -> None:
     assert first.prediction_study_ids
     assert rule.generate_calls == calls_after_first
     assert second.to_primitive() == first.to_primitive()
+
+
+def test_empty_completed_resume_rechecks_direct_outcome_configuration(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(())
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "resume_configuration")
+
+    first = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(configured_outcome,),
+        output_root=tmp_path,
+    )
+    assert not first.rows
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="configured outcome configuration changed during execution",
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
 
 
 def test_empty_candidate_resume_rejects_corrupt_manifest_study_ids(
@@ -1421,6 +1475,21 @@ def test_candidate_feature_names_must_match_declared_schema(tmp_path: Path) -> N
 
     with pytest.raises(InvalidPredictionOutputError, match="candidate feature names"):
         _build_fixture(dataset, rule, tmp_path)
+
+
+def test_source_rule_configuration_id_must_be_canonical_sha256(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = InvalidSourceConfigurationCandidateRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match=r"source rule configuration ID.*canonical SHA-256",
+    ):
+        _build_fixture(dataset, rule, tmp_path)
+
+    assert not tuple(tmp_path.rglob("rows/*.json"))
 
 
 def test_strategy_fields_must_be_contemporaneous_with_no_candidates(

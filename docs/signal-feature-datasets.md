@@ -352,7 +352,11 @@ against the complete row schema. Each configured outcome must return a
 canonical lowercase SHA-256 QF-11 study ID; invalid provenance is rejected
 before any row is persisted. Returned outcome session keys must belong to the
 current candidate chunk; unknown keys fail closed instead of silently
-censoring a candidate's available outcome. The builder also normalizes the
+censoring a candidate's available outcome. Candidate source-rule configuration
+IDs must likewise be canonical SHA-256 provenance values. The builder also
+routes completed empty-dataset outcome revalidation through the same checked
+execution boundary, so mutable direct outcomes cannot bypass configuration
+identity checks during resume. It normalizes the
 protocol's public namespace, fields, and unavailable defaults into dataset
 configuration, so downstream analysis does not depend on a concrete outcome
 implementation's private configuration shape. Outcome configuration identity is

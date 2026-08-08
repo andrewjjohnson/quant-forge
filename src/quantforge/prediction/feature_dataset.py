@@ -780,6 +780,7 @@ def build_signal_feature_dataset[
             strategy,
             feature_configuration,
             sorted_outcomes,
+            outcome_configuration_ids,
         )
     _initialize_or_validate_progress(
         destination,
@@ -1461,6 +1462,10 @@ def _action_session(action: CorporateAction) -> date:
 def _candidate_id(
     market_data: PredictionMarketData, candidate: SignalFeatureCandidate
 ) -> str:
+    if not _is_canonical_sha256(candidate.source_rule_configuration_id):
+        raise InvalidPredictionOutputError(
+            "candidate source rule configuration ID must be a canonical SHA-256"
+        )
     return configuration_identity(
         {
             "candidate_rule_configuration_id": candidate.strategy_configuration_id,
@@ -1798,6 +1803,7 @@ def _load_completed_result(
     strategy: _SignalFeatureRule,
     feature_configuration: PrimitiveMapping,
     outcomes: tuple[ConfiguredOutcome, ...],
+    outcome_configuration_ids: dict[str, str],
 ) -> SignalFeatureDatasetResult:
     manifest = _read_mapping(destination / "manifest.json")
     rows_by_candidate = _load_progress_rows(destination, feature_dataset_id, schema)
@@ -1807,7 +1813,11 @@ def _load_completed_result(
         prediction_study_ids = tuple(study_ids[name] for name in sorted(study_ids))
     else:
         prediction_study_ids = _empty_dataset_study_ids(
-            dataset, strategy, feature_configuration, outcomes
+            dataset,
+            strategy,
+            feature_configuration,
+            outcomes,
+            outcome_configuration_ids,
         )
     result = SignalFeatureDatasetResult(
         feature_dataset_id,
@@ -1846,11 +1856,20 @@ def _empty_dataset_study_ids(
     strategy: _SignalFeatureRule,
     feature_configuration: PrimitiveMapping,
     outcomes: tuple[ConfiguredOutcome, ...],
+    outcome_configuration_ids: dict[str, str],
 ) -> tuple[str, ...]:
     empty_rule = _FixedCandidateRule(strategy, ())
+    prepared_dataset = prepare_prediction_study_dataset(dataset)
     study_ids: list[str] = []
     for outcome in outcomes:
-        outcome_run = outcome.run(dataset, empty_rule, feature_configuration)
+        outcome_run = _run_configured_outcome(
+            outcome,
+            outcome_configuration_ids[outcome.namespace],
+            dataset,
+            prepared_dataset,
+            empty_rule,
+            feature_configuration,
+        )
         _validate_outcome_session_keys(
             outcome.namespace,
             frozenset(),
