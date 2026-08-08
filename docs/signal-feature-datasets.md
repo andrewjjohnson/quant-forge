@@ -354,15 +354,16 @@ fixed candidate and typed outcome. Wrap them with
 `PredictionStudyOutcome.create()`, supply sorted `SchemaField` definitions and
 explicit end-of-data defaults, and add the composition to `outcomes`. When an
 `available` field is declared, it must be a non-nullable boolean and its
-end-of-data default must be `false`. The QF-7 builder does not need
-outcome-specific branches. The builder independently validates every flattened
-available and unavailable value against these declarations, including values
-returned by custom `ConfiguredOutcome` implementations. Before checkpointing,
-it also validates every identity, disposition, feature, and outcome value
-against the complete row schema. Each configured outcome must return a
-canonical lowercase SHA-256 QF-11 study ID; invalid provenance is rejected
-before any row is persisted. Returned outcome session keys must belong to the
-current candidate chunk; unknown keys fail closed instead of silently
+end-of-data default must be `false`; the builder enforces this for both typed
+compositions and direct `ConfiguredOutcome` implementations. The QF-7 builder
+does not need outcome-specific branches. The builder independently validates
+every flattened available and unavailable value against these declarations,
+including values returned by custom `ConfiguredOutcome` implementations. Before
+checkpointing, it also validates every identity, disposition, feature, and
+outcome value against the complete row schema. Each configured outcome must
+return a canonical lowercase SHA-256 QF-11 study ID; invalid provenance is
+rejected before any row is persisted. Returned outcome session keys must belong
+to the current candidate chunk; unknown keys fail closed instead of silently
 censoring a candidate's available outcome. Candidate source-rule configuration
 IDs must likewise be canonical SHA-256 provenance values. The builder also
 routes completed empty-dataset outcome revalidation through the same checked

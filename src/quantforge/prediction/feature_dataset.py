@@ -747,7 +747,7 @@ def build_signal_feature_dataset[
             "configured outcomes must include the supplied PredictionStudy composition"
         )
     unavailable_outcome_values = {
-        outcome.namespace: _validated_flattened_outcome_values(
+        outcome.namespace: _validated_unavailable_outcome_values(
             outcome, outcome.unavailable_row()
         )
         for outcome in sorted_outcomes
@@ -1615,6 +1615,25 @@ def _validated_flattened_outcome_values(
             f"{invalid_value_names}"
         )
     return PrimitiveMappingSnapshot.capture(values).to_primitive()
+
+
+def _validated_unavailable_outcome_values(
+    configured_outcome: ConfiguredOutcome,
+    values: PrimitiveMapping,
+) -> PrimitiveMapping:
+    validated = _validated_flattened_outcome_values(configured_outcome, values)
+    fields_by_name = {field.name: field for field in configured_outcome.fields}
+    availability_field = fields_by_name.get("available")
+    if availability_field is not None and (
+        availability_field.data_type != "boolean"
+        or availability_field.nullable
+        or validated.get("available") is not False
+    ):
+        raise SignalFeatureDatasetError(
+            "outcome availability fields must be non-nullable booleans with "
+            "an unavailable default of false"
+        )
+    return validated
 
 
 def _row_id(feature_dataset_id: str, values: PrimitiveMapping) -> str:

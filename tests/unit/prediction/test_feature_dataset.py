@@ -475,6 +475,8 @@ class DirectConfiguredOutcome:
         values = self._delegate.unavailable_row()
         if self._malformed_source == "unavailable":
             values["raw_return"] = "not-a-decimal"
+        if self._malformed_source == "availability":
+            values["available"] = True
         return values
 
     def run(
@@ -1179,6 +1181,32 @@ def test_builder_validates_custom_flattened_outcome_values(
             outcomes=(configured_outcome,),
             output_root=tmp_path,
         )
+
+
+def test_builder_requires_false_direct_outcome_unavailable_flag(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "availability")
+
+    with pytest.raises(
+        SignalFeatureDatasetError,
+        match=r"availability fields must be non-nullable booleans.*false",
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
+
+    assert not tuple(tmp_path.iterdir())
 
 
 def test_builder_rejects_noncanonical_direct_outcome_study_id(
