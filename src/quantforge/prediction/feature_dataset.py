@@ -5,7 +5,7 @@ import io
 import json
 import os
 import tempfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal, DecimalException
@@ -694,14 +694,11 @@ def build_signal_feature_dataset[
             "persisted rows do not belong to the regenerated candidate population"
         )
     bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
-    enriched_candidates = tuple(
-        _enrich_candidate(
-            dataset,
-            candidate,
-            bar_indexes,
-            sorted_features,
-        )
-        for candidate in candidates
+    enriched_candidates = _enrich_candidates(
+        dataset,
+        candidates,
+        bar_indexes,
+        sorted_features,
     )
     _validate_regenerated_completed_rows(
         feature_dataset_id,
@@ -1107,34 +1104,83 @@ def _disposition_fields() -> tuple[SchemaField, ...]:
     )
 
 
-def _enrich_candidate(
+def _enrich_candidates(
     dataset: MarketDataset,
-    candidate: SignalFeatureCandidate,
+    candidates: tuple[SignalFeatureCandidate, ...],
     bar_indexes: dict[date, int],
     contextual_features: tuple[ContextualFeature, ...],
-) -> SignalFeatureCandidate:
-    index = bar_indexes[candidate.signal_session]
-    history = _causal_history(dataset, index, candidate.signal_session)
-    contextual_values: list[SignalFeatureValue] = []
+) -> tuple[SignalFeatureCandidate, ...]:
+    if not candidates:
+        return ()
+    values_by_session: dict[date, list[SignalFeatureValue]] = {
+        candidate.signal_session: [] for candidate in candidates
+    }
     for feature in contextual_features:
         expected_configuration_id = feature.configuration_id
         definition = feature.definition
-        value = feature.value_from_history(history)
+        aligned_callback = getattr(feature, "values_for_dataset", None)
+        if aligned_callback is None:
+            values = {
+                candidate.signal_session: feature.value_from_history(
+                    _causal_history(
+                        dataset,
+                        bar_indexes[candidate.signal_session],
+                        candidate.signal_session,
+                    )
+                )
+                for candidate in candidates
+            }
+        else:
+            if not callable(aligned_callback):
+                raise InvalidPredictionOutputError(
+                    f"contextual feature {feature.name} has an invalid aligned "
+                    "calculation callback"
+                )
+            calculate_aligned = cast(
+                Callable[[MarketDataset], tuple[Decimal | None, ...]],
+                aligned_callback,
+            )
+            raw_aligned_values = cast(object, calculate_aligned(dataset))
+            if not isinstance(raw_aligned_values, tuple):
+                raise InvalidPredictionOutputError(
+                    f"contextual feature {feature.name} returned a misaligned series"
+                )
+            raw_aligned_tuple = cast(tuple[object, ...], raw_aligned_values)
+            if len(raw_aligned_tuple) != len(dataset.bars):
+                raise InvalidPredictionOutputError(
+                    f"contextual feature {feature.name} returned a misaligned series"
+                )
+            aligned_values = cast(tuple[Decimal | None, ...], raw_aligned_tuple)
+            values = {
+                candidate.signal_session: aligned_values[
+                    bar_indexes[candidate.signal_session]
+                ]
+                for candidate in candidates
+            }
         if feature.configuration_id != expected_configuration_id:
             raise InvalidPredictionOutputError(
                 "contextual feature configuration changed during calculation"
             )
-        if value is None and not definition.nullable:
-            raise InvalidPredictionOutputError(
-                f"contextual feature {feature.name} returned null for a "
-                "non-nullable schema field"
+        for signal_session, value in values.items():
+            if value is None and not definition.nullable:
+                raise InvalidPredictionOutputError(
+                    f"contextual feature {feature.name} returned null for a "
+                    "non-nullable schema field"
+                )
+            values_by_session[signal_session].append(
+                SignalFeatureValue(feature.name, value)
             )
-        contextual_values.append(SignalFeatureValue(feature.name, value))
-    return replace(
-        candidate,
-        contextual_features=tuple(
-            sorted(contextual_values, key=lambda item: item.name)
-        ),
+    return tuple(
+        replace(
+            candidate,
+            contextual_features=tuple(
+                sorted(
+                    values_by_session[candidate.signal_session],
+                    key=lambda item: item.name,
+                )
+            ),
+        )
+        for candidate in candidates
     )
 
 

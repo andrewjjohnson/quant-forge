@@ -141,16 +141,22 @@ The documented unused baseline context is:
 These features are exploratory; none changes the baseline rule. Every
 `ContextualFeature` owns a stable configuration, schema definition, and
 `value_from_history()` implementation. The orchestration layer contains no
-overnight-gap-specific feature branches. It passes only a market-history prefix
-ending at the candidate session, so a contextual feature cannot inspect a later
-bar or later corporate action. Warm-up values remain `null`; they are never
+overnight-gap-specific feature branches. The three built-in contexts additionally
+provide one full-dataset aligned series calculated through causal QF-4 indicators;
+the builder computes each series once and selects the value at the candidate
+session. Changing a later bar cannot change an earlier aligned value. Custom
+features without the aligned-series method continue to receive only a
+market-history prefix ending at the candidate session, so they cannot inspect a
+later bar or later corporate action. Warm-up values remain `null`; they are never
 backfilled. A contextual feature declared non-nullable must return a value;
 schema/value contradictions fail closed.
 
 To add a context feature, implement `ContextualFeature`, preferably by composing
 a reusable QF-4 `Indicator`, document its type/unit/source/timing in
-`SchemaField`, and add the object to `contextual_features`. No dataset-builder
-change is needed.
+`SchemaField`, and add the object to `contextual_features`. An optional
+`values_for_dataset()` method may return one causally aligned value per bar so the
+builder can calculate the feature once rather than once per candidate. No
+dataset-builder change is needed.
 
 ## Forward returns
 

@@ -827,6 +827,55 @@ def test_future_changes_affect_outcomes_but_not_earlier_features(
     )
 
 
+def test_builtin_contextual_feature_calculates_one_aligned_series(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = make_dataset(("100", "102", "101", "104"))
+    original_values = AtrPercentageContext.values_for_dataset
+    calculation_count = 0
+
+    def counting_values(
+        context: AtrPercentageContext, dataset_to_calculate: MarketDataset
+    ) -> tuple[Decimal | None, ...]:
+        nonlocal calculation_count
+        calculation_count += 1
+        return original_values(context, dataset_to_calculate)
+
+    monkeypatch.setattr(AtrPercentageContext, "values_for_dataset", counting_values)
+
+    _build_fixture(
+        dataset,
+        FixtureCandidateRule(
+            (
+                SignalDisposition.ACCEPTED,
+                SignalDisposition.REJECTED,
+                SignalDisposition.BLOCKED,
+            )
+        ),
+        tmp_path,
+        context=AtrPercentageContext(2),
+    )
+
+    assert calculation_count == 1
+
+
+@pytest.mark.parametrize(
+    "context",
+    [AtrPercentageContext(2), TrendDistanceContext(2), VolumeRatioContext(2)],
+    ids=("atr", "trend", "volume"),
+)
+def test_aligned_contextual_series_do_not_change_prior_values(
+    context: AtrPercentageContext | TrendDistanceContext | VolumeRatioContext,
+) -> None:
+    first = make_dataset(("100", "102", "101"), dataset_id="first")
+    changed_future = make_dataset(("100", "102", "150"), dataset_id="changed")
+
+    assert (
+        context.values_for_dataset(first)[:2]
+        == context.values_for_dataset(changed_future)[:2]
+    )
+
+
 def test_contextual_feature_cannot_read_a_future_bar(tmp_path: Path) -> None:
     dataset = make_dataset(("100", "102", "101"))
     rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))

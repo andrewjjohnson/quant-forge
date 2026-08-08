@@ -21,7 +21,7 @@ from quantforge.prediction.signal_feature_models import SchemaField, SchemaField
 
 
 class ContextualFeature(Protocol):
-    """One independently configured feature calculated from a causal prefix."""
+    """One independently configured causal feature with a prefix fallback."""
 
     @property
     def name(self) -> str: ...
@@ -73,21 +73,28 @@ class AtrPercentageContext:
         return configuration_identity(self.configuration())
 
     def value_from_history(self, history: MarketDataset) -> Decimal | None:
+        return self.values_for_dataset(history)[-1]
+
+    def values_for_dataset(self, dataset: MarketDataset) -> tuple[Decimal | None, ...]:
         indicator = WilderAverageTrueRange(
             WilderAverageTrueRangeParameters(self.period)
         )
-        atr = indicator.calculate(history).values_for(WILDER_AVERAGE_TRUE_RANGE_OUTPUT)[
-            -1
-        ]
-        if atr is None:
-            return None
-        try:
-            with arithmetic():
-                return atr / history.bars[-1].close
-        except DecimalException as error:
-            raise InvalidPredictionConfigurationError(
-                "ATR percentage feature arithmetic failed"
-            ) from error
+        atr_values = indicator.calculate(dataset).values_for(
+            WILDER_AVERAGE_TRUE_RANGE_OUTPUT
+        )
+        values: list[Decimal | None] = []
+        for bar, atr in zip(dataset.bars, atr_values, strict=True):
+            if atr is None:
+                values.append(None)
+                continue
+            try:
+                with arithmetic():
+                    values.append(atr / bar.close)
+            except DecimalException as error:
+                raise InvalidPredictionConfigurationError(
+                    "ATR percentage feature arithmetic failed"
+                ) from error
+        return tuple(values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,21 +133,26 @@ class VolumeRatioContext:
         return configuration_identity(self.configuration())
 
     def value_from_history(self, history: MarketDataset) -> Decimal | None:
+        return self.values_for_dataset(history)[-1]
+
+    def values_for_dataset(self, dataset: MarketDataset) -> tuple[Decimal | None, ...]:
         indicator = SimpleMovingAverage(
             SimpleMovingAverageParameters(self.period, MarketField.VOLUME)
         )
-        average = indicator.calculate(history).values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[
-            -1
-        ]
-        if average in (None, Decimal(0)):
-            return None
-        try:
-            with arithmetic():
-                return history.bars[-1].volume / average
-        except DecimalException as error:
-            raise InvalidPredictionConfigurationError(
-                "volume-ratio feature arithmetic failed"
-            ) from error
+        averages = indicator.calculate(dataset).values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)
+        values: list[Decimal | None] = []
+        for bar, average in zip(dataset.bars, averages, strict=True):
+            if average in (None, Decimal(0)):
+                values.append(None)
+                continue
+            try:
+                with arithmetic():
+                    values.append(bar.volume / average)
+            except DecimalException as error:
+                raise InvalidPredictionConfigurationError(
+                    "volume-ratio feature arithmetic failed"
+                ) from error
+        return tuple(values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,21 +191,26 @@ class TrendDistanceContext:
         return configuration_identity(self.configuration())
 
     def value_from_history(self, history: MarketDataset) -> Decimal | None:
+        return self.values_for_dataset(history)[-1]
+
+    def values_for_dataset(self, dataset: MarketDataset) -> tuple[Decimal | None, ...]:
         indicator = SimpleMovingAverage(
             SimpleMovingAverageParameters(self.period, MarketField.CLOSE)
         )
-        average = indicator.calculate(history).values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[
-            -1
-        ]
-        if average in (None, Decimal(0)):
-            return None
-        try:
-            with arithmetic():
-                return history.bars[-1].close / average - Decimal(1)
-        except DecimalException as error:
-            raise InvalidPredictionConfigurationError(
-                "trend-distance feature arithmetic failed"
-            ) from error
+        averages = indicator.calculate(dataset).values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)
+        values: list[Decimal | None] = []
+        for bar, average in zip(dataset.bars, averages, strict=True):
+            if average in (None, Decimal(0)):
+                values.append(None)
+                continue
+            try:
+                with arithmetic():
+                    values.append(bar.close / average - Decimal(1))
+            except DecimalException as error:
+                raise InvalidPredictionConfigurationError(
+                    "trend-distance feature arithmetic failed"
+                ) from error
+        return tuple(values)
 
 
 def default_overnight_gap_contextual_features() -> tuple[ContextualFeature, ...]:
@@ -210,7 +227,7 @@ def _configuration(name: str, indicator: PrimitiveMapping) -> PrimitiveMapping:
         "component_name": name,
         "component_type": "signal_contextual_feature",
         "contract_version": "1",
-        "implementation_version": "1",
+        "implementation_version": "2",
         "indicator": indicator,
         "timing": "completed_signal_session_and_trailing_history_only",
     }
