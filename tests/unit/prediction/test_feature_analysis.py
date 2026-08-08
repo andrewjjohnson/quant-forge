@@ -11,6 +11,7 @@ from quantforge.prediction import (
     PredictionStudy,
     SignalFeatureCandidate,
     SignalFeatureDatasetError,
+    SignalFeatureRow,
     TrendDistanceContext,
     VolumeRatioContext,
     build_signal_feature_dataset,
@@ -124,6 +125,53 @@ def test_analysis_winner_definition_is_configurable(tmp_path: Path) -> None:
 
     assert greater_than_zero.analysis_id != equals_zero.analysis_id
     assert greater_than_zero.winner_count != equals_zero.winner_count
+
+
+def test_value_equals_compares_decimal_outcomes_numerically(tmp_path: Path) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    outcome_name = "outcome_forward_return_1_raw_return"
+    row_values = feature_dataset.rows[0].to_primitive()
+    row_values[outcome_name] = "1.0"
+    one_row_dataset = replace(
+        feature_dataset,
+        rows=(SignalFeatureRow.capture(row_values),),
+    )
+    feature_name = "feature_atr_percentage_of_close"
+    bins = {feature_name: (FeatureAnalysisBin("all", None, None),)}
+
+    integer_scale = analyze_signal_features(
+        one_row_dataset,
+        feature_names=(feature_name,),
+        outcome_name=outcome_name,
+        winner_definition=WinnerDefinition.VALUE_EQUALS,
+        winner_value="1",
+        bins=bins,
+    )
+    fractional_scale = analyze_signal_features(
+        one_row_dataset,
+        feature_names=(feature_name,),
+        outcome_name=outcome_name,
+        winner_definition=WinnerDefinition.VALUE_EQUALS,
+        winner_value="1.00",
+        bins=bins,
+    )
+
+    assert integer_scale.winner_count == fractional_scale.winner_count == 1
+    assert integer_scale.analysis_id == fractional_scale.analysis_id
 
 
 def test_analysis_excludes_rows_with_an_unavailable_outcome(tmp_path: Path) -> None:

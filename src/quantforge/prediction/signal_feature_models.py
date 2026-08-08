@@ -21,7 +21,10 @@ from quantforge.prediction.models import PredictionDirection, PredictionMarketDa
 
 FEATURE_SCHEMA_VERSION = "1"
 OUTCOME_SCHEMA_VERSION = "1"
-FEATURE_DATASET_ENGINE_VERSION = "11"
+FEATURE_DATASET_ENGINE_VERSION = "12"
+_SUPPORTED_SCHEMA_DATA_TYPES = frozenset(
+    ("array", "boolean", "date", "decimal", "integer", "object", "string")
+)
 
 
 class SignalDisposition(StrEnum):
@@ -91,6 +94,10 @@ class SchemaField:
         ):
             raise InvalidPredictionOutputError(
                 "schema fields require names, types, units, sources, and timing"
+            )
+        if self.data_type not in _SUPPORTED_SCHEMA_DATA_TYPES:
+            raise InvalidPredictionOutputError(
+                f"schema field data type is unsupported: {self.data_type}"
             )
 
     def to_primitive(self) -> PrimitiveMapping:

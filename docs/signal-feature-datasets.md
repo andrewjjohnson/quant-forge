@@ -233,7 +233,9 @@ Strategy and contextual feature values, outcome evaluator values, and explicit
 end-of-data defaults are checked against each declared schema type and
 nullability before export. Decimal values must be finite exact decimal text,
 dates must be canonical ISO dates, and primitive boolean, integer, string,
-object, and array types must match their declarations.
+object, and array types must match their declarations. Any schema data type
+outside `boolean`, `integer`, `decimal`, `date`, `string`, `object`, and `array`
+is rejected when the field is constructed, including for an empty dataset.
 
 Causal columns use `feature_`; future fields use `outcome_<namespace>_`. Decimal
 values are exact decimal text in CSV and can be inferred or explicitly parsed
@@ -308,7 +310,8 @@ winner. The analysis API accepts only contemporaneous-feature schema fields as
 features and a future-outcome schema field as the outcome, preserving the causal
 feature/outcome boundary. Analyzed features must declare numeric `decimal` or
 `integer` types. `DECIMAL_GREATER_THAN_ZERO` likewise requires a numeric outcome;
-`VALUE_EQUALS` accepts only scalar outcome types.
+`VALUE_EQUALS` accepts only scalar outcome types and compares decimal outcomes by
+numeric value rather than serialization scale.
 When an outcome namespace declares an `available` flag, rows where that flag is
 false are excluded before winner/loser classification, including non-null
 sentinel labels such as `unavailable`. Availability flags are eligibility

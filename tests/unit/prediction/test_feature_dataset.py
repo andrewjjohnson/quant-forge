@@ -840,6 +840,19 @@ def test_unavailable_outcome_defaults_obey_declared_field_types() -> None:
         )
 
 
+def test_schema_fields_reject_unsupported_data_types() -> None:
+    with pytest.raises(InvalidPredictionOutputError, match="unsupported"):
+        SchemaField(
+            "invalid_field",
+            SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
+            "number",
+            "fixture_unit",
+            False,
+            "fixture calculation",
+            "after the signal-session close",
+        )
+
+
 def test_accepted_candidate_requires_direction_and_selected_rule_reason() -> None:
     dataset = make_dataset(("100", "102"))
     candidate = (

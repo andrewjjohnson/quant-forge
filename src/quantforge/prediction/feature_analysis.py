@@ -23,7 +23,7 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "5"
+FEATURE_ANALYSIS_ENGINE_VERSION = "6"
 
 _NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
 _SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
@@ -241,6 +241,18 @@ def analyze_signal_features(
         raise SignalFeatureDatasetError(
             "value-equals winner definition requires winner_value"
         )
+    normalized_winner_value = winner_value
+    if (
+        winner_definition is WinnerDefinition.VALUE_EQUALS
+        and outcome_data_type == "decimal"
+    ):
+        parsed_winner_value = _decimal_value(winner_value)
+        if parsed_winner_value is None:
+            raise SignalFeatureDatasetError(
+                "value-equals requires a finite decimal winner_value for a decimal "
+                "outcome"
+            )
+        normalized_winner_value = decimal_to_primitive(parsed_winner_value)
     outcome_availability_name = _outcome_availability_name(result, outcome_name)
     if outcome_availability_name == outcome_name:
         raise SignalFeatureDatasetError(
@@ -264,7 +276,7 @@ def analyze_signal_features(
         "outcome_availability_name": outcome_availability_name,
         "outcome_name": outcome_name,
         "winner_definition": winner_definition.value,
-        "winner_value": winner_value,
+        "winner_value": normalized_winner_value,
     }
     configuration_snapshot = PrimitiveMappingSnapshot.capture(configuration)
     analysis_id = configuration_identity(
@@ -283,7 +295,10 @@ def analyze_signal_features(
         ):
             continue
         classification = _winner_classification(
-            primitive.get(outcome_name), winner_definition, winner_value
+            primitive.get(outcome_name),
+            winner_definition,
+            normalized_winner_value,
+            outcome_data_type,
         )
         if classification is not None:
             classified.append((primitive, classification))
@@ -415,12 +430,21 @@ def _winner_classification(
     value: Primitive | None,
     winner_definition: WinnerDefinition,
     winner_value: str | None,
+    outcome_data_type: str,
 ) -> bool | None:
     if value is None:
         return None
     if winner_definition is WinnerDefinition.DECIMAL_GREATER_THAN_ZERO:
         decimal_value = _decimal_value(value)
         return None if decimal_value is None else decimal_value > 0
+    if outcome_data_type == "decimal":
+        decimal_value = _decimal_value(value)
+        decimal_winner_value = _decimal_value(winner_value)
+        return (
+            None
+            if decimal_value is None or decimal_winner_value is None
+            else decimal_value == decimal_winner_value
+        )
     if not isinstance(value, (str, int, float, bool)):
         return None
     return str(value) == winner_value
