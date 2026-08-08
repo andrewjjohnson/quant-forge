@@ -471,6 +471,44 @@ def _validated_study_id(namespace: str, study_id: object) -> str:
     return cast(str, study_id)
 
 
+def _bound_outcome_study_id(
+    configured_outcome: ConfiguredOutcome,
+    reported_study_id: object,
+    market_data: PredictionMarketData,
+    strategy: PredictionRule[SignalFeatureCandidate],
+    feature_configuration: PrimitiveMapping,
+    fields: tuple[SchemaField, ...],
+    unavailable_values: PrimitiveMapping,
+) -> str:
+    validated_reported_id = _validated_study_id(
+        configured_outcome.namespace, reported_study_id
+    )
+    if isinstance(configured_outcome, PredictionStudyOutcome):
+        return validated_reported_id
+    return configuration_identity(
+        {
+            "binding_version": "1",
+            "component": "quantforge_qf7_direct_outcome_study_binding",
+            "feature_configuration": feature_configuration,
+            "market_data": market_data.to_primitive(),
+            "outcome": {
+                "configuration_id": configured_outcome.configuration_id,
+                "evaluator_configuration_id": (
+                    configured_outcome.evaluator_configuration_id
+                ),
+                "fields": [field.to_primitive() for field in fields],
+                "labeler_configuration_id": (
+                    configured_outcome.labeler_configuration_id
+                ),
+                "namespace": configured_outcome.namespace,
+                "reported_qf11_study_id": validated_reported_id,
+                "unavailable_values": unavailable_values,
+            },
+            "prediction_rule_configuration_id": strategy.configuration_id,
+        }
+    )
+
+
 def _validate_outcome_session_keys(
     namespace: str,
     expected_sessions: frozenset[date],
@@ -846,6 +884,8 @@ def build_signal_feature_dataset[
             strategy,
             feature_configuration,
             sorted_outcomes,
+            outcome_field_snapshots,
+            unavailable_outcome_values,
             outcome_configuration_ids,
         )
     _initialize_or_validate_progress(
@@ -941,8 +981,14 @@ def build_signal_feature_dataset[
                 )
                 for signal_session, values in outcome_run.values_by_session.items()
             }
-            study_id = _validated_study_id(
-                configured_outcome.namespace, outcome_run.study_id
+            study_id = _bound_outcome_study_id(
+                configured_outcome,
+                outcome_run.study_id,
+                market_data,
+                fixed_rule,
+                feature_configuration,
+                fields,
+                unavailable_outcome_values[configured_outcome.namespace],
             )
             chunk_study_ids[configured_outcome.namespace] = study_id
             previous_study_id = study_ids_by_namespace.get(configured_outcome.namespace)
@@ -977,7 +1023,9 @@ def build_signal_feature_dataset[
         )
     if not enriched_candidates:
         empty_rule = _FixedCandidateRule(strategy, (), candidate_population_id, 0)
-        for configured_outcome in sorted_outcomes:
+        for configured_outcome, fields in zip(
+            sorted_outcomes, outcome_field_snapshots, strict=True
+        ):
             if prepared_outcome_dataset is None:
                 raise InvalidPredictionOutputError(
                     "empty candidates require a prepared outcome dataset"
@@ -995,8 +1043,16 @@ def build_signal_feature_dataset[
                 frozenset(),
                 outcome_run.values_by_session,
             )
-            study_ids_by_namespace[configured_outcome.namespace] = _validated_study_id(
-                configured_outcome.namespace, outcome_run.study_id
+            study_ids_by_namespace[configured_outcome.namespace] = (
+                _bound_outcome_study_id(
+                    configured_outcome,
+                    outcome_run.study_id,
+                    market_data,
+                    empty_rule,
+                    feature_configuration,
+                    fields,
+                    unavailable_outcome_values[configured_outcome.namespace],
+                )
             )
     result = SignalFeatureDatasetResult(
         feature_dataset_id,
@@ -1931,6 +1987,8 @@ def _load_completed_result(
     strategy: _SignalFeatureRule,
     feature_configuration: PrimitiveMapping,
     outcomes: tuple[ConfiguredOutcome, ...],
+    outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
+    unavailable_outcome_values: dict[str, PrimitiveMapping],
     outcome_configuration_ids: dict[str, str],
 ) -> SignalFeatureDatasetResult:
     manifest = _read_mapping(destination / "manifest.json")
@@ -1945,6 +2003,8 @@ def _load_completed_result(
             strategy,
             feature_configuration,
             outcomes,
+            outcome_field_snapshots,
+            unavailable_outcome_values,
             outcome_configuration_ids,
         )
     result = SignalFeatureDatasetResult(
@@ -1984,6 +2044,8 @@ def _empty_dataset_study_ids(
     strategy: _SignalFeatureRule,
     feature_configuration: PrimitiveMapping,
     outcomes: tuple[ConfiguredOutcome, ...],
+    outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
+    unavailable_outcome_values: dict[str, PrimitiveMapping],
     outcome_configuration_ids: dict[str, str],
 ) -> tuple[str, ...]:
     empty_rule = _FixedCandidateRule(
@@ -1994,7 +2056,8 @@ def _empty_dataset_study_ids(
     )
     prepared_dataset = prepare_prediction_study_dataset(dataset)
     study_ids: list[str] = []
-    for outcome in outcomes:
+    market_data = PredictionMarketData.from_qf3(dataset.metadata)
+    for outcome, fields in zip(outcomes, outcome_field_snapshots, strict=True):
         outcome_run = _run_configured_outcome(
             outcome,
             outcome_configuration_ids[outcome.namespace],
@@ -2008,7 +2071,17 @@ def _empty_dataset_study_ids(
             frozenset(),
             outcome_run.values_by_session,
         )
-        study_ids.append(_validated_study_id(outcome.namespace, outcome_run.study_id))
+        study_ids.append(
+            _bound_outcome_study_id(
+                outcome,
+                outcome_run.study_id,
+                market_data,
+                empty_rule,
+                feature_configuration,
+                fields,
+                unavailable_outcome_values[outcome.namespace],
+            )
+        )
     return tuple(study_ids)
 
 

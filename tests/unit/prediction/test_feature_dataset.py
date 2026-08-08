@@ -583,6 +583,10 @@ class DirectConfiguredOutcome:
             return feature_dataset_module.OutcomeRun(
                 "not-a-canonical-study-id", outcome_run.values_by_session
             )
+        if self._malformed_source == "canonical_study_id":
+            return feature_dataset_module.OutcomeRun(
+                "0" * 64, outcome_run.values_by_session
+            )
         if self._malformed_source == "session" and outcome_run.values_by_session:
             values_by_session = dict(outcome_run.values_by_session)
             first_session = next(iter(values_by_session))
@@ -1377,6 +1381,37 @@ def test_builder_rejects_noncanonical_direct_outcome_study_id(
         )
 
     assert not tuple(tmp_path.rglob("rows/*.json"))
+
+
+def test_builder_binds_canonical_direct_outcome_study_id_to_composition(
+    tmp_path: Path,
+) -> None:
+    first_dataset = make_dataset(("100", "102"), dataset_id="first")
+    second_dataset = make_dataset(("100", "103"), dataset_id="second")
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "canonical_study_id")
+
+    first = build_signal_feature_dataset(
+        dataset=first_dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(configured_outcome,),
+        output_root=tmp_path / "first",
+    )
+    second = build_signal_feature_dataset(
+        dataset=second_dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(configured_outcome,),
+        output_root=tmp_path / "second",
+    )
+
+    assert first.prediction_study_ids[0] != "0" * 64
+    assert first.prediction_study_ids != second.prediction_study_ids
 
 
 def test_builder_rejects_direct_outcome_sessions_outside_chunk(

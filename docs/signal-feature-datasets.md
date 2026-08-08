@@ -388,3 +388,10 @@ rechecked immediately after every execution callback so chunk rows cannot be
 persisted under transient or restored undeclared settings. Direct protocol
 implementations must expose sorted, unique fields categorized exclusively as
 future outcomes, including when the candidate population is empty.
+For typed `PredictionStudyOutcome` compositions, the persisted study ID is the
+ID independently produced by the QF-11 engine. A direct `ConfiguredOutcome` ID
+is treated as a reported input and replaced with a deterministic binding over
+that report, exact market-data provenance, fixed replay-rule population,
+feature configuration, public outcome configuration and component IDs,
+snapshotted fields, and unavailable defaults. An arbitrary canonical hash can
+therefore never become unbound row or manifest provenance.
