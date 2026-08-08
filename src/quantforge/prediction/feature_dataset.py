@@ -287,6 +287,16 @@ class PredictionStudyOutcome[
                 "unavailable outcome defaults do not match declared field types: "
                 f"{invalid_default_names}"
             )
+        availability_field = fields_by_name.get("available")
+        if availability_field is not None and (
+            availability_field.data_type != "boolean"
+            or availability_field.nullable
+            or unavailable_values.get("available") is not False
+        ):
+            raise SignalFeatureDatasetError(
+                "outcome availability fields must be non-nullable booleans with "
+                "an unavailable default of false"
+            )
         return cls(
             namespace,
             labeler,

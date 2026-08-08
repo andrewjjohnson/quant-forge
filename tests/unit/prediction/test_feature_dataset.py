@@ -840,6 +840,33 @@ def test_outcome_requires_non_null_defaults_for_non_nullable_fields(
         )
 
 
+def test_outcome_availability_field_requires_false_unavailable_default() -> None:
+    primary = forward_return_outcome(1)
+    nullable_availability_fields = tuple(
+        replace(field, nullable=True) if field.name == "available" else field
+        for field in primary.fields
+    )
+    invalid_configurations = (
+        (nullable_availability_fields, False),
+        (primary.fields, True),
+    )
+
+    for fields, unavailable_default in invalid_configurations:
+        unavailable_values = primary.unavailable_row()
+        unavailable_values["available"] = unavailable_default
+        with pytest.raises(
+            SignalFeatureDatasetError,
+            match=r"availability fields must be non-nullable booleans.*false",
+        ):
+            PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues].create(
+                "invalid_availability",
+                primary.labeler,
+                primary.evaluator,
+                fields,
+                unavailable_values=unavailable_values,
+            )
+
+
 def test_available_outcome_values_obey_declared_nullability(
     tmp_path: Path,
 ) -> None:

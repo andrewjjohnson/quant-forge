@@ -320,9 +320,10 @@ normalizes integer text; date equality requires canonical ISO `YYYY-MM-DD` text.
 When an outcome namespace declares an `available` flag, rows where that flag is
 false are excluded before winner/loser classification, including non-null
 sentinel labels such as `unavailable`. Availability flags are eligibility
-metadata and cannot themselves be selected as analysis outcomes. When a custom
-outcome omits that flag, a non-null end-of-data default is ambiguous with a
-legitimate matching value, so analysis rejects the configuration rather than
+metadata and cannot themselves be selected as analysis outcomes. They must be
+non-nullable booleans whose unavailable-row default is exactly `false`. When a
+custom outcome omits that flag, a non-null end-of-data default is ambiguous with
+a legitimate matching value, so analysis rejects the configuration rather than
 silently filtering rows. Such outcomes must provide an explicit boolean
 `available` field; nullable outcomes whose unavailable value is null remain
 unambiguous because null values are never classified.
@@ -338,5 +339,7 @@ Implement a typed QF-11 `OutcomeLabeler` with an exact positive session horizon
 and sorted required market fields, then a typed evaluator that receives only the
 fixed candidate and typed outcome. Wrap them with
 `PredictionStudyOutcome.create()`, supply sorted `SchemaField` definitions and
-explicit end-of-data defaults, and add the composition to `outcomes`. The QF-7
-builder does not need outcome-specific branches.
+explicit end-of-data defaults, and add the composition to `outcomes`. When an
+`available` field is declared, it must be a non-nullable boolean and its
+end-of-data default must be `false`. The QF-7 builder does not need
+outcome-specific branches.

@@ -24,7 +24,7 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "10"
+FEATURE_ANALYSIS_ENGINE_VERSION = "11"
 
 _NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
 _SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
@@ -243,9 +243,11 @@ def analyze_signal_features(
             "value-equals winner definition requires winner_value"
         )
     value_equals_winner_value = cast(str, winner_value)
-    outcome_availability_name, outcome_unavailable_value = _outcome_eligibility(
-        result, outcome_name
-    )
+    (
+        outcome_availability_name,
+        outcome_unavailable_value,
+        availability_unavailable_value,
+    ) = _outcome_eligibility(result, outcome_name)
     if outcome_availability_name == outcome_name:
         raise SignalFeatureDatasetError(
             "outcome availability fields cannot be analysis outcomes"
@@ -255,9 +257,12 @@ def analyze_signal_features(
         or schema_fields[outcome_availability_name].category
         is not SchemaFieldCategory.FUTURE_OUTCOME
         or schema_fields[outcome_availability_name].data_type != "boolean"
+        or schema_fields[outcome_availability_name].nullable
+        or availability_unavailable_value is not False
     ):
         raise SignalFeatureDatasetError(
-            "analysis outcome availability field must be a boolean future outcome"
+            "analysis outcome availability field must be a non-nullable boolean "
+            "future outcome with an unavailable default of false"
         )
     if outcome_availability_name is None and outcome_unavailable_value is not None:
         raise SignalFeatureDatasetError(
@@ -519,10 +524,10 @@ def _winner_classification(
 
 def _outcome_eligibility(
     result: SignalFeatureDatasetResult, outcome_name: str
-) -> tuple[str | None, Primitive | None]:
+) -> tuple[str | None, Primitive | None, Primitive | None]:
     configured_outcomes = result.configuration.get("outcomes")
     if not isinstance(configured_outcomes, list):
-        return None, None
+        return None, None, None
     for raw_outcome in configured_outcomes:
         if not isinstance(raw_outcome, dict):
             continue
@@ -554,8 +559,18 @@ def _outcome_eligibility(
             if availability_name is None and isinstance(raw_unavailable_values, dict)
             else None
         )
-        return availability_name, cast(Primitive | None, unavailable_value)
-    return None, None
+        availability_unavailable_value = (
+            raw_unavailable_values.get("available")
+            if availability_name is not None
+            and isinstance(raw_unavailable_values, dict)
+            else None
+        )
+        return (
+            availability_name,
+            cast(Primitive | None, unavailable_value),
+            cast(Primitive | None, availability_unavailable_value),
+        )
+    return None, None, None
 
 
 def _decimal_value(value: Primitive | None) -> Decimal | None:
