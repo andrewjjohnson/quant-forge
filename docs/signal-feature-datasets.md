@@ -97,8 +97,10 @@ vetoes and directionless dojis as `rejected`, and never fabricates
 forward returns remain available for it; direction-dependent MFE/MAE and
 target/stop evaluations explicitly report `candidate_direction_unavailable`.
 Every accepted candidate must carry both its selected direction and selected
-rule reason, and that selected reason must be first in the matched-rule trace;
-contradictory accepted records fail at model construction.
+rule reason. Whenever any disposition carries a selected reason, that reason
+must be first in the matched-rule trace; contradictory records fail at model
+construction. Directionless blocked or overlapping candidates may omit both a
+direction and selected reason.
 
 The adapter calls the same `evaluate_overnight_gap_rules()` decision trace used
 by the original QF-11 baseline. It records the selected highest-priority reason

@@ -1331,6 +1331,31 @@ def test_accepted_candidate_requires_direction_and_selected_rule_reason() -> Non
         )
 
 
+@pytest.mark.parametrize(
+    "disposition",
+    [SignalDisposition.BLOCKED, SignalDisposition.OVERLAPPING],
+)
+def test_nonaccepted_selected_reason_must_lead_matched_trace(
+    disposition: SignalDisposition,
+) -> None:
+    dataset = make_dataset(("100",))
+    candidate = FixtureCandidateRule((disposition,)).generate(dataset).signals[0]
+
+    with pytest.raises(InvalidPredictionOutputError, match="first in the matched"):
+        replace(
+            candidate,
+            matched_rule_reasons=("lower_priority_rule", "fixture_up"),
+        )
+
+    directionless = replace(
+        candidate,
+        direction=None,
+        selected_rule_reason=None,
+        matched_rule_reasons=(),
+    )
+    assert directionless.direction is None
+
+
 def test_future_changes_affect_outcomes_but_not_earlier_features(
     tmp_path: Path,
 ) -> None:
