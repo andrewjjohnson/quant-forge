@@ -104,10 +104,13 @@ and every matched rule in documented priority order. The original
 
 One `candidate_id` is derived from the bar fingerprint, symbol, session, source
 rule/configuration/version, candidate-rule configuration, and complete parameter
-snapshot. One `row_id` combines that candidate with the QF-7 dataset identity.
-Accepted and rejected views of the same opportunity therefore cannot become two
-rows. Row order follows the fixed QF-11 candidate order. Summary counts expose
-candidate, accepted, rejected, blocked, and overlapping totals separately.
+snapshot. One `row_id` hashes the complete canonical flattened row payload under
+the QF-7 dataset identity. It therefore binds the candidate, features,
+disposition, provenance, and outcomes to the checkpoint filename and detects
+valid-JSON payload mutations during resume. Accepted and rejected views of the
+same opportunity cannot become two rows. Row order follows the fixed QF-11
+candidate order. Summary counts expose candidate, accepted, rejected, blocked,
+and overlapping totals separately.
 
 ## Contemporaneous feature schema
 
@@ -237,10 +240,11 @@ rows/
 
 Generation begins with an `in_progress` manifest and fixed schema. Each complete
 row checkpoint is written to a temporary file, flushed, and atomically renamed.
-Temporary/partial files are not checkpoints, and the row ID path prevents
-duplicates. On resume, the builder validates the source dataset, complete
-configuration, schema, row IDs, candidate population, and QF-11 study IDs. It
-skips completed candidates and processes only missing deterministic chunks.
+Temporary/partial files are not checkpoints, and the payload-bound row ID path
+prevents duplicates and fails closed on valid-JSON row corruption. On resume,
+the builder validates the source dataset, complete configuration, schema, row
+payload identities, candidate population, and QF-11 study IDs. It skips
+completed candidates and processes only missing deterministic chunks.
 `features.csv`, `summary.json`, and the final `complete` manifest are written
 atomically; the manifest is last. A complete resume validates exact deterministic
 CSV/JSON bytes and returns without rerunning the prediction rule or outcomes.

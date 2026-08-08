@@ -30,6 +30,7 @@ from quantforge.prediction import (
     SignalDisposition,
     SignalFeatureCandidate,
     SignalFeatureCandidateOutput,
+    SignalFeatureDatasetError,
     SignalFeatureDatasetResult,
     SignalFeaturePersistenceError,
     SignalFeatureRow,
@@ -387,6 +388,65 @@ def test_interrupted_generation_resumes_to_uninterrupted_bytes(
     ).read_bytes() == (
         tmp_path / "uninterrupted" / uninterrupted.dataset_id / "features.csv"
     ).read_bytes()
+
+
+def test_resume_rejects_valid_json_checkpoint_payload_corruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+    original_persist = cast(
+        Callable[[Path, SignalFeatureRow], None],
+        getattr(feature_dataset_module, "_persist_progress_row"),
+    )
+
+    def interrupt_after_first(destination: Path, row: SignalFeatureRow) -> None:
+        original_persist(destination, row)
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", interrupt_after_first
+    )
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        _build_fixture(dataset, rule, tmp_path)
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", original_persist
+    )
+
+    destination = next(path for path in tmp_path.iterdir() if path.is_dir())
+    checkpoint_path = next((destination / "rows").glob("*.json"))
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["feature_decision_close"] = "999"
+    checkpoint_path.write_text(
+        json.dumps(checkpoint, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SignalFeaturePersistenceError, match="identity or schema"):
+        _build_fixture(dataset, rule, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "unavailable_values",
+    [
+        {"available": False},
+        {"available": False, "horizon_sessions": None},
+    ],
+)
+def test_outcome_requires_non_null_defaults_for_non_nullable_fields(
+    unavailable_values: PrimitiveMapping,
+) -> None:
+    primary = forward_return_outcome(1)
+
+    with pytest.raises(SignalFeatureDatasetError, match="non-nullable outcome"):
+        PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues].create(
+            "invalid_defaults",
+            primary.labeler,
+            primary.evaluator,
+            primary.fields,
+            unavailable_values=unavailable_values,
+        )
 
 
 def test_future_changes_affect_outcomes_but_not_earlier_features(

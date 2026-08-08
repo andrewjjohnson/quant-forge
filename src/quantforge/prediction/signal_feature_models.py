@@ -21,7 +21,7 @@ from quantforge.prediction.models import PredictionDirection, PredictionMarketDa
 
 FEATURE_SCHEMA_VERSION = "1"
 OUTCOME_SCHEMA_VERSION = "1"
-FEATURE_DATASET_ENGINE_VERSION = "1"
+FEATURE_DATASET_ENGINE_VERSION = "2"
 
 
 class SignalDisposition(StrEnum):

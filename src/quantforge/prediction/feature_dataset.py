@@ -164,9 +164,21 @@ class PredictionStudyOutcome[
             raise SignalFeatureDatasetError(
                 "outcome fields must be sorted, unique future-outcome definitions"
             )
-        if not set(unavailable_values).issubset(field_names):
+        unavailable_field_names = set(unavailable_values)
+        if not unavailable_field_names.issubset(field_names):
             raise SignalFeatureDatasetError(
                 "unavailable outcome defaults must name declared fields"
+            )
+        non_nullable_field_names = {
+            field.name for field in fields if not field.nullable
+        }
+        if any(
+            field_name not in unavailable_values
+            or unavailable_values[field_name] is None
+            for field_name in non_nullable_field_names
+        ):
+            raise SignalFeatureDatasetError(
+                "non-nullable outcome fields require non-null unavailable defaults"
             )
         return cls(
             namespace,
@@ -991,13 +1003,6 @@ def _build_row(
     outcome_values: dict[str, dict[date, PrimitiveMapping]],
     study_ids: dict[str, str],
 ) -> SignalFeatureRow:
-    row_id = configuration_identity(
-        {
-            "candidate_id": candidate_id,
-            "feature_dataset_id": feature_dataset_id,
-            "record_type": "signal_feature_row",
-        }
-    )
     parameters = candidate.parameters_primitive()
     values: PrimitiveMapping = {
         "adjustment_mode": market_data.adjustment_mode,
@@ -1014,7 +1019,6 @@ def _build_row(
         "outcome_schema_version": OUTCOME_SCHEMA_VERSION,
         "prediction_study_ids": dict(sorted(study_ids.items())),
         "provider_name": market_data.provider_name,
-        "row_id": row_id,
         "selected_rule_reason": candidate.selected_rule_reason,
         "signal_disposition": candidate.disposition.value,
         "signal_session": candidate.signal_session.isoformat(),
@@ -1039,9 +1043,22 @@ def _build_row(
         )
         for field_name, field_value in unprefixed.items():
             values[f"outcome_{configured_outcome.namespace}_{field_name}"] = field_value
+    values["row_id"] = _row_id(feature_dataset_id, values)
     if tuple(values) != schema.column_names:
         values = {name: values[name] for name in schema.column_names}
     return SignalFeatureRow.capture(values)
+
+
+def _row_id(feature_dataset_id: str, values: PrimitiveMapping) -> str:
+    row_payload = dict(values)
+    row_payload.pop("row_id", None)
+    return configuration_identity(
+        {
+            "feature_dataset_id": feature_dataset_id,
+            "record_type": "signal_feature_row",
+            "row_payload": row_payload,
+        }
+    )
 
 
 def _initialize_or_validate_progress(
@@ -1099,17 +1116,12 @@ def _load_progress_rows(
     rows: dict[str, SignalFeatureRow] = {}
     for path in sorted(rows_directory.glob("*.json")):
         row = SignalFeatureRow.capture(_read_mapping(path))
-        expected_row_id = configuration_identity(
-            {
-                "candidate_id": row.candidate_id,
-                "feature_dataset_id": feature_dataset_id,
-                "record_type": "signal_feature_row",
-            }
-        )
+        row_values = row.to_primitive()
+        expected_row_id = _row_id(feature_dataset_id, row_values)
         if (
             path.stem != row.row_id
             or row.row_id != expected_row_id
-            or set(row.to_primitive()) != set(schema.column_names)
+            or set(row_values) != set(schema.column_names)
             or row.candidate_id in rows
         ):
             raise SignalFeaturePersistenceError(
