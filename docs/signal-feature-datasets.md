@@ -96,6 +96,8 @@ vetoes and directionless dojis as `rejected`, and never fabricates
 `overlapping`. A rejected or blocked candidate may have no direction. Raw
 forward returns remain available for it; direction-dependent MFE/MAE and
 target/stop evaluations explicitly report `candidate_direction_unavailable`.
+Every accepted candidate must carry both its selected direction and selected
+rule reason; contradictory accepted records fail at model construction.
 
 The adapter calls the same `evaluate_overnight_gap_rules()` decision trace used
 by the original QF-11 baseline. It records the selected highest-priority reason
@@ -217,6 +219,11 @@ include deterministic row/candidate/study IDs, exact QF-3 dataset ID and bar
 fingerprint, provider and adjustment provenance, source and candidate rule
 identities, implementation version, full parameters and their identity, and
 feature/outcome schema versions.
+
+Outcome evaluator values and explicit end-of-data defaults are checked against
+each declared schema type and nullability before export. Decimal values must be
+finite exact decimal text, dates must be canonical ISO dates, and primitive
+boolean, integer, string, object, and array types must match their declarations.
 
 Causal columns use `feature_`; future fields use `outcome_<namespace>_`. Decimal
 values are exact decimal text in CSV and can be inferred or explicitly parsed

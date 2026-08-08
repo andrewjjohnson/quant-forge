@@ -243,6 +243,16 @@ class NullRawReturnValues:
         return values
 
 
+@dataclass(frozen=True, slots=True)
+class InvalidRawReturnValues:
+    source: ForwardReturnValues
+
+    def to_primitive(self) -> PrimitiveMapping:
+        values = self.source.to_primitive()
+        values["raw_return"] = "not-a-decimal"
+        return values
+
+
 class NullRawReturnEvaluator:
     name = "null_raw_return_fixture_evaluator"
     implementation_version = "1"
@@ -267,6 +277,32 @@ class NullRawReturnEvaluator:
     ) -> NullRawReturnValues:
         del signal
         return NullRawReturnValues(outcome.values)
+
+
+class InvalidRawReturnEvaluator:
+    name = "invalid_raw_return_fixture_evaluator"
+    implementation_version = "1"
+    result_schema_version = "1"
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "prediction_evaluator",
+            "implementation_version": self.implementation_version,
+            "result_schema_version": self.result_schema_version,
+        }
+
+    def evaluate(
+        self,
+        signal: SignalFeatureCandidate,
+        outcome: PredictionOutcome[ForwardReturnValues],
+    ) -> InvalidRawReturnValues:
+        del signal
+        return InvalidRawReturnValues(outcome.values)
 
 
 def _fixture_study(
@@ -560,6 +596,49 @@ def test_available_outcome_values_obey_declared_nullability(
 
     with pytest.raises(InvalidPredictionOutputError, match=r"null.*non-nullable"):
         outcome.run(dataset, rule, {"feature_schema_version": "1"})
+
+
+def test_outcome_values_obey_declared_field_types(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+    primary = forward_return_outcome(1)
+    outcome = PredictionStudyOutcome[
+        ForwardReturnValues, InvalidRawReturnValues
+    ].create(
+        "invalid_raw_return",
+        primary.labeler,
+        InvalidRawReturnEvaluator(),
+        primary.fields,
+        unavailable_values={"available": False, "horizon_sessions": 1},
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match="declared field types"):
+        outcome.run(dataset, rule, {"feature_schema_version": "1"})
+
+
+def test_unavailable_outcome_defaults_obey_declared_field_types() -> None:
+    primary = forward_return_outcome(1)
+
+    with pytest.raises(SignalFeatureDatasetError, match="declared field types"):
+        PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues].create(
+            "invalid_unavailable_type",
+            primary.labeler,
+            primary.evaluator,
+            primary.fields,
+            unavailable_values={"available": "false", "horizon_sessions": 1},
+        )
+
+
+def test_accepted_candidate_requires_direction_and_selected_rule_reason() -> None:
+    dataset = make_dataset(("100", "102"))
+    candidate = (
+        FixtureCandidateRule((SignalDisposition.ACCEPTED,)).generate(dataset).signals[0]
+    )
+
+    with pytest.raises(InvalidPredictionOutputError, match="require a direction"):
+        replace(candidate, direction=None)
+    with pytest.raises(InvalidPredictionOutputError, match="require a direction"):
+        replace(candidate, selected_rule_reason=None)
 
 
 def test_future_changes_affect_outcomes_but_not_earlier_features(

@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -180,6 +180,19 @@ class PredictionStudyOutcome[
             raise SignalFeatureDatasetError(
                 "non-nullable outcome fields require non-null unavailable defaults"
             )
+        fields_by_name = {field.name: field for field in fields}
+        invalid_default_names = tuple(
+            sorted(
+                field_name
+                for field_name, field_value in unavailable_values.items()
+                if not _schema_value_matches(fields_by_name[field_name], field_value)
+            )
+        )
+        if invalid_default_names:
+            raise SignalFeatureDatasetError(
+                "unavailable outcome defaults do not match declared field types: "
+                f"{invalid_default_names}"
+            )
         return cls(
             namespace,
             labeler,
@@ -248,8 +261,50 @@ class PredictionStudyOutcome[
                 raise InvalidPredictionOutputError(
                     f"outcome {self.namespace} produced null for a non-nullable field"
                 )
+            invalid_value_names = tuple(
+                sorted(
+                    field.name
+                    for field in self.fields
+                    if not _schema_value_matches(field, values[field.name])
+                )
+            )
+            if invalid_value_names:
+                raise InvalidPredictionOutputError(
+                    f"outcome {self.namespace} values do not match declared field "
+                    f"types: {invalid_value_names}"
+                )
             values_by_session[row.signal.signal_session] = values
         return OutcomeRun(result.study_id, values_by_session)
+
+
+def _schema_value_matches(field: SchemaField, value: Primitive) -> bool:
+    if value is None:
+        return field.nullable
+    if field.data_type == "boolean":
+        return isinstance(value, bool)
+    if field.data_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if field.data_type == "decimal":
+        if not isinstance(value, str):
+            return False
+        try:
+            return Decimal(value).is_finite()
+        except DecimalException:
+            return False
+    if field.data_type == "date":
+        if not isinstance(value, str):
+            return False
+        try:
+            return date.fromisoformat(value).isoformat() == value
+        except ValueError:
+            return False
+    if field.data_type == "string":
+        return isinstance(value, str)
+    if field.data_type == "object":
+        return isinstance(value, dict)
+    if field.data_type == "array":
+        return isinstance(value, list)
+    return False
 
 
 class _SignalFeatureRule(Protocol):

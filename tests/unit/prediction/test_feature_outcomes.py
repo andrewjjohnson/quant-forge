@@ -23,6 +23,11 @@ from ..helpers import make_dataset
 def _candidate(
     signal_session: date, direction: PredictionDirection | None
 ) -> SignalFeatureCandidate:
+    disposition = (
+        SignalDisposition.ACCEPTED
+        if direction is not None
+        else SignalDisposition.REJECTED
+    )
     return SignalFeatureCandidate(
         symbol="SPY",
         signal_session=signal_session,
@@ -33,12 +38,12 @@ def _candidate(
         source_rule_implementation_version="1",
         source_rule_configuration_id="source-config",
         strategy_parameters=PrimitiveMappingSnapshot.capture({"period": 2}),
-        disposition=SignalDisposition.ACCEPTED,
-        reason_codes=("accepted",),
+        disposition=disposition,
+        reason_codes=(disposition.value,),
         explanation=None,
         direction=direction,
-        selected_rule_reason="accepted",
-        matched_rule_reasons=("accepted",),
+        selected_rule_reason=None if direction is None else "accepted",
+        matched_rule_reasons=() if direction is None else ("accepted",),
         strategy_features=(),
     )
 
