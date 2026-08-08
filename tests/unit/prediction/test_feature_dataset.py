@@ -28,6 +28,7 @@ from quantforge.prediction import (
     OvernightGapSignalFeatureRule,
     PredictionDirection,
     PredictionOutcome,
+    PredictionRule,
     PredictionStudy,
     PredictionStudyOutcome,
     SchemaField,
@@ -347,12 +348,75 @@ class CountingForwardReturnOutcomeLabeler(ForwardReturnOutcomeLabeler):
     def __init__(self, horizon_sessions: int) -> None:
         super().__init__(horizon_sessions)
         self.label_calls = 0
+        self.validate_calls = 0
+
+    def validate_dataset(self, dataset: MarketDataset) -> None:
+        self.validate_calls += 1
+        super().validate_dataset(dataset)
 
     def label(
         self, dataset: MarketDataset, signal_session: date
     ) -> OutcomeLabel[ForwardReturnValues] | None:
         self.label_calls += 1
         return super().label(dataset, signal_session)
+
+
+class MalformedConfiguredOutcome:
+    def __init__(
+        self,
+        delegate: PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues],
+        malformed_source: str,
+    ) -> None:
+        self._delegate = delegate
+        self._malformed_source = malformed_source
+
+    @property
+    def namespace(self) -> str:
+        return self._delegate.namespace
+
+    @property
+    def fields(self) -> tuple[SchemaField, ...]:
+        return self._delegate.fields
+
+    @property
+    def configuration_id(self) -> str:
+        return self._delegate.configuration_id
+
+    @property
+    def labeler_configuration_id(self) -> str:
+        return self._delegate.labeler_configuration_id
+
+    @property
+    def evaluator_configuration_id(self) -> str:
+        return self._delegate.evaluator_configuration_id
+
+    def configuration(self) -> PrimitiveMapping:
+        return self._delegate.configuration()
+
+    def unavailable_row(self) -> PrimitiveMapping:
+        values = self._delegate.unavailable_row()
+        if self._malformed_source == "unavailable":
+            values["raw_return"] = "not-a-decimal"
+        return values
+
+    def run(
+        self,
+        dataset: MarketDataset,
+        strategy: PredictionRule[SignalFeatureCandidate],
+        feature_configuration: PrimitiveMapping,
+    ) -> feature_dataset_module.OutcomeRun:
+        outcome_run = self._delegate.run(dataset, strategy, feature_configuration)
+        if self._malformed_source != "run" or not outcome_run.values_by_session:
+            return outcome_run
+        values_by_session = {
+            signal_session: dict(values)
+            for signal_session, values in outcome_run.values_by_session.items()
+        }
+        first_values = values_by_session[next(iter(values_by_session))]
+        first_values["raw_return"] = "not-a-decimal"
+        return feature_dataset_module.OutcomeRun(
+            outcome_run.study_id, values_by_session
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -558,6 +622,45 @@ def test_schema_documents_every_column_and_exports_flat_features(
     assert (destination / "schema.json").is_file()
     assert (destination / "summary.json").is_file()
     assert (destination / "rows").is_dir()
+
+
+def test_outcome_study_setup_is_reused_across_checkpoint_chunks(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101", "104"))
+    rule = FixtureCandidateRule(
+        (
+            SignalDisposition.ACCEPTED,
+            SignalDisposition.REJECTED,
+            SignalDisposition.BLOCKED,
+            SignalDisposition.OVERLAPPING,
+        )
+    )
+    template = forward_return_outcome(1)
+    labeler = CountingForwardReturnOutcomeLabeler(1)
+    primary = PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues].create(
+        "forward_return_1",
+        labeler,
+        template.evaluator,
+        template.fields,
+        unavailable_values=template.unavailable_row(),
+    )
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, labeler, template.evaluator)
+
+    result = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(primary,),
+        output_root=tmp_path,
+        chunk_size=1,
+    )
+
+    assert len(result.rows) == 4
+    assert labeler.validate_calls == 1
+    assert labeler.label_calls == 4
 
 
 def test_complete_resume_performs_no_new_generation(tmp_path: Path) -> None:
@@ -776,7 +879,7 @@ def test_partial_resume_evaluates_outcomes_only_for_missing_candidates(
 
     result = build()
 
-    assert calls_after_interruption == 2
+    assert calls_after_interruption == 4
     assert labeler.label_calls - calls_after_interruption == 3
     assert len(result.rows) == 4
 
@@ -909,6 +1012,34 @@ def test_outcome_values_obey_declared_field_types(tmp_path: Path) -> None:
 
     with pytest.raises(InvalidPredictionOutputError, match="declared field types"):
         outcome.run(dataset, rule, {"feature_schema_version": "1"})
+
+
+@pytest.mark.parametrize("malformed_source", ["run", "unavailable"])
+def test_builder_validates_custom_flattened_outcome_values(
+    malformed_source: str,
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = MalformedConfiguredOutcome(primary, malformed_source)
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match=r"flattened values.*field types or nullability",
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
 
 
 def test_unavailable_outcome_defaults_obey_declared_field_types() -> None:

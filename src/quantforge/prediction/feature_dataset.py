@@ -697,6 +697,12 @@ def build_signal_feature_dataset[
             feature_configuration,
             sorted_outcomes,
         )
+    unavailable_outcome_values = {
+        outcome.namespace: _validated_flattened_outcome_values(
+            outcome, outcome.unavailable_row()
+        )
+        for outcome in sorted_outcomes
+    }
     _initialize_or_validate_progress(
         destination,
         feature_dataset_id,
@@ -733,6 +739,7 @@ def build_signal_feature_dataset[
         enriched_candidates,
         completed_rows,
         sorted_outcomes,
+        unavailable_outcome_values,
     )
     missing_candidates = tuple(
         candidate
@@ -741,18 +748,22 @@ def build_signal_feature_dataset[
         if candidate_id not in completed_rows
     )
     study_ids_by_namespace = _study_ids_from_rows(completed_rows.values())
+    outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
+    missing_study_ids: dict[str, str] = {}
 
-    for chunk_start in range(0, len(missing_candidates), chunk_size):
-        chunk = missing_candidates[chunk_start : chunk_start + chunk_size]
-        fixed_rule = _FixedCandidateRule(strategy, chunk)
-        outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
-        chunk_study_ids: dict[str, str] = {}
+    if missing_candidates:
+        fixed_rule = _FixedCandidateRule(strategy, missing_candidates)
         for configured_outcome in sorted_outcomes:
             outcome_run = configured_outcome.run(
                 dataset, fixed_rule, feature_configuration
             )
-            outcome_values[configured_outcome.namespace] = outcome_run.values_by_session
-            chunk_study_ids[configured_outcome.namespace] = outcome_run.study_id
+            outcome_values[configured_outcome.namespace] = {
+                signal_session: _validated_flattened_outcome_values(
+                    configured_outcome, values
+                )
+                for signal_session, values in outcome_run.values_by_session.items()
+            }
+            missing_study_ids[configured_outcome.namespace] = outcome_run.study_id
             previous_study_id = study_ids_by_namespace.get(configured_outcome.namespace)
             if previous_study_id not in (None, outcome_run.study_id):
                 raise InvalidPredictionOutputError(
@@ -760,6 +771,8 @@ def build_signal_feature_dataset[
                 )
             study_ids_by_namespace[configured_outcome.namespace] = outcome_run.study_id
 
+    for chunk_start in range(0, len(missing_candidates), chunk_size):
+        chunk = missing_candidates[chunk_start : chunk_start + chunk_size]
         for candidate in chunk:
             candidate_id = _candidate_id(market_data, candidate)
             row = _build_row(
@@ -770,7 +783,8 @@ def build_signal_feature_dataset[
                 candidate_id,
                 sorted_outcomes,
                 outcome_values,
-                chunk_study_ids,
+                missing_study_ids,
+                unavailable_outcome_values,
             )
             _persist_progress_row(destination, row)
             completed_rows[candidate_id] = row
@@ -835,6 +849,7 @@ def _validate_regenerated_completed_rows(
     candidates: tuple[SignalFeatureCandidate, ...],
     completed_rows: dict[str, SignalFeatureRow],
     outcomes: tuple[ConfiguredOutcome, ...],
+    unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> None:
     for candidate in candidates:
         candidate_id = _candidate_id(market_data, candidate)
@@ -862,6 +877,7 @@ def _validate_regenerated_completed_rows(
             outcomes,
             outcome_values,
             _study_ids_from_rows((completed_row,)),
+            unavailable_outcome_values,
         )
         if regenerated_row.to_primitive() != completed_values:
             raise SignalFeaturePersistenceError(
@@ -1315,6 +1331,7 @@ def _build_row(
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_values: dict[str, dict[date, PrimitiveMapping]],
     study_ids: dict[str, str],
+    unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> SignalFeatureRow:
     candidate_features = {
         f"feature_{feature_name}": feature_value
@@ -1381,9 +1398,10 @@ def _build_row(
     values.update(candidate_features)
     for configured_outcome in outcomes:
         unprefixed = outcome_values[configured_outcome.namespace].get(
-            candidate.signal_session,
-            configured_outcome.unavailable_row(),
+            candidate.signal_session
         )
+        if unprefixed is None:
+            unprefixed = unavailable_outcome_values[configured_outcome.namespace]
         for field_name, field_value in unprefixed.items():
             values[f"outcome_{configured_outcome.namespace}_{field_name}"] = field_value
     values["row_id"] = _row_id(feature_dataset_id, values)
@@ -1393,6 +1411,32 @@ def _build_row(
         )
     values = {name: values[name] for name in schema.column_names}
     return SignalFeatureRow.capture(values)
+
+
+def _validated_flattened_outcome_values(
+    configured_outcome: ConfiguredOutcome,
+    values: PrimitiveMapping,
+) -> PrimitiveMapping:
+    fields_by_name = {field.name: field for field in configured_outcome.fields}
+    if set(values) != set(fields_by_name):
+        raise InvalidPredictionOutputError(
+            f"outcome {configured_outcome.namespace} flattened values do not match "
+            "their declared schema"
+        )
+    invalid_value_names = tuple(
+        sorted(
+            field_name
+            for field_name, field_value in values.items()
+            if not _schema_value_matches(fields_by_name[field_name], field_value)
+        )
+    )
+    if invalid_value_names:
+        raise InvalidPredictionOutputError(
+            f"outcome {configured_outcome.namespace} flattened values do not match "
+            "declared field types or nullability: "
+            f"{invalid_value_names}"
+        )
+    return PrimitiveMappingSnapshot.capture(values).to_primitive()
 
 
 def _row_id(feature_dataset_id: str, values: PrimitiveMapping) -> str:
