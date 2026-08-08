@@ -277,10 +277,10 @@ payload identities, candidate population, and QF-11 study IDs. Regenerated
 causal candidates are enriched and compared with completed protected rows before
 any checkpoint is skipped, so one artifact cannot combine two generations. A
 candidate-only QF-11 boundary fixes and validates the population without running
-the configured future outcome over completed rows. Each outcome validates and
-evaluates the complete missing candidate population once, reusing one QF-11
-study/session setup across row-checkpoint chunks; completed candidates are never
-relabeled.
+the configured future outcome over completed rows. One validated, detached QF-11
+dataset session is reused while each missing candidate chunk is labeled,
+evaluated, and checkpointed before the next chunk starts; completed candidates
+are never relabeled.
 If startup is interrupted before the manifest is created, an empty or
 schema-only checkpoint-free destination is safely reinitialized. Manifest-less
 state containing row checkpoints or unknown artifacts fails closed instead.
@@ -346,4 +346,7 @@ explicit end-of-data defaults, and add the composition to `outcomes`. When an
 end-of-data default must be `false`. The QF-7 builder does not need
 outcome-specific branches. The builder independently validates every flattened
 available and unavailable value against these declarations, including values
-returned by custom `ConfiguredOutcome` implementations.
+returned by custom `ConfiguredOutcome` implementations. It also normalizes the
+protocol's public namespace, fields, and unavailable defaults into dataset
+configuration, so downstream analysis does not depend on a concrete outcome
+implementation's private configuration shape.

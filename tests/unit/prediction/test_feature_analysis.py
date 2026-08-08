@@ -358,6 +358,56 @@ def test_analysis_excludes_rows_with_an_unavailable_outcome(tmp_path: Path) -> N
     assert analysis.winner_count + analysis.loser_count == available_rows
 
 
+def test_analysis_uses_normalized_public_outcome_contract_metadata(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    configuration = feature_dataset.configuration
+    configured_outcomes = configuration["outcomes"]
+    assert isinstance(configured_outcomes, list)
+    configured_outcome = configured_outcomes[0]
+    assert isinstance(configured_outcome, dict)
+    configured_outcome["component_configuration"] = {
+        "component": "direct_configured_outcome",
+        "implementation_version": "1",
+    }
+    normalized_dataset = replace(
+        feature_dataset,
+        configuration_snapshot=PrimitiveMappingSnapshot.capture(configuration),
+    )
+    feature_name = "feature_atr_percentage_of_close"
+
+    analysis = analyze_signal_features(
+        normalized_dataset,
+        feature_names=(feature_name,),
+        outcome_name="outcome_forward_return_1_raw_return",
+        winner_definition=WinnerDefinition.DECIMAL_GREATER_THAN_ZERO,
+        bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
+    )
+    available_rows = sum(
+        row.to_primitive()["outcome_forward_return_1_available"] is True
+        for row in normalized_dataset.rows
+    )
+
+    assert configured_outcome["fields"]
+    assert configured_outcome["unavailable_values"]
+    assert analysis.eligible_row_count == available_rows
+
+
 def test_analysis_requires_false_as_the_unavailable_availability_default(
     tmp_path: Path,
 ) -> None:

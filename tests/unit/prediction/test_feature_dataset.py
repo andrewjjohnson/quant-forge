@@ -361,7 +361,7 @@ class CountingForwardReturnOutcomeLabeler(ForwardReturnOutcomeLabeler):
         return super().label(dataset, signal_session)
 
 
-class MalformedConfiguredOutcome:
+class DirectConfiguredOutcome:
     def __init__(
         self,
         delegate: PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues],
@@ -380,7 +380,7 @@ class MalformedConfiguredOutcome:
 
     @property
     def configuration_id(self) -> str:
-        return self._delegate.configuration_id
+        return configuration_identity(self.configuration())
 
     @property
     def labeler_configuration_id(self) -> str:
@@ -391,7 +391,11 @@ class MalformedConfiguredOutcome:
         return self._delegate.evaluator_configuration_id
 
     def configuration(self) -> PrimitiveMapping:
-        return self._delegate.configuration()
+        return {
+            "component": "direct_configured_outcome_fixture",
+            "implementation_version": "1",
+            "namespace": self.namespace,
+        }
 
     def unavailable_row(self) -> PrimitiveMapping:
         values = self._delegate.unavailable_row()
@@ -879,7 +883,7 @@ def test_partial_resume_evaluates_outcomes_only_for_missing_candidates(
 
     result = build()
 
-    assert calls_after_interruption == 4
+    assert calls_after_interruption == 2
     assert labeler.label_calls - calls_after_interruption == 3
     assert len(result.rows) == 4
 
@@ -1027,7 +1031,7 @@ def test_builder_validates_custom_flattened_outcome_values(
     study = PredictionStudy[
         SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
     ].create(rule, primary.labeler, primary.evaluator)
-    configured_outcome = MalformedConfiguredOutcome(primary, malformed_source)
+    configured_outcome = DirectConfiguredOutcome(primary, malformed_source)
 
     with pytest.raises(
         InvalidPredictionOutputError,
@@ -1040,6 +1044,35 @@ def test_builder_validates_custom_flattened_outcome_values(
             outcomes=(configured_outcome,),
             output_root=tmp_path,
         )
+
+
+def test_builder_normalizes_direct_configured_outcome_metadata(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = DirectConfiguredOutcome(primary, "valid")
+
+    result = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(configured_outcome,),
+        output_root=tmp_path,
+    )
+    configured_outcomes = result.configuration["outcomes"]
+    assert isinstance(configured_outcomes, list)
+    normalized = configured_outcomes[0]
+    assert isinstance(normalized, dict)
+
+    assert "fields" not in configured_outcome.configuration()
+    assert normalized["component_configuration"] == configured_outcome.configuration()
+    assert normalized["fields"]
+    assert normalized["unavailable_values"] == configured_outcome.unavailable_row()
 
 
 def test_unavailable_outcome_defaults_obey_declared_field_types() -> None:

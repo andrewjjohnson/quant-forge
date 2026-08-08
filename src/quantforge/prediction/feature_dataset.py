@@ -80,7 +80,12 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureValue,
     summarize_dispositions,
 )
-from quantforge.prediction.study import run_prediction_study
+from quantforge.prediction.study import (
+    PredictionStudyDatasetSession,
+    prepare_prediction_study_dataset,
+    run_prediction_study,
+    run_prediction_study_in_session,
+)
 
 _LIMITATIONS = (
     "all feature relationships are exploratory hypotheses, not validated filters",
@@ -338,6 +343,18 @@ class PredictionStudyOutcome[
         strategy: PredictionRule[SignalFeatureCandidate],
         feature_configuration: PrimitiveMapping,
     ) -> OutcomeRun:
+        return self.run_prepared(
+            prepare_prediction_study_dataset(dataset),
+            strategy,
+            feature_configuration,
+        )
+
+    def run_prepared(
+        self,
+        prepared_dataset: PredictionStudyDatasetSession,
+        strategy: PredictionRule[SignalFeatureCandidate],
+        feature_configuration: PrimitiveMapping,
+    ) -> OutcomeRun:
         study = PredictionStudy[SignalFeatureCandidate, OutcomeT, EvaluationT].create(
             strategy,
             self.labeler,
@@ -345,7 +362,7 @@ class PredictionStudyOutcome[
             feature_configuration=feature_configuration,
             result_schema_version=OUTCOME_SCHEMA_VERSION,
         )
-        result = run_prediction_study(dataset, study)
+        result = run_prediction_study_in_session(prepared_dataset, study)
         field_names = {field.name for field in self.fields}
         non_nullable_field_names = {
             field.name for field in self.fields if not field.nullable
@@ -379,6 +396,20 @@ class PredictionStudyOutcome[
                 )
             values_by_session[row.signal.signal_session] = values
         return OutcomeRun(result.study_id, values_by_session)
+
+
+def _run_configured_outcome(
+    configured_outcome: ConfiguredOutcome,
+    dataset: MarketDataset,
+    prepared_dataset: PredictionStudyDatasetSession,
+    strategy: PredictionRule[SignalFeatureCandidate],
+    feature_configuration: PrimitiveMapping,
+) -> OutcomeRun:
+    if isinstance(configured_outcome, PredictionStudyOutcome):
+        return configured_outcome.run_prepared(
+            prepared_dataset, strategy, feature_configuration
+        )
+    return configured_outcome.run(dataset, strategy, feature_configuration)
 
 
 def _schema_value_matches(field: SchemaField, value: Primitive) -> bool:
@@ -672,12 +703,19 @@ def build_signal_feature_dataset[
         raise SignalFeatureDatasetError(
             "configured outcomes must include the supplied PredictionStudy composition"
         )
+    unavailable_outcome_values = {
+        outcome.namespace: _validated_flattened_outcome_values(
+            outcome, outcome.unavailable_row()
+        )
+        for outcome in sorted_outcomes
+    }
     configuration = _dataset_configuration(
         market_data,
         prediction_study,
         strategy_fields,
         sorted_features,
         sorted_outcomes,
+        unavailable_outcome_values,
     )
     configuration_snapshot = PrimitiveMappingSnapshot.capture(configuration)
     feature_dataset_id = configuration_identity(configuration)
@@ -697,12 +735,6 @@ def build_signal_feature_dataset[
             feature_configuration,
             sorted_outcomes,
         )
-    unavailable_outcome_values = {
-        outcome.namespace: _validated_flattened_outcome_values(
-            outcome, outcome.unavailable_row()
-        )
-        for outcome in sorted_outcomes
-    }
     _initialize_or_validate_progress(
         destination,
         feature_dataset_id,
@@ -748,14 +780,28 @@ def build_signal_feature_dataset[
         if candidate_id not in completed_rows
     )
     study_ids_by_namespace = _study_ids_from_rows(completed_rows.values())
-    outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
-    missing_study_ids: dict[str, str] = {}
+    prepared_outcome_dataset = (
+        prepare_prediction_study_dataset(dataset)
+        if missing_candidates or not enriched_candidates
+        else None
+    )
 
-    if missing_candidates:
-        fixed_rule = _FixedCandidateRule(strategy, missing_candidates)
+    for chunk_start in range(0, len(missing_candidates), chunk_size):
+        chunk = missing_candidates[chunk_start : chunk_start + chunk_size]
+        fixed_rule = _FixedCandidateRule(strategy, chunk)
+        outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
+        chunk_study_ids: dict[str, str] = {}
         for configured_outcome in sorted_outcomes:
-            outcome_run = configured_outcome.run(
-                dataset, fixed_rule, feature_configuration
+            if prepared_outcome_dataset is None:
+                raise InvalidPredictionOutputError(
+                    "missing candidates require a prepared outcome dataset"
+                )
+            outcome_run = _run_configured_outcome(
+                configured_outcome,
+                dataset,
+                prepared_outcome_dataset,
+                fixed_rule,
+                feature_configuration,
             )
             outcome_values[configured_outcome.namespace] = {
                 signal_session: _validated_flattened_outcome_values(
@@ -763,16 +809,13 @@ def build_signal_feature_dataset[
                 )
                 for signal_session, values in outcome_run.values_by_session.items()
             }
-            missing_study_ids[configured_outcome.namespace] = outcome_run.study_id
+            chunk_study_ids[configured_outcome.namespace] = outcome_run.study_id
             previous_study_id = study_ids_by_namespace.get(configured_outcome.namespace)
             if previous_study_id not in (None, outcome_run.study_id):
                 raise InvalidPredictionOutputError(
                     "QF-11 study identity changed across deterministic chunks"
                 )
             study_ids_by_namespace[configured_outcome.namespace] = outcome_run.study_id
-
-    for chunk_start in range(0, len(missing_candidates), chunk_size):
-        chunk = missing_candidates[chunk_start : chunk_start + chunk_size]
         for candidate in chunk:
             candidate_id = _candidate_id(market_data, candidate)
             row = _build_row(
@@ -783,7 +826,7 @@ def build_signal_feature_dataset[
                 candidate_id,
                 sorted_outcomes,
                 outcome_values,
-                missing_study_ids,
+                chunk_study_ids,
                 unavailable_outcome_values,
             )
             _persist_progress_row(destination, row)
@@ -800,8 +843,16 @@ def build_signal_feature_dataset[
     if not enriched_candidates:
         empty_rule = _FixedCandidateRule(strategy, ())
         for configured_outcome in sorted_outcomes:
-            outcome_run = configured_outcome.run(
-                dataset, empty_rule, feature_configuration
+            if prepared_outcome_dataset is None:
+                raise InvalidPredictionOutputError(
+                    "empty candidates require a prepared outcome dataset"
+                )
+            outcome_run = _run_configured_outcome(
+                configured_outcome,
+                dataset,
+                prepared_outcome_dataset,
+                empty_rule,
+                feature_configuration,
             )
             study_ids_by_namespace[configured_outcome.namespace] = outcome_run.study_id
     result = SignalFeatureDatasetResult(
@@ -961,6 +1012,11 @@ def _validate_feature_configuration(
             raise SignalFeatureDatasetError(
                 "contextual feature configuration identity is invalid"
             )
+    for outcome in outcomes:
+        if configuration_identity(outcome.configuration()) != outcome.configuration_id:
+            raise SignalFeatureDatasetError(
+                "configured outcome configuration identity is invalid"
+            )
 
 
 def _dataset_configuration[
@@ -974,6 +1030,7 @@ def _dataset_configuration[
     strategy_fields: tuple[SchemaField, ...],
     contextual_features: tuple[ContextualFeature, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
+    unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> PrimitiveMapping:
     return {
         "component": "quantforge_signal_feature_dataset",
@@ -993,7 +1050,25 @@ def _dataset_configuration[
             _contextual_feature_configuration(feature)
             for feature in contextual_features
         ],
-        "outcomes": [outcome.configuration() for outcome in outcomes],
+        "outcomes": [
+            _normalized_outcome_configuration(
+                outcome, unavailable_outcome_values[outcome.namespace]
+            )
+            for outcome in outcomes
+        ],
+    }
+
+
+def _normalized_outcome_configuration(
+    outcome: ConfiguredOutcome,
+    unavailable_values: PrimitiveMapping,
+) -> PrimitiveMapping:
+    return {
+        "component_configuration": outcome.configuration(),
+        "configuration_id": outcome.configuration_id,
+        "fields": [field.to_primitive() for field in outcome.fields],
+        "namespace": outcome.namespace,
+        "unavailable_values": unavailable_values,
     }
 
 

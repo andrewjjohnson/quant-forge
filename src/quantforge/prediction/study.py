@@ -38,6 +38,19 @@ STUDY_CONTRACT_VERSION = "1"
 
 
 @dataclass(frozen=True, slots=True)
+class PredictionStudyDatasetSession:
+    """One validated, detached dataset session reusable across related studies."""
+
+    source_dataset: MarketDataset
+    dataset_snapshot: MarketDataset
+    component_dataset: MarketDataset
+    market_data: PredictionMarketData
+    available_sessions: frozenset[date]
+    bar_indexes: dict[date, int]
+    validated_labelers: set[tuple[int, str]]
+
+
+@dataclass(frozen=True, slots=True)
 class PredictionStudyConfiguration:
     """Immutable identity inputs for a generic prediction study."""
 
@@ -204,13 +217,42 @@ def run_prediction_study(
     study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
 ) -> PredictionStudyResult[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]:
     """Run prediction, labeling, then evaluation as three ordered stages."""
+    return run_prediction_study_in_session(
+        prepare_prediction_study_dataset(dataset), study
+    )
+
+
+def prepare_prediction_study_dataset(
+    dataset: MarketDataset,
+) -> PredictionStudyDatasetSession:
+    """Validate and detach one dataset for related sequential study runs."""
     _validate_dataset(dataset)
     dataset_snapshot = _detached_copy("prediction market dataset snapshot", dataset)
     component_dataset = _detached_copy(
         "prediction component market dataset", dataset_snapshot
     )
+    return PredictionStudyDatasetSession(
+        dataset,
+        dataset_snapshot,
+        component_dataset,
+        PredictionMarketData.from_qf3(dataset_snapshot.metadata),
+        frozenset(bar.session_date for bar in component_dataset.bars),
+        {bar.session_date: index for index, bar in enumerate(component_dataset.bars)},
+        set(),
+    )
+
+
+def run_prediction_study_in_session(
+    prepared: PredictionStudyDatasetSession,
+    study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
+) -> PredictionStudyResult[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]:
+    """Run one study while preserving the session's validation boundaries."""
+    dataset_snapshot = prepared.dataset_snapshot
+    component_dataset = prepared.component_dataset
+    _validate_unchanged_dataset(prepared.source_dataset, dataset_snapshot)
+    _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     configuration = _capture_study_configuration(study)
-    market_data = PredictionMarketData.from_qf3(dataset_snapshot.metadata)
+    market_data = prepared.market_data
     study_id = _stable_id(
         {
             "component": "quantforge_prediction_study",
@@ -248,7 +290,13 @@ def run_prediction_study(
 
     # This is intentionally after signal generation. Dataset-specific future-label
     # checks must never run early enough to influence prediction generation.
-    study.outcome_labeler.validate_dataset(component_dataset)
+    labeler_session_key = (
+        id(study.outcome_labeler),
+        configuration.outcome_configuration_id,
+    )
+    if labeler_session_key not in prepared.validated_labelers:
+        study.outcome_labeler.validate_dataset(component_dataset)
+        prepared.validated_labelers.add(labeler_session_key)
     _validate_unchanged_component(
         "outcome labeler",
         study.outcome_labeler.configuration(),
@@ -263,10 +311,8 @@ def run_prediction_study(
         _ComponentValueState[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     ] = []
     unavailable_outcome_count = 0
-    available_sessions = {bar.session_date for bar in component_dataset.bars}
-    bar_indexes = {
-        bar.session_date: index for index, bar in enumerate(component_dataset.bars)
-    }
+    available_sessions = prepared.available_sessions
+    bar_indexes = prepared.bar_indexes
     for signal, signal_snapshot in zip(
         generated_signals, signal_snapshots, strict=True
     ):
@@ -483,6 +529,7 @@ def run_prediction_study(
         configuration.evaluator_configuration_id,
     )
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
+    _validate_unchanged_dataset(prepared.source_dataset, dataset_snapshot)
     return PredictionStudyResult(
         study_id,
         STUDY_ENGINE_VERSION,
