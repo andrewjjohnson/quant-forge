@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -160,4 +161,104 @@ def test_analysis_enforces_feature_outcome_schema_categories(tmp_path: Path) -> 
             outcome_name=feature_name,
             winner_definition=WinnerDefinition.DECIMAL_GREATER_THAN_ZERO,
             bins={feature_name: all_values},
+        )
+
+
+def test_analysis_rejects_nonnumeric_feature_schema_types(tmp_path: Path) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    feature_name = "feature_atr_percentage_of_close"
+    nonnumeric_schema = replace(
+        feature_dataset.schema,
+        fields=tuple(
+            replace(field, data_type="string") if field.name == feature_name else field
+            for field in feature_dataset.schema.fields
+        ),
+    )
+
+    with pytest.raises(SignalFeatureDatasetError, match="features must use numeric"):
+        analyze_signal_features(
+            replace(feature_dataset, schema=nonnumeric_schema),
+            feature_names=(feature_name,),
+            outcome_name="outcome_forward_return_1_raw_return",
+            winner_definition=WinnerDefinition.DECIMAL_GREATER_THAN_ZERO,
+            bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
+        )
+
+
+def test_analysis_rejects_decimal_rule_for_nonnumeric_outcome(tmp_path: Path) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    feature_name = "feature_atr_percentage_of_close"
+
+    with pytest.raises(SignalFeatureDatasetError, match="requires a numeric outcome"):
+        analyze_signal_features(
+            feature_dataset,
+            feature_names=(feature_name,),
+            outcome_name="outcome_forward_return_1_outcome_session",
+            winner_definition=WinnerDefinition.DECIMAL_GREATER_THAN_ZERO,
+            bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
+        )
+
+
+def test_analysis_rejects_value_equals_for_structured_outcome(tmp_path: Path) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    feature_name = "feature_atr_percentage_of_close"
+    outcome_name = "outcome_forward_return_1_raw_return"
+    structured_schema = replace(
+        feature_dataset.schema,
+        fields=tuple(
+            replace(field, data_type="object") if field.name == outcome_name else field
+            for field in feature_dataset.schema.fields
+        ),
+    )
+
+    with pytest.raises(SignalFeatureDatasetError, match="requires a scalar outcome"):
+        analyze_signal_features(
+            replace(feature_dataset, schema=structured_schema),
+            feature_names=(feature_name,),
+            outcome_name=outcome_name,
+            winner_definition=WinnerDefinition.VALUE_EQUALS,
+            winner_value="ignored",
+            bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
         )

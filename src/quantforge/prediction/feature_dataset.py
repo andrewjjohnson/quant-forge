@@ -29,8 +29,10 @@ from quantforge.data.models import (
 )
 from quantforge.indicators import Indicator
 from quantforge.prediction.contracts import (
+    OutcomeLabel,
     OutcomeLabeler,
     PredictionEvaluator,
+    PredictionOutcome,
     PredictionRule,
     PredictionRuleParameters,
     PredictionStudy,
@@ -92,6 +94,87 @@ class OutcomeRun:
 
     study_id: str
     values_by_session: dict[date, PrimitiveMapping]
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidatePopulationValues:
+    """Unreachable values type for the candidate-only QF-11 boundary."""
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {}
+
+
+class _CandidatePopulationLabeler:
+    """Keep QF-11 signal guards without evaluating a configured future outcome."""
+
+    name = "qf7_candidate_population_boundary"
+    implementation_version = "1"
+    result_schema_version = "1"
+    required_market_fields = ("close",)
+
+    def __init__(self, bar_count: int) -> None:
+        self.required_future_sessions = bar_count
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "prediction_outcome_labeler",
+            "contract_version": "1",
+            "implementation_version": self.implementation_version,
+            "parameters": {
+                "purpose": "fix_candidate_population_without_future_evaluation",
+                "unavailable_horizon_sessions": self.required_future_sessions,
+            },
+            "required_market_fields": list(self.required_market_fields),
+            "result_schema_version": self.result_schema_version,
+        }
+
+    def validate_dataset(self, dataset: MarketDataset) -> None:
+        del dataset
+
+    def label(
+        self, dataset: MarketDataset, signal_session: date
+    ) -> OutcomeLabel[_CandidatePopulationValues] | None:
+        del dataset, signal_session
+        return None
+
+
+class _CandidatePopulationEvaluator:
+    """Evaluator that cannot be reached because candidate-only labels are absent."""
+
+    name = "qf7_candidate_population_boundary"
+    implementation_version = "1"
+    result_schema_version = "1"
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "prediction_evaluator",
+            "contract_version": "1",
+            "implementation_version": self.implementation_version,
+            "parameters": {
+                "purpose": "candidate_population_has_no_evaluation",
+            },
+            "result_schema_version": self.result_schema_version,
+        }
+
+    def evaluate(
+        self,
+        signal: SignalFeatureCandidate,
+        outcome: PredictionOutcome[_CandidatePopulationValues],
+    ) -> _CandidatePopulationValues:
+        del signal, outcome
+        raise InvalidPredictionOutputError(
+            "candidate-only QF-11 boundary unexpectedly produced an outcome"
+        )
 
 
 class ConfiguredOutcome(Protocol):
@@ -597,8 +680,7 @@ def build_signal_feature_dataset[
     )
     completed_rows = _load_progress_rows(destination, feature_dataset_id, schema)
 
-    initial_result = run_prediction_study(dataset, prediction_study)
-    candidates = tuple(initial_result.signals)
+    candidates = _generate_candidate_population(dataset, prediction_study)
     candidate_ids = {
         _candidate_id(market_data, candidate): candidate for candidate in candidates
     }
@@ -611,27 +693,36 @@ def build_signal_feature_dataset[
         raise SignalFeaturePersistenceError(
             "persisted rows do not belong to the regenerated candidate population"
         )
+    bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
+    enriched_candidates = tuple(
+        _enrich_candidate(
+            dataset,
+            candidate,
+            bar_indexes,
+            sorted_features,
+        )
+        for candidate in candidates
+    )
+    _validate_regenerated_completed_rows(
+        feature_dataset_id,
+        market_data,
+        schema,
+        enriched_candidates,
+        completed_rows,
+        sorted_outcomes,
+    )
     missing_candidates = tuple(
         candidate
-        for candidate_id, candidate in candidate_ids.items()
+        for candidate in enriched_candidates
+        if (candidate_id := _candidate_id(market_data, candidate))
         if candidate_id not in completed_rows
     )
     feature_configuration = _feature_configuration(strategy_fields, sorted_features)
     study_ids_by_namespace = _study_ids_from_rows(completed_rows.values())
-    bar_indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
 
     for chunk_start in range(0, len(missing_candidates), chunk_size):
         chunk = missing_candidates[chunk_start : chunk_start + chunk_size]
-        enriched = tuple(
-            _enrich_candidate(
-                dataset,
-                candidate,
-                bar_indexes,
-                sorted_features,
-            )
-            for candidate in chunk
-        )
-        fixed_rule = _FixedCandidateRule(strategy, enriched)
+        fixed_rule = _FixedCandidateRule(strategy, chunk)
         outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
         chunk_study_ids: dict[str, str] = {}
         for configured_outcome in sorted_outcomes:
@@ -647,7 +738,7 @@ def build_signal_feature_dataset[
                 )
             study_ids_by_namespace[configured_outcome.namespace] = outcome_run.study_id
 
-        for candidate in enriched:
+        for candidate in chunk:
             candidate_id = _candidate_id(market_data, candidate)
             row = _build_row(
                 feature_dataset_id,
@@ -664,13 +755,13 @@ def build_signal_feature_dataset[
 
     ordered_rows = tuple(
         completed_rows[_candidate_id(market_data, candidate)]
-        for candidate in candidates
+        for candidate in enriched_candidates
     )
     if len(ordered_rows) != len({row.candidate_id for row in ordered_rows}):
         raise SignalFeaturePersistenceError(
             "completed signal-feature rows contain duplicate candidates"
         )
-    if not candidates:
+    if not enriched_candidates:
         empty_rule = _FixedCandidateRule(strategy, ())
         for configured_outcome in sorted_outcomes:
             outcome_run = configured_outcome.run(
@@ -690,6 +781,70 @@ def build_signal_feature_dataset[
     )
     _finalize_export(destination, result)
     return result
+
+
+def _generate_candidate_population[
+    InitialOutcomeT: PredictionValues,
+    InitialEvaluationT: PredictionValues,
+](
+    dataset: MarketDataset,
+    prediction_study: PredictionStudy[
+        SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
+    ],
+) -> tuple[SignalFeatureCandidate, ...]:
+    boundary_study = PredictionStudy[
+        SignalFeatureCandidate,
+        _CandidatePopulationValues,
+        _CandidatePopulationValues,
+    ].create(
+        prediction_study.strategy,
+        _CandidatePopulationLabeler(len(dataset.bars)),
+        _CandidatePopulationEvaluator(),
+        feature_configuration=prediction_study.feature_configuration,
+        result_schema_version=prediction_study.result_schema_version,
+    )
+    return tuple(run_prediction_study(dataset, boundary_study).signals)
+
+
+def _validate_regenerated_completed_rows(
+    feature_dataset_id: str,
+    market_data: PredictionMarketData,
+    schema: SignalFeatureSchema,
+    candidates: tuple[SignalFeatureCandidate, ...],
+    completed_rows: dict[str, SignalFeatureRow],
+    outcomes: tuple[ConfiguredOutcome, ...],
+) -> None:
+    for candidate in candidates:
+        candidate_id = _candidate_id(market_data, candidate)
+        completed_row = completed_rows.get(candidate_id)
+        if completed_row is None:
+            continue
+        completed_values = completed_row.to_primitive()
+        outcome_values = {
+            outcome.namespace: {
+                candidate.signal_session: {
+                    field.name: completed_values[
+                        f"outcome_{outcome.namespace}_{field.name}"
+                    ]
+                    for field in outcome.fields
+                }
+            }
+            for outcome in outcomes
+        }
+        regenerated_row = _build_row(
+            feature_dataset_id,
+            market_data,
+            schema,
+            candidate,
+            candidate_id,
+            outcomes,
+            outcome_values,
+            _study_ids_from_rows((completed_row,)),
+        )
+        if regenerated_row.to_primitive() != completed_values:
+            raise SignalFeaturePersistenceError(
+                "persisted row does not match its regenerated causal candidate"
+            )
 
 
 def _validated_market_data(dataset: MarketDataset) -> PredictionMarketData:

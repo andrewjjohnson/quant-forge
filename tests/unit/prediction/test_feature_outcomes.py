@@ -1,8 +1,13 @@
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
+from typing import cast
+
+import pytest
 
 from quantforge.configuration import PrimitiveMappingSnapshot
+from quantforge.data import MarketDataset
 from quantforge.prediction import (
     DirectionalExcursionEvaluator,
     ExcursionOutcomeLabeler,
@@ -16,6 +21,7 @@ from quantforge.prediction import (
     TargetStopLabel,
     TargetStopOutcomeLabeler,
 )
+from quantforge.prediction import feature_outcomes as feature_outcomes_module
 
 from ..helpers import make_dataset
 
@@ -60,6 +66,32 @@ def test_forward_returns_use_exact_exchange_session_indexes() -> None:
     assert label.values.outcome_price == Decimal(104)
     assert label.values.raw_return == Decimal("0.019607843137254901960784313725490")
     assert labeler.label(dataset, dataset.bars[-2].session_date) is None
+
+
+def test_outcome_labeler_builds_one_session_index_per_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = make_dataset(("100", "102", "101", "104"))
+    original_build = cast(
+        Callable[[MarketDataset], dict[date, int]],
+        getattr(feature_outcomes_module, "_build_session_indexes"),
+    )
+    build_calls = 0
+
+    def counting_build(dataset_to_index: MarketDataset) -> dict[date, int]:
+        nonlocal build_calls
+        build_calls += 1
+        return original_build(dataset_to_index)
+
+    monkeypatch.setattr(
+        feature_outcomes_module, "_build_session_indexes", counting_build
+    )
+    labeler = ForwardReturnOutcomeLabeler(1)
+
+    labeler.validate_dataset(dataset)
+    assert labeler.label(dataset, dataset.bars[0].session_date) is not None
+    assert labeler.label(dataset, dataset.bars[1].session_date) is not None
+    assert build_calls == 1
 
 
 def test_forward_return_skips_holiday_and_weekend_as_one_session() -> None:

@@ -22,7 +22,10 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "2"
+FEATURE_ANALYSIS_ENGINE_VERSION = "3"
+
+_NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
+_SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
 
 
 class WinnerDefinition(StrEnum):
@@ -206,6 +209,28 @@ def analyze_signal_features(
     if schema_fields[outcome_name].category is not SchemaFieldCategory.FUTURE_OUTCOME:
         raise SignalFeatureDatasetError(
             "analysis outcome must be a future-outcome schema field"
+        )
+    if any(
+        schema_fields[feature_name].data_type not in _NUMERIC_SCHEMA_TYPES
+        for feature_name in feature_names
+    ):
+        raise SignalFeatureDatasetError(
+            "analysis features must use numeric decimal or integer schema types"
+        )
+    outcome_data_type = schema_fields[outcome_name].data_type
+    if (
+        winner_definition is WinnerDefinition.DECIMAL_GREATER_THAN_ZERO
+        and outcome_data_type not in _NUMERIC_SCHEMA_TYPES
+    ):
+        raise SignalFeatureDatasetError(
+            "decimal-greater-than-zero requires a numeric outcome schema type"
+        )
+    if (
+        winner_definition is WinnerDefinition.VALUE_EQUALS
+        and outcome_data_type not in _SCALAR_SCHEMA_TYPES
+    ):
+        raise SignalFeatureDatasetError(
+            "value-equals requires a scalar outcome schema type"
         )
     if set(bins) != set(feature_names) or any(not bins[name] for name in feature_names):
         raise SignalFeatureDatasetError(

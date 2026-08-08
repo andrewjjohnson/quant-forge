@@ -25,6 +25,29 @@ from quantforge.prediction.signal_feature_models import SignalFeatureCandidate
 DEFAULT_FORWARD_RETURN_HORIZONS = (1, 2, 5, 10, 20)
 
 
+class _SessionIndexedOutcomeLabeler:
+    """Reuse one immutable session lookup for every label in a dataset run."""
+
+    def __init__(self) -> None:
+        self._indexed_dataset: MarketDataset | None = None
+        self._session_indexes: dict[date, int] = {}
+
+    def _prepare_session_indexes(self, dataset: MarketDataset) -> None:
+        if dataset is self._indexed_dataset:
+            return
+        self._session_indexes = _build_session_indexes(dataset)
+        self._indexed_dataset = dataset
+
+    def _signal_index(self, dataset: MarketDataset, signal_session: date) -> int:
+        self._prepare_session_indexes(dataset)
+        index = self._session_indexes.get(signal_session)
+        if index is None:
+            raise InvalidPredictionOutputError(
+                "outcome signal session is absent from the dataset"
+            )
+        return index
+
+
 @dataclass(frozen=True, slots=True)
 class ForwardReturnValues:
     """Completed-close return at one exact future exchange-session horizon."""
@@ -45,15 +68,16 @@ class ForwardReturnValues:
         }
 
 
-class ForwardReturnOutcomeLabeler:
+class ForwardReturnOutcomeLabeler(_SessionIndexedOutcomeLabeler):
     """Label close-to-future-close arithmetic return in trading sessions."""
 
     name = "forward_close_return"
-    implementation_version = "1"
+    implementation_version = "2"
     result_schema_version = "1"
     required_market_fields = ("close",)
 
     def __init__(self, horizon_sessions: int) -> None:
+        super().__init__()
         _validate_horizon(horizon_sessions)
         self.required_future_sessions = horizon_sessions
 
@@ -77,11 +101,12 @@ class ForwardReturnOutcomeLabeler:
 
     def validate_dataset(self, dataset: MarketDataset) -> None:
         _validate_price_basis(dataset)
+        self._prepare_session_indexes(dataset)
 
     def label(
         self, dataset: MarketDataset, signal_session: date
     ) -> OutcomeLabel[ForwardReturnValues] | None:
-        signal_index = _signal_index(dataset, signal_session)
+        signal_index = self._signal_index(dataset, signal_session)
         outcome_index = signal_index + self.required_future_sessions
         if outcome_index >= len(dataset.bars):
             return None
@@ -183,15 +208,16 @@ class ExcursionEvaluationValues:
         }
 
 
-class ExcursionOutcomeLabeler:
+class ExcursionOutcomeLabeler(_SessionIndexedOutcomeLabeler):
     """Capture direction-neutral future high/low extremes over exact sessions."""
 
     name = "future_high_low_excursion_path"
-    implementation_version = "1"
+    implementation_version = "2"
     result_schema_version = "1"
     required_market_fields = ("close", "high", "low")
 
     def __init__(self, horizon_sessions: int) -> None:
+        super().__init__()
         _validate_horizon(horizon_sessions)
         self.required_future_sessions = horizon_sessions
 
@@ -214,11 +240,12 @@ class ExcursionOutcomeLabeler:
 
     def validate_dataset(self, dataset: MarketDataset) -> None:
         _validate_price_basis(dataset)
+        self._prepare_session_indexes(dataset)
 
     def label(
         self, dataset: MarketDataset, signal_session: date
     ) -> OutcomeLabel[ExcursionPathValues] | None:
-        signal_index = _signal_index(dataset, signal_session)
+        signal_index = self._signal_index(dataset, signal_session)
         outcome_index = signal_index + self.required_future_sessions
         if outcome_index >= len(dataset.bars):
             return None
@@ -397,11 +424,11 @@ class TargetStopEvaluationValues:
         }
 
 
-class TargetStopOutcomeLabeler:
+class TargetStopOutcomeLabeler(_SessionIndexedOutcomeLabeler):
     """Capture the exact daily ranges needed for target/stop classification."""
 
     name = "future_target_stop_path"
-    implementation_version = "1"
+    implementation_version = "2"
     result_schema_version = "1"
     required_market_fields = ("close", "high", "low")
 
@@ -414,6 +441,7 @@ class TargetStopOutcomeLabeler:
             SameSessionConflictPolicy.AMBIGUOUS
         ),
     ) -> None:
+        super().__init__()
         _validate_horizon(horizon_sessions)
         self.required_future_sessions = horizon_sessions
         self.target_percentage = _positive_percentage(
@@ -449,11 +477,12 @@ class TargetStopOutcomeLabeler:
 
     def validate_dataset(self, dataset: MarketDataset) -> None:
         _validate_price_basis(dataset)
+        self._prepare_session_indexes(dataset)
 
     def label(
         self, dataset: MarketDataset, signal_session: date
     ) -> OutcomeLabel[TargetStopPathValues] | None:
-        signal_index = _signal_index(dataset, signal_session)
+        signal_index = self._signal_index(dataset, signal_session)
         outcome_index = signal_index + self.required_future_sessions
         if outcome_index >= len(dataset.bars):
             return None
@@ -697,14 +726,8 @@ def _positive_percentage(name: str, value: object) -> Decimal:
     return result
 
 
-def _signal_index(dataset: MarketDataset, signal_session: date) -> int:
-    indexes = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
-    index = indexes.get(signal_session)
-    if index is None:
-        raise InvalidPredictionOutputError(
-            "outcome signal session is absent from the dataset"
-        )
-    return index
+def _build_session_indexes(dataset: MarketDataset) -> dict[date, int]:
+    return {bar.session_date: index for index, bar in enumerate(dataset.bars)}
 
 
 def _validate_price_basis(dataset: MarketDataset) -> None:

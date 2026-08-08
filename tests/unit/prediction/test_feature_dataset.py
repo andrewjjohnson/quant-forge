@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -21,6 +22,7 @@ from quantforge.prediction import (
     ForwardReturnOutcomeLabeler,
     ForwardReturnValues,
     InvalidPredictionOutputError,
+    OutcomeLabel,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
     OvernightGapSignalFeatureRule,
@@ -254,6 +256,34 @@ class InvalidFeatureCandidateRule(FixtureCandidateRule):
             for signal in output.signals
         )
         return replace(output, signals=signals)
+
+
+class RegeneratingCandidateRule(FixtureCandidateRule):
+    regenerate_differently = False
+
+    def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        output = super().generate(dataset)
+        if not self.regenerate_differently or not output.signals:
+            return output
+        first = replace(
+            output.signals[0],
+            strategy_features=(SignalFeatureValue("decision_close", Decimal("999")),),
+        )
+        return replace(output, signals=(first, *output.signals[1:]))
+
+
+class CountingForwardReturnOutcomeLabeler(ForwardReturnOutcomeLabeler):
+    name = "counting_forward_close_return"
+
+    def __init__(self, horizon_sessions: int) -> None:
+        super().__init__(horizon_sessions)
+        self.label_calls = 0
+
+    def label(
+        self, dataset: MarketDataset, signal_session: date
+    ) -> OutcomeLabel[ForwardReturnValues] | None:
+        self.label_calls += 1
+        return super().label(dataset, signal_session)
 
 
 @dataclass(frozen=True, slots=True)
@@ -534,6 +564,99 @@ def test_interrupted_generation_resumes_to_uninterrupted_bytes(
     ).read_bytes() == (
         tmp_path / "uninterrupted" / uninterrupted.dataset_id / "features.csv"
     ).read_bytes()
+
+
+def test_resume_rejects_a_different_regenerated_causal_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = RegeneratingCandidateRule(
+        (SignalDisposition.ACCEPTED, SignalDisposition.REJECTED)
+    )
+    original_persist = cast(
+        Callable[[Path, SignalFeatureRow], None],
+        getattr(feature_dataset_module, "_persist_progress_row"),
+    )
+
+    def interrupt_after_first(destination: Path, row: SignalFeatureRow) -> None:
+        original_persist(destination, row)
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", interrupt_after_first
+    )
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        _build_fixture(dataset, rule, tmp_path)
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", original_persist
+    )
+    rule.regenerate_differently = True
+
+    with pytest.raises(
+        SignalFeaturePersistenceError, match="regenerated causal candidate"
+    ):
+        _build_fixture(dataset, rule, tmp_path)
+
+
+def test_partial_resume_evaluates_outcomes_only_for_missing_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = make_dataset(("100", "102", "101", "104"))
+    rule = FixtureCandidateRule(
+        (
+            SignalDisposition.ACCEPTED,
+            SignalDisposition.REJECTED,
+            SignalDisposition.BLOCKED,
+            SignalDisposition.OVERLAPPING,
+        )
+    )
+    template = forward_return_outcome(1)
+    labeler = CountingForwardReturnOutcomeLabeler(1)
+    primary = PredictionStudyOutcome[ForwardReturnValues, ForwardReturnValues].create(
+        "forward_return_1",
+        labeler,
+        template.evaluator,
+        template.fields,
+        unavailable_values={"available": False, "horizon_sessions": 1},
+    )
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, labeler, template.evaluator)
+
+    def build() -> SignalFeatureDatasetResult:
+        return build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(primary,),
+            output_root=tmp_path,
+            chunk_size=2,
+        )
+
+    original_persist = cast(
+        Callable[[Path, SignalFeatureRow], None],
+        getattr(feature_dataset_module, "_persist_progress_row"),
+    )
+
+    def interrupt_after_first(destination: Path, row: SignalFeatureRow) -> None:
+        original_persist(destination, row)
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", interrupt_after_first
+    )
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        build()
+    monkeypatch.setattr(
+        feature_dataset_module, "_persist_progress_row", original_persist
+    )
+    calls_after_interruption = labeler.label_calls
+
+    result = build()
+
+    assert calls_after_interruption == 2
+    assert labeler.label_calls - calls_after_interruption == 3
+    assert len(result.rows) == 4
 
 
 def test_resume_rejects_valid_json_checkpoint_payload_corruption(

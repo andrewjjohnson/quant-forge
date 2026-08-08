@@ -156,7 +156,8 @@ change is needed.
 
 `ForwardReturnOutcomeLabeler(H)` declares an exact QF-11 horizon of `H` exchange
 trading sessions. It uses the dataset's chronological session sequence, not
-calendar-day arithmetic:
+calendar-day arithmetic. Each outcome study builds its session lookup once and
+reuses it for every candidate rather than rescanning all bars per label:
 
 ```text
 forward_return(H) = close[t+H] / close[t] - 1
@@ -259,8 +260,12 @@ row checkpoint is written to a temporary file, flushed, and atomically renamed.
 Temporary/partial files are not checkpoints, and the payload-bound row ID path
 prevents duplicates and fails closed on valid-JSON row corruption. On resume,
 the builder validates the source dataset, complete configuration, schema, row
-payload identities, candidate population, and QF-11 study IDs. It skips
-completed candidates and processes only missing deterministic chunks.
+payload identities, candidate population, and QF-11 study IDs. Regenerated
+causal candidates are enriched and compared with completed protected rows before
+any checkpoint is skipped, so one artifact cannot combine two generations. A
+candidate-only QF-11 boundary fixes and validates the population without running
+the configured future outcome over completed rows; only missing deterministic
+chunks are labeled and evaluated.
 `features.csv`, `summary.json`, and the final `complete` manifest are written
 atomically; the manifest is last. A complete resume validates exact deterministic
 CSV/JSON bytes and returns without rerunning the prediction rule or outcomes.
@@ -286,7 +291,9 @@ fixed bins with winner rates. Empty bins remain present. The split is
 configurable through `WinnerDefinition`; it is not a universal definition of a
 winner. The analysis API accepts only contemporaneous-feature schema fields as
 features and a future-outcome schema field as the outcome, preserving the causal
-feature/outcome boundary.
+feature/outcome boundary. Analyzed features must declare numeric `decimal` or
+`integer` types. `DECIMAL_GREATER_THAN_ZERO` likewise requires a numeric outcome;
+`VALUE_EQUALS` accepts only scalar outcome types.
 
 The output is explicitly exploratory. It does not cherry-pick bins, select a
 filter, modify the rule, claim causality, or establish tradability. Any candidate
