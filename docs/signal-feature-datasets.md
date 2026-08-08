@@ -220,10 +220,11 @@ fingerprint, provider and adjustment provenance, source and candidate rule
 identities, implementation version, full parameters and their identity, and
 feature/outcome schema versions.
 
-Outcome evaluator values and explicit end-of-data defaults are checked against
-each declared schema type and nullability before export. Decimal values must be
-finite exact decimal text, dates must be canonical ISO dates, and primitive
-boolean, integer, string, object, and array types must match their declarations.
+Strategy and contextual feature values, outcome evaluator values, and explicit
+end-of-data defaults are checked against each declared schema type and
+nullability before export. Decimal values must be finite exact decimal text,
+dates must be canonical ISO dates, and primitive boolean, integer, string,
+object, and array types must match their declarations.
 
 Causal columns use `feature_`; future fields use `outcome_<namespace>_`. Decimal
 values are exact decimal text in CSV and can be inferred or explicitly parsed

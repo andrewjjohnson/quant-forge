@@ -233,6 +233,29 @@ class ExtraFeatureCandidateRule(FixtureCandidateRule):
         return replace(output, signals=signals)
 
 
+class InvalidFeatureCandidateRule(FixtureCandidateRule):
+    def __init__(
+        self,
+        dispositions: tuple[SignalDisposition, ...],
+        invalid_value: str | None,
+    ) -> None:
+        super().__init__(dispositions)
+        self._invalid_value = invalid_value
+
+    def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        output = super().generate(dataset)
+        signals = tuple(
+            replace(
+                signal,
+                strategy_features=(
+                    SignalFeatureValue("decision_close", self._invalid_value),
+                ),
+            )
+            for signal in output.signals
+        )
+        return replace(output, signals=signals)
+
+
 @dataclass(frozen=True, slots=True)
 class NullRawReturnValues:
     source: ForwardReturnValues
@@ -704,6 +727,17 @@ def test_candidate_feature_names_must_match_declared_schema(tmp_path: Path) -> N
     rule = ExtraFeatureCandidateRule((SignalDisposition.ACCEPTED,))
 
     with pytest.raises(InvalidPredictionOutputError, match="candidate feature names"):
+        _build_fixture(dataset, rule, tmp_path)
+
+
+@pytest.mark.parametrize("invalid_value", [None, "not-a-decimal"])
+def test_candidate_feature_values_must_match_declared_schema(
+    tmp_path: Path, invalid_value: str | None
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = InvalidFeatureCandidateRule((SignalDisposition.ACCEPTED,), invalid_value)
+
+    with pytest.raises(InvalidPredictionOutputError, match="candidate feature values"):
         _build_fixture(dataset, rule, tmp_path)
 
 

@@ -1065,17 +1065,32 @@ def _build_row(
         f"feature_{feature_name}": feature_value
         for feature_name, feature_value in candidate.features_primitive().items()
     }
-    declared_feature_names = {
-        field.name
+    declared_feature_fields = {
+        field.name: field
         for field in schema.fields
         if field.category is SchemaFieldCategory.CONTEMPORANEOUS_FEATURE
     }
+    declared_feature_names = set(declared_feature_fields)
     if set(candidate_features) != declared_feature_names:
         missing = sorted(declared_feature_names - set(candidate_features))
         unexpected = sorted(set(candidate_features) - declared_feature_names)
         raise InvalidPredictionOutputError(
             "candidate feature names do not match their declared schema: "
             f"missing={missing}, unexpected={unexpected}"
+        )
+    invalid_feature_names = tuple(
+        sorted(
+            feature_name
+            for feature_name, feature_value in candidate_features.items()
+            if not _schema_value_matches(
+                declared_feature_fields[feature_name], feature_value
+            )
+        )
+    )
+    if invalid_feature_names:
+        raise InvalidPredictionOutputError(
+            "candidate feature values do not match their declared schema types or "
+            f"nullability: {invalid_feature_names}"
         )
     parameters = candidate.parameters_primitive()
     values: PrimitiveMapping = {
