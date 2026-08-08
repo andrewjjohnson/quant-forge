@@ -1029,6 +1029,21 @@ def _validate_feature_configuration(
                 "contextual feature configuration identity is invalid"
             )
     for outcome in outcomes:
+        fields = outcome.fields
+        field_names = tuple(field.name for field in fields)
+        if (
+            not field_names
+            or field_names != tuple(sorted(field_names))
+            or len(field_names) != len(set(field_names))
+            or any(
+                field.category is not SchemaFieldCategory.FUTURE_OUTCOME
+                for field in fields
+            )
+        ):
+            raise SignalFeatureDatasetError(
+                "configured outcome fields must be sorted, unique future-outcome "
+                "definitions"
+            )
         if configuration_identity(outcome.configuration()) != outcome.configuration_id:
             raise SignalFeatureDatasetError(
                 "configured outcome configuration identity is invalid"

@@ -428,6 +428,15 @@ class DirectConfiguredOutcome:
         )
 
 
+class MiscategorizedDirectOutcome(DirectConfiguredOutcome):
+    @property
+    def fields(self) -> tuple[SchemaField, ...]:
+        return tuple(
+            replace(field, category=SchemaFieldCategory.CONTEMPORANEOUS_FEATURE)
+            for field in super().fields
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class NullRawReturnValues:
     source: ForwardReturnValues
@@ -1108,6 +1117,32 @@ def test_builder_rechecks_direct_outcome_configuration_after_each_run(
 
     destination = next(path for path in tmp_path.iterdir() if path.is_dir())
     assert not tuple((destination / "rows").glob("*.json"))
+
+
+def test_builder_requires_direct_outcome_fields_to_be_future_outcomes(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = FixtureCandidateRule(())
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    configured_outcome = MiscategorizedDirectOutcome(primary, "valid")
+
+    with pytest.raises(
+        SignalFeatureDatasetError,
+        match="sorted, unique future-outcome definitions",
+    ):
+        build_signal_feature_dataset(
+            dataset=dataset,
+            prediction_study=study,
+            contextual_features=(),
+            outcomes=(configured_outcome,),
+            output_root=tmp_path,
+        )
+
+    assert not tuple(tmp_path.iterdir())
 
 
 def test_unavailable_outcome_defaults_obey_declared_field_types() -> None:

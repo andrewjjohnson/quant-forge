@@ -351,4 +351,6 @@ protocol's public namespace, fields, and unavailable defaults into dataset
 configuration, so downstream analysis does not depend on a concrete outcome
 implementation's private configuration shape. Outcome configuration identity is
 rechecked immediately after every execution callback so chunk rows cannot be
-persisted under transient or restored undeclared settings.
+persisted under transient or restored undeclared settings. Direct protocol
+implementations must expose sorted, unique fields categorized exclusively as
+future outcomes, including when the candidate population is empty.
