@@ -908,10 +908,16 @@ def _enrich_candidate(
     contextual_values: list[SignalFeatureValue] = []
     for feature in contextual_features:
         expected_configuration_id = feature.configuration_id
+        definition = feature.definition
         value = feature.value_from_history(history)
         if feature.configuration_id != expected_configuration_id:
             raise InvalidPredictionOutputError(
                 "contextual feature configuration changed during calculation"
+            )
+        if value is None and not definition.nullable:
+            raise InvalidPredictionOutputError(
+                f"contextual feature {feature.name} returned null for a "
+                "non-nullable schema field"
             )
         contextual_values.append(SignalFeatureValue(feature.name, value))
     return replace(
@@ -1000,6 +1006,22 @@ def _build_row(
     outcome_values: dict[str, dict[date, PrimitiveMapping]],
     study_ids: dict[str, str],
 ) -> SignalFeatureRow:
+    candidate_features = {
+        f"feature_{feature_name}": feature_value
+        for feature_name, feature_value in candidate.features_primitive().items()
+    }
+    declared_feature_names = {
+        field.name
+        for field in schema.fields
+        if field.category is SchemaFieldCategory.CONTEMPORANEOUS_FEATURE
+    }
+    if set(candidate_features) != declared_feature_names:
+        missing = sorted(declared_feature_names - set(candidate_features))
+        unexpected = sorted(set(candidate_features) - declared_feature_names)
+        raise InvalidPredictionOutputError(
+            "candidate feature names do not match their declared schema: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
     parameters = candidate.parameters_primitive()
     values: PrimitiveMapping = {
         "adjustment_mode": market_data.adjustment_mode,
@@ -1031,8 +1053,7 @@ def _build_row(
         "symbol": candidate.symbol,
         "volume_basis": market_data.volume_basis,
     }
-    for feature_name, feature_value in candidate.features_primitive().items():
-        values[f"feature_{feature_name}"] = feature_value
+    values.update(candidate_features)
     for configured_outcome in outcomes:
         unprefixed = outcome_values[configured_outcome.namespace].get(
             candidate.signal_session,
@@ -1041,8 +1062,11 @@ def _build_row(
         for field_name, field_value in unprefixed.items():
             values[f"outcome_{configured_outcome.namespace}_{field_name}"] = field_value
     values["row_id"] = _row_id(feature_dataset_id, values)
-    if tuple(values) != schema.column_names:
-        values = {name: values[name] for name in schema.column_names}
+    if set(values) != set(schema.column_names):
+        raise InvalidPredictionOutputError(
+            "signal-feature row values do not match their complete schema"
+        )
+    values = {name: values[name] for name in schema.column_names}
     return SignalFeatureRow.capture(values)
 
 

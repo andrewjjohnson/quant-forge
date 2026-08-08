@@ -16,6 +16,7 @@ from quantforge.data import MarketDataset
 from quantforge.indicators import Indicator
 from quantforge.prediction import (
     AtrPercentageContext,
+    ContextualFeature,
     ForwardReturnEvaluator,
     ForwardReturnOutcomeLabeler,
     ForwardReturnValues,
@@ -185,6 +186,54 @@ class FutureReadingContext(LastCloseContext):
 
 
 @dataclass(frozen=True, slots=True)
+class NullNonNullableContext:
+    name: str = "null_non_nullable_context"
+
+    @property
+    def definition(self) -> SchemaField:
+        return SchemaField(
+            self.name,
+            SchemaFieldCategory.CONTEMPORANEOUS_FEATURE,
+            "decimal",
+            "ratio",
+            False,
+            "fixture null contextual feature",
+            "after the signal-session close",
+        )
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "signal_contextual_feature",
+            "implementation_version": "1",
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def value_from_history(self, history: MarketDataset) -> Decimal | None:
+        del history
+        return None
+
+
+class ExtraFeatureCandidateRule(FixtureCandidateRule):
+    def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        output = super().generate(dataset)
+        signals = tuple(
+            replace(
+                signal,
+                strategy_features=(
+                    *signal.strategy_features,
+                    SignalFeatureValue("undeclared_feature", Decimal(1)),
+                ),
+            )
+            for signal in output.signals
+        )
+        return replace(output, signals=signals)
+
+
+@dataclass(frozen=True, slots=True)
 class NullRawReturnValues:
     source: ForwardReturnValues
 
@@ -243,7 +292,7 @@ def _build_fixture(
     rule: FixtureCandidateRule,
     output_root: Path,
     *,
-    context: LastCloseContext | None = None,
+    context: ContextualFeature | None = None,
 ) -> SignalFeatureDatasetResult:
     study, primary = _fixture_study(rule)
     return build_signal_feature_dataset(
@@ -559,6 +608,24 @@ def test_contextual_feature_cannot_read_a_future_bar(tmp_path: Path) -> None:
 
     with pytest.raises(IndexError):
         _build_fixture(dataset, rule, tmp_path, context=FutureReadingContext())
+
+
+def test_non_nullable_contextual_feature_rejects_null_value(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = FixtureCandidateRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(
+        InvalidPredictionOutputError, match=r"contextual feature.*non-nullable"
+    ):
+        _build_fixture(dataset, rule, tmp_path, context=NullNonNullableContext())
+
+
+def test_candidate_feature_names_must_match_declared_schema(tmp_path: Path) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = ExtraFeatureCandidateRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(InvalidPredictionOutputError, match="candidate feature names"):
+        _build_fixture(dataset, rule, tmp_path)
 
 
 def test_material_configuration_changes_create_distinct_dataset_ids(

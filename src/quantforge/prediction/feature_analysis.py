@@ -17,9 +17,12 @@ from quantforge.configuration import (
 )
 from quantforge.prediction._arithmetic import arithmetic
 from quantforge.prediction.errors import SignalFeatureDatasetError
-from quantforge.prediction.signal_feature_models import SignalFeatureDatasetResult
+from quantforge.prediction.signal_feature_models import (
+    SchemaFieldCategory,
+    SignalFeatureDatasetResult,
+)
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "1"
+FEATURE_ANALYSIS_ENGINE_VERSION = "2"
 
 
 class WinnerDefinition(StrEnum):
@@ -185,12 +188,24 @@ def analyze_signal_features(
         raise SignalFeatureDatasetError(
             "analysis feature names must be a sorted unique tuple"
         )
-    schema_names = set(result.schema.column_names)
-    if outcome_name not in schema_names or any(
-        feature_name not in schema_names for feature_name in feature_names
+    schema_fields = {field.name: field for field in result.schema.fields}
+    if outcome_name not in schema_fields or any(
+        feature_name not in schema_fields for feature_name in feature_names
     ):
         raise SignalFeatureDatasetError(
             "analysis fields must exist in the signal-feature schema"
+        )
+    if any(
+        schema_fields[feature_name].category
+        is not SchemaFieldCategory.CONTEMPORANEOUS_FEATURE
+        for feature_name in feature_names
+    ):
+        raise SignalFeatureDatasetError(
+            "analysis features must be contemporaneous-feature schema fields"
+        )
+    if schema_fields[outcome_name].category is not SchemaFieldCategory.FUTURE_OUTCOME:
+        raise SignalFeatureDatasetError(
+            "analysis outcome must be a future-outcome schema field"
         )
     if set(bins) != set(feature_names) or any(not bins[name] for name in feature_names):
         raise SignalFeatureDatasetError(

@@ -1,18 +1,22 @@
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from quantforge.prediction import (
     AtrPercentageContext,
     OvernightGapPredictionParameters,
     OvernightGapSignalFeatureRule,
     PredictionStudy,
     SignalFeatureCandidate,
+    SignalFeatureDatasetError,
     TrendDistanceContext,
     VolumeRatioContext,
     build_signal_feature_dataset,
     forward_return_outcome,
 )
 from quantforge.prediction.feature_analysis import (
+    FeatureAnalysisBin,
     WinnerDefinition,
     analyze_signal_features,
     default_overnight_gap_feature_bins,
@@ -118,3 +122,42 @@ def test_analysis_winner_definition_is_configurable(tmp_path: Path) -> None:
 
     assert greater_than_zero.analysis_id != equals_zero.analysis_id
     assert greater_than_zero.winner_count != equals_zero.winner_count
+
+
+def test_analysis_enforces_feature_outcome_schema_categories(tmp_path: Path) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    feature_name = "feature_atr_percentage_of_close"
+    outcome_name = "outcome_forward_return_1_raw_return"
+    all_values = (FeatureAnalysisBin("all", None, None),)
+
+    with pytest.raises(SignalFeatureDatasetError, match="contemporaneous-feature"):
+        analyze_signal_features(
+            feature_dataset,
+            feature_names=(outcome_name,),
+            outcome_name=outcome_name,
+            winner_definition=WinnerDefinition.DECIMAL_GREATER_THAN_ZERO,
+            bins={outcome_name: all_values},
+        )
+
+    with pytest.raises(SignalFeatureDatasetError, match="future-outcome"):
+        analyze_signal_features(
+            feature_dataset,
+            feature_names=(feature_name,),
+            outcome_name=feature_name,
+            winner_definition=WinnerDefinition.DECIMAL_GREATER_THAN_ZERO,
+            bins={feature_name: all_values},
+        )

@@ -123,6 +123,10 @@ Every candidate contains all baseline decision inputs:
 - Python weekday (`Monday=0`);
 - the selected direction and complete reason trace.
 
+Candidate strategy-feature names must match their declared schema exactly.
+Missing or undeclared inputs fail closed instead of being omitted from the
+flattened artifact.
+
 The documented unused baseline context is:
 
 - `atr_percentage_of_close`: QF-4 Wilder ATR(14) divided by completed close,
@@ -138,7 +142,8 @@ These features are exploratory; none changes the baseline rule. Every
 overnight-gap-specific feature branches. It passes only a market-history prefix
 ending at the candidate session, so a contextual feature cannot inspect a later
 bar or later corporate action. Warm-up values remain `null`; they are never
-backfilled.
+backfilled. A contextual feature declared non-nullable must return a value;
+schema/value contradictions fail closed.
 
 To add a context feature, implement `ContextualFeature`, preferably by composing
 a reusable QF-4 `Indicator`, document its type/unit/source/timing in
@@ -271,7 +276,9 @@ ratio, and trend distance for winners and losers using sample count, mean,
 median, population standard deviation, first/third quartiles, and disclosed
 fixed bins with winner rates. Empty bins remain present. The split is
 configurable through `WinnerDefinition`; it is not a universal definition of a
-winner.
+winner. The analysis API accepts only contemporaneous-feature schema fields as
+features and a future-outcome schema field as the outcome, preserving the causal
+feature/outcome boundary.
 
 The output is explicitly exploratory. It does not cherry-pick bins, select a
 filter, modify the rule, claim causality, or establish tradability. Any candidate
