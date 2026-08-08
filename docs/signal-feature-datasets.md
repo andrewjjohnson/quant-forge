@@ -161,6 +161,9 @@ required to declare the `contemporaneous_feature` category and are evaluated
 through `value_from_history()` against a causal prefix. A full-dataset aligned
 optimization requires an explicit reviewed integration into the bundled context
 set; merely exposing `values_for_dataset()` does not grant access to future bars.
+Candidate rules must leave `SignalFeatureCandidate.contextual_features` empty;
+the builder exclusively owns contextual enrichment and rejects pre-populated
+values rather than silently replacing them.
 
 ## Forward returns
 

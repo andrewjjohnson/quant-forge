@@ -1333,6 +1333,10 @@ def _enrich_candidates(
     bar_indexes: dict[date, int],
     contextual_features: tuple[ContextualFeature, ...],
 ) -> tuple[SignalFeatureCandidate, ...]:
+    if any(candidate.contextual_features for candidate in candidates):
+        raise InvalidPredictionOutputError(
+            "candidate rules must not pre-populate builder-owned contextual features"
+        )
     if not candidates:
         return ()
     values_by_session: dict[date, list[SignalFeatureValue]] = {

@@ -335,6 +335,21 @@ class InvalidFeatureCandidateRule(FixtureCandidateRule):
         return replace(output, signals=signals)
 
 
+class PrepopulatedContextCandidateRule(FixtureCandidateRule):
+    def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        output = super().generate(dataset)
+        signals = tuple(
+            replace(
+                signal,
+                contextual_features=(
+                    SignalFeatureValue("undeclared_context", Decimal("1")),
+                ),
+            )
+            for signal in output.signals
+        )
+        return replace(output, signals=signals)
+
+
 class InvalidSourceConfigurationCandidateRule(FixtureCandidateRule):
     def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
         output = super().generate(dataset)
@@ -1475,6 +1490,21 @@ def test_candidate_feature_names_must_match_declared_schema(tmp_path: Path) -> N
 
     with pytest.raises(InvalidPredictionOutputError, match="candidate feature names"):
         _build_fixture(dataset, rule, tmp_path)
+
+
+def test_candidate_rules_must_not_prepopulate_contextual_features(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102", "101"))
+    rule = PrepopulatedContextCandidateRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match=r"must not pre-populate builder-owned contextual features",
+    ):
+        _build_fixture(dataset, rule, tmp_path)
+
+    assert not tuple(tmp_path.rglob("rows/*.json"))
 
 
 def test_source_rule_configuration_id_must_be_canonical_sha256(
