@@ -163,6 +163,35 @@ def test_analysis_excludes_rows_with_an_unavailable_outcome(tmp_path: Path) -> N
     assert analysis.winner_count + analysis.loser_count == available_rows
 
 
+def test_analysis_rejects_an_availability_flag_as_the_outcome(tmp_path: Path) -> None:
+    dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
+    rule = OvernightGapSignalFeatureRule(
+        OvernightGapPredictionParameters(excluded_weekdays=())
+    )
+    primary = forward_return_outcome(1)
+    study = PredictionStudy[
+        SignalFeatureCandidate, ForwardReturnValues, ForwardReturnValues
+    ].create(rule, primary.labeler, primary.evaluator)
+    feature_dataset = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(AtrPercentageContext(2),),
+        outcomes=(primary,),
+        output_root=tmp_path,
+    )
+    feature_name = "feature_atr_percentage_of_close"
+
+    with pytest.raises(SignalFeatureDatasetError, match="availability fields"):
+        analyze_signal_features(
+            feature_dataset,
+            feature_names=(feature_name,),
+            outcome_name="outcome_forward_return_1_available",
+            winner_definition=WinnerDefinition.VALUE_EQUALS,
+            winner_value="False",
+            bins={feature_name: (FeatureAnalysisBin("all", None, None),)},
+        )
+
+
 def test_analysis_enforces_feature_outcome_schema_categories(tmp_path: Path) -> None:
     dataset = make_dataset(tuple(str(100 + index % 3) for index in range(15)))
     rule = OvernightGapSignalFeatureRule(

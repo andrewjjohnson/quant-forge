@@ -311,7 +311,8 @@ feature/outcome boundary. Analyzed features must declare numeric `decimal` or
 `VALUE_EQUALS` accepts only scalar outcome types.
 When an outcome namespace declares an `available` flag, rows where that flag is
 false are excluded before winner/loser classification, including non-null
-sentinel labels such as `unavailable`.
+sentinel labels such as `unavailable`. Availability flags are eligibility
+metadata and cannot themselves be selected as analysis outcomes.
 
 The output is explicitly exploratory. It does not cherry-pick bins, select a
 filter, modify the rule, claim causality, or establish tradability. Any candidate

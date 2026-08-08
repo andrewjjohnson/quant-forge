@@ -23,7 +23,7 @@ from quantforge.prediction.signal_feature_models import (
     SignalFeatureDatasetResult,
 )
 
-FEATURE_ANALYSIS_ENGINE_VERSION = "4"
+FEATURE_ANALYSIS_ENGINE_VERSION = "5"
 
 _NUMERIC_SCHEMA_TYPES = frozenset(("decimal", "integer"))
 _SCALAR_SCHEMA_TYPES = frozenset(("boolean", "date", "decimal", "integer", "string"))
@@ -242,6 +242,10 @@ def analyze_signal_features(
             "value-equals winner definition requires winner_value"
         )
     outcome_availability_name = _outcome_availability_name(result, outcome_name)
+    if outcome_availability_name == outcome_name:
+        raise SignalFeatureDatasetError(
+            "outcome availability fields cannot be analysis outcomes"
+        )
     if outcome_availability_name is not None and (
         outcome_availability_name not in schema_fields
         or schema_fields[outcome_availability_name].category
