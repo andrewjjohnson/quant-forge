@@ -264,8 +264,51 @@ def predict_overnight_gap_direction(
     session_close: Decimal,
 ) -> tuple[PredictionDirection, str] | None:
     """Apply the documented veto, overrides, and base rule in priority order."""
-    if current_adx > parameters.maximum_adx:
+    evaluation = evaluate_overnight_gap_rules(
+        parameters,
+        previous_rsi=previous_rsi,
+        current_rsi=current_rsi,
+        previous_positive_di=previous_positive_di,
+        current_positive_di=current_positive_di,
+        previous_negative_di=previous_negative_di,
+        current_negative_di=current_negative_di,
+        previous_adx=previous_adx,
+        current_adx=current_adx,
+        session_open=session_open,
+        session_close=session_close,
+    )
+    if evaluation.direction is None or evaluation.selected_reason is None:
         return None
+    return evaluation.direction, evaluation.selected_reason
+
+
+@dataclass(frozen=True, slots=True)
+class OvernightGapRuleEvaluation:
+    """Deterministic baseline-rule trace without any future outcome values."""
+
+    direction: PredictionDirection | None
+    selected_reason: str | None
+    matched_reasons: tuple[str, ...]
+    veto_reason: str | None = None
+
+
+def evaluate_overnight_gap_rules(
+    parameters: OvernightGapPredictionParameters,
+    *,
+    previous_rsi: Decimal,
+    current_rsi: Decimal,
+    previous_positive_di: Decimal,
+    current_positive_di: Decimal,
+    previous_negative_di: Decimal,
+    current_negative_di: Decimal,
+    previous_adx: Decimal,
+    current_adx: Decimal,
+    session_open: Decimal,
+    session_close: Decimal,
+) -> OvernightGapRuleEvaluation:
+    """Return the original prediction plus every matched rule in priority order."""
+    if current_adx > parameters.maximum_adx:
+        return OvernightGapRuleEvaluation(None, None, (), "adx_above_maximum_veto")
 
     current_di_low = min(current_positive_di, current_negative_di)
     current_di_high = max(current_positive_di, current_negative_di)
@@ -273,11 +316,12 @@ def predict_overnight_gap_direction(
     previous_di_high = max(previous_positive_di, previous_negative_di)
     adx_is_in_zone = current_di_low <= current_adx <= current_di_high
     previous_adx_was_in_zone = previous_di_low <= previous_adx <= previous_di_high
+    matched: list[str] = []
     if adx_is_in_zone and not previous_adx_was_in_zone:
         if current_positive_di > current_negative_di:
-            return PredictionDirection.UP, "adx_entered_di_zone_plus_di_on_top"
+            matched.append("adx_entered_di_zone_plus_di_on_top")
         if current_negative_di > current_positive_di:
-            return PredictionDirection.DOWN, "adx_entered_di_zone_minus_di_on_top"
+            matched.append("adx_entered_di_zone_minus_di_on_top")
 
     stabbed_from_above = (
         previous_rsi > previous_di_high and current_rsi <= current_di_high
@@ -286,19 +330,34 @@ def predict_overnight_gap_direction(
         previous_rsi < previous_di_low and current_rsi >= current_di_low
     )
     if stabbed_from_above:
-        return PredictionDirection.UP, "rsi_stabbed_di_zone_from_above"
+        matched.append("rsi_stabbed_di_zone_from_above")
     if stabbed_from_below:
-        return PredictionDirection.DOWN, "rsi_stabbed_di_zone_from_below"
+        matched.append("rsi_stabbed_di_zone_from_below")
 
     if current_rsi < parameters.lower_rsi:
-        return PredictionDirection.UP, "rsi_below_lower_threshold"
-    if current_rsi > parameters.upper_rsi:
-        return PredictionDirection.DOWN, "rsi_above_upper_threshold"
-    if session_close > session_open:
-        return PredictionDirection.UP, "bullish_candle_in_middle_rsi_range"
-    if session_close < session_open:
-        return PredictionDirection.DOWN, "bearish_candle_in_middle_rsi_range"
-    return None
+        matched.append("rsi_below_lower_threshold")
+    elif current_rsi > parameters.upper_rsi:
+        matched.append("rsi_above_upper_threshold")
+    elif session_close > session_open:
+        matched.append("bullish_candle_in_middle_rsi_range")
+    elif session_close < session_open:
+        matched.append("bearish_candle_in_middle_rsi_range")
+
+    selected_reason = matched[0] if matched else None
+    if selected_reason is None:
+        return OvernightGapRuleEvaluation(None, None, ())
+    direction = (
+        PredictionDirection.DOWN
+        if selected_reason
+        in {
+            "adx_entered_di_zone_minus_di_on_top",
+            "rsi_stabbed_di_zone_from_below",
+            "rsi_above_upper_threshold",
+            "bearish_candle_in_middle_rsi_range",
+        }
+        else PredictionDirection.UP
+    )
+    return OvernightGapRuleEvaluation(direction, selected_reason, tuple(matched))
 
 
 def _decimal_parameter(name: str, value: object) -> Decimal:

@@ -300,6 +300,21 @@ experiment and cannot be presented as the maintained baseline.
 
 Use versioned schemas for both.
 
+QF-7 makes this population-level separation concrete. The first QF-11 study
+fixes and detaches every `SignalFeatureCandidate`, including end-of-data rows,
+before later market observations can be used. Each contextual feature receives
+only a dataset prefix ending at the signal session; future bars and future
+corporate actions are absent from that view. Every configured labeler/evaluator
+then runs as a generic QF-11 study over the fixed candidates. Rejected and
+blocked rows receive direction-independent returns when available, while a
+missing direction makes only direction-dependent labels explicitly unavailable.
+
+Daily target/stop conflicts default to `both_same_session` and preserve the
+ambiguous range. MFE/MAE are labeled as descriptive extrema, not executable
+returns. The example winner/loser report shows all fixed bins and sample counts,
+does not select a filter, and labels every relationship exploratory. See
+`docs/signal-feature-datasets.md`.
+
 ## Walk-forward testing
 
 A valid walk-forward process:

@@ -51,6 +51,14 @@ arithmetic policy alongside the component and contract versions, parameters,
 required fields, warm-up observations, output fields, and missing
 representation.
 
+`WilderAverageTrueRange` is the reusable QF-4 ATR implementation. For period
+`N`, it computes true range from the current high/low and prior close, initializes
+ATR with the first full `N`-range mean, then applies Wilder recursion. Its first
+available value requires `N + 1` completed bars. It uses the same fixed Decimal
+policy as the QF-4 Wilder RSI/DMI indicators and never revises earlier values
+when future bars are appended. QF-7 composes it for ATR divided by close rather
+than maintaining a second private ATR calculation.
+
 ```python
 from quantforge.indicators import (
     MarketField,
