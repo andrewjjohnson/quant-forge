@@ -581,11 +581,13 @@ class _FixedCandidateRule:
     def __init__(
         self,
         source: _SignalFeatureRule,
+        source_configuration_snapshot: PrimitiveMappingSnapshot,
         signals: tuple[SignalFeatureCandidate, ...],
         population_id: str,
         population_count: int,
     ) -> None:
         self._source = source
+        self._source_configuration_snapshot = source_configuration_snapshot
         self._signals = signals
         self._population_id = population_id
         self._population_count = population_count
@@ -622,8 +624,10 @@ class _FixedCandidateRule:
             "fixed_candidate_population_id": self._population_id,
             "implementation_version": self.implementation_version,
             "replay_semantics": "operational chunks are parts of one fixed population",
-            "source_configuration": self._source.configuration(),
-            "source_configuration_id": self._source.configuration_id,
+            "source_configuration": self._source_configuration_snapshot.to_primitive(),
+            "source_configuration_id": configuration_identity(
+                self._source_configuration_snapshot.to_primitive()
+            ),
         }
 
     def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
@@ -835,6 +839,16 @@ def build_signal_feature_dataset[
         raise SignalFeatureDatasetError("chunk_size must be a positive integer")
     market_data = _validated_market_data(dataset)
     strategy = cast(_SignalFeatureRule, prediction_study.strategy)
+    strategy_configuration_snapshot = PrimitiveMappingSnapshot.capture(
+        strategy.configuration()
+    )
+    strategy_configuration_id = configuration_identity(
+        strategy_configuration_snapshot.to_primitive()
+    )
+    if strategy.configuration_id != strategy_configuration_id:
+        raise SignalFeatureDatasetError(
+            "prediction strategy configuration identity is invalid"
+        )
     strategy_fields = _strategy_fields(strategy)
     sorted_features = tuple(sorted(contextual_features, key=lambda item: item.name))
     contextual_definitions = tuple(feature.definition for feature in sorted_features)
@@ -880,6 +894,7 @@ def build_signal_feature_dataset[
     configuration = _dataset_configuration(
         market_data,
         prediction_study,
+        strategy_configuration_snapshot,
         strategy_fields,
         contextual_definitions,
         contextual_configuration_snapshots,
@@ -918,6 +933,7 @@ def build_signal_feature_dataset[
             schema,
             dataset,
             strategy,
+            strategy_configuration_snapshot,
             feature_configuration,
             sorted_outcomes,
             outcome_field_snapshots,
@@ -933,7 +949,11 @@ def build_signal_feature_dataset[
     )
     completed_rows = _load_progress_rows(destination, feature_dataset_id, schema)
 
-    candidates = _generate_candidate_population(dataset, prediction_study)
+    candidates = _generate_candidate_population(
+        dataset,
+        prediction_study,
+        strategy_configuration_id,
+    )
     candidate_ids = {
         _candidate_id(market_data, candidate): candidate for candidate in candidates
     }
@@ -986,6 +1006,7 @@ def build_signal_feature_dataset[
         )
         fixed_rule = _FixedCandidateRule(
             strategy,
+            strategy_configuration_snapshot,
             chunk,
             candidate_population_id,
             len(enriched_candidates),
@@ -1060,7 +1081,13 @@ def build_signal_feature_dataset[
             "completed signal-feature rows contain duplicate candidates"
         )
     if not enriched_candidates:
-        empty_rule = _FixedCandidateRule(strategy, (), candidate_population_id, 0)
+        empty_rule = _FixedCandidateRule(
+            strategy,
+            strategy_configuration_snapshot,
+            (),
+            candidate_population_id,
+            0,
+        )
         for configured_outcome, fields in zip(
             sorted_outcomes, outcome_field_snapshots, strict=True
         ):
@@ -1116,7 +1143,12 @@ def _generate_candidate_population[
     prediction_study: PredictionStudy[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
+    expected_strategy_configuration_id: str,
 ) -> tuple[SignalFeatureCandidate, ...]:
+    _validate_strategy_configuration(
+        prediction_study.strategy,
+        expected_strategy_configuration_id,
+    )
     boundary_study = PredictionStudy[
         SignalFeatureCandidate,
         _CandidatePopulationValues,
@@ -1128,7 +1160,25 @@ def _generate_candidate_population[
         feature_configuration=prediction_study.feature_configuration,
         result_schema_version=prediction_study.result_schema_version,
     )
-    return tuple(run_prediction_study(dataset, boundary_study).signals)
+    signals = tuple(run_prediction_study(dataset, boundary_study).signals)
+    _validate_strategy_configuration(
+        prediction_study.strategy,
+        expected_strategy_configuration_id,
+    )
+    return signals
+
+
+def _validate_strategy_configuration(
+    strategy: PredictionRule[SignalFeatureCandidate],
+    expected_configuration_id: str,
+) -> None:
+    if (
+        strategy.configuration_id != expected_configuration_id
+        or configuration_identity(strategy.configuration()) != expected_configuration_id
+    ):
+        raise InvalidPredictionOutputError(
+            "prediction strategy configuration changed during candidate generation"
+        )
 
 
 def _validate_regenerated_completed_rows(
@@ -1297,6 +1347,7 @@ def _dataset_configuration[
     prediction_study: PredictionStudy[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
+    strategy_configuration_snapshot: PrimitiveMappingSnapshot,
     strategy_fields: tuple[SchemaField, ...],
     contextual_definitions: tuple[SchemaField, ...],
     contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
@@ -1315,7 +1366,7 @@ def _dataset_configuration[
             "feature_configuration": prediction_study.feature_configuration,
             "outcome_labeler": prediction_study.outcome_labeler.configuration(),
             "result_schema_version": prediction_study.result_schema_version,
-            "strategy": prediction_study.strategy.configuration(),
+            "strategy": strategy_configuration_snapshot.to_primitive(),
         },
         "source_data": market_data.to_primitive(),
         "strategy_feature_fields": [field.to_primitive() for field in strategy_fields],
@@ -2068,6 +2119,7 @@ def _load_completed_result(
     schema: SignalFeatureSchema,
     dataset: MarketDataset,
     strategy: _SignalFeatureRule,
+    strategy_configuration_snapshot: PrimitiveMappingSnapshot,
     feature_configuration: PrimitiveMapping,
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
@@ -2084,6 +2136,7 @@ def _load_completed_result(
         prediction_study_ids = _empty_dataset_study_ids(
             dataset,
             strategy,
+            strategy_configuration_snapshot,
             feature_configuration,
             outcomes,
             outcome_field_snapshots,
@@ -2125,6 +2178,7 @@ def _load_completed_result(
 def _empty_dataset_study_ids(
     dataset: MarketDataset,
     strategy: _SignalFeatureRule,
+    strategy_configuration_snapshot: PrimitiveMappingSnapshot,
     feature_configuration: PrimitiveMapping,
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
@@ -2133,6 +2187,7 @@ def _empty_dataset_study_ids(
 ) -> tuple[str, ...]:
     empty_rule = _FixedCandidateRule(
         strategy,
+        strategy_configuration_snapshot,
         (),
         _fixed_candidate_population_id(()),
         0,
