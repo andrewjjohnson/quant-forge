@@ -522,6 +522,27 @@ class RegeneratingCandidateRule(FixtureCandidateRule):
         return replace(output, signals=(first, *output.signals[1:]))
 
 
+class AlternatingConfigurationCandidateRule(FixtureCandidateRule):
+    def __init__(self, dispositions: tuple[SignalDisposition, ...]) -> None:
+        super().__init__(dispositions)
+        self.configuration_reads = 0
+
+    def _configuration_for_version(self, version: str) -> PrimitiveMapping:
+        configuration = super().configuration()
+        configuration["fixture_configuration_version"] = version
+        return configuration
+
+    @property
+    def configuration_id(self) -> str:
+        version = "1" if self.configuration_reads == 0 else "2"
+        return configuration_identity(self._configuration_for_version(version))
+
+    def configuration(self) -> PrimitiveMapping:
+        self.configuration_reads += 1
+        version = "1" if self.configuration_reads == 1 else "2"
+        return self._configuration_for_version(version)
+
+
 class CountingForwardReturnOutcomeLabeler(ForwardReturnOutcomeLabeler):
     name = "counting_forward_close_return"
 
@@ -1171,6 +1192,23 @@ def test_resume_rejects_a_different_regenerated_causal_candidate(
         SignalFeaturePersistenceError, match="regenerated causal candidate"
     ):
         _build_fixture(dataset, rule, tmp_path)
+
+
+def test_builder_rejects_strategy_configuration_changed_after_snapshot(
+    tmp_path: Path,
+) -> None:
+    dataset = make_dataset(("100", "102"))
+    rule = AlternatingConfigurationCandidateRule((SignalDisposition.ACCEPTED,))
+
+    with pytest.raises(
+        SignalFeatureDatasetError,
+        match="prediction strategy configuration identity is invalid",
+    ):
+        _build_fixture(dataset, rule, tmp_path)
+
+    assert rule.configuration_reads == 1
+    assert rule.generate_calls == 0
+    assert not tuple(tmp_path.iterdir())
 
 
 def test_partial_resume_evaluates_outcomes_only_for_missing_candidates(

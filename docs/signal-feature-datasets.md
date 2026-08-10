@@ -268,6 +268,11 @@ also hashes the complete prediction-study template, rule and parameter
 configuration, strategy-feature schema, contextual feature configurations,
 complete contextual field definitions, every QF-11 labeler/evaluator
 configuration, and feature/outcome/engine versions.
+The prediction strategy configuration is captured and identity-checked once
+before the dataset ID is derived, reused by fixed-candidate replay studies, and
+revalidated immediately before and after candidate generation. A mutable custom
+strategy therefore cannot generate rows under behavior absent from the dataset
+identity.
 Each contextual definition is captured once and reused for configuration,
 schema, and value validation, so a mutable property cannot split identity from
 the exported schema. QF-11 outcome replay binds the complete fixed candidate
