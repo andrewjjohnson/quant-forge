@@ -32,6 +32,13 @@ uppercased. `dataset.bars` is ascending canonical Decimal OHLCV,
 exposes typed `CashDividend` and `StockSplit` records. `MarketDataCache.load()`
 loads a dataset directly by immutable dataset ID.
 
+QF-13's canonical timeframe model documents this existing daily path as one
+completed exchange session under the configured calendar. It does not change
+`DailyBar`, schema version 4, provider requests, cache layouts, or existing
+dataset identities. New intraday ingestion and timeframe-bearing dataset
+manifests are deferred to later QF-12 stories. See
+[`timeframe-semantics.md`](timeframe-semantics.md) and ADR 0004.
+
 `get_daily_bars(..., refresh=True)` makes a new provider request even when the
 request key is cached. Raw responses and datasets remain write-once; only the
 small request-key pointer atomically advances to the newly retrieved immutable

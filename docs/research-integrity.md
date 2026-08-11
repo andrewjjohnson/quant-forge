@@ -157,6 +157,22 @@ Record:
 
 Do not treat every calendar date as a trading session. Distinguish an exchange holiday from missing provider data.
 
+QF-13 makes these policies structural in `quantforge.timeframes`. Intraday
+durations are distinct from exchange-session daily and exchange-trading-week
+intervals. The U.S. equity default uses XNYS regular hours in
+`America/New_York`, actual-session-open anchoring, and prohibited cross-session
+bars. Canonical boundaries serialize in UTC while the exchange-local policy
+preserves 09:30-16:00 interpretation across DST. Early-close terminal bars end
+at the schedule's actual close and remain completed even when shorter than the
+nominal duration.
+
+Bar labels are indexing metadata, not availability timestamps. Consumers must
+use the explicit end and completion state. Developing bars are excluded by
+default and structurally distinct from completed partial-duration terminal
+bars. The full timeframe/session configuration has a deterministic identity;
+future datasets and studies must bind it when they adopt the model. See
+`docs/timeframe-semantics.md` and ADR 0004.
+
 ## Costs and market impact
 
 Include realistic assumptions for reportable results:

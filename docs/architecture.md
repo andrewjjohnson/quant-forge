@@ -24,6 +24,9 @@ Raw immutable extract
 Normalization and validation
         |
         v
+Canonical timeframe + session policy
+        |
+        v
 Canonical bars + typed corporate actions
         |
         +----------------------------+
@@ -110,6 +113,33 @@ Must not:
 - infer missing prices from future observations;
 - mix adjusted and unadjusted series silently;
 - generate strategy decisions.
+
+### Timeframe and exchange-session semantics
+
+QF-13 implements the shared temporal domain in `quantforge.timeframes`. It sits
+below provider ingestion, aggregation, indicators, prediction, and backtesting.
+Distinct typed intervals represent sub-day durations, exchange-session counts,
+and exchange-trading-week counts. Immutable policy records define calendar,
+timezone, regular or explicit extended hours, anchoring, cross-session behavior,
+labels, and developing-bar exposure. See `docs/timeframe-semantics.md` and ADR
+0004.
+
+Responsibilities:
+
+- define provider-neutral interval and completion-state vocabulary;
+- resolve exchange sessions and trading weeks from the configured calendar;
+- validate intraday boundaries, anchors, clock-leading and session-terminal
+  partial durations, and developing-bar exposure;
+- serialize every material semantic policy and derive deterministic identity;
+- preserve explicit start/end timestamps independently of label convention.
+
+Must not:
+
+- retrieve provider data;
+- aggregate OHLCV;
+- align multiple timeframes as of a decision timestamp;
+- calculate indicators, predictions, signals, orders, or fills;
+- silently emulate a provider or chart platform's proprietary candle policy.
 
 ### Indicators and features
 
