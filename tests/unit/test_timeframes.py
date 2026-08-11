@@ -285,6 +285,34 @@ def test_intraday_bars_cannot_silently_cross_regular_session_close() -> None:
         )
 
 
+def test_cross_session_bar_at_session_close_is_only_developing() -> None:
+    timeframe = _four_hour_timeframe(
+        exposure=DevelopingBarExposure.INCLUDE,
+        cross_session_policy=CrossSessionPolicy.PERMITTED,
+    )
+    session_date = date(2024, 7, 1)
+    start = _local_timestamp(2024, 7, 1, 13, 30)
+    session_close = _local_timestamp(2024, 7, 1, 16)
+
+    developing = IntradayBarWindow(
+        timeframe,
+        session_date,
+        start,
+        session_close,
+        BarCompletion.DEVELOPING,
+    )
+    assert developing.completion is BarCompletion.DEVELOPING
+
+    with pytest.raises(TimeframeValidationError, match="prohibited cross-session"):
+        IntradayBarWindow(
+            timeframe,
+            session_date,
+            start,
+            session_close,
+            BarCompletion.COMPLETED_PARTIAL_DURATION_TERMINAL,
+        )
+
+
 def test_session_and_clock_anchors_are_distinct_explicit_policies() -> None:
     with pytest.raises(TimeframeValidationError, match="not aligned"):
         IntradayBarWindow(

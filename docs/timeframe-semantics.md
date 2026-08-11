@@ -98,7 +98,8 @@ duration remains four hours and the actual duration is 3.5 hours.
   session, so the completed observed intersection runs from session open to the
   next clock boundary;
 - `COMPLETED_PARTIAL_DURATION_TERMINAL`: actual duration is shorter than nominal
-  and ends at the actual session close.
+  and ends at the actual session close while cross-session continuation is
+  prohibited.
 
 A partial terminal bar is completed and causally usable after its end. It is
 not a developing bar. The same is true of a completed leading partial clock
@@ -108,6 +109,10 @@ terminal boundary is invalid and must be reclassified as completed.
 With the default `CrossSessionPolicy.PROHIBITED`, an intraday boundary outside
 its resolved session fails validation. `PERMITTED` exists only as an explicit,
 identity-bearing future policy; no QF-13 code aggregates cross-session OHLCV.
+When continuation is permitted, session close does not complete a shorter bar:
+that boundary is still `DEVELOPING` until the nominal terminal, and only when
+developing-bar exposure is enabled. This keeps completion states mutually
+exclusive.
 
 `IntradayAnchor.CLOCK` is also explicit and requires an exchange-local clock
 origin. It supports future consumers that need clock-aligned candles without

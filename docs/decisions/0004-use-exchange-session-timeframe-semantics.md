@@ -35,9 +35,11 @@ Intraday bar state distinguishes full completed, developing, completed leading
 partial-duration, and completed terminal partial-duration bars. The leading
 partial state applies only when a clock bucket begins before the session and
 ends after the open. A completed terminal partial-duration bar must be shorter
-than its nominal interval and end at the schedule's actual session close. A
-developing bar requires explicit consumer opt-in and must be strictly before its
-applicable full, clock, or session-close terminal boundary.
+than its nominal interval, end at the schedule's actual session close, and
+prohibit cross-session continuation. When continuation is permitted, session
+close remains a developing boundary until the nominal terminal. A developing
+bar requires explicit consumer opt-in and must be strictly before its applicable
+full, clock, or session-close terminal boundary.
 
 Regular boundaries are resolved from `exchange-calendars` and stored in UTC,
 with the configured exchange timezone retained in policy. Extended-hours scope
@@ -62,7 +64,8 @@ minute arithmetic. XNYS holidays, weekends, early closes, and DST behavior are
 calendar-derived and deterministic. Four-hour bars retain both nominal and
 actual duration, and terminal completion cannot alias a developing state.
 Clock-aligned leading intersections likewise remain explicit completed states
-instead of being discarded or mislabeled as developing.
+instead of being discarded or mislabeled as developing. Cross-session policy
+keeps session-close completion and continued development mutually exclusive.
 
 The configuration is more verbose than a string such as `4h`, but it preserves
 the policies required to reproduce a chart. A platform/provider correction or

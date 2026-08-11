@@ -609,6 +609,11 @@ class IntradayBarWindow:
         if self.completion is BarCompletion.COMPLETED_PARTIAL_DURATION_LEADING:
             self._validate_leading_partial(interval, session)
             return
+        if interval.cross_session_policy is CrossSessionPolicy.PERMITTED:
+            raise TimeframeValidationError(
+                "completed terminal partial-duration bar requires prohibited "
+                "cross-session continuation"
+            )
         if (
             actual_duration >= nominal_duration
             or self.end_timestamp != session.close_timestamp
