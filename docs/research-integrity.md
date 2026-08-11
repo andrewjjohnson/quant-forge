@@ -173,6 +173,34 @@ bars. The full timeframe/session configuration has a deterministic identity;
 future datasets and studies must bind it when they adopt the model. See
 `docs/timeframe-semantics.md` and ADR 0004.
 
+## Common-source multi-timeframe integrity
+
+Matching a symbol, provider name, or display interval does not prove that two
+bar series describe the same market observations. A venue-only feed and a
+consolidated feed can have materially different volume and OHLC values.
+Provider-native daily or four-hour candles can also use different sessions,
+anchors, adjustments, or source revisions from QuantForge-derived bars.
+
+QF-14 therefore requires every ordinary multi-timeframe study to use
+`DatasetFamilyReference` records with one deterministic family ID and one
+canonical source snapshot ID. Every higher-timeframe dataset must trace through
+an acyclic parent lineage to that source. The family identity includes provider,
+feed scope, source interval, full exchange-session/timezone policy,
+adjustment/corporate-action basis, and aggregation policy. IEX-only and
+consolidated data consequently cannot pass as one family.
+
+`validate_source_consistency()` fails closed on mixed references. An explicit
+external-bar policy is the only extension point, must carry deterministic
+configuration identity, and must leave auditable validation evidence. QF-14
+ships no concrete external policy, so ordinary contexts use the common-source
+rule. See `docs/dataset-lineage.md` and ADR 0005.
+
+Dataset-family manifests retain the complete sorted lineage. Their separate
+manifest identity changes as derived datasets are recorded, while the family ID
+remains stable for the same canonical source and policies. This lets later
+derived data remain compatible without allowing a source, feed, interval, or
+policy change to alias the earlier family.
+
 ## Costs and market impact
 
 Include realistic assumptions for reportable results:
