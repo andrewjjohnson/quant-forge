@@ -382,6 +382,44 @@ def test_clock_anchor_represents_leading_partial_and_developing_bucket() -> None
         )
 
 
+def test_clock_anchor_uses_one_cadence_for_non_day_divisor_duration() -> None:
+    interval = IntradayInterval(
+        timedelta(hours=5),
+        anchor=IntradayAnchor.CLOCK,
+        clock_anchor=time(10),
+    )
+    timeframe = Timeframe.us_equity(interval)
+    session_date = date(2024, 7, 1)
+
+    leading = IntradayBarWindow(
+        timeframe,
+        session_date,
+        _local_timestamp(2024, 7, 1, 9, 30),
+        _local_timestamp(2024, 7, 1, 11),
+        BarCompletion.COMPLETED_PARTIAL_DURATION_LEADING,
+    )
+    assert leading.actual_duration == timedelta(hours=1, minutes=30)
+
+    with pytest.raises(TimeframeValidationError, match="not aligned"):
+        IntradayBarWindow(
+            timeframe,
+            session_date,
+            _local_timestamp(2024, 7, 1, 10),
+            _local_timestamp(2024, 7, 1, 15),
+            BarCompletion.COMPLETED,
+        )
+
+    completed = IntradayBarWindow(
+        timeframe,
+        session_date,
+        _local_timestamp(2024, 7, 1, 11),
+        _local_timestamp(2024, 7, 1, 16),
+        BarCompletion.COMPLETED,
+    )
+    assert completed.actual_duration == timedelta(hours=5)
+    assert interval.to_primitive()["clock_anchor_epoch_date"] == "1970-01-01"
+
+
 def test_early_close_produces_completed_partial_duration_terminal_bar() -> None:
     session = resolve_exchange_session(date(2024, 11, 29))
     assert session.open_timestamp.astimezone(NEW_YORK).time() == time(9, 30)

@@ -115,9 +115,15 @@ developing-bar exposure is enabled. This keeps completion states mutually
 exclusive.
 
 `IntradayAnchor.CLOCK` is also explicit and requires an exchange-local clock
-origin. It supports future consumers that need clock-aligned candles without
-changing the session-open default. Clock anchoring does not implicitly permit a
-bar to cross the configured session. If the session opens inside a clock bucket,
+origin. The origin is placed on the fixed 1970-01-01 exchange-local epoch and
+all boundaries advance from it by exact elapsed nominal durations. A duration
+that does not divide 24 hours therefore continues one cadence across local date
+boundaries instead of resetting and producing overlapping buckets. The epoch is
+part of stable interval serialization.
+
+Clock anchoring supports future consumers that need clock-aligned candles
+without changing the session-open default. It does not implicitly permit a bar
+to cross the configured session. If the session opens inside a clock bucket,
 the opening intersection is represented explicitly as a completed leading
 partial-duration bar. For hourly buckets anchored at 09:00, the first regular
 XNYS window is therefore 09:30-10:00; while it is forming, its developing
@@ -127,9 +133,10 @@ terminal is 10:00 rather than 10:30.
 
 `Timeframe.to_primitive()` records the schema version, typed interval, exact
 duration or count, calendar, timezone, session scope and explicit extended-hours
-bounds, anchor and clock origin, cross-session policy, label policy, and
-developing-bar exposure. `Timeframe.configuration_id` is the repository's
-canonical sorted-JSON SHA-256 identity of that complete primitive mapping.
+bounds, anchor, clock origin and cadence epoch, cross-session policy, label
+policy, and developing-bar exposure. `Timeframe.configuration_id` is the
+repository's canonical sorted-JSON SHA-256 identity of that complete primitive
+mapping.
 
 Changing any material policy therefore changes the configuration ID. Consumers
 must persist both the primitive configuration and ID, then verify the ID before

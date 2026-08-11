@@ -45,7 +45,9 @@ Regular boundaries are resolved from `exchange-calendars` and stored in UTC,
 with the configured exchange timezone retained in policy. Extended-hours scope
 requires explicit same-day exchange-local bounds. Session-open and clock
 anchoring are different identity-bearing policies. Clock anchoring requires an
-explicit local origin. Cross-session permission is also explicit and is not the
+explicit local origin placed on a fixed 1970-01-01 exchange-local epoch;
+consecutive buckets advance from that epoch by exact elapsed duration rather
+than resetting daily. Cross-session permission is also explicit and is not the
 default.
 
 Every material setting has a stable primitive representation in timeframe
@@ -66,6 +68,8 @@ actual duration, and terminal completion cannot alias a developing state.
 Clock-aligned leading intersections likewise remain explicit completed states
 instead of being discarded or mislabeled as developing. Cross-session policy
 keeps session-close completion and continued development mutually exclusive.
+The fixed clock epoch prevents non-day-divisor durations from creating
+overlapping buckets around a daily reset.
 
 The configuration is more verbose than a string such as `4h`, but it preserves
 the policies required to reproduce a chart. A platform/provider correction or
@@ -107,7 +111,8 @@ that old manifests acquired new persisted fields.
 Deterministic unit and invariant-style parameterized tests cover arbitrary
 positive sub-day durations, distinct session/week counts, stable serialization,
 identity sensitivity, session-open and clock anchoring, explicit cross-session
-permission, clock-leading partials, developing-bar opt-in, the 09:30-13:30 and
-13:30-16:00 XNYS four-hour windows, the 2024-11-29 early close, the 2024
-Independence Day holiday week, a weekend, and the March 2024 DST boundary.
-Existing full-suite tests protect QF-3/QF-4/QF-5/QF-6/QF-7/QF-11 compatibility.
+permission, clock-leading partials, a non-day-divisor clock cadence,
+developing-bar opt-in, the 09:30-13:30 and 13:30-16:00 XNYS four-hour windows,
+the 2024-11-29 early close, the 2024 Independence Day holiday week, a weekend,
+and the March 2024 DST boundary. Existing full-suite tests protect
+QF-3/QF-4/QF-5/QF-6/QF-7/QF-11 compatibility.

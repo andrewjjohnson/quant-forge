@@ -13,6 +13,7 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 TIMEFRAME_SCHEMA_VERSION = "1"
 XNYS_CALENDAR = "XNYS"
 NEW_YORK_TIMEZONE = "America/New_York"
+_CLOCK_ANCHOR_EPOCH_DATE = date(1970, 1, 1)
 _ONE_DAY = timedelta(days=1)
 
 
@@ -239,6 +240,11 @@ class IntradayInterval:
             ),
             "anchor": self.anchor.value,
             "clock_anchor": _time_primitive(self.clock_anchor),
+            "clock_anchor_epoch_date": (
+                _CLOCK_ANCHOR_EPOCH_DATE.isoformat()
+                if self.anchor is IntradayAnchor.CLOCK
+                else None
+            ),
             "cross_session_policy": self.cross_session_policy.value,
         }
 
@@ -538,18 +544,17 @@ class IntradayBarWindow:
         self, interval: IntradayInterval
     ) -> tuple[datetime, datetime]:
         timezone = ZoneInfo(self.timeframe.session_policy.timezone_name)
-        local_start = self.start_timestamp.astimezone(timezone)
         anchor = datetime.combine(
-            local_start.date(), cast(time, interval.clock_anchor), timezone
-        )
-        if local_start < anchor:
-            anchor -= _ONE_DAY
-        elapsed = local_start - anchor
+            _CLOCK_ANCHOR_EPOCH_DATE,
+            cast(time, interval.clock_anchor),
+            timezone,
+        ).astimezone(UTC)
+        elapsed = self.start_timestamp - anchor
         bucket_start = anchor + (elapsed // interval.nominal_duration) * (
             interval.nominal_duration
         )
         bucket_end = bucket_start + interval.nominal_duration
-        return bucket_start.astimezone(UTC), bucket_end.astimezone(UTC)
+        return bucket_start, bucket_end
 
     def _anchored_terminal_timestamp(self, interval: IntradayInterval) -> datetime:
         if interval.anchor is IntradayAnchor.CLOCK:
