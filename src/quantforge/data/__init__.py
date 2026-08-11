@@ -1,4 +1,4 @@
-"""Provider-agnostic daily market data and typed corporate actions."""
+"""Provider-agnostic daily and intraday market-data contracts."""
 
 from quantforge.data.cache import MarketDataCache
 from quantforge.data.exceptions import (
@@ -6,9 +6,22 @@ from quantforge.data.exceptions import (
     MarketDataError,
     ProviderError,
     RequestError,
+    UnsupportedCapabilityError,
+    UnsupportedDateRangeError,
+    UnsupportedFeedError,
+    UnsupportedIntervalError,
+    UnsupportedSessionScopeError,
     ValidationError,
 )
 from quantforge.data.identity import dataset_identity_matches
+from quantforge.data.intraday import (
+    INTRADAY_CONTRACT_SCHEMA_VERSION,
+    IntradayBar,
+    IntradayBarProvenance,
+    IntradayBarRequest,
+    IntradayContractValidationError,
+    IntradayProviderCapabilities,
+)
 from quantforge.data.lineage import (
     DATASET_FAMILY_SCHEMA_VERSION,
     AdjustmentBasis,
@@ -40,6 +53,7 @@ from quantforge.data.validate import validate_market_dataset
 
 __all__ = [
     "DATASET_FAMILY_SCHEMA_VERSION",
+    "INTRADAY_CONTRACT_SCHEMA_VERSION",
     "AdjustmentBasis",
     "AdjustmentMode",
     "AggregationPolicy",
@@ -56,6 +70,11 @@ __all__ = [
     "ExternalBarValidationPolicy",
     "FeedCoverage",
     "FeedScope",
+    "IntradayBar",
+    "IntradayBarProvenance",
+    "IntradayBarRequest",
+    "IntradayContractValidationError",
+    "IntradayProviderCapabilities",
     "MarketDataCache",
     "MarketDataError",
     "MarketDataService",
@@ -66,6 +85,11 @@ __all__ = [
     "SourceConsistencyMode",
     "SourceConsistencyValidation",
     "StockSplit",
+    "UnsupportedCapabilityError",
+    "UnsupportedDateRangeError",
+    "UnsupportedFeedError",
+    "UnsupportedIntervalError",
+    "UnsupportedSessionScopeError",
     "ValidationError",
     "dataset_identity_matches",
     "validate_market_dataset",

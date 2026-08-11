@@ -1,8 +1,13 @@
-"""Provider boundary for daily bars."""
+"""Provider boundaries for canonical daily and intraday bars."""
 
 from datetime import date
 from typing import Protocol
 
+from quantforge.data.intraday import (
+    IntradayBar,
+    IntradayBarRequest,
+    IntradayProviderCapabilities,
+)
 from quantforge.data.models import AdjustmentMode, ProviderResponse
 
 
@@ -14,3 +19,14 @@ class DailyBarProvider(Protocol):
     def fetch_daily_bars(
         self, symbol: str, start: date, end: date, adjustment: AdjustmentMode
     ) -> ProviderResponse: ...
+
+
+class IntradayBarProvider(Protocol):
+    """Adapters expose capabilities and return only canonical intraday bars."""
+
+    name: str
+    intraday_capabilities: IntradayProviderCapabilities
+
+    def fetch_intraday_bars(
+        self, request: IntradayBarRequest
+    ) -> tuple[IntradayBar, ...]: ...

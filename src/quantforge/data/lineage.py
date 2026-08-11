@@ -41,6 +41,7 @@ class FeedCoverage(StrEnum):
     CONSOLIDATED = "consolidated"
     SINGLE_VENUE = "single_venue"
     PROVIDER_DEFINED = "provider_defined"
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +60,12 @@ class FeedScope:
             if self.market_center is not None or self.provider_scope is not None:
                 raise DatasetFamilyValidationError(
                     "consolidated feed scope cannot name a venue or provider scope"
+                )
+            return
+        if self.coverage is FeedCoverage.UNKNOWN:
+            if self.market_center is not None or self.provider_scope is not None:
+                raise DatasetFamilyValidationError(
+                    "unknown feed scope cannot name a venue or provider scope"
                 )
             return
         if self.coverage is FeedCoverage.SINGLE_VENUE:
@@ -85,9 +92,19 @@ class FeedScope:
         return cls(FeedCoverage.SINGLE_VENUE, market_center=market_center)
 
     @classmethod
+    def iex_only(cls) -> "FeedScope":
+        """Return the provider-neutral representation of IEX-only observations."""
+        return cls.single_venue("IEX")
+
+    @classmethod
     def provider_defined(cls, provider_scope: str) -> "FeedScope":
         """Return an explicit provider-defined scope with no canonical analogue."""
         return cls(FeedCoverage.PROVIDER_DEFINED, provider_scope=provider_scope)
+
+    @classmethod
+    def unknown(cls) -> "FeedScope":
+        """Return an explicitly unknown feed rather than assuming consolidation."""
+        return cls(FeedCoverage.UNKNOWN)
 
     def to_primitive(self) -> PrimitiveMapping:
         return {

@@ -80,9 +80,12 @@ prediction framework or feed future outcomes back into rule execution. See
 
 ### Data acquisition
 
-QF-3 implements this boundary in `quantforge.data`: an injected provider feeds
-pure normalization and XNYS-aware validation, followed by content-addressed raw
-JSON, canonical decimal CSV, and a stable manifest. See `docs/market-data.md`.
+QF-3 implements the daily boundary in `quantforge.data`: an injected provider
+feeds pure normalization and XNYS-aware validation, followed by content-
+addressed raw JSON, canonical decimal CSV, and a stable manifest. QF-15 adds
+typed provider-neutral intraday requests, canonical bars, provenance, and
+capability declarations without implementing HTTP retrieval or caching. See
+`docs/market-data.md` and `docs/intraday-market-data.md`.
 
 Responsibilities:
 
@@ -90,6 +93,8 @@ Responsibilities:
 - retrieve raw data;
 - capture provider metadata;
 - handle provider-specific errors and rate limits.
+- map intraday transport responses to canonical bars before returning through
+  the adapter protocol.
 
 Must not:
 
@@ -110,6 +115,8 @@ Responsibilities:
 - generate deterministic fingerprints;
 - authoritatively validate complete datasets by recomputing all derivable bar,
   calendar, gap, digest, path, and identity invariants.
+- validate intraday timezone, boundary, duration, completion, OHLCV, and
+  provider-neutral provenance contracts before downstream use.
 
 Must not:
 
@@ -160,8 +167,8 @@ compatibility while producing a new immutable manifest.
 
 Responsibilities:
 
-- represent consolidated, single-venue, and explicit provider-defined feed
-  scopes without provider response types;
+- represent consolidated, single-venue, explicit provider-defined, and unknown
+  feed scopes without provider response types;
 - retain parent, child, canonical-source, and timeframe identity for every
   dataset;
 - reject missing parents, inconsistent child links, disconnected lineage, and

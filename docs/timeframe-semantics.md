@@ -1,9 +1,12 @@
 # Timeframe and exchange-session semantics
 
-QF-13 defines the provider-neutral temporal vocabulary used by future market
-data, aggregation, alignment, indicator, prediction, and strategy consumers. It
+QF-13 defines the provider-neutral temporal vocabulary used by market data,
+aggregation, alignment, indicator, prediction, and strategy consumers. It
 defines configuration and boundary validation only. It does not retrieve data,
-aggregate OHLCV, align multiple timeframes, or change indicators.
+aggregate OHLCV, align multiple timeframes, or change indicators. QF-15's
+intraday request and canonical-bar contracts are the first ingestion boundary
+to consume the complete configuration and `IntradayBarWindow`; see
+[`intraday-market-data.md`](intraday-market-data.md).
 
 The public implementation is `quantforge.timeframes`.
 
@@ -142,9 +145,10 @@ Changing any material policy therefore changes the configuration ID. Consumers
 must persist both the primitive configuration and ID, then verify the ID before
 trusting cached or reportable results. Future intraday dataset and aggregation
 stories must bind this ID into their own manifests rather than copying only a
-display name such as `4h`. QF-14's `DatasetLineage` now provides that
+display name such as `4h`. QF-14's `DatasetLineage` provides that
 provider-neutral binding for canonical source and derived dataset-family
-members. See [`dataset-lineage.md`](dataset-lineage.md).
+members, and QF-15 intraday requests and bars bind the same ID before
+persistence exists. See [`dataset-lineage.md`](dataset-lineage.md).
 
 The schema is version `1`. Adding a new semantic policy or changing an existing
 meaning requires a schema-version and compatibility review; field-order changes
