@@ -21,10 +21,12 @@ from quantforge.data import (
     IntradayFetchResult,
     IntradayMarketDataCache,
     IntradayMarketDataService,
+    IntradayRawSnapshot,
     ProviderError,
     RequestError,
     UnsupportedSessionScopeError,
 )
+from quantforge.data.models import JsonValue, ProviderRecord
 from quantforge.data.providers import TiingoProvider
 from quantforge.timeframes import (
     BarLabel,
@@ -349,6 +351,47 @@ def test_fetch_result_rejects_cross_chunk_or_provider_misattribution(
             result.raw_snapshots,
             result.capabilities_configuration_id,
         )
+
+
+def test_raw_snapshot_owns_immutable_copy_of_provider_records() -> None:
+    request = _request()
+    provider_record = cast(
+        ProviderRecord,
+        {
+            "date": "2024-07-01T13:30:00.000Z",
+            "open": 100.0,
+            "high": 100.5,
+            "low": 99.5,
+            "close": 100.25,
+            "volume": 1000,
+            "metadata": {"sequence": [1, 2]},
+        },
+    )
+    snapshot = IntradayRawSnapshot(
+        provider_name="tiingo",
+        provider_symbol="SPY",
+        adapter_version="test-adapter",
+        endpoint="tiingo/equity/intraday/<ticker>/prices",
+        source_request_id=request.request_id,
+        chunk_start_timestamp=request.start_timestamp,
+        chunk_end_timestamp=request.end_timestamp,
+        retrieved_at=datetime(2024, 7, 1, 14, tzinfo=UTC),
+        request_parameters=(("resampleFreq", "5min"),),
+        records=(provider_record,),
+    )
+    original_id = snapshot.snapshot_id
+    original_serialized = snapshot.serialize()
+
+    cast(dict[str, JsonValue], provider_record)["close"] = 999.0
+    metadata = cast(dict[str, JsonValue], provider_record["metadata"])
+    metadata["sequence"] = [9]
+    exposed_record = cast(dict[str, JsonValue], snapshot.records[0])
+    exposed_record["close"] = 500.0
+
+    assert snapshot.records[0]["close"] == 100.25
+    assert snapshot.records[0]["metadata"] == {"sequence": [1, 2]}
+    assert snapshot.snapshot_id == original_id
+    assert snapshot.serialize() == original_serialized
 
 
 def test_tiingo_intraday_errors_do_not_expose_credentials(

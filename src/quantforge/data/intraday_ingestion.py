@@ -3,13 +3,13 @@
 import json
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, cast
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data.exceptions import CacheError, ProviderError, RequestError
 from quantforge.data.identity import canonical_json_bytes, sha256_hex
 from quantforge.data.intraday import (
@@ -41,7 +41,7 @@ def _json_records(records: tuple[ProviderRecord, ...]) -> list[dict[str, JsonVal
     return [dict(record) for record in records]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class IntradayRawSnapshot:
     """One lossless JSON-compatible provider response for a bounded chunk."""
 
@@ -54,7 +54,38 @@ class IntradayRawSnapshot:
     chunk_end_timestamp: datetime
     retrieved_at: datetime
     request_parameters: tuple[tuple[str, str], ...]
-    records: tuple[ProviderRecord, ...]
+    _records_snapshot: PrimitiveMappingSnapshot = field(repr=False)
+
+    def __init__(
+        self,
+        provider_name: str,
+        provider_symbol: str,
+        adapter_version: str,
+        endpoint: str,
+        source_request_id: str,
+        chunk_start_timestamp: datetime,
+        chunk_end_timestamp: datetime,
+        retrieved_at: datetime,
+        request_parameters: tuple[tuple[str, str], ...],
+        records: tuple[ProviderRecord, ...],
+    ) -> None:
+        object.__setattr__(self, "provider_name", provider_name)
+        object.__setattr__(self, "provider_symbol", provider_symbol)
+        object.__setattr__(self, "adapter_version", adapter_version)
+        object.__setattr__(self, "endpoint", endpoint)
+        object.__setattr__(self, "source_request_id", source_request_id)
+        object.__setattr__(self, "chunk_start_timestamp", chunk_start_timestamp)
+        object.__setattr__(self, "chunk_end_timestamp", chunk_end_timestamp)
+        object.__setattr__(self, "retrieved_at", retrieved_at)
+        object.__setattr__(self, "request_parameters", request_parameters)
+        object.__setattr__(
+            self,
+            "_records_snapshot",
+            PrimitiveMappingSnapshot.capture(
+                cast(PrimitiveMapping, {"records": _json_records(records)})
+            ),
+        )
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         _validated_text(self.provider_name, "raw provider name")
@@ -78,6 +109,19 @@ class IntradayRawSnapshot:
         object.__setattr__(self, "retrieved_at", retrieved_at)
         object.__setattr__(self, "request_parameters", parameters)
 
+    @property
+    def records(self) -> tuple[ProviderRecord, ...]:
+        """Return detached records without exposing the immutable snapshot."""
+        records = self._records_snapshot.to_primitive()["records"]
+        if not isinstance(records, list):
+            raise TypeError("raw records snapshot must decode to an array")
+        detached: list[ProviderRecord] = []
+        for record in records:
+            if not isinstance(record, dict):
+                raise TypeError("raw records snapshot entries must be objects")
+            detached.append(cast(ProviderRecord, record))
+        return tuple(detached)
+
     def to_primitive(self) -> PrimitiveMapping:
         """Return raw payload and non-secret request provenance."""
         return cast(
@@ -94,7 +138,7 @@ class IntradayRawSnapshot:
                 "chunk_end_timestamp": self.chunk_end_timestamp.isoformat(),
                 "retrieved_at": self.retrieved_at.isoformat(),
                 "request_parameters": dict(self.request_parameters),
-                "records": _json_records(self.records),
+                "records": self._records_snapshot.to_primitive()["records"],
             },
         )
 
