@@ -240,6 +240,30 @@ def test_aggregation_configuration_is_snapshotted_before_identity() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("adjustment_mode", "ohlc_basis", "volume_basis"),
+    [
+        (AdjustmentMode.UNADJUSTED, "split_adjusted", "raw_provider"),
+        (AdjustmentMode.UNADJUSTED, "raw_provider", "split_adjusted"),
+        (AdjustmentMode.SPLIT_ADJUSTED, "raw_provider", "split_adjusted"),
+        (AdjustmentMode.SPLIT_ADJUSTED, "split_adjusted", "raw_provider"),
+    ],
+)
+def test_adjustment_mode_rejects_contradictory_price_or_volume_basis(
+    adjustment_mode: AdjustmentMode,
+    ohlc_basis: str,
+    volume_basis: str,
+) -> None:
+    with pytest.raises(DatasetFamilyValidationError, match="inconsistent"):
+        AdjustmentBasis(
+            adjustment_mode,
+            ohlc_basis,
+            volume_basis,
+            "separate_provider_reported_cash_dividends_and_splits",
+            False,
+        )
+
+
 def test_valid_multi_timeframe_references_share_one_family() -> None:
     family = _family()
 

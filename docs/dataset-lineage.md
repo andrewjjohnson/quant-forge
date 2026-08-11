@@ -68,6 +68,11 @@ policy's meaning and must supply its complete primitive configuration.
 map its vocabulary into these values, but downstream lineage code never accepts
 provider SDK or response types.
 
+`AdjustmentBasis` follows the existing QF-3 invariant: unadjusted data must use
+`raw_provider` for both OHLC and volume, while every adjusted mode uses
+`split_adjusted` for both. Contradictory combinations fail construction rather
+than becoming trusted family provenance.
+
 ## Lineage invariants
 
 Each `DatasetLineage` entry stores its dataset ID, complete timeframe, canonical

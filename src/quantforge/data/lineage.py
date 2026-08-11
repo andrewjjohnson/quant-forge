@@ -119,6 +119,15 @@ class AdjustmentBasis:
             raise DatasetFamilyValidationError(
                 "adjusted-fields-used flag must be a boolean"
             )
+        expected_basis = (
+            "raw_provider"
+            if self.adjustment_mode is AdjustmentMode.UNADJUSTED
+            else "split_adjusted"
+        )
+        if self.ohlc_basis != expected_basis or self.volume_basis != expected_basis:
+            raise DatasetFamilyValidationError(
+                "adjustment mode is inconsistent with the OHLC or volume basis"
+            )
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
