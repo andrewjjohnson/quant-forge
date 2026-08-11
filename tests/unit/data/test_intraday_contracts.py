@@ -15,6 +15,7 @@ from quantforge.data import (
     FeedCoverage,
     FeedScope,
     IntradayBar,
+    IntradayBarBatch,
     IntradayBarProvenance,
     IntradayBarRequest,
     IntradayContractValidationError,
@@ -356,6 +357,47 @@ def test_bar_preserves_completed_partial_actual_duration() -> None:
     assert bar.to_primitive()["actual_duration_microseconds"] == 9_000_000_000
 
 
+def test_intraday_bar_batch_is_request_bound_serializable_and_deterministic() -> None:
+    request = _request()
+    first = _bar()
+    second = _bar(
+        start_timestamp=datetime(2024, 7, 1, 10, 30, tzinfo=NEW_YORK),
+        end_timestamp=datetime(2024, 7, 1, 11, 30, tzinfo=NEW_YORK),
+    )
+    batch = IntradayBarBatch(request, (first, second))
+
+    assert batch.bars == (first, second)
+    assert json.loads(batch.serialize()) == batch.to_primitive()
+    assert batch.batch_id == configuration_identity(batch.to_primitive())
+    assert IntradayBarBatch(_request(), (first, second)).batch_id == batch.batch_id
+
+
+def test_intraday_bar_batch_rejects_duplicates_and_out_of_order_bars() -> None:
+    request = _request()
+    first = _bar()
+    second = _bar(
+        start_timestamp=datetime(2024, 7, 1, 10, 30, tzinfo=NEW_YORK),
+        end_timestamp=datetime(2024, 7, 1, 11, 30, tzinfo=NEW_YORK),
+    )
+
+    with pytest.raises(IntradayContractValidationError, match="duplicate bar key"):
+        IntradayBarBatch(request, (first, replace(first, close=Decimal("101.5"))))
+    with pytest.raises(IntradayContractValidationError, match="chronologically"):
+        IntradayBarBatch(request, (second, first))
+
+
+def test_intraday_bar_batch_rejects_bars_from_another_request() -> None:
+    consolidated_request = _request()
+    iex_request = _request(feed_scope=FeedScope.iex_only())
+    iex_bar = replace(
+        _bar(),
+        provenance=_provenance(iex_request),
+    )
+
+    with pytest.raises(IntradayContractValidationError, match="request identity"):
+        IntradayBarBatch(consolidated_request, (iex_bar,))
+
+
 @pytest.mark.parametrize(
     ("high", "low", "volume", "message"),
     [
@@ -391,7 +433,7 @@ def test_intraday_adapter_boundary_is_canonical_and_daily_contract_is_unchanged(
     )
 
     assert intraday_hints["request"] is IntradayBarRequest
-    assert intraday_hints["return"] == tuple[IntradayBar, ...]
+    assert intraday_hints["return"] is IntradayBarBatch
     assert daily_hints["return"] is ProviderResponse
     assert SCHEMA_VERSION == "4"
     assert daily_bar.session_date == date(2024, 7, 1)

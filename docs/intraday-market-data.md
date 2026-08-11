@@ -74,7 +74,7 @@ consolidated data.
 
 ## Canonical bars
 
-`IntradayBar` is the provider-neutral adapter output. It records:
+`IntradayBar` is one provider-neutral normalized observation. It records:
 
 - canonical symbol and exchange-session identifier;
 - explicit bar start and end timestamps normalized to UTC;
@@ -106,14 +106,19 @@ records:
 - adjustment/corporate-action basis.
 
 Provider SDK or HTTP response objects never cross the adapter boundary.
-`IntradayBarProvider.fetch_intraday_bars()` returns only a tuple of canonical
-`IntradayBar` records. A future adapter is responsible for preserving its raw
+`IntradayBarProvider.fetch_intraday_bars()` returns an `IntradayBarBatch`, never
+a provider response or a bare tuple. The batch binds bars to the exact request,
+requires chronological ordering, rejects duplicate keys, and verifies every
+bar's symbol, timeframe, request identity, feed scope, adjustment basis, and
+requested timestamp range. It deliberately does not infer missing bars or
+validate session gaps. A future adapter is responsible for preserving its raw
 response separately before mapping it to these contracts.
 
-Like requests, bars expose `to_primitive()`, canonical `serialize()` bytes, and
-a deterministic `bar_id`. The bar identity binds timestamps, interval and
-session policy, completion, OHLCV, request/snapshot provenance, feed, and
-adjustment basis.
+Like requests, bars and batches expose `to_primitive()`, canonical `serialize()`
+bytes, and deterministic identities. The bar identity binds timestamps,
+interval and session policy, completion, OHLCV, request/snapshot provenance,
+feed, and adjustment basis. The batch identity additionally binds the exact
+ordered collection and its complete request.
 
 ## Provider capability metadata
 

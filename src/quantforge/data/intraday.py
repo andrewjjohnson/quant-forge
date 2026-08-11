@@ -327,6 +327,111 @@ class IntradayBar:
 
 
 @dataclass(frozen=True, slots=True)
+class IntradayBarBatch:
+    """One request-bound, chronologically ordered canonical bar collection."""
+
+    request: IntradayBarRequest
+    bars: tuple[IntradayBar, ...]
+    schema_version: str = INTRADAY_CONTRACT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        request = cast(object, self.request)
+        bars = cast(object, self.bars)
+        if not isinstance(request, IntradayBarRequest):
+            raise IntradayContractValidationError(
+                "intraday bar batch request is invalid"
+            )
+        if not isinstance(bars, tuple):
+            raise IntradayContractValidationError(
+                "intraday bar batch bars must be a tuple"
+            )
+        untyped_bars = cast(tuple[object, ...], bars)
+        if any(not isinstance(bar, IntradayBar) for bar in untyped_bars):
+            raise IntradayContractValidationError(
+                "intraday bar batch contains an invalid bar"
+            )
+        typed_bars = cast(tuple[IntradayBar, ...], untyped_bars)
+        if self.schema_version != INTRADAY_CONTRACT_SCHEMA_VERSION:
+            raise IntradayContractValidationError(
+                f"intraday contract schema {INTRADAY_CONTRACT_SCHEMA_VERSION} "
+                "is required"
+            )
+        for bar in typed_bars:
+            self._validate_bar_matches_request(bar)
+        bar_keys = tuple(
+            (bar.symbol, bar.timeframe.configuration_id, bar.start_timestamp)
+            for bar in typed_bars
+        )
+        if len(set(bar_keys)) != len(bar_keys):
+            raise IntradayContractValidationError(
+                "intraday bar batch contains a duplicate bar key"
+            )
+        chronological_keys = tuple(
+            (bar.start_timestamp, bar.end_timestamp) for bar in typed_bars
+        )
+        if chronological_keys != tuple(sorted(chronological_keys)):
+            raise IntradayContractValidationError(
+                "intraday bar batch must be ordered chronologically"
+            )
+
+    def _validate_bar_matches_request(self, bar: IntradayBar) -> None:
+        if bar.symbol != self.request.symbol:
+            raise IntradayContractValidationError(
+                "intraday bar symbol does not match its request"
+            )
+        if bar.timeframe != self.request.timeframe:
+            raise IntradayContractValidationError(
+                "intraday bar timeframe does not match its request"
+            )
+        if bar.provenance.source_request_id != self.request.request_id:
+            raise IntradayContractValidationError(
+                "intraday bar provenance does not match its request identity"
+            )
+        if bar.provenance.feed_scope != self.request.feed_scope:
+            raise IntradayContractValidationError(
+                "intraday bar feed scope does not match its request"
+            )
+        if bar.provenance.adjustment_basis != self.request.adjustment_basis:
+            raise IntradayContractValidationError(
+                "intraday bar adjustment basis does not match its request"
+            )
+        if (
+            not (
+                self.request.start_timestamp
+                <= bar.start_timestamp
+                < self.request.end_timestamp
+            )
+            or bar.end_timestamp > self.request.end_timestamp
+        ):
+            raise IntradayContractValidationError(
+                "intraday bar falls outside its request range"
+            )
+
+    def to_primitive(self) -> PrimitiveMapping:
+        """Return the request binding and ordered canonical bars."""
+        return {
+            "schema_version": self.schema_version,
+            "contract_type": "intraday_bar_batch",
+            "request": {
+                "request_id": self.request.request_id,
+                "configuration": self.request.to_primitive(),
+            },
+            "bars": [
+                {"bar_id": bar.bar_id, "bar": bar.to_primitive()} for bar in self.bars
+            ],
+        }
+
+    @property
+    def batch_id(self) -> str:
+        """Return the deterministic identity of this exact ordered collection."""
+        return configuration_identity(self.to_primitive())
+
+    def serialize(self) -> bytes:
+        """Serialize the batch as canonical sorted JSON bytes."""
+        return canonical_json_bytes(self.to_primitive())
+
+
+@dataclass(frozen=True, slots=True)
 class IntradayProviderCapabilities:
     """Serializable provider support for source intervals and coverage policy."""
 
@@ -499,6 +604,7 @@ class IntradayProviderCapabilities:
 __all__ = [
     "INTRADAY_CONTRACT_SCHEMA_VERSION",
     "IntradayBar",
+    "IntradayBarBatch",
     "IntradayBarProvenance",
     "IntradayBarRequest",
     "IntradayContractValidationError",

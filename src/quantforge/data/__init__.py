@@ -17,6 +17,7 @@ from quantforge.data.identity import dataset_identity_matches
 from quantforge.data.intraday import (
     INTRADAY_CONTRACT_SCHEMA_VERSION,
     IntradayBar,
+    IntradayBarBatch,
     IntradayBarProvenance,
     IntradayBarRequest,
     IntradayContractValidationError,
@@ -71,6 +72,7 @@ __all__ = [
     "FeedCoverage",
     "FeedScope",
     "IntradayBar",
+    "IntradayBarBatch",
     "IntradayBarProvenance",
     "IntradayBarRequest",
     "IntradayContractValidationError",

@@ -4,7 +4,7 @@ from datetime import date
 from typing import Protocol
 
 from quantforge.data.intraday import (
-    IntradayBar,
+    IntradayBarBatch,
     IntradayBarRequest,
     IntradayProviderCapabilities,
 )
@@ -27,6 +27,4 @@ class IntradayBarProvider(Protocol):
     name: str
     intraday_capabilities: IntradayProviderCapabilities
 
-    def fetch_intraday_bars(
-        self, request: IntradayBarRequest
-    ) -> tuple[IntradayBar, ...]: ...
+    def fetch_intraday_bars(self, request: IntradayBarRequest) -> IntradayBarBatch: ...

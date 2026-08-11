@@ -20,18 +20,19 @@ completion state so a start label cannot expose a future close or volume.
 ## Decision
 
 QuantForge uses immutable `IntradayBarRequest`, `IntradayBar`,
-`IntradayBarProvenance`, and `IntradayProviderCapabilities` records in the data
-domain. Requests use timezone-aware half-open boundaries normalized to UTC and
-embed the complete QF-13 intraday `Timeframe`, QF-14 `FeedScope`, and QF-14
-`AdjustmentBasis`.
+`IntradayBarBatch`, `IntradayBarProvenance`, and
+`IntradayProviderCapabilities` records in the data domain. Requests use
+timezone-aware half-open boundaries normalized to UTC and embed the complete
+QF-13 intraday `Timeframe`, QF-14 `FeedScope`, and QF-14 `AdjustmentBasis`.
 
 Canonical bars retain explicit start/end timestamps, timeframe, completion,
 session identifier, exact Decimal OHLCV, and provider-neutral provenance. They
 delegate boundary, anchor, duration, partial-bar, and completion validation to
 QF-13's `IntradayBarWindow`. Their retrieval timestamp cannot precede the
-observed end. Provider adapters expose declared capabilities and return only
-canonical bars; vendor response types remain inside the adapter/raw-artifact
-boundary.
+observed end. Provider adapters expose declared capabilities and return only a
+request-bound canonical batch; its construction rejects out-of-order bars,
+duplicate bar keys, and request/provenance mismatches. Vendor response types
+remain inside the adapter/raw-artifact boundary.
 
 Feed coverage explicitly distinguishes consolidated, IEX-only single-venue,
 provider-defined, and unknown observations. Unknown is not treated as
@@ -82,7 +83,8 @@ bind these identities into their own immutable artifacts.
 
 Offline tests cover typed serialization and identity sensitivity, timezone
 normalization and naive rejection, start/end ordering, full and partial bar
-duration, OHLCV invariants, feed distinctions, capability ordering and range
-metadata, each unsupported-capability exception, canonical adapter return
-types, and unchanged daily schema/protocol behavior. The full repository suite
-protects existing QF-3 through QF-14 consumers.
+duration, collection ordering and duplicate rejection, OHLCV invariants, feed
+distinctions, capability ordering and range metadata, each unsupported-
+capability exception, canonical adapter return types, and unchanged daily
+schema/protocol behavior. The full repository suite protects existing QF-3
+through QF-14 consumers.
