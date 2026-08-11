@@ -53,6 +53,12 @@ reuses the complete QF-13 timeframe and QF-14 feed/adjustment records while
 leaving this daily API and every schema-version-4 identity unchanged. See
 [`intraday-market-data.md`](intraday-market-data.md) and ADR 0006.
 
+QF-16 implements Tiingo 1-minute and 5-minute intraday retrieval plus a separate
+schema-version-1 intraday cache. It does not change this daily cache or API.
+Intraday feed coverage is explicit: consolidated history and IEX-only history
+use different endpoints, QF-15 request identities, and provenance. See
+[`intraday-market-data.md`](intraday-market-data.md) and ADR 0007.
+
 `get_daily_bars(..., refresh=True)` makes a new provider request even when the
 request key is cached. Raw responses and datasets remain write-once; only the
 small request-key pointer atomically advances to the newly retrieved immutable

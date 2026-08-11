@@ -84,7 +84,10 @@ QF-3 implements the daily boundary in `quantforge.data`: an injected provider
 feeds pure normalization and XNYS-aware validation, followed by content-
 addressed raw JSON, canonical decimal CSV, and a stable manifest. QF-15 adds
 typed provider-neutral intraday requests, canonical bars, provenance, and
-capability declarations without implementing HTTP retrieval or caching. See
+capability declarations. QF-16 adds a Tiingo implementation plus a separate
+content-addressed intraday raw-chunk, canonical-batch, manifest, and request-
+pointer namespace. The cache-aware service can replay an identical request
+without constructing a provider or accessing credentials. See
 `docs/market-data.md` and `docs/intraday-market-data.md`.
 
 Responsibilities:
@@ -95,6 +98,8 @@ Responsibilities:
 - handle provider-specific errors and rate limits.
 - map intraday transport responses to canonical bars before returning through
   the adapter protocol.
+- preserve every bounded intraday transport response before normalization and
+  bind its hash into bar provenance and the immutable dataset manifest.
 
 Must not:
 

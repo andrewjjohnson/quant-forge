@@ -1,9 +1,10 @@
 # Provider-neutral intraday market-data contracts
 
 QF-15 defines the typed boundary for requesting and normalizing historical
-intraday OHLCV. It builds on QF-13 timeframe/session semantics and QF-14
-dataset-family provenance without implementing a provider HTTP client, cache,
-aggregation, or session-gap validation.
+intraday OHLCV. QF-16 implements the first HTTP and immutable-cache path behind
+that boundary using Tiingo. Both build on QF-13 timeframe/session semantics and
+QF-14 dataset-family provenance; neither implements aggregation or session-gap
+validation.
 
 The public records are exported from `quantforge.data`. Provider adapters use
 `IntradayBarProvider` from `quantforge.data.providers`.
@@ -111,8 +112,10 @@ a provider response or a bare tuple. The batch binds bars to the exact request,
 requires chronological ordering, rejects duplicate keys, and verifies every
 bar's symbol, timeframe, request identity, feed scope, adjustment basis, and
 requested timestamp range. It deliberately does not infer missing bars or
-validate session gaps. A future adapter is responsible for preserving its raw
-response separately before mapping it to these contracts.
+validate session gaps. An ingestion adapter is responsible for preserving its
+raw response separately before mapping it to these contracts. QF-16's Tiingo
+adapter satisfies that boundary with `IntradayFetchResult` and immutable raw
+chunk snapshots.
 
 Like requests, bars and batches expose `to_primitive()`, canonical `serialize()`
 bytes, and deterministic identities. The bar identity binds timestamps,
@@ -147,6 +150,112 @@ so callers may handle one capability class or an exact unsupported dimension.
 These errors describe a valid provider-neutral request that a particular
 adapter cannot satisfy; malformed contracts fail construction instead.
 
+## Tiingo intraday ingestion
+
+`TiingoProvider` implements both the QF-15 canonical adapter and the QF-16 raw
+acquisition boundary. It currently declares:
+
+- 1-minute and 5-minute source intervals;
+- the complete canonical XNYS regular-hours timeframe policy only;
+- raw, unadjusted OHLCV only;
+- consolidated equity and explicitly IEX-only feed scopes.
+
+Five-minute consolidated data is the preferred canonical source where the
+account and endpoint provide it. Tiingo's
+[consolidated equity documentation](https://www.tiingo.com/documentation/equity-realtime-stock-data)
+maps a consolidated request to
+`/tiingo/equity/intraday/<ticker>/prices`; an IEX-only request uses
+the endpoint documented by the
+[IEX API](https://www.tiingo.com/documentation/iex),
+`/iex/<ticker>/prices`. The adapter never silently falls back from one to the
+other because doing so would change the QF-15 request identity and source-family
+meaning. Callers that cannot access consolidated history must make a new
+request with `FeedScope.iex_only()`. Tiingo documents the consolidated endpoint
+as beta and the IEX historical volume field as IEX-only coverage.
+
+Authentication uses only `Authorization: Token ...`. Tokens are absent from
+query strings, endpoint metadata, raw artifacts, normalized artifacts,
+manifests, and translated exception text. Requests explicitly select OHLCV,
+disable provider force-fill, and exclude after-hours data. Force-filled chart
+bars would invent observations and are therefore not accepted as canonical
+source data.
+
+Intraday corporate actions are not supplied by these endpoints. Requests must
+therefore use `TiingoProvider.intraday_adjustment_basis`, whose policy records
+`not_provided_for_intraday_bars`; the adapter rejects a request that claims the
+daily provider-reported dividend/split policy.
+
+The adapter divides a half-open request into contiguous chunks of at most 30
+days by default. The bound is configurable for testing and provider-plan
+constraints. Chunk boundaries are deterministic from the exact request start,
+end, and bound. Tiingo's documented date parameters can cause adjacent raw
+responses to include the same boundary session; normalization assigns a row to
+exactly one half-open chunk by bar start, sorts the merged bars, and then lets
+`IntradayBarBatch` reject any remaining duplicate key or ordering problem.
+Detailed expected-session completeness checks remain deferred.
+
+## Intraday immutable cache
+
+`IntradayMarketDataService` checks an `IntradayMarketDataCache` before provider
+access. A cached request can therefore be replayed with only
+`provider_name="tiingo"`; constructing a provider or supplying
+`TIINGO_API_KEY` is unnecessary. A cache miss without a provider fails
+explicitly.
+
+The intraday namespace is separate from QF-3 daily schema version 4:
+
+```text
+intraday/raw/<raw-snapshot-sha256>.json
+intraday/datasets/<dataset-sha256>/bars.json
+intraday/datasets/<dataset-sha256>/manifest.json
+intraday/requests/<provider>/<request-sha256>.json
+```
+
+Each raw chunk is canonical JSON containing the lossless response records,
+provider and provider symbol, non-secret request parameters, endpoint, exact
+chunk range, retrieval timestamp, parent request ID, and adapter version. Its
+SHA-256 is both its immutable filename and the `source_snapshot_id` retained by
+every canonical bar derived from it.
+
+The normalized artifact is the QF-15 canonical `IntradayBarBatch`. Dataset
+schema version 1 manifests bind:
+
+- the full request and request identity;
+- provider, endpoint/feed scope, source interval, and session scope;
+- adapter and provider-capability versions;
+- every ordered chunk range, retrieval timestamp, raw location, and raw hash;
+- normalized batch identity, bar count, content hash, and dataset identity.
+
+Writes use fsynced temporary files and hard-link creation. Existing immutable
+content is accepted only when its bytes match; a collision raises `CacheError`.
+Refresh creates new raw and dataset identities and atomically advances only the
+small request pointer, leaving every prior snapshot reloadable.
+
+```python
+cache = IntradayMarketDataCache(Path("data/market-data"))
+dataset = IntradayMarketDataService(
+    cache,
+    provider=TiingoProvider(os.environ["TIINGO_API_KEY"]),
+).get_intraday_bars(request)
+
+# Later, including in an offline process with no API key:
+replayed = IntradayMarketDataService(
+    cache,
+    provider_name="tiingo",
+).get_intraday_bars(request)
+```
+
+Ordinary tests use small synthetic JSON fixtures. Live verification is opt-in:
+
+```bash
+TIINGO_API_KEY=... QUANTFORGE_RUN_LIVE_TIINGO_INTRADAY=1 \
+  uv run pytest -m integration \
+  tests/integration/test_tiingo_intraday_market_data.py
+```
+
+The live test prefers consolidated data. Set
+`QUANTFORGE_TIINGO_INTRADAY_FEED=iex` to explicitly validate the IEX-only path.
+
 ## Daily compatibility
 
 QF-15 does not change:
@@ -156,19 +265,15 @@ QF-15 does not change:
 - `DailyBarProvider.fetch_daily_bars()` or `ProviderResponse`;
 - `MarketDataService.get_daily_bars()`;
 - daily request/cache keys, manifests, dataset IDs, artifacts, or provider
-  implementations.
+  behavior.
 
-Intraday contracts use schema version 1 in a separate namespace. Future cache
-and ingestion stories must create new intraday artifacts and bind the complete
-request/timeframe identities rather than modifying legacy QF-3 artifacts.
+Intraday contracts and QF-16 datasets use independently versioned schema-1
+artifacts in a separate namespace, leaving legacy QF-3 artifacts unchanged.
 
 ## Deliberate limitations
 
-QF-15 does not implement:
+QF-15/QF-16 do not implement:
 
-- Tiingo or another provider's intraday HTTP mapping;
-- raw or normalized intraday cache population;
-- chunked retrieval;
 - session-gap or missing-source-bar validation;
 - bar aggregation;
 - multi-timeframe as-of alignment;
