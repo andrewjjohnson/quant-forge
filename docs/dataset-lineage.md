@@ -64,9 +64,13 @@ define OHLCV aggregation behavior. A later aggregation implementation owns the
 policy's meaning and must supply its complete primitive configuration.
 
 `FeedScope` is provider-neutral. The canonical coverage categories are
-`consolidated`, `single_venue`, and `provider_defined`. A provider adapter may
-map its vocabulary into these values, but downstream lineage code never accepts
-provider SDK or response types.
+`consolidated`, `single_venue`, `provider_defined`, and explicitly `unknown`.
+QF-15 adds `FeedScope.iex_only()` as the canonical single-venue IEX shorthand
+and `FeedScope.unknown()` for observations whose coverage has not been
+established. Unknown never aliases consolidated coverage. A provider adapter
+may map its vocabulary into these values, but downstream lineage code never
+accepts provider SDK or response types. See
+[`intraday-market-data.md`](intraday-market-data.md).
 
 `AdjustmentBasis` follows the existing QF-3 invariant: unadjusted data must use
 `raw_provider` for both OHLC and volume, while every adjusted mode uses

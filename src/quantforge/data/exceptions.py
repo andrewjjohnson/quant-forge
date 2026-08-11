@@ -9,6 +9,26 @@ class RequestError(MarketDataError):
     """The caller supplied an invalid request."""
 
 
+class UnsupportedCapabilityError(RequestError):
+    """A valid request is outside a provider's declared capabilities."""
+
+
+class UnsupportedIntervalError(UnsupportedCapabilityError):
+    """A provider does not support the requested source interval."""
+
+
+class UnsupportedFeedError(UnsupportedCapabilityError):
+    """A provider does not support the requested market-data feed scope."""
+
+
+class UnsupportedSessionScopeError(UnsupportedCapabilityError):
+    """A provider does not support the requested market-session scope."""
+
+
+class UnsupportedDateRangeError(UnsupportedCapabilityError):
+    """A request falls outside a provider's declared historical range."""
+
+
 class ProviderError(MarketDataError):
     """A provider could not satisfy a valid request."""
 

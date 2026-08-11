@@ -1,4 +1,4 @@
-# Daily market data
+# Market data
 
 QF-3 provides provider-independent completed daily stock and ETF bars plus
 typed, immutable corporate actions. It does not calculate indicators, signals,
@@ -46,6 +46,12 @@ family's canonical source snapshot, but feed scope, source timeframe,
 adjustment/corporate-action basis, and the future aggregation-policy reference
 must be supplied explicitly when constructing that family. See
 [`dataset-lineage.md`](dataset-lineage.md) and ADR 0005.
+
+QF-15 adds separate provider-neutral intraday request, canonical-bar,
+provenance, provider-capability, and unsupported-capability contracts. It
+reuses the complete QF-13 timeframe and QF-14 feed/adjustment records while
+leaving this daily API and every schema-version-4 identity unchanged. See
+[`intraday-market-data.md`](intraday-market-data.md) and ADR 0006.
 
 `get_daily_bars(..., refresh=True)` makes a new provider request even when the
 request key is cached. Raw responses and datasets remain write-once; only the
