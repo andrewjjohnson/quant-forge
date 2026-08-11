@@ -23,6 +23,16 @@ from quantforge.data.intraday import (
     IntradayContractValidationError,
     IntradayProviderCapabilities,
 )
+from quantforge.data.intraday_ingestion import (
+    INTRADAY_DATASET_SCHEMA_VERSION,
+    IntradayDataset,
+    IntradayDatasetMetadata,
+    IntradayFetchResult,
+    IntradayIngestionProvider,
+    IntradayMarketDataCache,
+    IntradayMarketDataService,
+    IntradayRawSnapshot,
+)
 from quantforge.data.lineage import (
     DATASET_FAMILY_SCHEMA_VERSION,
     AdjustmentBasis,
@@ -55,6 +65,7 @@ from quantforge.data.validate import validate_market_dataset
 __all__ = [
     "DATASET_FAMILY_SCHEMA_VERSION",
     "INTRADAY_CONTRACT_SCHEMA_VERSION",
+    "INTRADAY_DATASET_SCHEMA_VERSION",
     "AdjustmentBasis",
     "AdjustmentMode",
     "AggregationPolicy",
@@ -76,7 +87,14 @@ __all__ = [
     "IntradayBarProvenance",
     "IntradayBarRequest",
     "IntradayContractValidationError",
+    "IntradayDataset",
+    "IntradayDatasetMetadata",
+    "IntradayFetchResult",
+    "IntradayIngestionProvider",
+    "IntradayMarketDataCache",
+    "IntradayMarketDataService",
     "IntradayProviderCapabilities",
+    "IntradayRawSnapshot",
     "MarketDataCache",
     "MarketDataError",
     "MarketDataService",

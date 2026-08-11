@@ -78,11 +78,27 @@ uv run pytest tests/unit/data/test_tiingo_provider.py \
   tests/unit/backtesting/test_runner.py
 ```
 
+Run the deterministic offline Tiingo intraday adapter and cache tests:
+
+```bash
+uv run pytest tests/unit/data/test_tiingo_intraday.py
+```
+
 Run the opt-in live Tiingo integration only with both the key and explicit flag:
 
 ```bash
 TIINGO_API_KEY=... QUANTFORGE_RUN_LIVE_TIINGO=1 \
   uv run pytest -m integration tests/integration/test_tiingo_market_data.py
+```
+
+Run the fixed opt-in Tiingo SPY intraday verification. Consolidated data is the
+default; set `QUANTFORGE_TIINGO_INTRADAY_FEED=iex` to request the explicitly
+IEX-only path:
+
+```bash
+TIINGO_API_KEY=... QUANTFORGE_RUN_LIVE_TIINGO_INTRADAY=1 \
+  uv run pytest -m integration \
+  tests/integration/test_tiingo_intraday_market_data.py
 ```
 
 Run the fixed 2020-2025 real SPY example, or its explicitly synthetic offline
