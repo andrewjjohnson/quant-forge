@@ -29,6 +29,9 @@ Canonical timeframe + session policy
         v
 Canonical bars + typed corporate actions
         |
+        v
+Dataset-family lineage
+        |
         +----------------------------+
         |                            |
         v                            v
@@ -140,6 +143,41 @@ Must not:
 - align multiple timeframes as of a decision timestamp;
 - calculate indicators, predictions, signals, orders, or fills;
 - silently emulate a provider or chart platform's proprietary candle policy.
+
+### Dataset-family lineage and source consistency
+
+QF-14 implements the provider-neutral provenance boundary in
+`quantforge.data.lineage`. One immutable canonical source snapshot and its
+source policies define a deterministic family. A validated single-parent DAG
+records every derived dataset and its QF-13 timeframe. See
+`docs/dataset-lineage.md` and ADR 0005.
+
+The family identity binds symbol, provider, feed scope, canonical snapshot,
+source interval/session/calendar/timezone, adjustment/corporate-action basis,
+and aggregation-policy configuration. The separate manifest identity also
+binds the exact lineage graph, so adding a derived dataset preserves family
+compatibility while producing a new immutable manifest.
+
+Responsibilities:
+
+- represent consolidated, single-venue, and explicit provider-defined feed
+  scopes without provider response types;
+- retain parent, child, canonical-source, and timeframe identity for every
+  dataset;
+- reject missing parents, inconsistent child links, disconnected lineage, and
+  cycles;
+- serialize deterministic family manifests and compact dataset references;
+- reject multi-timeframe references from different families unless a separately
+  identity-bearing external policy explicitly validates them.
+
+Must not:
+
+- retrieve provider data;
+- aggregate OHLCV or define aggregation algorithms;
+- align timeframes at a decision timestamp;
+- treat matching symbols/providers as proof of common-source consistency;
+- silently combine IEX-only, consolidated, EOD, or provider-native interval
+  datasets.
 
 ### Indicators and features
 
@@ -397,6 +435,8 @@ under a fixed run identity.
 Responsibilities:
 
 - record code, dependency, configuration, and data identities;
+- embed or immutably link the QF-14 dataset-family manifest and source-
+  consistency validation when multiple timeframes are consumed;
 - render immutable human-readable reports;
 - link results to underlying artifacts;
 - clearly distinguish in-sample and out-of-sample results.

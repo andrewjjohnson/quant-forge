@@ -39,6 +39,14 @@ dataset identities. New intraday ingestion and timeframe-bearing dataset
 manifests are deferred to later QF-12 stories. See
 [`timeframe-semantics.md`](timeframe-semantics.md) and ADR 0004.
 
+QF-14 adds a separate provider-neutral dataset-family manifest for canonical
+source and derived-dataset lineage. Existing QF-3 schema-version-4 daily
+manifests and dataset IDs remain unchanged. A QF-3 dataset ID can be named as a
+family's canonical source snapshot, but feed scope, source timeframe,
+adjustment/corporate-action basis, and the future aggregation-policy reference
+must be supplied explicitly when constructing that family. See
+[`dataset-lineage.md`](dataset-lineage.md) and ADR 0005.
+
 `get_daily_bars(..., refresh=True)` makes a new provider request even when the
 request key is cached. Raw responses and datasets remain write-once; only the
 small request-key pointer atomically advances to the newly retrieved immutable

@@ -142,7 +142,9 @@ Changing any material policy therefore changes the configuration ID. Consumers
 must persist both the primitive configuration and ID, then verify the ID before
 trusting cached or reportable results. Future intraday dataset and aggregation
 stories must bind this ID into their own manifests rather than copying only a
-display name such as `4h`.
+display name such as `4h`. QF-14's `DatasetLineage` now provides that
+provider-neutral binding for canonical source and derived dataset-family
+members. See [`dataset-lineage.md`](dataset-lineage.md).
 
 The schema is version `1`. Adding a new semantic policy or changing an existing
 meaning requires a schema-version and compatibility review; field-order changes
