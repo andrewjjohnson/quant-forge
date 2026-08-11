@@ -16,7 +16,9 @@ from quantforge.data import (
     AdjustmentBasis,
     AdjustmentMode,
     FeedScope,
+    IntradayBarBatch,
     IntradayBarRequest,
+    IntradayFetchResult,
     IntradayMarketDataCache,
     IntradayMarketDataService,
     ProviderError,
@@ -304,6 +306,49 @@ def test_tiingo_intraday_refresh_preserves_old_immutable_artifacts(
         == original_raw
     )
     assert service.get_intraday_bars(request) == refreshed
+
+
+def test_fetch_result_rejects_cross_chunk_or_provider_misattribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_responses(
+        monkeypatch,
+        (
+            _fixture("spy_intraday_5min_chunk_1.json"),
+            _fixture("spy_intraday_5min_chunk_2.json"),
+        ),
+    )
+    request = _request()
+    result = TiingoProvider(
+        TOKEN,
+        retry_delays=(),
+        intraday_chunk_duration=timedelta(minutes=10),
+    ).fetch_intraday(request)
+    first_bar = result.batch.bars[0]
+    wrong_chunk_bar = replace(
+        first_bar,
+        provenance=replace(
+            first_bar.provenance,
+            source_snapshot_id=result.raw_snapshots[1].snapshot_id,
+        ),
+    )
+    wrong_provider_bar = replace(
+        first_bar,
+        provenance=replace(first_bar.provenance, provider_name="other-provider"),
+    )
+
+    with pytest.raises(ValueError, match="outside its referenced raw snapshot"):
+        IntradayFetchResult(
+            IntradayBarBatch(request, (wrong_chunk_bar, *result.batch.bars[1:])),
+            result.raw_snapshots,
+            result.capabilities_configuration_id,
+        )
+    with pytest.raises(ValueError, match="does not match its referenced"):
+        IntradayFetchResult(
+            IntradayBarBatch(request, (wrong_provider_bar, *result.batch.bars[1:])),
+            result.raw_snapshots,
+            result.capabilities_configuration_id,
+        )
 
 
 def test_tiingo_intraday_errors_do_not_expose_credentials(

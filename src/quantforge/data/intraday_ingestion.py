@@ -147,12 +147,37 @@ class IntradayFetchResult:
                 snapshot.chunk_start_timestamp
             ):
                 raise ValueError("raw chunks must be ordered and contiguous")
-        snapshot_ids = {snapshot.snapshot_id for snapshot in snapshots}
-        if any(
-            bar.provenance.source_snapshot_id not in snapshot_ids
-            for bar in self.batch.bars
-        ):
-            raise ValueError("bar provenance names an unknown raw snapshot")
+        snapshots_by_id = {snapshot.snapshot_id: snapshot for snapshot in snapshots}
+        if len(snapshots_by_id) != len(snapshots):
+            raise ValueError("raw snapshot identities must be unique")
+        for bar in self.batch.bars:
+            snapshot = snapshots_by_id.get(bar.provenance.source_snapshot_id)
+            if snapshot is None:
+                raise ValueError("bar provenance names an unknown raw snapshot")
+            if not (
+                snapshot.chunk_start_timestamp
+                <= bar.start_timestamp
+                < snapshot.chunk_end_timestamp
+            ):
+                raise ValueError(
+                    "bar start falls outside its referenced raw snapshot chunk"
+                )
+            if (
+                bar.provenance.provider_name,
+                bar.provenance.provider_symbol,
+                bar.provenance.adapter_version,
+                bar.provenance.retrieved_at,
+                bar.provenance.source_request_id,
+            ) != (
+                snapshot.provider_name,
+                snapshot.provider_symbol,
+                snapshot.adapter_version,
+                snapshot.retrieved_at,
+                snapshot.source_request_id,
+            ):
+                raise ValueError(
+                    "bar provenance does not match its referenced raw snapshot"
+                )
 
 
 class IntradayIngestionProvider(Protocol):
