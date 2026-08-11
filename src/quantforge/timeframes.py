@@ -64,10 +64,11 @@ class DevelopingBarExposure(StrEnum):
 
 
 class BarCompletion(StrEnum):
-    """Mutually exclusive bar states; partial terminal bars are still completed."""
+    """Mutually exclusive developing, full, and partial completed states."""
 
     COMPLETED = "completed"
     DEVELOPING = "developing"
+    COMPLETED_PARTIAL_DURATION_LEADING = "completed_partial_duration_leading"
     COMPLETED_PARTIAL_DURATION_TERMINAL = "completed_partial_duration_terminal"
 
 
@@ -402,9 +403,7 @@ class ExchangeTradingWeek:
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "week_start": self.week_start.isoformat(),
-            "session_dates": [
-                session.session_date.isoformat() for session in self.sessions
-            ],
+            "sessions": [session.to_primitive() for session in self.sessions],
         }
 
 
@@ -503,12 +502,16 @@ class IntradayBarWindow:
             self.session_date, self.timeframe.session_policy
         )
         interval = cast(IntradayInterval, self.timeframe.interval)
-        if interval.cross_session_policy is CrossSessionPolicy.PROHIBITED and (
-            start_timestamp < session.open_timestamp
-            or end_timestamp > session.close_timestamp
+        if not session.open_timestamp <= start_timestamp < session.close_timestamp:
+            raise TimeframeValidationError(
+                "intraday bar start must belong to its declared exchange session"
+            )
+        if (
+            interval.cross_session_policy is CrossSessionPolicy.PROHIBITED
+            and end_timestamp > session.close_timestamp
         ):
             raise TimeframeValidationError(
-                "intraday bar cannot cross or extend outside its exchange session"
+                "intraday bar cannot cross or extend beyond its exchange session"
             )
         self._validate_anchor(interval, session)
         self._validate_completion(interval, session)
@@ -518,18 +521,64 @@ class IntradayBarWindow:
     ) -> None:
         if interval.anchor is IntradayAnchor.SESSION_OPEN:
             offset = self.start_timestamp - session.open_timestamp
+            if offset >= timedelta(0) and not offset % interval.nominal_duration:
+                return
         else:
-            timezone = ZoneInfo(self.timeframe.session_policy.timezone_name)
-            local_start = self.start_timestamp.astimezone(timezone)
-            anchor = datetime.combine(
-                local_start.date(), cast(time, interval.clock_anchor), timezone
-            )
-            offset = local_start - anchor
-            if offset < timedelta(0):
-                offset += _ONE_DAY
-        if offset < timedelta(0) or offset % interval.nominal_duration:
+            bucket_start, bucket_end = self._clock_bucket_boundaries(interval)
+            if self.start_timestamp == bucket_start or (
+                self.start_timestamp == session.open_timestamp
+                and self.start_timestamp < bucket_end
+            ):
+                return
+        raise TimeframeValidationError(
+            "intraday bar start is not aligned with its configured anchor"
+        )
+
+    def _clock_bucket_boundaries(
+        self, interval: IntradayInterval
+    ) -> tuple[datetime, datetime]:
+        timezone = ZoneInfo(self.timeframe.session_policy.timezone_name)
+        local_start = self.start_timestamp.astimezone(timezone)
+        anchor = datetime.combine(
+            local_start.date(), cast(time, interval.clock_anchor), timezone
+        )
+        if local_start < anchor:
+            anchor -= _ONE_DAY
+        elapsed = local_start - anchor
+        bucket_start = anchor + (elapsed // interval.nominal_duration) * (
+            interval.nominal_duration
+        )
+        bucket_end = bucket_start + interval.nominal_duration
+        return bucket_start.astimezone(UTC), bucket_end.astimezone(UTC)
+
+    def _anchored_terminal_timestamp(self, interval: IntradayInterval) -> datetime:
+        if interval.anchor is IntradayAnchor.CLOCK:
+            _, bucket_end = self._clock_bucket_boundaries(interval)
+            return bucket_end
+        return self.start_timestamp + interval.nominal_duration
+
+    def _terminal_timestamp(
+        self, interval: IntradayInterval, session: ExchangeSession
+    ) -> datetime:
+        terminal_timestamp = self._anchored_terminal_timestamp(interval)
+        if interval.cross_session_policy is CrossSessionPolicy.PROHIBITED:
+            return min(terminal_timestamp, session.close_timestamp)
+        return terminal_timestamp
+
+    def _validate_leading_partial(
+        self, interval: IntradayInterval, session: ExchangeSession
+    ) -> None:
+        anchored_terminal = self._anchored_terminal_timestamp(interval)
+        if (
+            interval.anchor is not IntradayAnchor.CLOCK
+            or self.start_timestamp != session.open_timestamp
+            or anchored_terminal >= self.start_timestamp + interval.nominal_duration
+            or self.end_timestamp != anchored_terminal
+            or self.end_timestamp >= session.close_timestamp
+        ):
             raise TimeframeValidationError(
-                "intraday bar start is not aligned with its configured anchor"
+                "completed leading partial-duration bar must start at the session "
+                "open and end at the next clock boundary before session close"
             )
 
     def _validate_completion(
@@ -541,20 +590,24 @@ class IntradayBarWindow:
             raise TimeframeValidationError(
                 "intraday bar actual duration cannot exceed nominal duration"
             )
+        terminal_timestamp = self._terminal_timestamp(interval, session)
         if self.completion is BarCompletion.COMPLETED:
-            if actual_duration != nominal_duration:
+            if (
+                actual_duration != nominal_duration
+                or self.end_timestamp != terminal_timestamp
+            ):
                 raise TimeframeValidationError(
                     "completed full bar must have its nominal duration"
                 )
             return
-        terminal_timestamp = self.start_timestamp + nominal_duration
-        if interval.cross_session_policy is CrossSessionPolicy.PROHIBITED:
-            terminal_timestamp = min(terminal_timestamp, session.close_timestamp)
         if self.completion is BarCompletion.DEVELOPING:
             if self.end_timestamp >= terminal_timestamp:
                 raise TimeframeValidationError(
                     "a bar at its terminal boundary is not developing"
                 )
+            return
+        if self.completion is BarCompletion.COMPLETED_PARTIAL_DURATION_LEADING:
+            self._validate_leading_partial(interval, session)
             return
         if (
             actual_duration >= nominal_duration
@@ -581,7 +634,10 @@ class IntradayBarWindow:
 
     @property
     def is_partial_duration(self) -> bool:
-        return self.completion is BarCompletion.COMPLETED_PARTIAL_DURATION_TERMINAL
+        return self.completion in {
+            BarCompletion.COMPLETED_PARTIAL_DURATION_LEADING,
+            BarCompletion.COMPLETED_PARTIAL_DURATION_TERMINAL,
+        }
 
     def to_primitive(self) -> PrimitiveMapping:
         """Return an auditable boundary record with nominal and actual duration."""

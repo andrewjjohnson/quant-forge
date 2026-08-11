@@ -128,8 +128,8 @@ Responsibilities:
 
 - define provider-neutral interval and completion-state vocabulary;
 - resolve exchange sessions and trading weeks from the configured calendar;
-- validate intraday boundaries, anchors, terminal partial durations, and
-  developing-bar exposure;
+- validate intraday boundaries, anchors, clock-leading and session-terminal
+  partial durations, and developing-bar exposure;
 - serialize every material semantic policy and derive deterministic identity;
 - preserve explicit start/end timestamps independently of label convention.
 

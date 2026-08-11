@@ -2,11 +2,12 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from quantforge.configuration import configuration_identity
+from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data.models import SCHEMA_VERSION, DailyBar
 from quantforge.timeframes import (
     DEFAULT_US_EQUITY_TIMEFRAME,
@@ -274,6 +275,15 @@ def test_intraday_bars_cannot_silently_cross_regular_session_close() -> None:
     )
     assert explicitly_permitted.actual_duration == timedelta(hours=4)
 
+    with pytest.raises(TimeframeValidationError, match="declared exchange session"):
+        IntradayBarWindow(
+            _four_hour_timeframe(cross_session_policy=CrossSessionPolicy.PERMITTED),
+            date(2024, 7, 1),
+            _local_timestamp(2024, 7, 2, 9, 30),
+            _local_timestamp(2024, 7, 2, 13, 30),
+            BarCompletion.COMPLETED,
+        )
+
 
 def test_session_and_clock_anchors_are_distinct_explicit_policies() -> None:
     with pytest.raises(TimeframeValidationError, match="not aligned"):
@@ -299,6 +309,49 @@ def test_session_and_clock_anchors_are_distinct_explicit_policies() -> None:
         BarCompletion.COMPLETED,
     )
     assert clock_aligned.actual_duration == timedelta(hours=1)
+
+
+def test_clock_anchor_represents_leading_partial_and_developing_bucket() -> None:
+    interval = IntradayInterval(
+        timedelta(hours=1),
+        anchor=IntradayAnchor.CLOCK,
+        clock_anchor=time(9),
+    )
+    leading = IntradayBarWindow(
+        Timeframe.us_equity(interval),
+        date(2024, 7, 1),
+        _local_timestamp(2024, 7, 1, 9, 30),
+        _local_timestamp(2024, 7, 1, 10),
+        BarCompletion.COMPLETED_PARTIAL_DURATION_LEADING,
+    )
+
+    assert leading.nominal_duration == timedelta(hours=1)
+    assert leading.actual_duration == timedelta(minutes=30)
+    assert leading.is_partial_duration
+    assert leading.to_primitive()["completion"] == (
+        "completed_partial_duration_leading"
+    )
+
+    developing = IntradayBarWindow(
+        Timeframe(
+            interval,
+            developing_bar_exposure=DevelopingBarExposure.INCLUDE,
+        ),
+        date(2024, 7, 1),
+        _local_timestamp(2024, 7, 1, 9, 30),
+        _local_timestamp(2024, 7, 1, 9, 45),
+        BarCompletion.DEVELOPING,
+    )
+    assert developing.actual_duration == timedelta(minutes=15)
+
+    with pytest.raises(TimeframeValidationError, match="next clock boundary"):
+        IntradayBarWindow(
+            Timeframe.us_equity(interval),
+            date(2024, 7, 1),
+            _local_timestamp(2024, 7, 1, 9, 30),
+            _local_timestamp(2024, 7, 1, 10, 30),
+            BarCompletion.COMPLETED_PARTIAL_DURATION_LEADING,
+        )
 
 
 def test_early_close_produces_completed_partial_duration_terminal_bar() -> None:
@@ -331,6 +384,29 @@ def test_exchange_trading_week_excludes_holiday_but_not_neighboring_sessions() -
         date(2024, 7, 3),
         date(2024, 7, 5),
     )
+
+
+def test_trading_week_serialization_retains_resolved_session_boundaries() -> None:
+    regular_week = resolve_trading_week(date(2024, 11, 29))
+    regular_primitive = regular_week.to_primitive()
+    regular_sessions = cast(list[PrimitiveMapping], regular_primitive["sessions"])
+
+    assert "session_dates" not in regular_primitive
+    assert regular_sessions[-1] == {
+        "session_date": "2024-11-29",
+        "open_timestamp": "2024-11-29T14:30:00+00:00",
+        "close_timestamp": "2024-11-29T18:00:00+00:00",
+    }
+
+    extended_week = resolve_trading_week(
+        date(2024, 11, 29),
+        ExchangeSessionPolicy(
+            scope=SessionScope.EXTENDED_HOURS,
+            extended_hours_start=time(4),
+            extended_hours_end=time(20),
+        ),
+    )
+    assert extended_week.to_primitive() != regular_primitive
 
 
 def test_dst_preserves_local_session_times_and_changes_utc() -> None:

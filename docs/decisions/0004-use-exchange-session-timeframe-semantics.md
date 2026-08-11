@@ -31,11 +31,13 @@ hours, actual-session-open intraday anchoring, prohibited cross-session bars,
 start labels, and completed-bars-only exposure. Bar labels never determine
 availability; explicit end timestamps and completion state do.
 
-Intraday bar state is exactly one of full completed, developing, or completed
-partial-duration terminal. A completed partial-duration bar must be shorter
+Intraday bar state distinguishes full completed, developing, completed leading
+partial-duration, and completed terminal partial-duration bars. The leading
+partial state applies only when a clock bucket begins before the session and
+ends after the open. A completed terminal partial-duration bar must be shorter
 than its nominal interval and end at the schedule's actual session close. A
 developing bar requires explicit consumer opt-in and must be strictly before its
-terminal boundary.
+applicable full, clock, or session-close terminal boundary.
 
 Regular boundaries are resolved from `exchange-calendars` and stored in UTC,
 with the configured exchange timezone retained in policy. Extended-hours scope
@@ -59,6 +61,8 @@ The type system prevents daily and weekly bars from silently collapsing into
 minute arithmetic. XNYS holidays, weekends, early closes, and DST behavior are
 calendar-derived and deterministic. Four-hour bars retain both nominal and
 actual duration, and terminal completion cannot alias a developing state.
+Clock-aligned leading intersections likewise remain explicit completed states
+instead of being discarded or mislabeled as developing.
 
 The configuration is more verbose than a string such as `4h`, but it preserves
 the policies required to reproduce a chart. A platform/provider correction or
@@ -100,7 +104,7 @@ that old manifests acquired new persisted fields.
 Deterministic unit and invariant-style parameterized tests cover arbitrary
 positive sub-day durations, distinct session/week counts, stable serialization,
 identity sensitivity, session-open and clock anchoring, explicit cross-session
-permission, developing-bar opt-in, the 09:30-13:30 and 13:30-16:00 XNYS
-four-hour windows, the 2024-11-29 early close, the 2024 Independence Day holiday
-week, a weekend, and the March 2024 DST boundary. Existing full-suite tests
-protect QF-3/QF-4/QF-5/QF-6/QF-7/QF-11 compatibility.
+permission, clock-leading partials, developing-bar opt-in, the 09:30-13:30 and
+13:30-16:00 XNYS four-hour windows, the 2024-11-29 early close, the 2024
+Independence Day holiday week, a weekend, and the March 2024 DST boundary.
+Existing full-suite tests protect QF-3/QF-4/QF-5/QF-6/QF-7/QF-11 compatibility.

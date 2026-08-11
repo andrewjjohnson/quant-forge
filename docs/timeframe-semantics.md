@@ -94,12 +94,16 @@ duration remains four hours and the actual duration is 3.5 hours.
 - `COMPLETED`: actual duration equals nominal duration;
 - `DEVELOPING`: the observed boundary has not reached its full or session-close
   terminal boundary and the timeframe explicitly opts into developing bars;
+- `COMPLETED_PARTIAL_DURATION_LEADING`: a clock-aligned bucket begins before the
+  session, so the completed observed intersection runs from session open to the
+  next clock boundary;
 - `COMPLETED_PARTIAL_DURATION_TERMINAL`: actual duration is shorter than nominal
   and ends at the actual session close.
 
 A partial terminal bar is completed and causally usable after its end. It is
-not a developing bar. A developing bar that reaches the terminal boundary is
-invalid and must be reclassified as completed.
+not a developing bar. The same is true of a completed leading partial clock
+bucket. A developing bar that reaches its full, leading, or session-close
+terminal boundary is invalid and must be reclassified as completed.
 
 With the default `CrossSessionPolicy.PROHIBITED`, an intraday boundary outside
 its resolved session fails validation. `PERMITTED` exists only as an explicit,
@@ -108,7 +112,11 @@ identity-bearing future policy; no QF-13 code aggregates cross-session OHLCV.
 `IntradayAnchor.CLOCK` is also explicit and requires an exchange-local clock
 origin. It supports future consumers that need clock-aligned candles without
 changing the session-open default. Clock anchoring does not implicitly permit a
-bar to cross the configured session.
+bar to cross the configured session. If the session opens inside a clock bucket,
+the opening intersection is represented explicitly as a completed leading
+partial-duration bar. For hourly buckets anchored at 09:00, the first regular
+XNYS window is therefore 09:30-10:00; while it is forming, its developing
+terminal is 10:00 rather than 10:30.
 
 ## Stable serialization and identity
 
