@@ -122,6 +122,9 @@ Responsibilities:
   calendar, gap, digest, path, and identity invariants.
 - validate intraday timezone, boundary, duration, completion, OHLCV, and
   provider-neutral provenance contracts before downstream use.
+- derive expected intraday source intervals from the configured exchange
+  calendar/session policy, report exact coverage gaps and warnings, and bind
+  the verified quality report into immutable intraday dataset metadata.
 
 Must not:
 

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from typing import cast
 
 from quantforge.configuration import (
@@ -373,6 +374,11 @@ class IntradayBarBatch:
             raise IntradayContractValidationError(
                 "intraday bar batch must be ordered chronologically"
             )
+        for previous, current in pairwise(typed_bars):
+            if current.start_timestamp < previous.end_timestamp:
+                raise IntradayContractValidationError(
+                    "intraday bar batch contains overlapping timestamps"
+                )
 
     def _validate_bar_matches_request(self, bar: IntradayBar) -> None:
         if bar.symbol != self.request.symbol:

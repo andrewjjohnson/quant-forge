@@ -173,6 +173,15 @@ bars. The full timeframe/session configuration has a deterministic identity;
 future datasets and studies must bind it when they adopt the model. See
 `docs/timeframe-semantics.md` and ADR 0004.
 
+QF-17 derives intraday coverage from those same policies rather than assuming
+weekdays or fixed UTC trading hours. Missing completed source intervals,
+incomplete sessions, early closes, extended-hours scope, and daylight-saving
+offsets remain distinguishable in a deterministic quality report. Validation
+never fills absent prices or volume. Zero-volume intervals are retained and
+warned because absence of executions is not proof that the interval itself is
+missing. Intraday dataset manifests bind the report, and cache loads recompute
+it before downstream use.
+
 ## Common-source multi-timeframe integrity
 
 Matching a symbol, provider name, or display interval does not prove that two
