@@ -90,6 +90,12 @@ Run the focused provider-neutral intraday coverage validation tests:
 uv run pytest tests/unit/data/test_intraday_validation.py
 ```
 
+Run deterministic session-aware intraday aggregation and derived-cache tests:
+
+```bash
+uv run pytest tests/unit/data/test_intraday_aggregation.py
+```
+
 Run the opt-in live Tiingo integration only with both the key and explicit flag:
 
 ```bash

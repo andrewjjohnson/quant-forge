@@ -143,12 +143,11 @@ mapping.
 
 Changing any material policy therefore changes the configuration ID. Consumers
 must persist both the primitive configuration and ID, then verify the ID before
-trusting cached or reportable results. Future intraday dataset and aggregation
-stories must bind this ID into their own manifests rather than copying only a
-display name such as `4h`. QF-14's `DatasetLineage` provides that
-provider-neutral binding for canonical source and derived dataset-family
-members, and QF-15 intraday requests and bars bind the same ID before
-persistence exists. See [`dataset-lineage.md`](dataset-lineage.md).
+trusting cached or reportable results. QF-18 derived intraday manifests bind
+this ID rather than copying only a display name such as `4h`. QF-14's
+`DatasetLineage` provides the provider-neutral binding for canonical source and
+derived dataset-family members, and QF-15 intraday requests and bars bind the
+same ID. See [`dataset-lineage.md`](dataset-lineage.md).
 
 The schema is version `1`. Adding a new semantic policy or changing an existing
 meaning requires a schema-version and compatibility review; field-order changes

@@ -2,8 +2,8 @@
 
 QF-14 defines the provider-neutral provenance contract that groups canonical
 source bars and QuantForge-derived timeframes into one auditable dataset family.
-It does not retrieve intraday data, aggregate bars, or align multi-timeframe
-contexts.
+It does not itself retrieve or aggregate bars or align multi-timeframe contexts.
+QF-18 consumes this contract for derived intraday datasets.
 
 The public implementation is `quantforge.data.lineage`, re-exported from
 `quantforge.data`.
@@ -147,5 +147,7 @@ QF-14 does not provide:
 - a concrete external-bar validator;
 - migration of legacy QF-3 cache manifests.
 
-Those behaviors belong to later QF-12 stories and must consume these lineage
-contracts rather than weakening them.
+QF-18 now supplies intraday-to-larger-intraday aggregation and derived dataset
+construction by consuming these contracts. Daily/weekly aggregation,
+multi-timeframe as-of alignment, and external-bar validation remain later
+QF-12 work and must not weaken them.

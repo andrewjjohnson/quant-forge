@@ -30,6 +30,9 @@ Canonical timeframe + session policy
 Canonical bars + typed corporate actions
         |
         v
+Session-aware intraday aggregation
+        |
+        v
 Dataset-family lineage
         |
         +----------------------------+
@@ -193,6 +196,35 @@ Must not:
 - treat matching symbols/providers as proof of common-source consistency;
 - silently combine IEX-only, consolidated, EOD, or provider-native interval
   datasets.
+
+### Session-aware intraday aggregation
+
+QF-18 implements deterministic lower-intraday to larger-intraday aggregation in
+`quantforge.data.intraday_aggregation` and immutable derived persistence in
+`quantforge.data.intraday_aggregation_cache`. It consumes one immutable QF-16
+source dataset and its verified QF-17 quality report, uses QF-13 session
+boundaries, and emits a QF-14 family containing only the canonical source and
+the QuantForge-derived member. See `docs/intraday-market-data.md` and ADR 0009.
+
+Responsibilities:
+
+- require a target duration that is a strictly larger exact multiple of the
+  source duration and uses the same session and anchor policies;
+- form windows from actual exchange opens and closes without crossing sessions;
+- aggregate open/maximum high/minimum low/final close/summed volume;
+- emit completed terminal partial-duration bars at normal and early closes;
+- reject missing or unexpected constituents by default, or disclose and exclude
+  them under an identity-bearing diagnostic policy;
+- bind source dataset and quality identities, aggregation policy, per-window
+  constituent evidence, and dataset-family lineage into immutable artifacts.
+
+Must not:
+
+- retrieve provider data or combine provider-native higher-timeframe bars;
+- fill, interpolate, or forward-fill missing observations;
+- aggregate daily or weekly bars;
+- expose developing target bars or align multiple timeframes as of a decision
+  timestamp.
 
 ### Indicators and features
 
