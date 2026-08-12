@@ -382,7 +382,9 @@ entry with bytes that disagree with its metadata.
 `aggregate_session_dataset()` accepts one immutable `IntradayDataset`, a
 `Timeframe` containing exactly `SessionInterval(1)` or
 `TradingWeekInterval(1)`, and an optional `SessionAggregationPolicy`. Source and
-target session policies must match exactly. The default strict policy rejects a
+target session policies must match exactly, and the source interval must
+prohibit cross-session continuation so post-close values cannot enter a bar
+labeled with the earlier session close. The default strict policy rejects a
 QF-17 report with missing or unexpected completed intervals. Diagnostic mode
 excludes unexpected observations, never fills missing constituents, and
 preserves every gap in the source report and target-period evidence.

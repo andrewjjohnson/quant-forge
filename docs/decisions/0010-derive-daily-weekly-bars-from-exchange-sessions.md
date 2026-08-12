@@ -21,6 +21,10 @@ week. QF-13 supplies exact sessions and boundaries. QF-17 supplies expected,
 missing, and unexpected source-interval evidence. OHLCV is first open, maximum
 high, minimum low, final close, and summed volume.
 
+Source intraday intervals must prohibit cross-session continuation. This keeps
+post-close constituents out of a daily or weekly bar whose explicit boundary is
+the exchange session's actual close.
+
 The default strict policy rejects incomplete source coverage. Explicit
 diagnostic mode excludes unexpected observations, never fills gaps, and binds
 the complete source report and exact missing constituents into the derived

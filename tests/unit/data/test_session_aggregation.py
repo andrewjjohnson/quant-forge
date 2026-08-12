@@ -32,6 +32,7 @@ from quantforge.data import (
 from quantforge.data.identity import sha256_hex
 from quantforge.timeframes import (
     BarCompletion,
+    CrossSessionPolicy,
     ExchangeSessionPolicy,
     IntradayInterval,
     SessionInterval,
@@ -217,6 +218,78 @@ def _extended_dataset() -> tuple[IntradayDataset, ExchangeSessionPolicy]:
         quality_report=report,
     )
     return IntradayDataset(request, bars, metadata), session_policy
+
+
+def _cross_session_dataset() -> IntradayDataset:
+    source_timeframe = Timeframe.us_equity(
+        IntradayInterval(
+            timedelta(hours=4),
+            cross_session_policy=CrossSessionPolicy.PERMITTED,
+        )
+    )
+    session_date = date(2024, 7, 1)
+    session = resolve_exchange_session(session_date)
+    request = IntradayBarRequest(
+        symbol="SPY",
+        start_timestamp=session.open_timestamp,
+        end_timestamp=session.open_timestamp + timedelta(hours=8),
+        timeframe=source_timeframe,
+        feed_scope=FeedScope.consolidated(),
+        adjustment_basis=_adjustment_basis(),
+    )
+    provenance = IntradayBarProvenance(
+        provider_name="fixture-provider",
+        provider_symbol="SPY",
+        adapter_version="fixture-1",
+        retrieved_at=RETRIEVED_AT,
+        source_request_id=request.request_id,
+        source_snapshot_id="raw-cross-session",
+        feed_scope=request.feed_scope,
+        adjustment_basis=request.adjustment_basis,
+    )
+    bars = tuple(
+        IntradayBar(
+            symbol="SPY",
+            session_date=session_date,
+            start_timestamp=session.open_timestamp + timedelta(hours=4 * index),
+            end_timestamp=session.open_timestamp + timedelta(hours=4 * (index + 1)),
+            timeframe=source_timeframe,
+            completion=BarCompletion.COMPLETED,
+            open=Decimal(100 + index),
+            high=Decimal(102 + index),
+            low=Decimal(99 + index),
+            close=Decimal(101 + index),
+            volume=Decimal(1000 + index),
+            provenance=provenance,
+        )
+        for index in range(2)
+    )
+    batch = IntradayBarBatch(request, bars)
+    report = validate_intraday_coverage(batch, mode=IntradayValidationMode.DIAGNOSTIC)
+    dataset_id = configuration_identity(
+        {
+            "fixture": "cross-session",
+            "request_id": request.request_id,
+            "batch_id": batch.batch_id,
+        }
+    )
+    metadata = IntradayDatasetMetadata(
+        dataset_id=dataset_id,
+        request_id=request.request_id,
+        provider_name="fixture-provider",
+        provider_symbol="SPY",
+        adapter_version="fixture-1",
+        retrieved_at=RETRIEVED_AT,
+        capabilities_configuration_id="fixture-capabilities",
+        batch_id=batch.batch_id,
+        bar_count=len(bars),
+        raw_snapshot_ids=("raw-cross-session",),
+        raw_locations=("intraday/raw/raw-cross-session.json",),
+        normalized_location=f"intraday/datasets/{dataset_id}/bars.json",
+        data_sha256=sha256_hex(batch.serialize()),
+        quality_report=report,
+    )
+    return IntradayDataset(request, bars, metadata)
 
 
 def test_daily_bars_are_one_session_and_hand_auditable() -> None:
@@ -470,3 +543,17 @@ def test_invalid_targets_remain_out_of_scope() -> None:
         aggregate_session_dataset(source, Timeframe.us_equity(SessionInterval(2)))
     with pytest.raises(SessionAggregationValidationError, match="exactly one"):
         aggregate_session_dataset(source, Timeframe.us_equity(TradingWeekInterval(2)))
+
+
+def test_source_bars_cannot_continue_beyond_session_close() -> None:
+    source = _cross_session_dataset()
+    assert (
+        source.bars[-1].end_timestamp
+        > resolve_exchange_session(date(2024, 7, 1)).close_timestamp
+    )
+
+    with pytest.raises(
+        SessionAggregationValidationError,
+        match="prohibited source cross-session continuation",
+    ):
+        aggregate_session_dataset(source, _daily())

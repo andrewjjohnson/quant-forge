@@ -31,7 +31,9 @@ from quantforge.data.lineage import (
 )
 from quantforge.timeframes import (
     BarCompletion,
+    CrossSessionPolicy,
     DevelopingBarExposure,
+    IntradayInterval,
     SessionInterval,
     Timeframe,
     TradingWeekInterval,
@@ -90,6 +92,7 @@ class SessionAggregationPolicy:
             "schema_version": self.schema_version,
             "missing_constituent_policy": self.missing_constituent_policy.value,
             "source_requirement": "validated_canonical_intraday_dataset",
+            "source_cross_session_policy": "prohibited",
             "daily_boundary": "one_complete_exchange_session",
             "weekly_boundary": "monday_sunday_exchange_trading_week",
             "partial_source_range_policy": "exclude_incomplete_target_period",
@@ -687,6 +690,11 @@ def _validate_target(
     if target_timeframe.developing_bar_exposure is not DevelopingBarExposure.EXCLUDE:
         raise SessionAggregationValidationError(
             "session aggregation emits completed bars only"
+        )
+    source_interval = cast(IntradayInterval, source_dataset.request.timeframe.interval)
+    if source_interval.cross_session_policy is not CrossSessionPolicy.PROHIBITED:
+        raise SessionAggregationValidationError(
+            "session aggregation requires prohibited source cross-session continuation"
         )
 
 
