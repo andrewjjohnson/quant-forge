@@ -19,10 +19,16 @@ from quantforge.data.intraday import (
     IntradayBarRequest,
     IntradayProviderCapabilities,
 )
+from quantforge.data.intraday_validation import (
+    IntradayCoverageReport,
+    IntradayValidationMode,
+    validate_intraday_coverage,
+)
 from quantforge.data.models import JsonValue, ProviderRecord
 from quantforge.timeframes import BarCompletion
 
-INTRADAY_DATASET_SCHEMA_VERSION = "1"
+INTRADAY_DATASET_SCHEMA_VERSION = "2"
+INTRADAY_RAW_SNAPSHOT_SCHEMA_VERSION = "1"
 
 
 def _validated_text(value: object, field_name: str) -> str:
@@ -127,7 +133,7 @@ class IntradayRawSnapshot:
         return cast(
             PrimitiveMapping,
             {
-                "schema_version": INTRADAY_DATASET_SCHEMA_VERSION,
+                "schema_version": INTRADAY_RAW_SNAPSHOT_SCHEMA_VERSION,
                 "artifact_type": "intraday_raw_snapshot",
                 "provider_name": self.provider_name,
                 "provider_symbol": self.provider_symbol,
@@ -250,6 +256,7 @@ class IntradayDatasetMetadata:
     raw_locations: tuple[str, ...]
     normalized_location: str
     data_sha256: str
+    quality_report: IntradayCoverageReport
     schema_version: str = INTRADAY_DATASET_SCHEMA_VERSION
 
 
@@ -260,6 +267,11 @@ class IntradayDataset:
     request: IntradayBarRequest
     bars: tuple[IntradayBar, ...]
     metadata: IntradayDatasetMetadata
+
+    @property
+    def quality_report(self) -> IntradayCoverageReport:
+        """Expose persisted validation evidence to derived-data consumers."""
+        return self.metadata.quality_report
 
 
 class IntradayMarketDataCache:
@@ -292,7 +304,10 @@ class IntradayMarketDataCache:
         request = result.batch.request
         normalized_bytes = result.batch.serialize()
         data_sha256 = sha256_hex(normalized_bytes)
-        identity = self._identity_value(result, data_sha256)
+        quality_report = validate_intraday_coverage(
+            result.batch, mode=IntradayValidationMode.DIAGNOSTIC
+        )
+        identity = self._identity_value(result, data_sha256, quality_report)
         dataset_id = sha256_hex(canonical_json_bytes(identity))
         normalized_location = f"intraday/datasets/{dataset_id}/bars.json"
         raw_locations = tuple(
@@ -376,6 +391,15 @@ class IntradayMarketDataCache:
             batch = _batch_from_primitive(normalized_value, request)
             if batch.batch_id != manifest.get("batch_id"):
                 raise CacheError("intraday batch identity mismatch")
+            quality_report = validate_intraday_coverage(
+                batch, mode=IntradayValidationMode.DIAGNOSTIC
+            )
+            expected_quality = {
+                "report_id": quality_report.report_id,
+                "report": quality_report.to_primitive(),
+            }
+            if manifest.get("quality_report") != expected_quality:
+                raise CacheError("intraday quality report mismatch")
             metadata = IntradayDatasetMetadata(
                 dataset_id=dataset_id,
                 request_id=request.request_id,
@@ -394,6 +418,7 @@ class IntradayMarketDataCache:
                 raw_locations=tuple(raw_locations),
                 normalized_location=normalized_location,
                 data_sha256=_json_string(manifest, "data_sha256", "manifest"),
+                quality_report=quality_report,
             )
         except CacheError:
             raise
@@ -407,7 +432,9 @@ class IntradayMarketDataCache:
 
     @staticmethod
     def _identity_value(
-        result: IntradayFetchResult, data_sha256: str
+        result: IntradayFetchResult,
+        data_sha256: str,
+        quality_report: IntradayCoverageReport,
     ) -> dict[str, object]:
         batch = result.batch
         first = result.raw_snapshots[0]
@@ -445,6 +472,10 @@ class IntradayMarketDataCache:
             "batch_id": batch.batch_id,
             "bar_count": len(batch.bars),
             "data_sha256": data_sha256,
+            "quality_report": {
+                "report_id": quality_report.report_id,
+                "report": quality_report.to_primitive(),
+            },
         }
 
     def _request_index(self, provider_name: str, request_id: str) -> Path:
@@ -657,6 +688,7 @@ def _batch_from_primitive(
 
 __all__ = [
     "INTRADAY_DATASET_SCHEMA_VERSION",
+    "INTRADAY_RAW_SNAPSHOT_SCHEMA_VERSION",
     "IntradayDataset",
     "IntradayDatasetMetadata",
     "IntradayFetchResult",

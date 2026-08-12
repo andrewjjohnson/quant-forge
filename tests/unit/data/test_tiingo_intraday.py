@@ -13,6 +13,7 @@ import pytest
 
 import quantforge.data.providers.tiingo as tiingo_module
 from quantforge.data import (
+    INTRADAY_DATASET_SCHEMA_VERSION,
     AdjustmentBasis,
     AdjustmentMode,
     FeedScope,
@@ -141,6 +142,10 @@ def test_tiingo_intraday_fetches_chunks_caches_and_replays_without_credentials(
     assert dataset.metadata.raw_snapshot_ids == tuple(
         bar.provenance.source_snapshot_id for bar in (dataset.bars[0], dataset.bars[-1])
     )
+    assert dataset.metadata.schema_version == INTRADAY_DATASET_SCHEMA_VERSION == "2"
+    assert dataset.quality_report.is_complete
+    assert dataset.quality_report.observed_bar_count == 3
+    assert dataset.quality_report.expected_completed_interval_count == 3
     assert cache.load(dataset.metadata.dataset_id, request) == dataset
 
     first_query = parse_qs(urlparse(calls[0][0].full_url).query)
@@ -176,6 +181,9 @@ def test_tiingo_intraday_fetches_chunks_caches_and_replays_without_credentials(
     assert manifest["feed_scope"] == FeedScope.consolidated().to_primitive()
     assert manifest["source_interval"] == request.source_interval.to_primitive()
     assert manifest["session_scope"] == SessionScope.REGULAR_HOURS.value
+    quality_report = cast(dict[str, object], manifest["quality_report"])
+    assert quality_report["report_id"] == dataset.quality_report.report_id
+    assert quality_report["report"] == dataset.quality_report.to_primitive()
     manifest_request = cast(dict[str, object], manifest["request"])
     assert manifest_request["configuration"] == request.to_primitive()
     chunks = cast(list[dict[str, object]], manifest["chunks"])

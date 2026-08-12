@@ -84,6 +84,12 @@ Run the deterministic offline Tiingo intraday adapter and cache tests:
 uv run pytest tests/unit/data/test_tiingo_intraday.py
 ```
 
+Run the focused provider-neutral intraday coverage validation tests:
+
+```bash
+uv run pytest tests/unit/data/test_intraday_validation.py
+```
+
 Run the opt-in live Tiingo integration only with both the key and explicit flag:
 
 ```bash

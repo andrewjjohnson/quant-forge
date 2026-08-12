@@ -25,6 +25,7 @@ from quantforge.data.intraday import (
 )
 from quantforge.data.intraday_ingestion import (
     INTRADAY_DATASET_SCHEMA_VERSION,
+    INTRADAY_RAW_SNAPSHOT_SCHEMA_VERSION,
     IntradayDataset,
     IntradayDatasetMetadata,
     IntradayFetchResult,
@@ -32,6 +33,16 @@ from quantforge.data.intraday_ingestion import (
     IntradayMarketDataCache,
     IntradayMarketDataService,
     IntradayRawSnapshot,
+)
+from quantforge.data.intraday_validation import (
+    INTRADAY_QUALITY_REPORT_SCHEMA_VERSION,
+    IntradayCoverageInterval,
+    IntradayCoverageReport,
+    IntradayCoverageStatus,
+    IntradayCoverageValidationError,
+    IntradaySessionCoverage,
+    IntradayValidationMode,
+    validate_intraday_coverage,
 )
 from quantforge.data.lineage import (
     DATASET_FAMILY_SCHEMA_VERSION,
@@ -66,6 +77,8 @@ __all__ = [
     "DATASET_FAMILY_SCHEMA_VERSION",
     "INTRADAY_CONTRACT_SCHEMA_VERSION",
     "INTRADAY_DATASET_SCHEMA_VERSION",
+    "INTRADAY_QUALITY_REPORT_SCHEMA_VERSION",
+    "INTRADAY_RAW_SNAPSHOT_SCHEMA_VERSION",
     "AdjustmentBasis",
     "AdjustmentMode",
     "AggregationPolicy",
@@ -87,6 +100,10 @@ __all__ = [
     "IntradayBarProvenance",
     "IntradayBarRequest",
     "IntradayContractValidationError",
+    "IntradayCoverageInterval",
+    "IntradayCoverageReport",
+    "IntradayCoverageStatus",
+    "IntradayCoverageValidationError",
     "IntradayDataset",
     "IntradayDatasetMetadata",
     "IntradayFetchResult",
@@ -95,6 +112,8 @@ __all__ = [
     "IntradayMarketDataService",
     "IntradayProviderCapabilities",
     "IntradayRawSnapshot",
+    "IntradaySessionCoverage",
+    "IntradayValidationMode",
     "MarketDataCache",
     "MarketDataError",
     "MarketDataService",
@@ -112,6 +131,7 @@ __all__ = [
     "UnsupportedSessionScopeError",
     "ValidationError",
     "dataset_identity_matches",
+    "validate_intraday_coverage",
     "validate_market_dataset",
     "validate_source_consistency",
 ]

@@ -2,9 +2,10 @@
 
 QF-15 defines the typed boundary for requesting and normalizing historical
 intraday OHLCV. QF-16 implements the first HTTP and immutable-cache path behind
-that boundary using Tiingo. Both build on QF-13 timeframe/session semantics and
-QF-14 dataset-family provenance; neither implements aggregation or session-gap
-validation.
+that boundary using Tiingo. QF-17 validates completed source-interval coverage
+against the configured exchange calendar and persists typed quality evidence.
+All three build on QF-13 timeframe/session semantics and QF-14 dataset-family
+provenance; none implements bar aggregation.
 
 The public records are exported from `quantforge.data`. Provider adapters use
 `IntradayBarProvider` from `quantforge.data.providers`.
@@ -116,6 +117,10 @@ validate session gaps. An ingestion adapter is responsible for preserving its
 raw response separately before mapping it to these contracts. QF-16's Tiingo
 adapter satisfies that boundary with `IntradayFetchResult` and immutable raw
 chunk snapshots.
+
+Adjacent canonical bars may not overlap. Duplicate keys, out-of-order bars,
+overlapping timestamps, or bars outside their request range fail at the typed
+batch boundary before coverage validation.
 
 Like requests, bars and batches expose `to_primitive()`, canonical `serialize()`
 bytes, and deterministic identities. The bar identity binds timestamps,
@@ -256,6 +261,57 @@ TIINGO_API_KEY=... QUANTFORGE_RUN_LIVE_TIINGO_INTRADAY=1 \
 The live test prefers consolidated data. Set
 `QUANTFORGE_TIINGO_INTRADAY_FEED=iex` to explicitly validate the IEX-only path.
 
+## Intraday coverage and quality validation
+
+`validate_intraday_coverage()` consumes a provider-neutral
+`IntradayBarBatch`; it performs no retrieval and never changes, fills,
+interpolates, or invents a bar. Expected completed source intervals are derived
+from the request's complete QF-13 timeframe and the installed exchange calendar.
+The calculation therefore uses actual XNYS sessions, session opens and closes,
+early closes, exchange-local daylight-saving behavior, and the request's
+regular- or explicit extended-hours scope. Weekends and holidays do not enter
+the expected set.
+
+The typed `IntradayCoverageReport` records:
+
+- request, batch, timeframe, source-interval, feed, and session-scope identity;
+- expected and observed completed interval counts;
+- exact missing and unexpected interval boundaries;
+- incomplete exchange sessions;
+- developing bars and zero-volume bars as warnings;
+- per-session open, close, requested coverage, and quality details.
+
+Completed terminal partial-duration bars are expected when a session ends
+before the nominal interval boundary, including an early close. They are not
+reported as gaps. Completed bars that do not match the canonical expected
+boundaries are material unexpected intervals. Developing bars do not satisfy a
+completed interval and remain separately visible.
+
+The modes change control flow, not calendar or quality semantics:
+
+- `IntradayValidationMode.STRICT` raises
+  `IntradayCoverageValidationError` when completed intervals are missing or
+  unexpected. The exception retains the complete report.
+- `IntradayValidationMode.DIAGNOSTIC` always returns the report so a caller can
+  inspect or apply its own tolerance policy.
+
+Zero volume remains permitted by the QF-15 canonical contract because a valid
+interval can contain no executions. QF-17 records it as a warning. Negative or
+non-finite volume, non-finite/nonpositive prices, null/non-Decimal values, and
+invalid OHLC relationships remain hard `IntradayBar` construction failures in
+both modes. Session-scope, range, ordering, duplicate, and overlap violations
+likewise fail at the canonical bar or batch boundary rather than being softened
+by diagnostic mode.
+
+Intraday cache schema version 2 embeds the diagnostic report and its
+deterministic identity in every dataset manifest. Cache loads recompute the
+report from canonical bars and the exchange calendar and reject a mismatch.
+`IntradayDataset.quality_report` exposes the verified report directly to later
+derived-dataset and study code. Raw snapshot schema version 1 remains unchanged,
+so the same raw response bytes keep their content identity. Existing intraday
+dataset-schema-1 manifests are not rewritten; refresh or re-ingest them to
+create a quality-bearing schema-2 dataset.
+
 ## Daily compatibility
 
 QF-15 does not change:
@@ -272,11 +328,11 @@ artifacts in a separate namespace, leaving legacy QF-3 artifacts unchanged.
 
 ## Deliberate limitations
 
-QF-15/QF-16 do not implement:
+QF-15/QF-16/QF-17 do not implement:
 
-- session-gap or missing-source-bar validation;
 - bar aggregation;
 - multi-timeframe as-of alignment;
+- downstream study-specific tolerance decisions beyond exposing the report;
 - provider capability discovery over the network.
 
 Those are sibling QF-12 stories. They must consume these contracts without
