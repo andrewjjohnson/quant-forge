@@ -192,6 +192,16 @@ and binds its identity, the source dataset, the target timeframe, and the
 aggregation policy. Session-open windows terminate at the calendar's actual
 close, so normal, early-close, and DST sessions cannot bleed into one another.
 
+QF-19 applies the same rule to daily and weekly data. Daily bars contain exactly
+one fully covered exchange session. Weekly bars contain exactly the sessions in
+the QF-13 Monday-Sunday exchange week, so a holiday-shortened week remains a
+valid complete period while a dataset that begins or ends midweek is excluded
+instead of mislabeled complete. Strict aggregation rejects missing or
+unexpected source intervals. Diagnostic aggregation never fills them and
+embeds the exact QF-17 report plus per-period missing-constituent evidence.
+Ordered source-bar IDs are part of each output identity, and dataset validation
+rejects reuse of a source bar across output periods.
+
 ## Common-source multi-timeframe integrity
 
 Matching a symbol, provider name, or display interval does not prove that two

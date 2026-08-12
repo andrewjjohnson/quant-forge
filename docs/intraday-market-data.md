@@ -5,8 +5,9 @@ intraday OHLCV. QF-16 implements the first HTTP and immutable-cache path behind
 that boundary using Tiingo. QF-17 validates completed source-interval coverage
 against the configured exchange calendar and persists typed quality evidence.
 QF-18 aggregates those immutable source datasets into deterministic larger
-intraday bars. All four build on QF-13 timeframe/session semantics and QF-14
-dataset-family provenance.
+intraday bars. QF-19 derives exchange-session daily and exchange-weekly bars
+from the same source. All five build on QF-13 timeframe/session semantics and
+QF-14 dataset-family provenance.
 
 The public records are exported from `quantforge.data`. Provider adapters use
 `IntradayBarProvider` from `quantforge.data.providers`.
@@ -376,6 +377,63 @@ identity, canonical paths, producer provenance, and exact family lineage. A
 reconstructed or replaced dataclass therefore cannot poison a content-addressed
 entry with bytes that disagree with its metadata.
 
+## Exchange-session daily and weekly derived bars
+
+`aggregate_session_dataset()` accepts one immutable `IntradayDataset`, a
+`Timeframe` containing exactly `SessionInterval(1)` or
+`TradingWeekInterval(1)`, and an optional `SessionAggregationPolicy`. Source and
+target session policies must match exactly. The default strict policy rejects a
+QF-17 report with missing or unexpected completed intervals. Diagnostic mode
+excludes unexpected observations, never fills missing constituents, and
+preserves every gap in the source report and target-period evidence.
+
+Daily bars map to one fully covered exchange session. Their timestamps run from
+that session's configured actual open to actual close, including early closes.
+Weekly bars map to the QF-13 Monday-Sunday exchange trading week and list every
+constituent session explicitly. Holidays are absent because the exchange
+calendar publishes no session; a holiday-shortened week is complete when all
+of its actual sessions are covered. Source ranges beginning or ending inside a
+session or exchange week are recorded as excluded partial periods and are not
+emitted as completed bars.
+
+Both targets use first open, maximum high, minimum low, final close, and summed
+volume. Each bar carries the ordered immutable intraday source-bar IDs used in
+the calculation. Validation rejects duplicate source IDs within a bar and any
+reuse across bars in one derived dataset. Equivalent runs produce identical
+bars, bar IDs, dataset IDs, family manifests, and bytes.
+
+The derived manifest embeds and verifies:
+
+- the normalized source dataset, raw snapshots, request, batch, and complete
+  QF-17 quality report;
+- the complete QF-13 target timeframe and configured regular/extended-hours
+  session scope;
+- the source adjustment and corporate-action basis through the QF-14 family;
+- the aggregation policy and per-period constituent evidence;
+- a two-member QF-14 lineage from the source snapshot to the QuantForge-derived
+  target dataset.
+
+`SessionAggregationCache` persists immutable artifacts at:
+
+```text
+session/derived/<dataset-sha256>/bars.json
+session/derived/<dataset-sha256>/manifest.json
+```
+
+Cache loads rederive the requested dataset from the verified source and compare
+canonical bytes, identities, and checksums. Existing artifacts are never
+overwritten with different bytes.
+
+### Differences from provider-native EOD data
+
+Provider-native daily or weekly bars are never substituted. Even for the same
+symbol and apparent date, provider EOD values can differ because of feed venue
+coverage, regular-versus-extended hours, provider correction timing, corporate-
+action adjustment, weekly labeling, or proprietary aggregation rules. QF-19
+bars identify `quantforge` as producer and trace to the exact canonical
+intraday snapshot. Provider EOD remains a separate dataset family unless a
+future explicit external-bar validation policy proves compatibility.
+
 ## Daily compatibility
 
 QF-15 does not change:
@@ -392,9 +450,8 @@ separate namespace, leaving legacy QF-3 artifacts unchanged.
 
 ## Deliberate limitations
 
-QF-15/QF-16/QF-17/QF-18 do not implement:
+QF-15/QF-16/QF-17/QF-18/QF-19 do not implement:
 
-- daily or weekly aggregation;
 - multi-timeframe as-of alignment;
 - downstream study-specific tolerance decisions beyond exposing the report;
 - developing target bars;

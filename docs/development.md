@@ -96,6 +96,13 @@ Run deterministic session-aware intraday aggregation and derived-cache tests:
 uv run pytest tests/unit/data/test_intraday_aggregation.py
 ```
 
+Run deterministic exchange-session daily/weekly aggregation and immutable-cache
+tests:
+
+```bash
+uv run pytest tests/unit/data/test_session_aggregation.py
+```
+
 Run the opt-in live Tiingo integration only with both the key and explicit flag:
 
 ```bash

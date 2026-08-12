@@ -226,6 +226,38 @@ Must not:
 - expose developing target bars or align multiple timeframes as of a decision
   timestamp.
 
+### Exchange-session daily and weekly aggregation
+
+QF-19 implements canonical intraday-to-session aggregation in
+`quantforge.data.session_aggregation` and immutable persistence in
+`quantforge.data.session_aggregation_cache`. It consumes one QF-16 source
+dataset and its exact QF-17 quality report, then emits either one completed bar
+per fully covered exchange session or one completed bar per fully covered
+Monday-Sunday exchange trading week. See `docs/intraday-market-data.md` and ADR
+0010.
+
+Responsibilities:
+
+- aggregate first open, maximum high, minimum low, final close, and summed
+  volume from canonical intraday constituents;
+- use QF-13 sessions and trading weeks, including holidays, early closes, and
+  the configured regular/extended-hours scope;
+- exclude partial source-range sessions or weeks instead of labeling them
+  complete;
+- reject missing/unexpected constituents by default, or preserve their exact
+  QF-17 evidence in an explicitly diagnostic derived dataset;
+- guarantee a source bar appears at most once in one derived dataset;
+- bind source snapshot, session scope, target timeframe, adjustment/corporate-
+  action basis, aggregation policy, quality evidence, and QF-14 lineage into
+  deterministic immutable artifacts.
+
+Must not:
+
+- retrieve data or substitute provider-native daily/EOD/weekly bars;
+- fill or infer missing observations;
+- aggregate larger intraday intervals, align multiple timeframes, expose
+  developing bars, or calculate indicators.
+
 ### Indicators and features
 
 QF-4 implements the reusable indicator boundary in `quantforge.indicators`.
