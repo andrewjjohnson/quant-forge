@@ -4,8 +4,9 @@ QF-15 defines the typed boundary for requesting and normalizing historical
 intraday OHLCV. QF-16 implements the first HTTP and immutable-cache path behind
 that boundary using Tiingo. QF-17 validates completed source-interval coverage
 against the configured exchange calendar and persists typed quality evidence.
-All three build on QF-13 timeframe/session semantics and QF-14 dataset-family
-provenance; none implements bar aggregation.
+QF-18 aggregates those immutable source datasets into deterministic larger
+intraday bars. All four build on QF-13 timeframe/session semantics and QF-14
+dataset-family provenance.
 
 The public records are exported from `quantforge.data`. Provider adapters use
 `IntradayBarProvider` from `quantforge.data.providers`.
@@ -312,6 +313,69 @@ so the same raw response bytes keep their content identity. Existing intraday
 dataset-schema-1 manifests are not rewritten; refresh or re-ingest them to
 create a quality-bearing schema-2 dataset.
 
+## Session-aware derived intraday bars
+
+`aggregate_intraday_dataset()` accepts one immutable `IntradayDataset`, a QF-13
+target `Timeframe`, and an optional `IntradayAggregationPolicy`. The target must
+be intraday, strictly larger than the source, and an exact duration multiple.
+Source and target use the same exchange-session and anchor policies, both
+prohibit cross-session continuation, and the target excludes developing bars.
+This supports 5-minute sources resampled to 15-minute, 30-minute, 1-hour,
+2-hour, and 4-hour bars as well as other valid exact multiples.
+
+Target windows begin at the actual session open under the default policy and
+end at the earlier of their nominal boundary or actual session close. A normal
+XNYS 4-hour session therefore emits 09:30-13:30 and a completed partial-duration
+13:30-16:00 bar. The 2024-11-29 early close emits one completed partial-duration
+09:30-13:00 bar. Boundaries are resolved per session, so DST changes affect UTC
+offsets without changing the exchange-local 09:30 open, and no aggregate can
+contain constituents from two sessions.
+
+OHLCV uses first open, maximum high, minimum low, final close, and summed
+volume. Every output window records ordered source bar IDs, expected and
+observed constituent counts, exact missing intervals, and its output bar ID.
+The default `MissingConstituentPolicy.STRICT` raises
+`IntradayAggregationQualityError` before returning a dataset if the verified
+source report is incomplete. `DIAGNOSTIC` excludes unexpected source intervals,
+never fills gaps, and may emit an explicitly incomplete aggregate from the
+available expected constituents; a window with no observations is recorded but
+not emitted. Consumers must not treat a diagnostic incomplete bar as equivalent
+to a quality-complete bar.
+
+Derived bars identify `quantforge` as their producer and point their source
+snapshot at the immutable normalized source dataset ID. The derived manifest
+embeds the complete QF-17 source report and binds:
+
+- source dataset, request, batch, normalized content, and raw snapshot IDs;
+- complete target request/timeframe semantics;
+- complete aggregation policy and per-window quality report;
+- normalized derived bar content and identities;
+- a QF-14 family manifest whose only members are the canonical source dataset
+  and the QuantForge-derived child.
+
+Provider-native higher-timeframe bars therefore cannot enter this derived
+family by matching a provider name or symbol. Repeating aggregation with the
+same source snapshot, target timeframe, and policy produces identical bars,
+bar IDs, dataset ID, family manifest, and bytes. Changing the source snapshot
+or aggregation policy changes the derived dataset identity.
+
+`IntradayAggregationCache` writes immutable artifacts separately from source
+ingestion:
+
+```text
+intraday/derived/<dataset-sha256>/bars.json
+intraday/derived/<dataset-sha256>/manifest.json
+```
+
+Loading rederives the result from the verified source dataset and compares the
+complete canonical bytes, identities, and checksums. Existing content is never
+overwritten; differing bytes at a content-addressed path raise `CacheError`.
+Before creating any artifact, persistence also recomputes the supplied derived
+dataset's batch ID, bar count, content checksum, source/report bindings, dataset
+identity, canonical paths, producer provenance, and exact family lineage. A
+reconstructed or replaced dataclass therefore cannot poison a content-addressed
+entry with bytes that disagree with its metadata.
+
 ## Daily compatibility
 
 QF-15 does not change:
@@ -323,16 +387,17 @@ QF-15 does not change:
 - daily request/cache keys, manifests, dataset IDs, artifacts, or provider
   behavior.
 
-Intraday contracts and QF-16 datasets use independently versioned schema-1
-artifacts in a separate namespace, leaving legacy QF-3 artifacts unchanged.
+Intraday contracts and datasets use independently versioned artifacts in a
+separate namespace, leaving legacy QF-3 artifacts unchanged.
 
 ## Deliberate limitations
 
-QF-15/QF-16/QF-17 do not implement:
+QF-15/QF-16/QF-17/QF-18 do not implement:
 
-- bar aggregation;
+- daily or weekly aggregation;
 - multi-timeframe as-of alignment;
 - downstream study-specific tolerance decisions beyond exposing the report;
+- developing target bars;
 - provider capability discovery over the network.
 
 Those are sibling QF-12 stories. They must consume these contracts without

@@ -27,6 +27,8 @@ Do not create ADRs for routine implementation details that are easy to change.
 - [ADR 0006: Use provider-neutral intraday request and bar contracts](0006-use-provider-neutral-intraday-contracts.md)
 - [ADR 0007: Cache intraday source snapshots separately](0007-cache-intraday-source-snapshots-separately.md)
 - [ADR 0008: Bind intraday quality reports to datasets](0008-bind-intraday-quality-reports-to-datasets.md)
+- [ADR 0009: Derive intraday bars from verified session windows](0009-derive-intraday-bars-from-verified-session-windows.md)
+- [ADR 0009: Derive intraday bars from verified session windows](0009-derive-intraday-bars-from-verified-session-windows.md)
 
 ## File naming
 

@@ -182,6 +182,16 @@ warned because absence of executions is not proof that the interval itself is
 missing. Intraday dataset manifests bind the report, and cache loads recompute
 it before downstream use.
 
+QF-18 consumes that verified evidence rather than inferring completeness from
+row counts. Strict aggregation fails before returning a derived dataset when
+expected source intervals are missing or unexpected. Diagnostic aggregation
+never fills a gap: it excludes unexpected observations, aggregates only the
+available expected constituents, and marks the exact missing intervals on the
+target window. Each derived manifest embeds the complete source quality report
+and binds its identity, the source dataset, the target timeframe, and the
+aggregation policy. Session-open windows terminate at the calendar's actual
+close, so normal, early-close, and DST sessions cannot bleed into one another.
+
 ## Common-source multi-timeframe integrity
 
 Matching a symbol, provider name, or display interval does not prove that two
