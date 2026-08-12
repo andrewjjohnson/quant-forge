@@ -402,6 +402,55 @@ def test_derived_cache_persists_reloads_and_rejects_collisions(tmp_path: Path) -
         cache.persist(derived)
 
 
+def test_derived_cache_rejects_replaced_content_before_any_write(
+    tmp_path: Path,
+) -> None:
+    source = _session_dataset((date(2024, 7, 1),))
+    derived = aggregate_intraday_dataset(source, _target(60))
+    altered_first_bar = replace(
+        derived.bars[0], volume=derived.bars[0].volume + Decimal(1)
+    )
+    poisoned = replace(
+        derived,
+        bars=(altered_first_bar, *derived.bars[1:]),
+    )
+    cache = IntradayAggregationCache(tmp_path)
+
+    with pytest.raises(IntradayAggregationValidationError, match="batch identity"):
+        cache.persist(poisoned)
+
+    assert not (tmp_path / "intraday").exists()
+    cache.persist(derived)
+
+
+def test_derived_cache_recomputes_metadata_and_canonical_paths_before_write(
+    tmp_path: Path,
+) -> None:
+    source = _session_dataset((date(2024, 7, 1),))
+    derived = aggregate_intraday_dataset(source, _target(60))
+    cache = IntradayAggregationCache(tmp_path)
+    replacements = (
+        (replace(derived.metadata, batch_id="altered-batch"), "batch identity"),
+        (replace(derived.metadata, bar_count=0), "bar count"),
+        (replace(derived.metadata, data_sha256="altered-digest"), "content digest"),
+        (replace(derived.metadata, dataset_id="altered-dataset"), "dataset identity"),
+        (
+            replace(derived.metadata, normalized_location="altered/bars.json"),
+            "normalized location",
+        ),
+        (
+            replace(derived.metadata, manifest_location="altered/manifest.json"),
+            "manifest location",
+        ),
+    )
+
+    for altered_metadata, expected_message in replacements:
+        with pytest.raises(IntradayAggregationValidationError, match=expected_message):
+            cache.persist(replace(derived, metadata=altered_metadata))
+
+    assert not (tmp_path / "intraday").exists()
+
+
 def test_invalid_target_semantics_fail_closed() -> None:
     source = _session_dataset((date(2024, 7, 1),))
 

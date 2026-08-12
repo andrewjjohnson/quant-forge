@@ -370,6 +370,11 @@ intraday/derived/<dataset-sha256>/manifest.json
 Loading rederives the result from the verified source dataset and compares the
 complete canonical bytes, identities, and checksums. Existing content is never
 overwritten; differing bytes at a content-addressed path raise `CacheError`.
+Before creating any artifact, persistence also recomputes the supplied derived
+dataset's batch ID, bar count, content checksum, source/report bindings, dataset
+identity, canonical paths, producer provenance, and exact family lineage. A
+reconstructed or replaced dataclass therefore cannot poison a content-addressed
+entry with bytes that disagree with its metadata.
 
 ## Daily compatibility
 

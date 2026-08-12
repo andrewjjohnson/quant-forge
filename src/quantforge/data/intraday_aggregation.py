@@ -316,6 +316,221 @@ class AggregatedIntradayDataset:
     def serialize_bars(self) -> bytes:
         return IntradayBarBatch(self.request, self.bars).serialize()
 
+    def validate(self) -> None:
+        """Recompute every derived identity and canonical persistence invariant."""
+        request_value = cast(object, self.request)
+        bars_value = cast(object, self.bars)
+        metadata_value = cast(object, self.metadata)
+        if not isinstance(request_value, IntradayBarRequest):
+            raise IntradayAggregationValidationError(
+                "derived intraday request is invalid"
+            )
+        if not isinstance(bars_value, tuple):
+            raise IntradayAggregationValidationError(
+                "derived intraday bars must be a tuple"
+            )
+        if not isinstance(metadata_value, AggregatedIntradayDatasetMetadata):
+            raise IntradayAggregationValidationError(
+                "derived intraday metadata is invalid"
+            )
+        metadata = metadata_value
+        if metadata.schema_version != INTRADAY_AGGREGATION_SCHEMA_VERSION:
+            raise IntradayAggregationValidationError(
+                "derived intraday metadata schema is invalid"
+            )
+        policy_value = cast(object, metadata.aggregation_policy)
+        family_value = cast(object, metadata.family)
+        report_value = cast(object, metadata.aggregation_report)
+        source_quality_value = cast(object, metadata.source_quality_report)
+        if not isinstance(policy_value, IntradayAggregationPolicy):
+            raise IntradayAggregationValidationError(
+                "derived intraday aggregation policy is invalid"
+            )
+        if not isinstance(family_value, DatasetFamily):
+            raise IntradayAggregationValidationError(
+                "derived intraday dataset family is invalid"
+            )
+        if not isinstance(report_value, IntradayAggregationReport):
+            raise IntradayAggregationValidationError(
+                "derived intraday aggregation report is invalid"
+            )
+        if not isinstance(source_quality_value, IntradayCoverageReport):
+            raise IntradayAggregationValidationError(
+                "derived intraday source quality report is invalid"
+            )
+
+        batch = IntradayBarBatch(self.request, self.bars)
+        normalized_bytes = batch.serialize()
+        data_sha256 = sha256_hex(normalized_bytes)
+        if metadata.batch_id != batch.batch_id:
+            raise IntradayAggregationValidationError(
+                "derived intraday batch identity does not match its bars"
+            )
+        if metadata.bar_count != len(batch.bars):
+            raise IntradayAggregationValidationError(
+                "derived intraday bar count does not match its bars"
+            )
+        if metadata.data_sha256 != data_sha256:
+            raise IntradayAggregationValidationError(
+                "derived intraday content digest does not match its bars"
+            )
+        if metadata.target_request_id != self.request.request_id:
+            raise IntradayAggregationValidationError(
+                "derived intraday target request identity mismatch"
+            )
+        self._validate_source_and_report_bindings()
+        self._validate_bar_provenance()
+
+        identity = _dataset_identity_primitive(
+            source_dataset_id=metadata.source_dataset_id,
+            source_request_id=metadata.source_request_id,
+            source_batch_id=metadata.source_batch_id,
+            source_data_sha256=metadata.source_data_sha256,
+            source_raw_snapshot_ids=metadata.source_raw_snapshot_ids,
+            source_quality_report=metadata.source_quality_report,
+            provider_name=metadata.provider_name,
+            provider_symbol=metadata.provider_symbol,
+            target_request=self.request,
+            aggregation_policy=metadata.aggregation_policy,
+            family_id=metadata.family.family_id,
+            aggregation_report=metadata.aggregation_report,
+            batch_id=batch.batch_id,
+            bar_count=len(batch.bars),
+            data_sha256=data_sha256,
+        )
+        if metadata.dataset_id != configuration_identity(identity):
+            raise IntradayAggregationValidationError(
+                "derived intraday dataset identity mismatch"
+            )
+        canonical_directory = f"intraday/derived/{metadata.dataset_id}"
+        if metadata.normalized_location != f"{canonical_directory}/bars.json":
+            raise IntradayAggregationValidationError(
+                "derived intraday normalized location is not canonical"
+            )
+        if metadata.manifest_location != f"{canonical_directory}/manifest.json":
+            raise IntradayAggregationValidationError(
+                "derived intraday manifest location is not canonical"
+            )
+        self._validate_family()
+
+    def _validate_source_and_report_bindings(self) -> None:
+        metadata = self.metadata
+        source_quality = metadata.source_quality_report
+        report = metadata.aggregation_report
+        if metadata.source_quality_report_id != source_quality.report_id:
+            raise IntradayAggregationValidationError(
+                "derived intraday source quality report identity mismatch"
+            )
+        if (
+            metadata.source_request_id != source_quality.request_id
+            or metadata.source_batch_id != source_quality.batch_id
+        ):
+            raise IntradayAggregationValidationError(
+                "derived intraday source quality bindings mismatch"
+            )
+        if (
+            report.source_dataset_id != metadata.source_dataset_id
+            or report.source_batch_id != metadata.source_batch_id
+            or report.source_quality_report_id != source_quality.report_id
+            or report.source_coverage_status is not source_quality.status
+            or report.source_missing_interval_count
+            != len(source_quality.missing_intervals)
+            or report.source_unexpected_interval_count
+            != len(source_quality.unexpected_intervals)
+            or report.source_developing_interval_count
+            != len(source_quality.developing_intervals)
+            or report.source_zero_volume_interval_count
+            != len(source_quality.zero_volume_intervals)
+            or report.incomplete_sessions != source_quality.incomplete_sessions
+        ):
+            raise IntradayAggregationValidationError(
+                "derived intraday aggregation report source bindings mismatch"
+            )
+        if (
+            report.target_request_id != self.request.request_id
+            or report.target_timeframe_configuration_id
+            != self.request.timeframe.configuration_id
+            or report.aggregation_policy_configuration_id
+            != metadata.aggregation_policy.configuration_id
+        ):
+            raise IntradayAggregationValidationError(
+                "derived intraday aggregation report target bindings mismatch"
+            )
+        emitted_ids = tuple(
+            window.output_bar_id
+            for window in report.windows
+            if window.output_bar_id is not None
+        )
+        if emitted_ids != tuple(bar.bar_id for bar in self.bars):
+            raise IntradayAggregationValidationError(
+                "derived intraday aggregation windows do not match output bars"
+            )
+
+    def _validate_bar_provenance(self) -> None:
+        metadata = self.metadata
+        if any(
+            bar.provenance.provider_name != _AGGREGATION_PRODUCER_NAME
+            or bar.provenance.provider_symbol != metadata.provider_symbol
+            or bar.provenance.source_snapshot_id != metadata.source_dataset_id
+            for bar in self.bars
+        ):
+            raise IntradayAggregationValidationError(
+                "derived intraday bar provenance mismatch"
+            )
+
+    def _validate_family(self) -> None:
+        metadata = self.metadata
+        family = metadata.family
+        if family.canonical_source_snapshot_id != metadata.source_dataset_id:
+            raise IntradayAggregationValidationError(
+                "derived intraday family source identity mismatch"
+            )
+        if (
+            family.canonical_symbol != self.request.symbol
+            or family.provider_name != metadata.provider_name
+            or family.feed_scope != self.request.feed_scope
+            or family.adjustment_basis != self.request.adjustment_basis
+            or family.aggregation_policy
+            != metadata.aggregation_policy.to_lineage_policy()
+        ):
+            raise IntradayAggregationValidationError(
+                "derived intraday family policy bindings mismatch"
+            )
+        expected_family = DatasetFamily(
+            canonical_symbol=self.request.symbol,
+            provider_name=metadata.provider_name,
+            feed_scope=self.request.feed_scope,
+            adjustment_basis=self.request.adjustment_basis,
+            aggregation_policy=metadata.aggregation_policy.to_lineage_policy(),
+            canonical_source_snapshot_id=metadata.source_dataset_id,
+            datasets=(
+                DatasetLineage(
+                    dataset_id=metadata.source_dataset_id,
+                    timeframe=family.source_timeframe,
+                    canonical_source_snapshot_id=metadata.source_dataset_id,
+                    parent_dataset_id=None,
+                    child_dataset_ids=(metadata.dataset_id,),
+                ),
+                DatasetLineage(
+                    dataset_id=metadata.dataset_id,
+                    timeframe=self.request.timeframe,
+                    canonical_source_snapshot_id=metadata.source_dataset_id,
+                    parent_dataset_id=metadata.source_dataset_id,
+                ),
+            ),
+        )
+        if family != expected_family:
+            raise IntradayAggregationValidationError(
+                "derived intraday family lineage mismatch"
+            )
+        source_quality_timeframe_id = (
+            metadata.source_quality_report.timeframe_configuration_id
+        )
+        if source_quality_timeframe_id != family.source_timeframe.configuration_id:
+            raise IntradayAggregationValidationError(
+                "derived intraday family source timeframe mismatch"
+            )
+
 
 def _utc_timestamp(timestamp: datetime) -> datetime:
     return timestamp.astimezone(UTC)

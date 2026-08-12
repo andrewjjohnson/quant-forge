@@ -41,8 +41,10 @@ the QuantForge-derived dataset. Derived bars identify QuantForge as producer,
 so provider-native higher-timeframe observations cannot alias a family member.
 
 Derived artifacts use a separate content-addressed namespace. Existing bytes
-are accepted only when identical, and loads rederive from the verified source
-before comparing canonical bars, manifest, IDs, and checksums.
+are accepted only when identical. Persistence recomputes content, identity,
+canonical-path, provenance, report, and lineage invariants before any write,
+and loads rederive from the verified source before comparing canonical bars,
+manifest, IDs, and checksums.
 
 ## Consequences
 

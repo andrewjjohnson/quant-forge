@@ -28,6 +28,7 @@ class IntradayAggregationCache:
         dataset_value = cast(object, dataset)
         if not isinstance(dataset_value, AggregatedIntradayDataset):
             raise TypeError("aggregation cache requires an AggregatedIntradayDataset")
+        dataset.validate()
         self._write_once(
             self.root / dataset.metadata.normalized_location,
             dataset.serialize_bars(),
