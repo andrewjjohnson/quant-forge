@@ -146,6 +146,19 @@ class AggregatedSessionBar:
             raise SessionAggregationValidationError(
                 "aggregated session bar requires a daily or weekly timeframe"
             )
+        if isinstance(interval, SessionInterval) and interval.session_count != 1:
+            raise SessionAggregationValidationError(
+                "aggregated daily bar requires exactly one exchange session"
+            )
+        if isinstance(interval, TradingWeekInterval) and interval.week_count != 1:
+            raise SessionAggregationValidationError(
+                "aggregated weekly bar requires exactly one exchange trading week"
+            )
+        if self.schema_version != SESSION_AGGREGATION_SCHEMA_VERSION:
+            raise SessionAggregationValidationError(
+                f"session aggregation schema {SESSION_AGGREGATION_SCHEMA_VERSION} "
+                "is required for aggregated bars"
+            )
         if self.timeframe.developing_bar_exposure is not DevelopingBarExposure.EXCLUDE:
             raise SessionAggregationValidationError(
                 "aggregated session bars must exclude developing values"
@@ -331,6 +344,13 @@ class SessionAggregationReport:
     excluded_partial_periods: tuple[date, ...]
     windows: tuple[SessionAggregationWindowQuality, ...]
     schema_version: str = SESSION_AGGREGATION_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != SESSION_AGGREGATION_SCHEMA_VERSION:
+            raise SessionAggregationValidationError(
+                f"session aggregation schema {SESSION_AGGREGATION_SCHEMA_VERSION} "
+                "is required for aggregation reports"
+            )
 
     @property
     def missing_constituent_count(self) -> int:

@@ -530,6 +530,31 @@ def test_cache_rejects_replaced_content_before_writing(tmp_path: Path) -> None:
     assert not (tmp_path / "session").exists()
 
 
+def test_exported_bar_rejects_multi_period_timeframes() -> None:
+    daily = aggregate_session_dataset(_dataset(), _daily())
+    weekly = aggregate_session_dataset(_dataset(), _weekly())
+
+    with pytest.raises(SessionAggregationValidationError, match="exactly one"):
+        replace(
+            daily.bars[0],
+            timeframe=Timeframe.us_equity(SessionInterval(2)),
+        )
+    with pytest.raises(SessionAggregationValidationError, match="exactly one"):
+        replace(
+            weekly.bars[0],
+            timeframe=Timeframe.us_equity(TradingWeekInterval(2)),
+        )
+
+
+def test_nested_records_reject_unsupported_schema_versions() -> None:
+    derived = aggregate_session_dataset(_dataset(), _daily())
+
+    with pytest.raises(SessionAggregationValidationError, match="aggregated bars"):
+        replace(derived.bars[0], schema_version="unsupported")
+    with pytest.raises(SessionAggregationValidationError, match="aggregation reports"):
+        replace(derived.aggregation_report, schema_version="unsupported")
+
+
 def test_invalid_targets_remain_out_of_scope() -> None:
     source = _dataset()
 
