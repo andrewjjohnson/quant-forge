@@ -25,9 +25,12 @@ from quantforge.data.multi_timeframe import (
 )
 from quantforge.data.session_aggregation import AggregatedSessionBar
 from quantforge.indicators import (
+    EXPONENTIAL_MOVING_AVERAGE_OUTPUT,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
     ConfiguredTimeframeIndicator,
     DevelopingBarSupport,
+    ExponentialMovingAverage,
+    ExponentialMovingAverageParameters,
     IndicatorSourceError,
     MarketField,
     SimpleMovingAverage,
@@ -280,13 +283,14 @@ def _all_completed_context(
 @pytest.mark.parametrize(
     "indicator",
     [
+        ExponentialMovingAverage(ExponentialMovingAverageParameters(2)),
         SimpleMovingAverage(SimpleMovingAverageParameters(2)),
         WilderRelativeStrengthIndex(WilderRelativeStrengthIndexParameters(2)),
         WilderAverageTrueRange(WilderAverageTrueRangeParameters(2)),
         WilderDirectionalMovement(WilderDirectionalMovementParameters(2)),
     ],
 )
-def test_existing_indicator_contracts_run_on_5m_4h_daily_and_weekly_bars(
+def test_indicator_contracts_run_on_5m_4h_daily_and_weekly_bars(
     indicator: TimeframeNeutralIndicator,
 ) -> None:
     context = _all_completed_context()
@@ -298,6 +302,17 @@ def test_existing_indicator_contracts_run_on_5m_4h_daily_and_weekly_bars(
         assert output.source_timeframe == timeframe
         assert output.warm_up_bars == indicator.warm_up_observations
         assert output.developing_bar_support is DevelopingBarSupport.DEVELOPING_AS_OF
+
+
+def test_ema_values_are_identical_on_intraday_daily_and_weekly_fixtures() -> None:
+    closes = ("10", "11", "12", "13", "14")
+    context = _all_completed_context(closes=closes)
+    indicator = ExponentialMovingAverage(ExponentialMovingAverageParameters(3))
+    expected = (None, None, Decimal(11), Decimal(12), Decimal(13))
+
+    for timeframe in _timeframes():
+        output = evaluate_indicator(indicator, context, timeframe)
+        assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT) == expected
 
 
 def test_daily_generic_evaluation_preserves_existing_numerical_results() -> None:
@@ -345,6 +360,33 @@ def test_configuration_identity_binds_timeframe_policy_fields_and_lineage() -> N
     assert source["aggregation_provenance"] == _reference(four_hour).to_primitive()
 
 
+def test_ema_identity_binds_period_field_timeframe_and_completion_policy() -> None:
+    context = _all_completed_context()
+    _, four_hour, daily, _ = _timeframes()
+    close_two = ExponentialMovingAverage(ExponentialMovingAverageParameters(2))
+    close_three = ExponentialMovingAverage(ExponentialMovingAverageParameters(3))
+    open_two = ExponentialMovingAverage(
+        ExponentialMovingAverageParameters(2, source_field=MarketField.OPEN)
+    )
+    developing_context = _context(
+        {
+            timeframe.configuration_id: context.bars_for(timeframe)
+            for timeframe in _timeframes()
+        },
+        completion_policy=ContextCompletionPolicy.DEVELOPING_BAR_AS_OF,
+    )
+
+    identities = {
+        bind_indicator(close_two, context, four_hour).configuration_id,
+        bind_indicator(close_three, context, four_hour).configuration_id,
+        bind_indicator(open_two, context, four_hour).configuration_id,
+        bind_indicator(close_two, context, daily).configuration_id,
+        bind_indicator(close_two, developing_context, four_hour).configuration_id,
+    }
+
+    assert len(identities) == 5
+
+
 def test_four_hour_instance_rejects_a_daily_only_context() -> None:
     context = _all_completed_context()
     _, four_hour, daily, _ = _timeframes()
@@ -360,9 +402,17 @@ def test_four_hour_instance_rejects_a_daily_only_context() -> None:
         configured.calculate(daily_only)
 
 
-def test_appending_future_bars_does_not_change_historical_indicator_values() -> None:
+@pytest.mark.parametrize(
+    "indicator",
+    [
+        ExponentialMovingAverage(ExponentialMovingAverageParameters(2)),
+        WilderDirectionalMovement(WilderDirectionalMovementParameters(2)),
+    ],
+)
+def test_appending_future_bars_does_not_change_historical_indicator_values(
+    indicator: TimeframeNeutralIndicator,
+) -> None:
     _, four_hour, _, _ = _timeframes()
-    indicator = WilderDirectionalMovement(WilderDirectionalMovementParameters(2))
     cutoff_context = _all_completed_context(closes=CLOSES[:5])
     extended_context = _all_completed_context()
 
@@ -438,6 +488,18 @@ def test_developing_bar_evaluation_is_explicit_and_causal() -> None:
     assert output.completion_policy is ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
     assert output.completion_states[-1] is BarCompletion.DEVELOPING
     assert output.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == Decimal("13.5")
+
+
+def test_ema_developing_bar_uses_only_the_causal_as_of_close() -> None:
+    _, four_hour, _, _ = _timeframes()
+    output = evaluate_indicator(
+        ExponentialMovingAverage(ExponentialMovingAverageParameters(1)),
+        _developing_context(),
+        four_hour,
+    )
+
+    assert output.completion_states[-1] is BarCompletion.DEVELOPING
+    assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT)[-1] == Decimal(15)
 
 
 def test_completed_only_indicator_rejects_developing_bar() -> None:

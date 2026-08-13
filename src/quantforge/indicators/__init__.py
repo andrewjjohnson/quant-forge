@@ -17,6 +17,11 @@ from quantforge.indicators.exceptions import (
     UnorderedMarketDataError,
     UnsupportedDevelopingBarError,
 )
+from quantforge.indicators.exponential_moving_average import (
+    EXPONENTIAL_MOVING_AVERAGE_OUTPUT,
+    ExponentialMovingAverage,
+    ExponentialMovingAverageParameters,
+)
 from quantforge.indicators.models import (
     IndicatorFieldOutput,
     IndicatorOutput,
@@ -51,6 +56,7 @@ from quantforge.indicators.wilder import (
 
 __all__ = [
     "AVERAGE_DIRECTIONAL_INDEX_OUTPUT",
+    "EXPONENTIAL_MOVING_AVERAGE_OUTPUT",
     "NEGATIVE_DIRECTIONAL_INDICATOR_OUTPUT",
     "POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT",
     "SIMPLE_MOVING_AVERAGE_OUTPUT",
@@ -59,6 +65,8 @@ __all__ = [
     "WILDER_RSI_OUTPUT",
     "ConfiguredTimeframeIndicator",
     "DevelopingBarSupport",
+    "ExponentialMovingAverage",
+    "ExponentialMovingAverageParameters",
     "Indicator",
     "IndicatorBar",
     "IndicatorCalculationError",
