@@ -149,6 +149,12 @@ this ID rather than copying only a display name such as `4h`. QF-14's
 derived dataset-family members, and QF-15 intraday requests and bars bind the
 same ID. See [`dataset-lineage.md`](dataset-lineage.md).
 
+QF-19 daily and weekly manifests likewise bind the complete target timeframe
+and session policy. Their explicit start/end timestamps are the first actual
+exchange open and last actual exchange close in the target period. A weekly
+bar's session list must exactly match `resolve_trading_week()`; a provider's
+calendar-week label or fixed five-weekday assumption is not accepted.
+
 The schema is version `1`. Adding a new semantic policy or changing an existing
 meaning requires a schema-version and compatibility review; field-order changes
 alone do not affect the canonical identity.

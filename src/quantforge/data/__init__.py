@@ -85,6 +85,20 @@ from quantforge.data.models import (
     StockSplit,
 )
 from quantforge.data.service import MarketDataService
+from quantforge.data.session_aggregation import (
+    SESSION_AGGREGATION_POLICY_VERSION,
+    SESSION_AGGREGATION_SCHEMA_VERSION,
+    AggregatedSessionBar,
+    AggregatedSessionDataset,
+    AggregatedSessionDatasetMetadata,
+    SessionAggregationPolicy,
+    SessionAggregationQualityError,
+    SessionAggregationReport,
+    SessionAggregationValidationError,
+    SessionAggregationWindowQuality,
+    aggregate_session_dataset,
+)
+from quantforge.data.session_aggregation_cache import SessionAggregationCache
 from quantforge.data.validate import validate_market_dataset
 
 __all__ = [
@@ -95,10 +109,15 @@ __all__ = [
     "INTRADAY_DATASET_SCHEMA_VERSION",
     "INTRADAY_QUALITY_REPORT_SCHEMA_VERSION",
     "INTRADAY_RAW_SNAPSHOT_SCHEMA_VERSION",
+    "SESSION_AGGREGATION_POLICY_VERSION",
+    "SESSION_AGGREGATION_SCHEMA_VERSION",
     "AdjustmentBasis",
     "AdjustmentMode",
     "AggregatedIntradayDataset",
     "AggregatedIntradayDatasetMetadata",
+    "AggregatedSessionBar",
+    "AggregatedSessionDataset",
+    "AggregatedSessionDatasetMetadata",
     "AggregatedWindowQuality",
     "AggregationPolicy",
     "CacheError",
@@ -146,6 +165,12 @@ __all__ = [
     "MixedDatasetFamilyError",
     "ProviderError",
     "RequestError",
+    "SessionAggregationCache",
+    "SessionAggregationPolicy",
+    "SessionAggregationQualityError",
+    "SessionAggregationReport",
+    "SessionAggregationValidationError",
+    "SessionAggregationWindowQuality",
     "SourceConsistencyMode",
     "SourceConsistencyValidation",
     "StockSplit",
@@ -156,6 +181,7 @@ __all__ = [
     "UnsupportedSessionScopeError",
     "ValidationError",
     "aggregate_intraday_dataset",
+    "aggregate_session_dataset",
     "dataset_identity_matches",
     "validate_intraday_coverage",
     "validate_market_dataset",

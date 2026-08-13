@@ -1,0 +1,9 @@
+[
+  {"session_date":"2024-07-01","start_local":"09:30","end_local":"13:30","completion":"completed","open":"100","high":"104","low":"99","close":"103","volume":"1000"},
+  {"session_date":"2024-07-01","start_local":"13:30","end_local":"16:00","completion":"completed_partial_duration_terminal","open":"103","high":"106","low":"102","close":"105","volume":"1500"},
+  {"session_date":"2024-07-02","start_local":"09:30","end_local":"13:30","completion":"completed","open":"105","high":"108","low":"104","close":"107","volume":"2000"},
+  {"session_date":"2024-07-02","start_local":"13:30","end_local":"16:00","completion":"completed_partial_duration_terminal","open":"107","high":"109","low":"106","close":"108","volume":"2500"},
+  {"session_date":"2024-07-03","start_local":"09:30","end_local":"13:00","completion":"completed_partial_duration_terminal","open":"108","high":"112","low":"107","close":"111","volume":"3000"},
+  {"session_date":"2024-07-05","start_local":"09:30","end_local":"13:30","completion":"completed","open":"111","high":"115","low":"110","close":"114","volume":"3500"},
+  {"session_date":"2024-07-05","start_local":"13:30","end_local":"16:00","completion":"completed_partial_duration_terminal","open":"114","high":"116","low":"113","close":"115","volume":"4000"}
+]
