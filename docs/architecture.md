@@ -38,7 +38,11 @@ Dataset-family lineage
         +----------------------------+
         |                            |
         v                            v
-Aligned indicators             Dataset fingerprint
+Completed-bar multi-timeframe   Dataset fingerprint
+context alignment
+        |
+        v
+Aligned indicators
         |
         v
 Strategy target-state decisions
@@ -257,6 +261,33 @@ Must not:
 - fill or infer missing observations;
 - aggregate larger intraday intervals, align multiple timeframes, expose
   developing bars, or calculate indicators.
+
+### Completed-bar multi-timeframe alignment
+
+QF-20 implements the shared as-of alignment boundary in
+`quantforge.data.multi_timeframe`. It consumes QF-13 timeframes, QF-14 family
+references, and canonical QF-15/QF-18/QF-19 bars. It lives below indicators,
+prediction, strategies, and backtesting. See `docs/multi-timeframe-context.md`
+and ADR 0011.
+
+Responsibilities:
+
+- align primary, weekly, daily, and intraday series at one explicit decision
+  timestamp;
+- expose only terminal bars whose explicit end is at or before that timestamp;
+- require common-family source validation and identical exchange-session
+  policies;
+- retain explicit available, stale, and missing state with dataset and bar
+  identities;
+- provide guarded timeframe access plus deterministic identity and canonical
+  serialization.
+
+Must not:
+
+- reconstruct developing bars or fill missing observations;
+- calculate indicators or future labels;
+- depend on prediction, strategy, backtesting, or provider clients;
+- combine mixed feeds or dataset families silently.
 
 ### Indicators and features
 

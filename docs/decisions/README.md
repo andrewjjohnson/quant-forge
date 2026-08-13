@@ -29,6 +29,7 @@ Do not create ADRs for routine implementation details that are easy to change.
 - [ADR 0008: Bind intraday quality reports to datasets](0008-bind-intraday-quality-reports-to-datasets.md)
 - [ADR 0009: Derive intraday bars from verified session windows](0009-derive-intraday-bars-from-verified-session-windows.md)
 - [ADR 0010: Derive daily and weekly bars from exchange sessions](0010-derive-daily-weekly-bars-from-exchange-sessions.md)
+- [ADR 0011: Align only completed multi-timeframe bars by default](0011-align-only-completed-multi-timeframe-bars.md)
 
 ## File naming
 
