@@ -7,6 +7,14 @@ from quantforge.indicators.base import (
     IndicatorParameters,
     TimeframeNeutralIndicator,
 )
+from quantforge.indicators.bollinger_bands import (
+    BOLLINGER_BANDWIDTH_OUTPUT,
+    BOLLINGER_LOWER_BAND_OUTPUT,
+    BOLLINGER_MIDDLE_BAND_OUTPUT,
+    BOLLINGER_UPPER_BAND_OUTPUT,
+    BollingerBands,
+    BollingerBandsParameters,
+)
 from quantforge.indicators.exceptions import (
     IndicatorCalculationError,
     IndicatorError,
@@ -56,6 +64,10 @@ from quantforge.indicators.wilder import (
 
 __all__ = [
     "AVERAGE_DIRECTIONAL_INDEX_OUTPUT",
+    "BOLLINGER_BANDWIDTH_OUTPUT",
+    "BOLLINGER_LOWER_BAND_OUTPUT",
+    "BOLLINGER_MIDDLE_BAND_OUTPUT",
+    "BOLLINGER_UPPER_BAND_OUTPUT",
     "EXPONENTIAL_MOVING_AVERAGE_OUTPUT",
     "NEGATIVE_DIRECTIONAL_INDICATOR_OUTPUT",
     "POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT",
@@ -63,6 +75,8 @@ __all__ = [
     "TIMEFRAME_INDICATOR_CONTRACT_VERSION",
     "WILDER_AVERAGE_TRUE_RANGE_OUTPUT",
     "WILDER_RSI_OUTPUT",
+    "BollingerBands",
+    "BollingerBandsParameters",
     "ConfiguredTimeframeIndicator",
     "DevelopingBarSupport",
     "ExponentialMovingAverage",

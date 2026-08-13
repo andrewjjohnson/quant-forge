@@ -25,8 +25,14 @@ from quantforge.data.multi_timeframe import (
 )
 from quantforge.data.session_aggregation import AggregatedSessionBar
 from quantforge.indicators import (
+    BOLLINGER_BANDWIDTH_OUTPUT,
+    BOLLINGER_LOWER_BAND_OUTPUT,
+    BOLLINGER_MIDDLE_BAND_OUTPUT,
+    BOLLINGER_UPPER_BAND_OUTPUT,
     EXPONENTIAL_MOVING_AVERAGE_OUTPUT,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
+    BollingerBands,
+    BollingerBandsParameters,
     ConfiguredTimeframeIndicator,
     DevelopingBarSupport,
     ExponentialMovingAverage,
@@ -283,6 +289,7 @@ def _all_completed_context(
 @pytest.mark.parametrize(
     "indicator",
     [
+        BollingerBands(BollingerBandsParameters(2)),
         ExponentialMovingAverage(ExponentialMovingAverageParameters(2)),
         SimpleMovingAverage(SimpleMovingAverageParameters(2)),
         WilderRelativeStrengthIndex(WilderRelativeStrengthIndexParameters(2)),
@@ -313,6 +320,27 @@ def test_ema_values_are_identical_on_intraday_daily_and_weekly_fixtures() -> Non
     for timeframe in _timeframes():
         output = evaluate_indicator(indicator, context, timeframe)
         assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT) == expected
+
+
+def test_bollinger_values_are_identical_on_intraday_daily_and_weekly_fixtures() -> None:
+    context = _all_completed_context(closes=("10", "12", "14"))
+    indicator = BollingerBands(BollingerBandsParameters(2, Decimal(2)))
+    expected = {
+        BOLLINGER_MIDDLE_BAND_OUTPUT: (None, Decimal(11), Decimal(13)),
+        BOLLINGER_UPPER_BAND_OUTPUT: (None, Decimal(13), Decimal(15)),
+        BOLLINGER_LOWER_BAND_OUTPUT: (None, Decimal(9), Decimal(11)),
+        BOLLINGER_BANDWIDTH_OUTPUT: (
+            None,
+            Decimal("0.3636363636363636363636363636363636"),
+            Decimal("0.3076923076923076923076923076923077"),
+        ),
+    }
+
+    for timeframe in _timeframes():
+        output = evaluate_indicator(indicator, context, timeframe)
+        assert output.aggregation_provenance == _reference(timeframe).to_primitive()
+        for field_name, values in expected.items():
+            assert output.values_for(field_name) == values
 
 
 def test_daily_generic_evaluation_preserves_existing_numerical_results() -> None:
@@ -387,6 +415,33 @@ def test_ema_identity_binds_period_field_timeframe_and_completion_policy() -> No
     assert len(identities) == 5
 
 
+def test_bollinger_identity_binds_all_formula_and_source_parameters() -> None:
+    context = _all_completed_context()
+    _, four_hour, daily, _ = _timeframes()
+    close_two = BollingerBands(BollingerBandsParameters(2, Decimal(2)))
+    close_three = BollingerBands(BollingerBandsParameters(3, Decimal(2)))
+    close_wider = BollingerBands(BollingerBandsParameters(2, Decimal(3)))
+    open_two = BollingerBands(BollingerBandsParameters(2, Decimal(2), MarketField.OPEN))
+    developing_context = _context(
+        {
+            timeframe.configuration_id: context.bars_for(timeframe)
+            for timeframe in _timeframes()
+        },
+        completion_policy=ContextCompletionPolicy.DEVELOPING_BAR_AS_OF,
+    )
+
+    identities = {
+        bind_indicator(close_two, context, four_hour).configuration_id,
+        bind_indicator(close_three, context, four_hour).configuration_id,
+        bind_indicator(close_wider, context, four_hour).configuration_id,
+        bind_indicator(open_two, context, four_hour).configuration_id,
+        bind_indicator(close_two, context, daily).configuration_id,
+        bind_indicator(close_two, developing_context, four_hour).configuration_id,
+    }
+
+    assert len(identities) == 6
+
+
 def test_four_hour_instance_rejects_a_daily_only_context() -> None:
     context = _all_completed_context()
     _, four_hour, daily, _ = _timeframes()
@@ -405,6 +460,7 @@ def test_four_hour_instance_rejects_a_daily_only_context() -> None:
 @pytest.mark.parametrize(
     "indicator",
     [
+        BollingerBands(BollingerBandsParameters(2)),
         ExponentialMovingAverage(ExponentialMovingAverageParameters(2)),
         WilderDirectionalMovement(WilderDirectionalMovementParameters(2)),
     ],
@@ -500,6 +556,22 @@ def test_ema_developing_bar_uses_only_the_causal_as_of_close() -> None:
 
     assert output.completion_states[-1] is BarCompletion.DEVELOPING
     assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT)[-1] == Decimal(15)
+
+
+def test_bollinger_developing_bar_uses_only_the_causal_as_of_close() -> None:
+    _, four_hour, _, _ = _timeframes()
+    output = evaluate_indicator(
+        BollingerBands(BollingerBandsParameters(1)),
+        _developing_context(),
+        four_hour,
+    )
+
+    assert output.completion_policy is ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
+    assert output.completion_states[-1] is BarCompletion.DEVELOPING
+    assert output.values_for(BOLLINGER_MIDDLE_BAND_OUTPUT)[-1] == Decimal(15)
+    assert output.values_for(BOLLINGER_UPPER_BAND_OUTPUT)[-1] == Decimal(15)
+    assert output.values_for(BOLLINGER_LOWER_BAND_OUTPUT)[-1] == Decimal(15)
+    assert output.values_for(BOLLINGER_BANDWIDTH_OUTPUT)[-1] == Decimal(0)
 
 
 def test_completed_only_indicator_rejects_developing_bar() -> None:
