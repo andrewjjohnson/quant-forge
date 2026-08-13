@@ -92,7 +92,7 @@ class BollingerBands:
     """
 
     name = "bollinger_bands"
-    implementation_version = "1"
+    implementation_version = "2"
     output_fields = (
         BOLLINGER_MIDDLE_BAND_OUTPUT,
         BOLLINGER_UPPER_BAND_OUTPUT,
@@ -135,7 +135,10 @@ class BollingerBands:
                     "sqrt(sum((observation - middle_band) ** 2) / period)"
                 ),
                 "standard_deviation_degrees_of_freedom": 0,
-                "window_update": "rolling_sum_and_centered_sum_of_squares",
+                "window_update": (
+                    "rolling_sum_and_centered_sum_of_squares_with_periodic_"
+                    "rebaseline_and_exact_constant_window_reset"
+                ),
                 "upper_band": (
                     "middle_band + standard_deviation_multiplier * standard_deviation"
                 ),
@@ -196,8 +199,10 @@ class BollingerBands:
         divisor = Decimal(period)
         multiplier = self._parameters.standard_deviation_multiplier
         window: deque[Decimal | None] = deque()
+        value_counts: dict[Decimal, int] = {}
         missing_count = 0
         statistics_are_valid = False
+        rolling_updates_since_rebuild = 0
         rolling_sum: Decimal | None = None
         middle: Decimal | None = None
         centered_sum_of_squares: Decimal | None = None
@@ -209,12 +214,17 @@ class BollingerBands:
                     outgoing = window.popleft() if window_was_full else None
                     if window_was_full and outgoing is None:
                         missing_count -= 1
+                    elif window_was_full:
+                        _decrement_count(value_counts, cast(Decimal, outgoing))
                     window.append(current)
                     if current is None:
                         missing_count += 1
+                    else:
+                        value_counts[current] = value_counts.get(current, 0) + 1
 
                     if len(window) < period or missing_count:
                         statistics_are_valid = False
+                        rolling_updates_since_rebuild = 0
                         _append_unavailable(
                             middle_values,
                             upper_values,
@@ -224,7 +234,30 @@ class BollingerBands:
                         continue
 
                     current_value = cast(Decimal, current)
-                    if statistics_are_valid and window_was_full:
+                    if len(value_counts) == 1:
+                        constant_value = next(iter(value_counts))
+                        rolling_sum = constant_value * divisor
+                        middle = constant_value
+                        centered_sum_of_squares = Decimal(0)
+                        rolling_updates_since_rebuild = 0
+                        statistics_are_valid = True
+                        _append_bands(
+                            middle=middle,
+                            centered_sum_of_squares=centered_sum_of_squares,
+                            divisor=divisor,
+                            multiplier=multiplier,
+                            middle_values=middle_values,
+                            upper_values=upper_values,
+                            lower_values=lower_values,
+                            bandwidth_values=bandwidth_values,
+                        )
+                        continue
+                    should_roll = (
+                        statistics_are_valid
+                        and window_was_full
+                        and rolling_updates_since_rebuild < period
+                    )
+                    if should_roll:
                         rolling_sum, middle, centered_sum_of_squares = (
                             _roll_window_statistics(
                                 previous_sum=cast(Decimal, rolling_sum),
@@ -243,29 +276,27 @@ class BollingerBands:
                                     cast(tuple[Decimal, ...], tuple(window)), divisor
                                 )
                             )
+                            rolling_updates_since_rebuild = 0
+                        else:
+                            rolling_updates_since_rebuild += 1
                     else:
                         rolling_sum, middle, centered_sum_of_squares = (
                             _rebuild_window_statistics(
                                 cast(tuple[Decimal, ...], tuple(window)), divisor
                             )
                         )
+                        rolling_updates_since_rebuild = 0
                     statistics_are_valid = True
-                    variance = centered_sum_of_squares / divisor
-                    standard_deviation = variance.sqrt()
-                    offset = multiplier * standard_deviation
-                    upper = middle + offset
-                    lower = middle - offset
-                    width = upper - lower
-                    if width.is_zero():
-                        bandwidth: IndicatorValue = Decimal(0)
-                    elif middle.is_zero():
-                        bandwidth = None
-                    else:
-                        bandwidth = width / middle
-                    middle_values.append(middle)
-                    upper_values.append(upper)
-                    lower_values.append(lower)
-                    bandwidth_values.append(bandwidth)
+                    _append_bands(
+                        middle=middle,
+                        centered_sum_of_squares=centered_sum_of_squares,
+                        divisor=divisor,
+                        multiplier=multiplier,
+                        middle_values=middle_values,
+                        upper_values=upper_values,
+                        lower_values=lower_values,
+                        bandwidth_values=bandwidth_values,
+                    )
         except DecimalException as error:
             raise IndicatorCalculationError(
                 "Bollinger Bands arithmetic failed under its configured decimal policy"
@@ -295,6 +326,35 @@ def _rebuild_window_statistics(
     return total, middle, centered_sum_of_squares
 
 
+def _append_bands(
+    *,
+    middle: Decimal,
+    centered_sum_of_squares: Decimal,
+    divisor: Decimal,
+    multiplier: Decimal,
+    middle_values: list[IndicatorValue],
+    upper_values: list[IndicatorValue],
+    lower_values: list[IndicatorValue],
+    bandwidth_values: list[IndicatorValue],
+) -> None:
+    variance = centered_sum_of_squares / divisor
+    standard_deviation = variance.sqrt()
+    offset = multiplier * standard_deviation
+    upper = middle + offset
+    lower = middle - offset
+    width = upper - lower
+    if width.is_zero():
+        bandwidth: IndicatorValue = Decimal(0)
+    elif middle.is_zero():
+        bandwidth = None
+    else:
+        bandwidth = width / middle
+    middle_values.append(middle)
+    upper_values.append(upper)
+    lower_values.append(lower)
+    bandwidth_values.append(bandwidth)
+
+
 def _roll_window_statistics(
     *,
     previous_sum: Decimal,
@@ -316,6 +376,14 @@ def _roll_window_statistics(
 def _append_unavailable(*outputs: list[IndicatorValue]) -> None:
     for output in outputs:
         output.append(None)
+
+
+def _decrement_count(counts: dict[Decimal, int], value: Decimal) -> None:
+    remaining = counts[value] - 1
+    if remaining:
+        counts[value] = remaining
+    else:
+        del counts[value]
 
 
 def _arithmetic_context() -> Context:

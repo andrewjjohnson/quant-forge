@@ -126,7 +126,18 @@ def test_mature_windows_update_statistics_without_rescanning(
         make_dataset(tuple(str(value) for value in range(1, 16)))
     )
 
-    assert rebuild_count == 1
+    assert rebuild_count == 2
+
+
+def test_constant_window_rebases_positive_residue_after_scale_change() -> None:
+    output = BollingerBands(BollingerBandsParameters(2)).calculate(
+        make_dataset(("0", "1", "1E+34", "1E+34"))
+    )
+
+    assert output.values_for(BOLLINGER_MIDDLE_BAND_OUTPUT)[-1] == Decimal("1E+34")
+    assert output.values_for(BOLLINGER_UPPER_BAND_OUTPUT)[-1] == Decimal("1E+34")
+    assert output.values_for(BOLLINGER_LOWER_BAND_OUTPUT)[-1] == Decimal("1E+34")
+    assert output.values_for(BOLLINGER_BANDWIDTH_OUTPUT)[-1] == Decimal(0)
 
 
 def test_constant_price_has_zero_width_and_zero_bandwidth() -> None:
@@ -209,7 +220,10 @@ def test_configuration_serialization_and_identity_include_formula_parameters() -
     }
     formula = cast(dict[str, object], first.configuration()["formula"])
     assert formula["standard_deviation_degrees_of_freedom"] == 0
-    assert formula["window_update"] == "rolling_sum_and_centered_sum_of_squares"
+    assert formula["window_update"] == (
+        "rolling_sum_and_centered_sum_of_squares_with_periodic_rebaseline_"
+        "and_exact_constant_window_reset"
+    )
 
 
 def test_output_rows_serialize_all_fields_stably() -> None:
