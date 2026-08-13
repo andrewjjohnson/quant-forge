@@ -23,3 +23,11 @@ class MisalignedIndicatorOutputError(IndicatorError):
 
 class IndicatorCalculationError(IndicatorError):
     """A canonical field cannot be represented by the indicator."""
+
+
+class IndicatorSourceError(IndicatorError):
+    """A timeframe-bound indicator source is missing or incompatible."""
+
+
+class UnsupportedDevelopingBarError(IndicatorSourceError):
+    """An indicator received a developing bar it does not explicitly support."""
