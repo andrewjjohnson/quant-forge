@@ -83,7 +83,12 @@ the one context family containing all exact derived dataset IDs to each
 constructor as shown above. The constructor verifies that the artifact ID and
 timeframe occur in that family and that its canonical source, symbol, provider,
 feed, adjustment basis, and source timeframe match the artifact's validated
-embedded family.
+embedded family. A composed context family must use the
+`quantforge_context_artifact_set` version 1 aggregation policy and list every
+embedded `artifact_family.manifest_id` in its
+`artifact_family_manifest_ids` configuration. Each constructor verifies its
+own exact manifest membership, so a fabricated common policy cannot relabel
+unrelated validated artifacts as one family.
 
 `TimeframeContext` and `MultiTimeframeContext` are likewise result-only models:
 their constructors are not public. `build_multi_timeframe_context()` is the

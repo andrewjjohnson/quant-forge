@@ -33,7 +33,10 @@ and must equal the supplied in-memory dataset, so the complete content-addressed
 manifest identity, raw artifacts, and canonical paths are verified before the
 series is exposed. The aligned timeframe and complete context models are
 factory-only results of `build_multi_timeframe_context()`; callers cannot attach
-unvalidated bars directly to those exported dataclasses.
+unvalidated bars directly to those exported dataclasses. When partial QF-18 or
+QF-19 families are composed for one context, the composition policy must name
+each validated artifact family's exact manifest ID before its reference may be
+reissued under the composed family.
 
 The context is ordered independently of caller input order. Its deterministic
 identity binds `as_of`, primary and required timeframes, freshness limits,
@@ -80,4 +83,5 @@ consolidated-versus-IEX family rejection. Regression tests also tamper source
 content together with matching digest evidence, forge source dataset IDs,
 change family symbols, and alter derived source provenance to prove a reference
 cannot authenticate unrelated bars. Direct construction of aligned or complete
-context results is also rejected.
+context results is also rejected, as are composed families whose policy does not
+bind a derived artifact's embedded family manifest.

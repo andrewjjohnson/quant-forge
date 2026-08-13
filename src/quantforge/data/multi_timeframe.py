@@ -28,6 +28,9 @@ from quantforge.data.session_aggregation import (
 from quantforge.timeframes import BarCompletion, DevelopingBarExposure, Timeframe
 
 MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION = "1"
+_CONTEXT_FAMILY_COMPOSITION_POLICY_NAME = "quantforge_context_artifact_set"
+_CONTEXT_FAMILY_COMPOSITION_POLICY_VERSION = "1"
+_ARTIFACT_FAMILY_MANIFEST_IDS_KEY = "artifact_family_manifest_ids"
 
 
 class MultiTimeframeContextError(ValueError):
@@ -284,12 +287,39 @@ def _reference_for_derived_artifact(
         raise MultiTimeframeContextValidationError(
             "derived dataset does not match the supplied context family"
         )
+    if context_family is not None and context_family != artifact_family:
+        _validate_composed_family_binding(context_family, artifact_family)
     reference = family.reference(dataset_id)
     if reference.timeframe_configuration_id != timeframe.configuration_id:
         raise MultiTimeframeContextValidationError(
             "derived dataset timeframe does not match the supplied context family"
         )
     return reference
+
+
+def _validate_composed_family_binding(
+    context_family: DatasetFamily,
+    artifact_family: DatasetFamily,
+) -> None:
+    policy = context_family.aggregation_policy
+    policy_primitive = policy.to_primitive()
+    configuration = cast(
+        PrimitiveMapping,
+        policy_primitive["configuration"],
+    )
+    manifest_ids = cast(
+        object,
+        configuration.get(_ARTIFACT_FAMILY_MANIFEST_IDS_KEY),
+    )
+    if (
+        policy.policy_name != _CONTEXT_FAMILY_COMPOSITION_POLICY_NAME
+        or policy.policy_version != _CONTEXT_FAMILY_COMPOSITION_POLICY_VERSION
+        or not isinstance(manifest_ids, list)
+        or artifact_family.manifest_id not in manifest_ids
+    ):
+        raise MultiTimeframeContextValidationError(
+            "supplied context family does not bind the derived artifact family manifest"
+        )
 
 
 def _validated_cached_source_artifact(

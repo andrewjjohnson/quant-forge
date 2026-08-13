@@ -657,6 +657,22 @@ def test_session_series_rejects_bars_unbound_from_derived_dataset() -> None:
     assert series.dataset_reference.family_id == context_family.family_id
     assert series.bars == derived.bars
 
+    fabricated_family = replace(
+        context_family,
+        aggregation_policy=AggregationPolicy(
+            "fabricated_context_policy",
+            "1",
+            {"artifact_family_manifest_ids": [derived.dataset_family.manifest_id]},
+        ),
+    )
+    with pytest.raises(
+        MultiTimeframeContextValidationError, match="artifact family manifest"
+    ):
+        TimeframeBarSeries.from_aggregated_session_dataset(
+            derived,
+            family=fabricated_family,
+        )
+
     foreign_bar = replace(derived.bars[0], source_dataset_id="foreign-source")
     tampered = replace(derived, bars=(foreign_bar,))
     with pytest.raises(
