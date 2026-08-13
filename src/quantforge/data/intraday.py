@@ -285,6 +285,11 @@ class IntradayBar:
         return self.end_timestamp - self.start_timestamp
 
     @property
+    def complete(self) -> bool:
+        """Return whether the observation has reached a terminal boundary."""
+        return self.completion is not BarCompletion.DEVELOPING
+
+    @property
     def session_identifier(self) -> str:
         """Return the canonical exchange-session identifier."""
         return self.session_date.isoformat()

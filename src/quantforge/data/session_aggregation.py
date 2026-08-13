@@ -261,6 +261,11 @@ class AggregatedSessionBar:
         )
         return f"{prefix}:{self.period_start_date.isoformat()}"
 
+    @property
+    def complete(self) -> bool:
+        """Session aggregates are always terminal completed bars."""
+        return True
+
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "schema_version": self.schema_version,

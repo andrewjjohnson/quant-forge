@@ -262,13 +262,14 @@ Must not:
 - aggregate larger intraday intervals, align multiple timeframes, expose
   developing bars, or calculate indicators.
 
-### Completed-bar multi-timeframe alignment
+### Multi-timeframe alignment and developing-bar reconstruction
 
-QF-20 implements the shared as-of alignment boundary in
+QF-20 implements the shared completed-bar as-of alignment boundary and QF-21
+adds explicit developing-bar reconstruction in
 `quantforge.data.multi_timeframe`. It consumes QF-13 timeframes, QF-14 family
 references, and canonical QF-15/QF-18/QF-19 bars. It lives below indicators,
 prediction, strategies, and backtesting. See `docs/multi-timeframe-context.md`
-and ADR 0011.
+and ADRs 0011-0012.
 
 Responsibilities:
 
@@ -281,10 +282,14 @@ Responsibilities:
   identities;
 - provide guarded timeframe access plus deterministic identity and canonical
   serialization.
+- reconstruct at most one larger-intraday, daily, or weekly developing bar
+  from cache-validated canonical intraday constituents available by `as_of`;
+- preserve completed QF-18/QF-19 bars while exposing the developing result as a
+  structurally distinct, identity-bearing type only under explicit opt-in.
 
 Must not:
 
-- reconstruct developing bars or fill missing observations;
+- fill, interpolate, or accept missing developing-bar constituents;
 - calculate indicators or future labels;
 - depend on prediction, strategy, backtesting, or provider clients;
 - combine mixed feeds or dataset families silently.

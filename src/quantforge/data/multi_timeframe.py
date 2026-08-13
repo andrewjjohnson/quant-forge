@@ -1,12 +1,17 @@
-"""Leakage-safe completed-bar alignment across compatible dataset timeframes."""
+"""Leakage-safe as-of alignment across compatible dataset timeframes."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from itertools import pairwise
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.data.developing_bars import (
+    DevelopingBar,
+    DevelopingBarValidationError,
+    reconstruct_developing_bar_as_of,
+)
 from quantforge.data.exceptions import CacheError, ValidationError
 from quantforge.data.identity import canonical_json_bytes
 from quantforge.data.intraday import IntradayBar
@@ -15,6 +20,7 @@ from quantforge.data.intraday_ingestion import (
     IntradayDataset,
     IntradayMarketDataCache,
 )
+from quantforge.data.intraday_validation import IntradayCoverageInterval
 from quantforge.data.lineage import (
     DatasetFamily,
     DatasetFamilyReference,
@@ -53,6 +59,7 @@ class ContextCompletionPolicy(StrEnum):
     """Which bar completion states a context may expose."""
 
     COMPLETED_BARS_ONLY = "completed_bars_only"
+    DEVELOPING_BAR_AS_OF = "developing_bar_as_of"
 
 
 class ContextAvailability(StrEnum):
@@ -63,7 +70,8 @@ class ContextAvailability(StrEnum):
     MISSING = "missing"
 
 
-type ContextBar = IntradayBar | AggregatedSessionBar
+type ArtifactBar = IntradayBar | AggregatedSessionBar
+type ContextBar = ArtifactBar | DevelopingBar
 
 
 def _utc_timestamp(value: object, field_name: str) -> datetime:
@@ -87,6 +95,13 @@ def _timeframe_primitive(timeframe: Timeframe) -> PrimitiveMapping:
 
 def _bar_sort_key(bar: ContextBar) -> tuple[datetime, datetime, str]:
     return (bar.end_timestamp, bar.start_timestamp, bar.bar_id)
+
+
+@dataclass(frozen=True, slots=True)
+class _DevelopingSourceEvidence:
+    expected_intervals: tuple[IntradayCoverageInterval, ...]
+    request_start_timestamp: datetime
+    request_end_timestamp: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,14 +143,17 @@ class TimeframeBarSeries:
 
     dataset_reference: DatasetFamilyReference
     timeframe: Timeframe
-    bars: tuple[ContextBar, ...]
+    bars: tuple[ArtifactBar, ...]
+    _developing_source_evidence: _DevelopingSourceEvidence | None
 
     @classmethod
     def _from_validated_artifact(
         cls,
         dataset_reference: DatasetFamilyReference,
         timeframe: Timeframe,
-        bars: tuple[ContextBar, ...],
+        bars: tuple[ArtifactBar, ...],
+        *,
+        developing_source_evidence: _DevelopingSourceEvidence | None = None,
     ) -> "TimeframeBarSeries":
         """Construct after a concrete dataset artifact has passed validation."""
         reference_value = cast(object, dataset_reference)
@@ -168,7 +186,7 @@ class TimeframeBarSeries:
             raise MultiTimeframeContextValidationError(
                 "timeframe series contains an unsupported bar"
             )
-        typed_bars = cast(tuple[ContextBar, ...], untyped_bars)
+        typed_bars = cast(tuple[ArtifactBar, ...], untyped_bars)
         if any(bar.timeframe != timeframe_value for bar in typed_bars):
             raise MultiTimeframeContextValidationError(
                 "timeframe series contains a bar from another timeframe"
@@ -190,6 +208,9 @@ class TimeframeBarSeries:
         object.__setattr__(instance, "dataset_reference", reference_value)
         object.__setattr__(instance, "timeframe", timeframe_value)
         object.__setattr__(instance, "bars", ordered)
+        object.__setattr__(
+            instance, "_developing_source_evidence", developing_source_evidence
+        )
         return instance
 
     @classmethod
@@ -206,6 +227,7 @@ class TimeframeBarSeries:
             family.reference(validated_dataset.metadata.dataset_id),
             validated_dataset.request.timeframe,
             validated_dataset.bars,
+            developing_source_evidence=_developing_source_evidence(validated_dataset),
         )
 
     @classmethod
@@ -370,6 +392,51 @@ def _validated_cached_source_artifact(
         ) from error
 
 
+def _developing_source_evidence(
+    dataset: IntradayDataset,
+) -> _DevelopingSourceEvidence:
+    expected: list[IntradayCoverageInterval] = []
+    bars_by_session: dict[date, list[IntradayBar]] = {}
+    for bar in dataset.bars:
+        if bar.completion is not BarCompletion.DEVELOPING:
+            bars_by_session.setdefault(bar.session_date, []).append(bar)
+    for session in dataset.quality_report.sessions:
+        unexpected = {
+            (
+                interval.start_timestamp,
+                interval.end_timestamp,
+                interval.completion,
+            )
+            for interval in session.unexpected_intervals
+        }
+        observed = (
+            IntradayCoverageInterval(
+                bar.session_date,
+                bar.start_timestamp,
+                bar.end_timestamp,
+                bar.completion,
+            )
+            for bar in bars_by_session.get(session.session_date, ())
+            if (bar.start_timestamp, bar.end_timestamp, bar.completion)
+            not in unexpected
+        )
+        expected.extend((*observed, *session.missing_intervals))
+    return _DevelopingSourceEvidence(
+        tuple(
+            sorted(
+                expected,
+                key=lambda item: (
+                    item.start_timestamp,
+                    item.end_timestamp,
+                    item.completion.value,
+                ),
+            )
+        ),
+        dataset.request.start_timestamp,
+        dataset.request.end_timestamp,
+    )
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class TimeframeContext:
     """As-of view and audit metadata for one declared timeframe."""
@@ -430,7 +497,7 @@ class TimeframeContext:
             )
         untyped_bars = cast(tuple[object, ...], bars)
         if any(
-            not isinstance(bar, (IntradayBar, AggregatedSessionBar))
+            not isinstance(bar, (IntradayBar, AggregatedSessionBar, DevelopingBar))
             for bar in untyped_bars
         ):
             raise MultiTimeframeContextValidationError(
@@ -452,8 +519,13 @@ class TimeframeContext:
             raise MultiTimeframeContextValidationError(
                 "aligned timeframe does not match its dataset reference"
             )
-        latest_timestamp = None if not typed_bars else typed_bars[-1].end_timestamp
-        if self.latest_completed_bar_timestamp != latest_timestamp:
+        completed_bars = tuple(
+            bar for bar in typed_bars if bar.completion is not BarCompletion.DEVELOPING
+        )
+        latest_completed_timestamp = (
+            None if not completed_bars else completed_bars[-1].end_timestamp
+        )
+        if self.latest_completed_bar_timestamp != latest_completed_timestamp:
             raise MultiTimeframeContextValidationError(
                 "latest completed timestamp does not match aligned bars"
             )
@@ -499,7 +571,7 @@ class TimeframeContext:
 
     def to_primitive(self) -> PrimitiveMapping:
         latest = self.latest_bar
-        return {
+        primitive: PrimitiveMapping = {
             "requirement": self.requirement.to_primitive(),
             "dataset_reference": (
                 None
@@ -522,6 +594,12 @@ class TimeframeContext:
             ),
             "visible_bar_ids": [bar.bar_id for bar in self.bars],
         }
+        if isinstance(latest, DevelopingBar):
+            primitive["developing_bar"] = {
+                "bar_id": latest.bar_id,
+                "bar": latest.to_primitive(),
+            }
+        return primitive
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -572,9 +650,9 @@ class MultiTimeframeContext:
         source_consistency = cast(object, self.source_consistency)
         timeframes = cast(object, self.timeframes)
         required = cast(object, self.required_timeframes)
-        if completion_policy is not ContextCompletionPolicy.COMPLETED_BARS_ONLY:
+        if not isinstance(completion_policy, ContextCompletionPolicy):
             raise MultiTimeframeContextValidationError(
-                "only completed-bars-only context is implemented"
+                "context completion policy is invalid"
             )
         if not isinstance(source_consistency, SourceConsistencyValidation):
             raise MultiTimeframeContextValidationError(
@@ -614,9 +692,14 @@ class MultiTimeframeContext:
             raise MultiTimeframeContextValidationError(
                 "aligned timeframes do not match declared requirements"
             )
+        developing_bars = tuple(
+            (aligned, bar)
+            for aligned in typed_timeframes
+            for bar in aligned.bars
+            if isinstance(bar, DevelopingBar)
+        )
         if any(
-            bar.completion is BarCompletion.DEVELOPING
-            or bar.end_timestamp > decision_timestamp
+            bar.end_timestamp > decision_timestamp
             for aligned in typed_timeframes
             for bar in aligned.bars
         ) or any(
@@ -627,6 +710,24 @@ class MultiTimeframeContext:
             raise MultiTimeframeContextValidationError(
                 "aligned timeframe exposes a bar unavailable at context as-of"
             )
+        if completion_policy is ContextCompletionPolicy.COMPLETED_BARS_ONLY:
+            if developing_bars:
+                raise MultiTimeframeContextValidationError(
+                    "completed-bars-only context exposes a developing bar"
+                )
+        else:
+            if any(
+                bar.as_of != decision_timestamp
+                or aligned.timeframe == self.primary_timeframe
+                or aligned.bars[-1] is not bar
+                for aligned, bar in developing_bars
+            ) or any(
+                sum(isinstance(bar, DevelopingBar) for bar in aligned.bars) > 1
+                for aligned in typed_timeframes
+            ):
+                raise MultiTimeframeContextValidationError(
+                    "developing bars must be current, contextual, and unique"
+                )
         references = tuple(
             aligned.dataset_reference
             for aligned in typed_timeframes
@@ -766,18 +867,20 @@ def build_multi_timeframe_context(
 ) -> MultiTimeframeContext:
     """Build one immutable as-of context from common-family bar series.
 
-    A bar is visible only when it is terminal and its explicit end timestamp is
-    at or before ``as_of``. Future or developing inputs are ignored rather than
-    being truncated, reconstructed, or filled.
+    Completed-bars-only is the default. The explicit developing policy appends
+    one reconstructed contextual bar using only validated primary source bars
+    whose explicit end is at or before ``as_of``.
     """
     decision_timestamp = _utc_timestamp(as_of, "context as-of")
     ordered_requirements = _validate_declared_timeframes(
         primary_timeframe, required_timeframes
     )
-    if completion_policy is not ContextCompletionPolicy.COMPLETED_BARS_ONLY:
+    completion_policy_value = cast(object, completion_policy)
+    if not isinstance(completion_policy_value, ContextCompletionPolicy):
         raise MultiTimeframeContextValidationError(
-            "only completed-bars-only context is implemented"
+            "context completion policy is invalid"
         )
+    completion_policy = completion_policy_value
     series_value = cast(object, series)
     if not isinstance(series_value, tuple) or not series_value:
         raise MultiTimeframeContextValidationError(
@@ -794,6 +897,26 @@ def build_multi_timeframe_context(
         raise MultiTimeframeContextValidationError(
             "context contains duplicate timeframe series"
         )
+    developing_source = by_timeframe.get(primary_timeframe.configuration_id)
+    developing_evidence = (
+        None
+        if developing_source is None
+        else developing_source._developing_source_evidence  # pyright: ignore[reportPrivateUsage]
+    )
+    if completion_policy is ContextCompletionPolicy.DEVELOPING_BAR_AS_OF:
+        if developing_source is None or developing_evidence is None:
+            raise MultiTimeframeContextValidationError(
+                "developing-bar mode requires the validated canonical source "
+                "series as the primary timeframe"
+            )
+        if not (
+            developing_evidence.request_start_timestamp
+            <= decision_timestamp
+            <= developing_evidence.request_end_timestamp
+        ):
+            raise MultiTimeframeContextValidationError(
+                "context as-of falls outside the developing source request"
+            )
 
     primary_requirement = ContextTimeframeRequirement(primary_timeframe)
     declared_requirements = (primary_requirement, *ordered_requirements)
@@ -817,7 +940,7 @@ def build_multi_timeframe_context(
     for requirement in declared_requirements:
         timeframe_id = requirement.timeframe.configuration_id
         input_series = by_timeframe.get(timeframe_id)
-        visible = (
+        completed_visible: tuple[ContextBar, ...] = (
             ()
             if input_series is None
             else tuple(
@@ -827,6 +950,32 @@ def build_multi_timeframe_context(
                 and bar.end_timestamp <= decision_timestamp
             )
         )
+        latest_completed_timestamp = (
+            None if not completed_visible else completed_visible[-1].end_timestamp
+        )
+        visible = completed_visible
+        if (
+            completion_policy is ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
+            and requirement.timeframe != primary_timeframe
+        ):
+            assert developing_source is not None
+            assert developing_evidence is not None
+            source_bars = tuple(
+                bar for bar in developing_source.bars if isinstance(bar, IntradayBar)
+            )
+            try:
+                developing_bar = reconstruct_developing_bar_as_of(
+                    as_of=decision_timestamp,
+                    target_timeframe=requirement.timeframe,
+                    source_timeframe=developing_source.timeframe,
+                    source_bars=source_bars,
+                    expected_source_intervals=(developing_evidence.expected_intervals),
+                    source_dataset_reference=(developing_source.dataset_reference),
+                )
+            except DevelopingBarValidationError as error:
+                raise MultiTimeframeContextValidationError(str(error)) from error
+            if developing_bar is not None:
+                visible = (*visible, developing_bar)
         latest = visible[-1] if visible else None
         latest_timestamp = None if latest is None else latest.end_timestamp
         age = (
@@ -849,7 +998,7 @@ def build_multi_timeframe_context(
                 ),
                 availability=availability,
                 bars=visible,
-                latest_completed_bar_timestamp=latest_timestamp,
+                latest_completed_bar_timestamp=latest_completed_timestamp,
                 age=age,
             )
         )
