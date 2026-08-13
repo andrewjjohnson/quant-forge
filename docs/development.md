@@ -110,6 +110,13 @@ early-close tests:
 uv run pytest tests/unit/data/test_multi_timeframe.py
 ```
 
+Run the timeframe-neutral indicator compatibility, identity, causality, and
+developing-bar tests:
+
+```bash
+uv run pytest tests/unit/indicators
+```
+
 Run the opt-in live Tiingo integration only with both the key and explicit flag:
 
 ```bash

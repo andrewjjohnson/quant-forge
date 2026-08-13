@@ -11,12 +11,16 @@ from decimal import (
     Overflow,
     localcontext,
 )
+from itertools import pairwise
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data.models import MarketDataset
 from quantforge.indicators.base import (
+    DevelopingBarSupport,
+    IndicatorBar,
     IndicatorParameters,
     validate_indicator_alignment,
+    validate_indicator_bars,
     validate_market_input,
 )
 from quantforge.indicators.exceptions import (
@@ -65,12 +69,13 @@ class WilderRelativeStrengthIndexParameters:
 
 
 class WilderRelativeStrengthIndex:
-    """Wilder RSI using the current and historical completed closes only."""
+    """Wilder RSI using the current and historical bar closes only."""
 
     name = "wilder_relative_strength_index"
     implementation_version = "1"
     output_fields = (WILDER_RSI_OUTPUT,)
     missing_value = None
+    developing_bar_support = DevelopingBarSupport.DEVELOPING_AS_OF
 
     def __init__(self, parameters: WilderRelativeStrengthIndexParameters) -> None:
         self._parameters = parameters
@@ -103,19 +108,26 @@ class WilderRelativeStrengthIndex:
 
     def calculate(self, dataset: MarketDataset) -> IndicatorOutput:
         validate_market_input(dataset, self.required_fields)
-        _validate_finite_decimal_fields(dataset, self.required_fields)
-        values: list[IndicatorValue] = [None] * len(dataset.bars)
+        fields = self.calculate_bar_fields(dataset.bars)
+        return _aligned_output(self, dataset, fields)
+
+    def calculate_bar_fields(
+        self, bars: tuple[IndicatorBar, ...]
+    ) -> tuple[IndicatorFieldOutput, ...]:
+        """Calculate RSI against any validated canonical timeframe series."""
+        validate_indicator_bars(bars, self.required_fields)
+        values: list[IndicatorValue] = [None] * len(bars)
         period = self._parameters.period
-        if len(dataset.bars) <= period:
-            return _aligned_output(self, dataset, (tuple(values),))
+        if len(bars) <= period:
+            return (IndicatorFieldOutput(WILDER_RSI_OUTPUT, tuple(values)),)
 
         context = _arithmetic_context()
         try:
             with localcontext(context):
                 gains: list[Decimal] = []
                 losses: list[Decimal] = []
-                for index in range(1, len(dataset.bars)):
-                    change = dataset.bars[index].close - dataset.bars[index - 1].close
+                for index in range(1, len(bars)):
+                    change = bars[index].close - bars[index - 1].close
                     gains.append(max(change, Decimal(0)))
                     losses.append(max(-change, Decimal(0)))
 
@@ -124,7 +136,7 @@ class WilderRelativeStrengthIndex:
                 average_loss = sum(losses[:period], Decimal(0)) / divisor
                 values[period] = _rsi(average_gain, average_loss)
 
-                for index in range(period + 1, len(dataset.bars)):
+                for index in range(period + 1, len(bars)):
                     gain = gains[index - 1]
                     loss = losses[index - 1]
                     average_gain = (average_gain * Decimal(period - 1) + gain) / divisor
@@ -135,7 +147,7 @@ class WilderRelativeStrengthIndex:
                 "Wilder RSI arithmetic failed under its configured decimal policy"
             ) from error
 
-        return _aligned_output(self, dataset, (tuple(values),))
+        return (IndicatorFieldOutput(WILDER_RSI_OUTPUT, tuple(values)),)
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +164,7 @@ class WilderDirectionalMovementParameters:
 
 
 class WilderDirectionalMovement:
-    """Aligned Wilder +DI, -DI, and ADX over completed OHLC bars."""
+    """Aligned Wilder +DI, -DI, and ADX over canonical OHLC bars."""
 
     name = "wilder_directional_movement"
     implementation_version = "1"
@@ -162,6 +174,7 @@ class WilderDirectionalMovement:
         AVERAGE_DIRECTIONAL_INDEX_OUTPUT,
     )
     missing_value = None
+    developing_bar_support = DevelopingBarSupport.DEVELOPING_AS_OF
 
     def __init__(self, parameters: WilderDirectionalMovementParameters) -> None:
         self._parameters = parameters
@@ -194,17 +207,27 @@ class WilderDirectionalMovement:
 
     def calculate(self, dataset: MarketDataset) -> IndicatorOutput:
         validate_market_input(dataset, self.required_fields)
-        _validate_finite_decimal_fields(dataset, self.required_fields)
-        count = len(dataset.bars)
+        fields = self.calculate_bar_fields(dataset.bars)
+        return _aligned_output(self, dataset, fields)
+
+    def calculate_bar_fields(
+        self, bars: tuple[IndicatorBar, ...]
+    ) -> tuple[IndicatorFieldOutput, ...]:
+        """Calculate DMI/ADX against any validated canonical timeframe series."""
+        validate_indicator_bars(bars, self.required_fields)
+        count = len(bars)
         positive_di: list[IndicatorValue] = [None] * count
         negative_di: list[IndicatorValue] = [None] * count
         adx: list[IndicatorValue] = [None] * count
         period = self._parameters.period
         if count <= period:
-            return _aligned_output(
-                self,
-                dataset,
-                (tuple(positive_di), tuple(negative_di), tuple(adx)),
+            return tuple(
+                IndicatorFieldOutput(name, values)
+                for name, values in zip(
+                    self.output_fields,
+                    (tuple(positive_di), tuple(negative_di), tuple(adx)),
+                    strict=True,
+                )
             )
 
         context = _arithmetic_context()
@@ -214,8 +237,8 @@ class WilderDirectionalMovement:
                 positive_movements: list[Decimal] = []
                 negative_movements: list[Decimal] = []
                 for index in range(1, count):
-                    current = dataset.bars[index]
-                    previous = dataset.bars[index - 1]
+                    current = bars[index]
+                    previous = bars[index - 1]
                     true_ranges.append(
                         max(
                             current.high - current.low,
@@ -286,10 +309,13 @@ class WilderDirectionalMovement:
                 "decimal policy"
             ) from error
 
-        return _aligned_output(
-            self,
-            dataset,
-            (tuple(positive_di), tuple(negative_di), tuple(adx)),
+        return tuple(
+            IndicatorFieldOutput(name, values)
+            for name, values in zip(
+                self.output_fields,
+                (tuple(positive_di), tuple(negative_di), tuple(adx)),
+                strict=True,
+            )
         )
 
 
@@ -307,12 +333,13 @@ class WilderAverageTrueRangeParameters:
 
 
 class WilderAverageTrueRange:
-    """Aligned Wilder ATR using only current and prior completed OHLC bars."""
+    """Aligned Wilder ATR using only current and prior canonical OHLC bars."""
 
     name = "wilder_average_true_range"
     implementation_version = "1"
     output_fields = (WILDER_AVERAGE_TRUE_RANGE_OUTPUT,)
     missing_value = None
+    developing_bar_support = DevelopingBarSupport.DEVELOPING_AS_OF
 
     def __init__(self, parameters: WilderAverageTrueRangeParameters) -> None:
         self._parameters = parameters
@@ -345,11 +372,20 @@ class WilderAverageTrueRange:
 
     def calculate(self, dataset: MarketDataset) -> IndicatorOutput:
         validate_market_input(dataset, self.required_fields)
-        _validate_finite_decimal_fields(dataset, self.required_fields)
-        values: list[IndicatorValue] = [None] * len(dataset.bars)
+        fields = self.calculate_bar_fields(dataset.bars)
+        return _aligned_output(self, dataset, fields)
+
+    def calculate_bar_fields(
+        self, bars: tuple[IndicatorBar, ...]
+    ) -> tuple[IndicatorFieldOutput, ...]:
+        """Calculate ATR against any validated canonical timeframe series."""
+        validate_indicator_bars(bars, self.required_fields)
+        values: list[IndicatorValue] = [None] * len(bars)
         period = self._parameters.period
-        if len(dataset.bars) <= period:
-            return _aligned_output(self, dataset, (tuple(values),))
+        if len(bars) <= period:
+            return (
+                IndicatorFieldOutput(WILDER_AVERAGE_TRUE_RANGE_OUTPUT, tuple(values)),
+            )
 
         context = _arithmetic_context()
         try:
@@ -360,14 +396,12 @@ class WilderAverageTrueRange:
                         abs(current.high - previous.close),
                         abs(current.low - previous.close),
                     )
-                    for previous, current in zip(
-                        dataset.bars[:-1], dataset.bars[1:], strict=True
-                    )
+                    for previous, current in pairwise(bars)
                 )
                 divisor = Decimal(period)
                 current_atr = sum(true_ranges[:period], Decimal(0)) / divisor
                 values[period] = current_atr
-                for index in range(period + 1, len(dataset.bars)):
+                for index in range(period + 1, len(bars)):
                     current_atr = (
                         current_atr * Decimal(period - 1) + true_ranges[index - 1]
                     ) / divisor
@@ -376,7 +410,7 @@ class WilderAverageTrueRange:
             raise IndicatorCalculationError(
                 "Wilder ATR arithmetic failed under its configured decimal policy"
             ) from error
-        return _aligned_output(self, dataset, (tuple(values),))
+        return (IndicatorFieldOutput(WILDER_AVERAGE_TRUE_RANGE_OUTPUT, tuple(values)),)
 
 
 def _rsi(average_gain: Decimal, average_loss: Decimal) -> Decimal:
@@ -445,18 +479,13 @@ def _aligned_output(
         WilderRelativeStrengthIndex | WilderDirectionalMovement | WilderAverageTrueRange
     ),
     dataset: MarketDataset,
-    values: tuple[tuple[IndicatorValue, ...], ...],
+    fields: tuple[IndicatorFieldOutput, ...],
 ) -> IndicatorOutput:
     output = IndicatorOutput(
         indicator.name,
         indicator.configuration_id,
         tuple(bar.session_date for bar in dataset.bars),
-        tuple(
-            IndicatorFieldOutput(field_name, field_values)
-            for field_name, field_values in zip(
-                indicator.output_fields, values, strict=True
-            )
-        ),
+        fields,
     )
     validate_indicator_alignment(dataset, output)
     return output
@@ -480,15 +509,3 @@ def _validate_period(value: object) -> None:
         raise InvalidIndicatorParametersError("period must be an integer")
     if value < 1:
         raise InvalidIndicatorParametersError("period must be at least 1")
-
-
-def _validate_finite_decimal_fields(
-    dataset: MarketDataset, fields: frozenset[MarketField]
-) -> None:
-    for bar in dataset.bars:
-        for field in fields:
-            value = getattr(bar, field.value)
-            if not isinstance(value, Decimal) or not value.is_finite():
-                raise IndicatorCalculationError(
-                    f"{field.value} must be a finite Decimal"
-                )

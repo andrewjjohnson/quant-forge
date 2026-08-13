@@ -27,6 +27,10 @@ exposes a stable name, immutable typed parameters, required `MarketField`
 values, observations required for warm-up, named outputs, missing-value policy,
 a stable primitive configuration and its SHA-256 identity, and `calculate()`.
 It consumes QF-3 `MarketDataset` objects, not provider responses or SDK models.
+QF-22 retains that daily compatibility API and adds the
+`TimeframeNeutralIndicator` contract for canonical intraday, daily, and weekly
+bars. Periods and warm-up are always counts of input bars; they are never
+interpreted as days.
 
 `IndicatorOutput` stores the input session dates unchanged and one or more
 immutable `IndicatorFieldOutput` series of exactly the same length. `None` is
@@ -72,6 +76,39 @@ indicator = SimpleMovingAverage(
 output = indicator.calculate(dataset)
 rows = output.to_rows()  # one row for every input session
 ```
+
+For a QF-20/QF-21 context, use `evaluate_indicator()` or retain the explicit
+binding returned by `bind_indicator()`. The requested timeframe must be declared
+by the context. The binding snapshots the formula configuration and records the
+exact timeframe, source fields, context completion policy, warm-up bar count,
+developing-bar declaration, and compact QF-14 dataset-family reference. All of
+those values participate in its configuration identity.
+
+```python
+from quantforge.indicators import (
+    SimpleMovingAverage,
+    SimpleMovingAverageParameters,
+    evaluate_indicator,
+)
+
+indicator = SimpleMovingAverage(SimpleMovingAverageParameters(window=20))
+four_hour_output = evaluate_indicator(indicator, context, four_hour_timeframe)
+```
+
+`TimeframeIndicatorOutput` aligns by exact source bar ID, end timestamp, and
+completion state instead of collapsing intraday rows onto a session date. It
+also carries the source timeframe, source fields, completion policy, warm-up
+bars, developing-bar support, and dataset-family aggregation provenance. A
+4-hour binding cannot be evaluated against a daily-only context or against a
+different dataset-family reference.
+
+Every QF-22 built-in indicator declares
+`DevelopingBarSupport.DEVELOPING_AS_OF`. This means its formula can consume the
+single causal `DevelopingBar` produced by QF-21; it does not enable developing
+bars by itself. The enclosing context must have been built with
+`ContextCompletionPolicy.DEVELOPING_BAR_AS_OF`. Completed-bars-only remains the
+default. An indicator declaring `COMPLETED_ONLY` fails if a developing bar is
+present.
 
 ## Strategy contract
 

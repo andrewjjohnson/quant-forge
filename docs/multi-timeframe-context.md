@@ -244,6 +244,9 @@ The schema version is `1`.
 
 The context does not calculate indicators, add prediction-rule declarations,
 export features, or execute trades. Those remain sibling stories under QF-12.
+QF-22's `quantforge.indicators.evaluate_indicator()` consumes this context from
+the indicator layer without moving calculation responsibility into the data
+module.
 It also does not silently combine provider-native higher-timeframe products
 with QuantForge-derived datasets. Multi-session daily and multi-week developing
 targets remain unsupported, matching QF-19's current completed aggregation

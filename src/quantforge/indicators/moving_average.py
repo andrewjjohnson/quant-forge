@@ -19,14 +19,16 @@ from quantforge.configuration import (
 )
 from quantforge.data.models import MarketDataset
 from quantforge.indicators.base import (
+    DevelopingBarSupport,
+    IndicatorBar,
     IndicatorParameters,
     validate_indicator_alignment,
+    validate_indicator_bars,
     validate_market_input,
 )
 from quantforge.indicators.exceptions import (
     IndicatorCalculationError,
     InvalidIndicatorParametersError,
-    MissingMarketFieldError,
 )
 from quantforge.indicators.models import (
     IndicatorFieldOutput,
@@ -76,6 +78,7 @@ class SimpleMovingAverage:
     name = "simple_moving_average"
     output_fields = (SIMPLE_MOVING_AVERAGE_OUTPUT,)
     missing_value = None
+    developing_bar_support = DevelopingBarSupport.DEVELOPING_AS_OF
 
     def __init__(self, parameters: SimpleMovingAverageParameters) -> None:
         self._parameters = parameters
@@ -122,20 +125,26 @@ class SimpleMovingAverage:
     def calculate(self, dataset: MarketDataset) -> IndicatorOutput:
         """Return aligned deterministic means without partial or filled windows."""
         validate_market_input(dataset, self.required_fields)
+        fields = self.calculate_bar_fields(cast(tuple[IndicatorBar, ...], dataset.bars))
+        output = IndicatorOutput(
+            self.name,
+            self.configuration_id,
+            tuple(bar.session_date for bar in dataset.bars),
+            fields,
+        )
+        validate_indicator_alignment(dataset, output)
+        return output
+
+    def calculate_bar_fields(
+        self, bars: tuple[IndicatorBar, ...]
+    ) -> tuple[IndicatorFieldOutput, ...]:
+        """Calculate against canonical bars whose timeframe is validated upstream."""
+        validate_indicator_bars(bars, self.required_fields, require_finite=False)
         source: list[Decimal | None] = []
-        for bar in dataset.bars:
-            try:
-                raw_value = getattr(bar, self._parameters.source_field.value)
-            except AttributeError as error:
-                raise MissingMarketFieldError(
-                    "market data is missing required field: "
-                    f"{self._parameters.source_field.value}"
-                ) from error
-            if not isinstance(raw_value, Decimal):
-                raise IndicatorCalculationError(
-                    f"{self._parameters.source_field.value} must be a Decimal"
-                )
-            source.append(raw_value if raw_value.is_finite() else None)
+        for bar in bars:
+            raw_value = getattr(bar, self._parameters.source_field.value)
+            typed_value = cast(Decimal, raw_value)
+            source.append(typed_value if typed_value.is_finite() else None)
 
         window = self._parameters.window
         divisor = Decimal(window)
@@ -162,14 +171,7 @@ class SimpleMovingAverage:
                         "configured decimal policy"
                     ) from error
 
-        output = IndicatorOutput(
-            self.name,
-            self.configuration_id,
-            tuple(bar.session_date for bar in dataset.bars),
-            (IndicatorFieldOutput(SIMPLE_MOVING_AVERAGE_OUTPUT, tuple(values)),),
-        )
-        validate_indicator_alignment(dataset, output)
-        return output
+        return (IndicatorFieldOutput(SIMPLE_MOVING_AVERAGE_OUTPUT, tuple(values)),)
 
 
 def _arithmetic_context() -> Context:
