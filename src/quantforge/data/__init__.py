@@ -1,6 +1,12 @@
 """Provider-agnostic daily and intraday market-data contracts."""
 
 from quantforge.data.cache import MarketDataCache
+from quantforge.data.developing_bars import (
+    DEVELOPING_BAR_RECONSTRUCTION_POLICY_VERSION,
+    DEVELOPING_BAR_SCHEMA_VERSION,
+    DevelopingBar,
+    DevelopingBarValidationError,
+)
 from quantforge.data.exceptions import (
     CacheError,
     MarketDataError,
@@ -118,6 +124,8 @@ from quantforge.data.validate import validate_market_dataset
 
 __all__ = [
     "DATASET_FAMILY_SCHEMA_VERSION",
+    "DEVELOPING_BAR_RECONSTRUCTION_POLICY_VERSION",
+    "DEVELOPING_BAR_SCHEMA_VERSION",
     "INTRADAY_AGGREGATION_POLICY_VERSION",
     "INTRADAY_AGGREGATION_SCHEMA_VERSION",
     "INTRADAY_CONTRACT_SCHEMA_VERSION",
@@ -150,6 +158,8 @@ __all__ = [
     "DatasetFamilyValidationError",
     "DatasetLineage",
     "DatasetMetadata",
+    "DevelopingBar",
+    "DevelopingBarValidationError",
     "ExternalBarValidationPolicy",
     "FeedCoverage",
     "FeedScope",

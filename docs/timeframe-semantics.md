@@ -109,6 +109,13 @@ not a developing bar. The same is true of a completed leading partial clock
 bucket. A developing bar that reaches its full, leading, or session-close
 terminal boundary is invalid and must be reclassified as completed.
 
+QF-21's `DEVELOPING_BAR_AS_OF` context policy does not mutate or relabel these
+persisted timeframe artifacts. QF-18/QF-19 datasets retain completed-only
+timeframes. The context reconstructs a separate `DevelopingBar` result whose
+explicit context policy, type, `complete = false` metadata, and embedded target
+timeframe make exposure unambiguous while preserving the completed artifact's
+configuration and identity.
+
 With the default `CrossSessionPolicy.PROHIBITED`, an intraday boundary outside
 its resolved session fails validation. `PERMITTED` exists only as an explicit,
 identity-bearing future policy; no QF-13 code aggregates cross-session OHLCV.

@@ -202,6 +202,18 @@ embeds the exact QF-17 report plus per-period missing-constituent evidence.
 Ordered source-bar IDs are part of each output identity, and dataset validation
 rejects reuse of a source bar across output periods.
 
+QF-21 keeps completed-bars-only as the multi-timeframe default. Its explicit
+`DEVELOPING_BAR_AS_OF` policy reconstructs a forming larger-intraday, daily, or
+weekly value only from cache-validated canonical source bars whose ends are at
+or before the decision timestamp. Missing expected constituents fail closed,
+unexpected observations are excluded, and no source bar is truncated at the
+decision time. The result records `complete = false`, exact `as_of`, observed
+boundaries and sessions, expected exchange-calendar completion, constituent
+IDs/count, source lineage, and the fixed reconstruction policy. Appending or
+changing later source bars cannot change the earlier causal OHLCV or
+constituent set; a distinct immutable source artifact still intentionally has
+distinct provenance identity.
+
 ## Common-source multi-timeframe integrity
 
 Matching a symbol, provider name, or display interval does not prove that two
