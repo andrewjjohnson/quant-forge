@@ -3,6 +3,7 @@ from typing import cast
 
 import pytest
 
+import quantforge.indicators.bollinger_bands as bollinger_module
 from quantforge.indicators import (
     BOLLINGER_BANDWIDTH_OUTPUT,
     BOLLINGER_LOWER_BAND_OUTPUT,
@@ -102,6 +103,32 @@ def test_missing_source_invalidates_only_each_containing_full_window() -> None:
         assert values[6] is not None
 
 
+def test_mature_windows_update_statistics_without_rescanning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rebuild = (
+        bollinger_module._rebuild_window_statistics  # pyright: ignore[reportPrivateUsage]
+    )
+    rebuild_count = 0
+
+    def counting_rebuild(
+        observations: tuple[Decimal, ...], divisor: Decimal
+    ) -> tuple[Decimal, Decimal, Decimal]:
+        nonlocal rebuild_count
+        rebuild_count += 1
+        return rebuild(observations, divisor)
+
+    monkeypatch.setattr(
+        bollinger_module, "_rebuild_window_statistics", counting_rebuild
+    )
+
+    BollingerBands(BollingerBandsParameters(7)).calculate(
+        make_dataset(tuple(str(value) for value in range(1, 16)))
+    )
+
+    assert rebuild_count == 1
+
+
 def test_constant_price_has_zero_width_and_zero_bandwidth() -> None:
     output = BollingerBands(BollingerBandsParameters(3)).calculate(
         make_dataset(("5", "5", "5"))
@@ -182,6 +209,7 @@ def test_configuration_serialization_and_identity_include_formula_parameters() -
     }
     formula = cast(dict[str, object], first.configuration()["formula"])
     assert formula["standard_deviation_degrees_of_freedom"] == 0
+    assert formula["window_update"] == "rolling_sum_and_centered_sum_of_squares"
 
 
 def test_output_rows_serialize_all_fields_stably() -> None:

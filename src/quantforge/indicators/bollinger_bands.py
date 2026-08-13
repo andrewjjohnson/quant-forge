@@ -1,5 +1,6 @@
 """Full-window, population-standard-deviation Bollinger Bands."""
 
+from collections import deque
 from dataclasses import dataclass
 from decimal import (
     ROUND_HALF_EVEN,
@@ -134,6 +135,7 @@ class BollingerBands:
                     "sqrt(sum((observation - middle_band) ** 2) / period)"
                 ),
                 "standard_deviation_degrees_of_freedom": 0,
+                "window_update": "rolling_sum_and_centered_sum_of_squares",
                 "upper_band": (
                     "middle_band + standard_deviation_multiplier * standard_deviation"
                 ),
@@ -193,11 +195,26 @@ class BollingerBands:
         period = self._parameters.period
         divisor = Decimal(period)
         multiplier = self._parameters.standard_deviation_multiplier
+        window: deque[Decimal | None] = deque()
+        missing_count = 0
+        statistics_are_valid = False
+        rolling_sum: Decimal | None = None
+        middle: Decimal | None = None
+        centered_sum_of_squares: Decimal | None = None
 
         try:
             with localcontext(_arithmetic_context()):
-                for index in range(len(source)):
-                    if index + 1 < period:
+                for current in source:
+                    window_was_full = len(window) == period
+                    outgoing = window.popleft() if window_was_full else None
+                    if window_was_full and outgoing is None:
+                        missing_count -= 1
+                    window.append(current)
+                    if current is None:
+                        missing_count += 1
+
+                    if len(window) < period or missing_count:
+                        statistics_are_valid = False
                         _append_unavailable(
                             middle_values,
                             upper_values,
@@ -205,27 +222,35 @@ class BollingerBands:
                             bandwidth_values,
                         )
                         continue
-                    window = source[index + 1 - period : index + 1]
-                    if any(observation is None for observation in window):
-                        _append_unavailable(
-                            middle_values,
-                            upper_values,
-                            lower_values,
-                            bandwidth_values,
+
+                    current_value = cast(Decimal, current)
+                    if statistics_are_valid and window_was_full:
+                        rolling_sum, middle, centered_sum_of_squares = (
+                            _roll_window_statistics(
+                                previous_sum=cast(Decimal, rolling_sum),
+                                previous_middle=cast(Decimal, middle),
+                                previous_centered_sum_of_squares=cast(
+                                    Decimal, centered_sum_of_squares
+                                ),
+                                outgoing=cast(Decimal, outgoing),
+                                incoming=current_value,
+                                divisor=divisor,
+                            )
                         )
-                        continue
-                    observations = cast(tuple[Decimal, ...], window)
-                    middle = sum(observations, Decimal(0)) / divisor
-                    variance = (
-                        sum(
-                            (
-                                (observation - middle) * (observation - middle)
-                                for observation in observations
-                            ),
-                            Decimal(0),
+                        if centered_sum_of_squares < Decimal(0):
+                            rolling_sum, middle, centered_sum_of_squares = (
+                                _rebuild_window_statistics(
+                                    cast(tuple[Decimal, ...], tuple(window)), divisor
+                                )
+                            )
+                    else:
+                        rolling_sum, middle, centered_sum_of_squares = (
+                            _rebuild_window_statistics(
+                                cast(tuple[Decimal, ...], tuple(window)), divisor
+                            )
                         )
-                        / divisor
-                    )
+                    statistics_are_valid = True
+                    variance = centered_sum_of_squares / divisor
                     standard_deviation = variance.sqrt()
                     offset = multiplier * standard_deviation
                     upper = middle + offset
@@ -252,6 +277,40 @@ class BollingerBands:
             IndicatorFieldOutput(BOLLINGER_LOWER_BAND_OUTPUT, tuple(lower_values)),
             IndicatorFieldOutput(BOLLINGER_BANDWIDTH_OUTPUT, tuple(bandwidth_values)),
         )
+
+
+def _rebuild_window_statistics(
+    observations: tuple[Decimal, ...], divisor: Decimal
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Establish rolling statistics after warm-up or a missing-value gap."""
+    total = sum(observations, Decimal(0))
+    middle = total / divisor
+    centered_sum_of_squares = sum(
+        (
+            (observation - middle) * (observation - middle)
+            for observation in observations
+        ),
+        Decimal(0),
+    )
+    return total, middle, centered_sum_of_squares
+
+
+def _roll_window_statistics(
+    *,
+    previous_sum: Decimal,
+    previous_middle: Decimal,
+    previous_centered_sum_of_squares: Decimal,
+    outgoing: Decimal,
+    incoming: Decimal,
+    divisor: Decimal,
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Replace one observation using constant-time sliding variance updates."""
+    total = previous_sum - outgoing + incoming
+    middle = total / divisor
+    centered_sum_of_squares = previous_centered_sum_of_squares + (
+        (incoming - outgoing) * (incoming - middle + outgoing - previous_middle)
+    )
+    return total, middle, centered_sum_of_squares
 
 
 def _append_unavailable(*outputs: list[IndicatorValue]) -> None:

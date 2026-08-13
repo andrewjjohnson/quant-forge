@@ -118,6 +118,13 @@ are not filled, backfilled, or carried across the gap. Calculations use the
 indicator's serialized 34-digit `Decimal`, round-half-even arithmetic policy,
 including square root.
 
+The first complete window establishes its sum and centered sum of squares.
+Each later contiguous finite bar removes the expired observation and adds the
+new observation with a constant-time sliding-variance update. A missing-value
+gap invalidates the statistics; the first complete finite window after the gap
+re-establishes them once. Mature contiguous calculations therefore do not
+rescan every overlapping period.
+
 Constant-price windows have zero population deviation, equal middle/upper/lower
 bands, and bandwidth `0`. More generally, any zero-width band has bandwidth
 `0`, including a zero-price window. If a mathematically possible input has a
