@@ -103,6 +103,13 @@ tests:
 uv run pytest tests/unit/data/test_session_aggregation.py
 ```
 
+Run completed-bar multi-timeframe alignment, causality, family, holiday, and
+early-close tests:
+
+```bash
+uv run pytest tests/unit/data/test_multi_timeframe.py
+```
+
 Run the opt-in live Tiingo integration only with both the key and explicit flag:
 
 ```bash

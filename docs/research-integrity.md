@@ -230,6 +230,20 @@ remains stable for the same canonical source and policies. This lets later
 derived data remain compatible without allowing a source, feed, interval, or
 policy change to alias the earlier family.
 
+QF-20 applies those lineage guarantees at a decision timestamp. Its default and
+only current policy exposes a bar only after the explicit bar end and only when
+the bar is terminal. A start label never advances availability. Tuesday's
+eventual daily value and the current week's eventual weekly value consequently
+remain invisible to a Tuesday intraday decision. Completed early-close and
+terminal partial-duration bars become visible at their actual ends.
+
+Each declared timeframe retains explicit available, stale, or missing state;
+alignment never forward-fills an absent series. Undeclared and unavailable
+access raises a domain error. The context identity binds the UTC decision time,
+required timeframes and freshness limits, completed-only policy, common-family
+evidence, dataset references, and visible bar IDs. Appending later bars cannot
+change a historical context. See `docs/multi-timeframe-context.md` and ADR 0011.
+
 ## Costs and market impact
 
 Include realistic assumptions for reportable results:
