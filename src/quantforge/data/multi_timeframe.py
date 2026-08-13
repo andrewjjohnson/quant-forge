@@ -340,7 +340,7 @@ def _validated_cached_source_artifact(
         ) from error
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class TimeframeContext:
     """As-of view and audit metadata for one declared timeframe."""
 
@@ -350,6 +350,32 @@ class TimeframeContext:
     bars: tuple[ContextBar, ...]
     latest_completed_bar_timestamp: datetime | None
     age: timedelta | None
+
+    @classmethod
+    def _from_aligned_series(
+        cls,
+        *,
+        requirement: ContextTimeframeRequirement,
+        dataset_reference: DatasetFamilyReference | None,
+        availability: ContextAvailability,
+        bars: tuple[ContextBar, ...],
+        latest_completed_bar_timestamp: datetime | None,
+        age: timedelta | None,
+    ) -> "TimeframeContext":
+        """Construct only after the builder has aligned a validated series."""
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "requirement", requirement)
+        object.__setattr__(instance, "dataset_reference", dataset_reference)
+        object.__setattr__(instance, "availability", availability)
+        object.__setattr__(instance, "bars", bars)
+        object.__setattr__(
+            instance,
+            "latest_completed_bar_timestamp",
+            latest_completed_bar_timestamp,
+        )
+        object.__setattr__(instance, "age", age)
+        instance.__post_init__()
+        return instance
 
     def __post_init__(self) -> None:
         requirement = cast(object, self.requirement)
@@ -468,7 +494,7 @@ class TimeframeContext:
         }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class MultiTimeframeContext:
     """Deterministic completed-bar views synchronized to one decision timestamp."""
 
@@ -479,6 +505,31 @@ class MultiTimeframeContext:
     source_consistency: SourceConsistencyValidation
     timeframes: tuple[TimeframeContext, ...]
     schema_version: str = MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION
+
+    @classmethod
+    def _from_aligned_timeframes(
+        cls,
+        *,
+        as_of: datetime,
+        primary_timeframe: Timeframe,
+        required_timeframes: tuple[ContextTimeframeRequirement, ...],
+        completion_policy: ContextCompletionPolicy,
+        source_consistency: SourceConsistencyValidation,
+        timeframes: tuple[TimeframeContext, ...],
+    ) -> "MultiTimeframeContext":
+        """Construct only from builder-produced, artifact-bound views."""
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "as_of", as_of)
+        object.__setattr__(instance, "primary_timeframe", primary_timeframe)
+        object.__setattr__(instance, "required_timeframes", required_timeframes)
+        object.__setattr__(instance, "completion_policy", completion_policy)
+        object.__setattr__(instance, "source_consistency", source_consistency)
+        object.__setattr__(instance, "timeframes", timeframes)
+        object.__setattr__(
+            instance, "schema_version", MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION
+        )
+        instance.__post_init__()
+        return instance
 
     def __post_init__(self) -> None:
         decision_timestamp = _utc_timestamp(self.as_of, "context as-of")
@@ -761,7 +812,7 @@ def build_multi_timeframe_context(
         else:
             availability = ContextAvailability.AVAILABLE
         aligned_timeframes.append(
-            TimeframeContext(
+            TimeframeContext._from_aligned_series(  # pyright: ignore[reportPrivateUsage]
                 requirement=requirement,
                 dataset_reference=(
                     None if input_series is None else input_series.dataset_reference
@@ -773,7 +824,7 @@ def build_multi_timeframe_context(
             )
         )
 
-    return MultiTimeframeContext(
+    return MultiTimeframeContext._from_aligned_timeframes(  # pyright: ignore[reportPrivateUsage]
         as_of=decision_timestamp,
         primary_timeframe=primary_timeframe,
         required_timeframes=ordered_requirements,

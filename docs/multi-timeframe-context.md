@@ -85,6 +85,12 @@ timeframe occur in that family and that its canonical source, symbol, provider,
 feed, adjustment basis, and source timeframe match the artifact's validated
 embedded family.
 
+`TimeframeContext` and `MultiTimeframeContext` are likewise result-only models:
+their constructors are not public. `build_multi_timeframe_context()` is the
+only supported construction boundary, so callers cannot bypass artifact
+validation by attaching arbitrary bars directly to an otherwise valid family
+reference.
+
 ## Causal visibility
 
 A bar is visible only when both conditions hold:
@@ -99,8 +105,13 @@ see Tuesday's eventual session bar or the current week's eventual trading-week
 bar. Supplying those future bars to the builder does not expose them.
 
 The context retains only the causally visible in-memory bar tuple for each
-declared timeframe. Appending bars after `as_of` cannot change the serialized
-context or `context_id`.
+declared timeframe. Additional bars after `as_of` within the same validated
+dataset-family inputs cannot change the serialized context or `context_id`.
+A newly persisted content-addressed dataset or family is a different provenance
+input and intentionally changes the identity, even when its OHLCV prefix is
+numerically equal. QF-20 records exact family and bar identities rather than
+treating observations from distinct retrievals or source snapshots as
+interchangeable.
 
 ## Availability and access
 

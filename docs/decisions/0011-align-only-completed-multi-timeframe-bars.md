@@ -31,7 +31,9 @@ recomputed content, provenance, exact dataset ID, and family supply the context
 reference. Source artifacts are reloaded through their `IntradayMarketDataCache`
 and must equal the supplied in-memory dataset, so the complete content-addressed
 manifest identity, raw artifacts, and canonical paths are verified before the
-series is exposed.
+series is exposed. The aligned timeframe and complete context models are
+factory-only results of `build_multi_timeframe_context()`; callers cannot attach
+unvalidated bars directly to those exported dataclasses.
 
 The context is ordered independently of caller input order. Its deterministic
 identity binds `as_of`, primary and required timeframes, freshness limits,
@@ -42,9 +44,12 @@ copying OHLCV values.
 ## Consequences
 
 An intraday decision cannot observe the current session's eventual daily bar or
-the current week's eventual weekly bar. Appending future data leaves a
-historical context byte-identical. Consumers must handle missing and stale
-states explicitly and retain referenced immutable datasets for reproduction.
+the current week's eventual weekly bar. Adding future bars to the same validated
+family inputs leaves a historical context byte-identical. A newly persisted
+content-addressed dataset or family remains distinct provenance and therefore
+changes the context identity even when its price prefix is numerically equal.
+Consumers must handle missing and stale states explicitly and retain referenced
+immutable datasets for reproduction.
 
 Developing-bar reconstruction, indicators, prediction integration, and trade
 execution remain separate later boundaries. The completed-only restriction is
@@ -74,4 +79,5 @@ available/stale/missing states, guarded access, incompatible sessions, and
 consolidated-versus-IEX family rejection. Regression tests also tamper source
 content together with matching digest evidence, forge source dataset IDs,
 change family symbols, and alter derived source provenance to prove a reference
-cannot authenticate unrelated bars.
+cannot authenticate unrelated bars. Direct construction of aligned or complete
+context results is also rejected.

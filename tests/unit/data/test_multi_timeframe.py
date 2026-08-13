@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -28,9 +29,11 @@ from quantforge.data import (
     IntradayMarketDataCache,
     IntradayRawSnapshot,
     IntradayValidationMode,
+    MultiTimeframeContext,
     MultiTimeframeContextValidationError,
     SessionAggregationPolicy,
     TimeframeBarSeries,
+    TimeframeContext,
     UnavailableTimeframeError,
     UndeclaredTimeframeError,
     aggregate_intraday_dataset,
@@ -455,13 +458,30 @@ def test_appending_future_bars_cannot_change_historical_context() -> None:
     assert appended.serialize() == original.serialize()
 
 
-def test_context_model_rejects_moving_as_of_before_an_exposed_bar() -> None:
+def test_context_models_cannot_be_constructed_with_unbound_bars() -> None:
     context = _context()
+    aligned = context.timeframes[0]
+    timeframe_context_constructor = cast(Callable[..., object], TimeframeContext)
+    multi_context_constructor = cast(Callable[..., object], MultiTimeframeContext)
 
-    with pytest.raises(
-        MultiTimeframeContextValidationError, match="unavailable at context as-of"
-    ):
-        replace(context, as_of=AS_OF - timedelta(minutes=1))
+    with pytest.raises(TypeError):
+        timeframe_context_constructor(
+            aligned.requirement,
+            aligned.dataset_reference,
+            aligned.availability,
+            aligned.bars,
+            aligned.latest_completed_bar_timestamp,
+            aligned.age,
+        )
+    with pytest.raises(TypeError):
+        multi_context_constructor(
+            context.as_of,
+            context.primary_timeframe,
+            context.required_timeframes,
+            context.completion_policy,
+            context.source_consistency,
+            context.timeframes,
+        )
 
 
 def test_construction_is_deterministic_and_orders_requirements_and_bars() -> None:
