@@ -2,8 +2,9 @@
 
 QF-22 generalizes the existing QF-4 SMA, Wilder RSI, Wilder ATR, and Wilder
 directional-movement/ADX formulas for canonical intraday, exchange-session
-daily, and exchange-week bars. It consumes the leakage-safe QF-20/QF-21 context
-boundary and does not retrieve, aggregate, or align market data itself.
+daily, and exchange-week bars. QF-23 adds EMA through the same contract. The
+indicator layer consumes the leakage-safe QF-20/QF-21 context boundary and does
+not retrieve, aggregate, or align market data itself.
 
 ## Contracts
 
@@ -34,6 +35,7 @@ Every period, window, and warm-up is measured in input observations/bars:
 | Indicator | Parameter | First available output |
 | --- | --- | --- |
 | SMA | `window=N` | bar `N` |
+| EMA | `period=N` | bar `N` |
 | Wilder RSI | `period=N` | bar `N + 1` |
 | Wilder ATR | `period=N` | bar `N + 1` |
 | +DI / -DI | `period=N` | bar `N + 1` |
@@ -45,6 +47,45 @@ duration or session count.
 
 Warm-up rows remain present and use `None`. There is no backfill, centered
 window, or partial-window result.
+
+## Exponential moving average
+
+`ExponentialMovingAverageParameters` contains the positive integer `period` and
+one canonical OHLCV `source_field`, defaulting to `close`. The source timeframe
+and completion policy are supplied by the typed QF-22 binding rather than
+duplicated in the formula parameters. Consequently the bound configuration and
+identity include period, field, complete timeframe semantics, completion or
+developing-bar policy, and dataset-family provenance.
+
+For period `N`, the smoothing factor is:
+
+```text
+alpha = 2 / (N + 1)
+```
+
+The first EMA is the simple arithmetic mean of the first `N` consecutive finite
+source observations. It appears on bar `N`; preceding aligned rows are `None`.
+Each later value is calculated recursively under the indicator's serialized
+34-digit `Decimal`, round-half-even arithmetic policy:
+
+```text
+EMA[current] = alpha * source[current] + (1 - alpha) * EMA[previous]
+```
+
+The implementation evaluates the algebraically equivalent rational form
+`((N - 1) * EMA[previous] + 2 * source[current]) / (N + 1)`. This avoids
+rounding a repeating `alpha` before applying the recurrence while preserving
+the standard formula.
+
+A non-finite source observation is treated as unavailable: that row is `None`,
+the prior EMA is not carried forward, and initialization restarts. Another
+value appears only after `N` new consecutive finite observations. This policy
+does not interpolate, forward-fill, or bridge a market-data gap.
+
+EMA declares `DEVELOPING_AS_OF` support. In developing context mode the current
+input is the structurally distinct as-of bar already reconstructed by QF-21
+from completed lower-timeframe constituents. The recurrence never sees or
+infers the eventual completed close.
 
 ## Source binding and identity
 
@@ -102,6 +143,7 @@ presented as the eventual completed candle. An indicator declaring
 
 ## Deliberate limits
 
-QF-22 does not add EMA, Bollinger Bands, MACD, stochastic, volume formulas,
-prediction integration, feature export, or strategy/backtest multi-timeframe
-integration. Those are sibling-ticket concerns under QF-12.
+QF-22/QF-23 do not add Bollinger Bands, MACD, stochastic, volume formulas,
+prediction integration, feature export, EMA-based prediction rules, or
+strategy/backtest multi-timeframe integration. Those are sibling-ticket
+concerns under QF-12.
