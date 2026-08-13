@@ -13,8 +13,8 @@ indicators, call a provider, integrate prediction rules, or simulate trades.
 - one primary or decision `Timeframe`;
 - ordered `ContextTimeframeRequirement` declarations for contextual
   timeframes;
-- `TimeframeBarSeries` inputs that carry one `DatasetFamilyReference` per
-  dataset;
+- `TimeframeBarSeries` inputs constructed from validated source or derived
+  dataset artifacts;
 - the default `ContextCompletionPolicy.COMPLETED_BARS_ONLY` policy.
 
 Requirements may set a positive `maximum_age`. This limit is a caller-defined
@@ -28,6 +28,23 @@ from quantforge.data import (
     ContextTimeframeRequirement,
     TimeframeBarSeries,
     build_multi_timeframe_context,
+)
+
+five_minute_series = TimeframeBarSeries.from_source_dataset(
+    source_dataset,
+    family=dataset_family,
+)
+four_hour_series = TimeframeBarSeries.from_aggregated_intraday_dataset(
+    four_hour_dataset,
+    family=dataset_family,
+)
+daily_series = TimeframeBarSeries.from_aggregated_session_dataset(
+    daily_dataset,
+    family=dataset_family,
+)
+weekly_series = TimeframeBarSeries.from_aggregated_session_dataset(
+    weekly_dataset,
+    family=dataset_family,
 )
 
 context = build_multi_timeframe_context(
@@ -47,6 +64,21 @@ requirements are sorted by complete timeframe configuration ID, so changing
 the input tuple order cannot change the context or its identity. Bars inside a
 series are likewise ordered by completion timestamp, start timestamp, and bar
 ID. Duplicate boundaries and overlaps fail construction.
+
+`TimeframeBarSeries` cannot be initialized from a bare family reference and bar
+tuple. Its public constructors validate the concrete immutable dataset first,
+recompute its content and provenance invariants, and derive the reference from
+that dataset's exact ID and embedded family. The source-dataset constructor also
+requires the QF-14 family containing that canonical source and checks symbol,
+provider, feed, adjustment, source timeframe, content digest, quality report,
+and per-bar provenance. This prevents a valid family reference from being
+attached to bars from another symbol, feed, revision, or derived artifact.
+When QF-18 and QF-19 artifacts carry their own partial lineage manifests, pass
+the one context family containing all exact derived dataset IDs to each
+constructor as shown above. The constructor verifies that the artifact ID and
+timeframe occur in that family and that its canonical source, symbol, provider,
+feed, adjustment basis, and source timeframe match the artifact's validated
+embedded family.
 
 ## Causal visibility
 

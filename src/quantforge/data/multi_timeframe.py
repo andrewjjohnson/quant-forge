@@ -7,14 +7,28 @@ from itertools import pairwise
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.data.identity import canonical_json_bytes
-from quantforge.data.intraday import IntradayBar
+from quantforge.data.exceptions import ValidationError
+from quantforge.data.identity import canonical_json_bytes, sha256_hex
+from quantforge.data.intraday import IntradayBar, IntradayBarBatch
+from quantforge.data.intraday_aggregation import AggregatedIntradayDataset
+from quantforge.data.intraday_ingestion import (
+    INTRADAY_DATASET_SCHEMA_VERSION,
+    IntradayDataset,
+)
+from quantforge.data.intraday_validation import (
+    IntradayValidationMode,
+    validate_intraday_coverage,
+)
 from quantforge.data.lineage import (
+    DatasetFamily,
     DatasetFamilyReference,
     SourceConsistencyValidation,
     validate_source_consistency,
 )
-from quantforge.data.session_aggregation import AggregatedSessionBar
+from quantforge.data.session_aggregation import (
+    AggregatedSessionBar,
+    AggregatedSessionDataset,
+)
 from quantforge.timeframes import BarCompletion, DevelopingBarExposure, Timeframe
 
 MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION = "1"
@@ -105,35 +119,49 @@ class ContextTimeframeRequirement:
         }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class TimeframeBarSeries:
-    """Immutable ordered bars for one dataset-family member and timeframe."""
+    """Validated dataset artifact projected as immutable bars for alignment.
+
+    Use one of the public ``from_*_dataset`` constructors. Directly pairing a
+    family reference with unbound bars is intentionally unsupported.
+    """
 
     dataset_reference: DatasetFamilyReference
     timeframe: Timeframe
     bars: tuple[ContextBar, ...]
 
-    def __post_init__(self) -> None:
-        reference = cast(object, self.dataset_reference)
-        timeframe = cast(object, self.timeframe)
-        bars = cast(object, self.bars)
-        if not isinstance(reference, DatasetFamilyReference):
+    @classmethod
+    def _from_validated_artifact(
+        cls,
+        dataset_reference: DatasetFamilyReference,
+        timeframe: Timeframe,
+        bars: tuple[ContextBar, ...],
+    ) -> "TimeframeBarSeries":
+        """Construct after a concrete dataset artifact has passed validation."""
+        reference_value = cast(object, dataset_reference)
+        timeframe_value = cast(object, timeframe)
+        bars_value = cast(object, bars)
+        if not isinstance(reference_value, DatasetFamilyReference):
             raise MultiTimeframeContextValidationError(
                 "timeframe series dataset reference is invalid"
             )
-        if not isinstance(timeframe, Timeframe):
+        if not isinstance(timeframe_value, Timeframe):
             raise MultiTimeframeContextValidationError(
                 "timeframe series timeframe is invalid"
             )
-        if reference.timeframe_configuration_id != timeframe.configuration_id:
+        if (
+            reference_value.timeframe_configuration_id
+            != timeframe_value.configuration_id
+        ):
             raise MultiTimeframeContextValidationError(
                 "timeframe series does not match its dataset reference"
             )
-        if not isinstance(bars, tuple):
+        if not isinstance(bars_value, tuple):
             raise MultiTimeframeContextValidationError(
                 "timeframe series bars must be a tuple"
             )
-        untyped_bars = cast(tuple[object, ...], bars)
+        untyped_bars = cast(tuple[object, ...], bars_value)
         if any(
             not isinstance(bar, (IntradayBar, AggregatedSessionBar))
             for bar in untyped_bars
@@ -142,7 +170,7 @@ class TimeframeBarSeries:
                 "timeframe series contains an unsupported bar"
             )
         typed_bars = cast(tuple[ContextBar, ...], untyped_bars)
-        if any(bar.timeframe != timeframe for bar in typed_bars):
+        if any(bar.timeframe != timeframe_value for bar in typed_bars):
             raise MultiTimeframeContextValidationError(
                 "timeframe series contains a bar from another timeframe"
             )
@@ -159,7 +187,173 @@ class TimeframeBarSeries:
                 raise MultiTimeframeContextValidationError(
                     "timeframe series contains overlapping bars"
                 )
-        object.__setattr__(self, "bars", ordered)
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "dataset_reference", reference_value)
+        object.__setattr__(instance, "timeframe", timeframe_value)
+        object.__setattr__(instance, "bars", ordered)
+        return instance
+
+    @classmethod
+    def from_source_dataset(
+        cls,
+        dataset: IntradayDataset,
+        *,
+        family: DatasetFamily,
+    ) -> "TimeframeBarSeries":
+        """Validate and bind one canonical QF-15/QF-16 source dataset."""
+        _validate_source_artifact(dataset, family)
+        return cls._from_validated_artifact(
+            family.reference(dataset.metadata.dataset_id),
+            dataset.request.timeframe,
+            dataset.bars,
+        )
+
+    @classmethod
+    def from_aggregated_intraday_dataset(
+        cls,
+        dataset: AggregatedIntradayDataset,
+        *,
+        family: DatasetFamily | None = None,
+    ) -> "TimeframeBarSeries":
+        """Validate and bind one QF-18 derived intraday dataset."""
+        dataset_value = cast(object, dataset)
+        if not isinstance(dataset_value, AggregatedIntradayDataset):
+            raise MultiTimeframeContextValidationError(
+                "derived intraday series requires an aggregated dataset"
+            )
+        try:
+            dataset_value.validate()
+            reference = _reference_for_derived_artifact(
+                artifact_family=dataset_value.dataset_family,
+                context_family=family,
+                dataset_id=dataset_value.metadata.dataset_id,
+                timeframe=dataset_value.request.timeframe,
+            )
+        except (TypeError, ValueError, ValidationError) as error:
+            raise MultiTimeframeContextValidationError(
+                f"derived intraday dataset validation failed: {error}"
+            ) from error
+        return cls._from_validated_artifact(
+            reference, dataset_value.request.timeframe, dataset_value.bars
+        )
+
+    @classmethod
+    def from_aggregated_session_dataset(
+        cls,
+        dataset: AggregatedSessionDataset,
+        *,
+        family: DatasetFamily | None = None,
+    ) -> "TimeframeBarSeries":
+        """Validate and bind one QF-19 derived daily or weekly dataset."""
+        dataset_value = cast(object, dataset)
+        if not isinstance(dataset_value, AggregatedSessionDataset):
+            raise MultiTimeframeContextValidationError(
+                "session series requires an aggregated dataset"
+            )
+        try:
+            dataset_value.validate()
+            reference = _reference_for_derived_artifact(
+                artifact_family=dataset_value.dataset_family,
+                context_family=family,
+                dataset_id=dataset_value.metadata.dataset_id,
+                timeframe=dataset_value.metadata.target_timeframe,
+            )
+        except (TypeError, ValueError, ValidationError) as error:
+            raise MultiTimeframeContextValidationError(
+                f"session dataset validation failed: {error}"
+            ) from error
+        return cls._from_validated_artifact(
+            reference, dataset_value.metadata.target_timeframe, dataset_value.bars
+        )
+
+
+def _reference_for_derived_artifact(
+    *,
+    artifact_family: DatasetFamily,
+    context_family: DatasetFamily | None,
+    dataset_id: str,
+    timeframe: Timeframe,
+) -> DatasetFamilyReference:
+    family = artifact_family if context_family is None else context_family
+    if context_family is not None and (
+        context_family.canonical_source_snapshot_id
+        != artifact_family.canonical_source_snapshot_id
+        or context_family.canonical_symbol != artifact_family.canonical_symbol
+        or context_family.provider_name != artifact_family.provider_name
+        or context_family.feed_scope != artifact_family.feed_scope
+        or context_family.adjustment_basis != artifact_family.adjustment_basis
+        or context_family.source_timeframe != artifact_family.source_timeframe
+    ):
+        raise MultiTimeframeContextValidationError(
+            "derived dataset does not match the supplied context family"
+        )
+    reference = family.reference(dataset_id)
+    if reference.timeframe_configuration_id != timeframe.configuration_id:
+        raise MultiTimeframeContextValidationError(
+            "derived dataset timeframe does not match the supplied context family"
+        )
+    return reference
+
+
+def _validate_source_artifact(dataset: IntradayDataset, family: DatasetFamily) -> None:
+    dataset_value = cast(object, dataset)
+    family_value = cast(object, family)
+    if not isinstance(dataset_value, IntradayDataset):
+        raise MultiTimeframeContextValidationError(
+            "source series requires an intraday dataset"
+        )
+    if not isinstance(family_value, DatasetFamily):
+        raise MultiTimeframeContextValidationError(
+            "source series requires a dataset family"
+        )
+    try:
+        batch = IntradayBarBatch(dataset_value.request, dataset_value.bars)
+        metadata = dataset_value.metadata
+        report = validate_intraday_coverage(
+            batch, mode=IntradayValidationMode.DIAGNOSTIC
+        )
+        if metadata.schema_version != INTRADAY_DATASET_SCHEMA_VERSION:
+            raise MultiTimeframeContextValidationError(
+                "source dataset metadata schema is invalid"
+            )
+        if (
+            metadata.request_id != dataset_value.request.request_id
+            or metadata.batch_id != batch.batch_id
+            or metadata.bar_count != len(batch.bars)
+            or metadata.data_sha256 != sha256_hex(batch.serialize())
+            or metadata.quality_report != report
+        ):
+            raise MultiTimeframeContextValidationError(
+                "source dataset metadata does not match its bars"
+            )
+        if any(
+            bar.provenance.provider_name != metadata.provider_name
+            or bar.provenance.provider_symbol != metadata.provider_symbol
+            or bar.provenance.adapter_version != metadata.adapter_version
+            or bar.provenance.source_snapshot_id not in metadata.raw_snapshot_ids
+            for bar in batch.bars
+        ):
+            raise MultiTimeframeContextValidationError(
+                "source dataset bar provenance does not match its metadata"
+            )
+        if (
+            family_value.canonical_source_snapshot_id != metadata.dataset_id
+            or family_value.canonical_symbol != dataset_value.request.symbol
+            or family_value.provider_name != metadata.provider_name
+            or family_value.feed_scope != dataset_value.request.feed_scope
+            or family_value.adjustment_basis != dataset_value.request.adjustment_basis
+            or family_value.source_timeframe != dataset_value.request.timeframe
+        ):
+            raise MultiTimeframeContextValidationError(
+                "source dataset does not match its family identity"
+            )
+        family_value.reference(metadata.dataset_id)
+    except MultiTimeframeContextValidationError:
+        raise
+    except (TypeError, ValueError) as error:
+        raise MultiTimeframeContextValidationError(
+            f"source dataset validation failed: {error}"
+        ) from error
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,14 +16,25 @@ from quantforge.data import (
     DatasetFamily,
     DatasetLineage,
     FeedScope,
+    IntradayAggregationPolicy,
     IntradayBar,
+    IntradayBarBatch,
     IntradayBarProvenance,
+    IntradayBarRequest,
+    IntradayDataset,
+    IntradayDatasetMetadata,
+    IntradayValidationMode,
     MultiTimeframeContextValidationError,
+    SessionAggregationPolicy,
     TimeframeBarSeries,
     UnavailableTimeframeError,
     UndeclaredTimeframeError,
+    aggregate_intraday_dataset,
+    aggregate_session_dataset,
     build_multi_timeframe_context,
+    validate_intraday_coverage,
 )
+from quantforge.data.identity import sha256_hex
 from quantforge.timeframes import (
     BarCompletion,
     ExchangeSessionPolicy,
@@ -90,13 +101,13 @@ def _family(*, feed_scope: FeedScope | None = None) -> DatasetFamily:
     )
 
 
-def _provenance() -> IntradayBarProvenance:
+def _provenance(*, source_request_id: str = "fixture-request") -> IntradayBarProvenance:
     return IntradayBarProvenance(
         provider_name="fixture-provider",
         provider_symbol="SPY",
         adapter_version="fixture-1",
         retrieved_at=RETRIEVED_AT,
-        source_request_id="fixture-request",
+        source_request_id=source_request_id,
         source_snapshot_id=SOURCE_ID,
         feed_scope=FeedScope.consolidated(),
         adjustment_basis=_adjustment_basis(),
@@ -150,6 +161,101 @@ def _session_bar(timeframe: Timeframe, period_start: date) -> AggregatedSessionB
     )
 
 
+def _trusted_series(
+    family: DatasetFamily,
+    dataset_id: str,
+    timeframe: Timeframe,
+    bars: tuple[IntradayBar | AggregatedSessionBar, ...],
+) -> TimeframeBarSeries:
+    """Build isolated alignment fixtures after their own helper validation."""
+    return TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
+        family.reference(dataset_id), timeframe, bars
+    )
+
+
+def _complete_source_dataset() -> IntradayDataset:
+    five_minute = _timeframes()[0]
+    session = resolve_exchange_session(date(2024, 7, 8))
+    request = IntradayBarRequest(
+        symbol="SPY",
+        start_timestamp=session.open_timestamp,
+        end_timestamp=session.close_timestamp,
+        timeframe=five_minute,
+        feed_scope=FeedScope.consolidated(),
+        adjustment_basis=_adjustment_basis(),
+    )
+    provenance = _provenance(source_request_id=request.request_id)
+    bars = tuple(
+        IntradayBar(
+            symbol="SPY",
+            session_date=session.session_date,
+            start_timestamp=session.open_timestamp + timedelta(minutes=5 * index),
+            end_timestamp=session.open_timestamp + timedelta(minutes=5 * (index + 1)),
+            timeframe=five_minute,
+            completion=BarCompletion.COMPLETED,
+            open=Decimal(100 + index),
+            high=Decimal(102 + index),
+            low=Decimal(99 + index),
+            close=Decimal(101 + index),
+            volume=Decimal("1000"),
+            provenance=provenance,
+        )
+        for index in range(78)
+    )
+    batch = IntradayBarBatch(request, bars)
+    report = validate_intraday_coverage(batch, mode=IntradayValidationMode.DIAGNOSTIC)
+    return IntradayDataset(
+        request,
+        bars,
+        IntradayDatasetMetadata(
+            dataset_id=SOURCE_ID,
+            request_id=request.request_id,
+            provider_name="fixture-provider",
+            provider_symbol="SPY",
+            adapter_version="fixture-1",
+            retrieved_at=RETRIEVED_AT,
+            capabilities_configuration_id="fixture-capabilities",
+            batch_id=batch.batch_id,
+            bar_count=len(bars),
+            raw_snapshot_ids=(SOURCE_ID,),
+            raw_locations=(f"intraday/raw/{SOURCE_ID}.json",),
+            normalized_location=f"intraday/datasets/{SOURCE_ID}/bars.json",
+            data_sha256=sha256_hex(batch.serialize()),
+            quality_report=report,
+        ),
+    )
+
+
+def _context_family_for_derived(
+    artifact_family: DatasetFamily,
+    dataset_id: str,
+    timeframe: Timeframe,
+) -> DatasetFamily:
+    source_id = artifact_family.canonical_source_snapshot_id
+    return DatasetFamily(
+        canonical_symbol=artifact_family.canonical_symbol,
+        provider_name=artifact_family.provider_name,
+        feed_scope=artifact_family.feed_scope,
+        adjustment_basis=artifact_family.adjustment_basis,
+        aggregation_policy=AggregationPolicy(
+            "quantforge_context_artifact_set",
+            "1",
+            {"artifact_family_manifest_ids": [artifact_family.manifest_id]},
+        ),
+        canonical_source_snapshot_id=source_id,
+        datasets=(
+            DatasetLineage(
+                source_id,
+                artifact_family.source_timeframe,
+                source_id,
+                None,
+                (dataset_id,),
+            ),
+            DatasetLineage(dataset_id, timeframe, source_id, source_id),
+        ),
+    )
+
+
 def _fixture_series(
     family: DatasetFamily,
 ) -> tuple[TimeframeBarSeries, ...]:
@@ -192,10 +298,10 @@ def _fixture_series(
         _session_bar(weekly, date(2024, 7, 8)),
     )
     return (
-        TimeframeBarSeries(family.reference(SOURCE_ID), five_minute, five_minute_bars),
-        TimeframeBarSeries(family.reference(FOUR_HOUR_ID), four_hour, four_hour_bars),
-        TimeframeBarSeries(family.reference(DAILY_ID), daily, daily_bars),
-        TimeframeBarSeries(family.reference(WEEKLY_ID), weekly, weekly_bars),
+        _trusted_series(family, SOURCE_ID, five_minute, five_minute_bars),
+        _trusted_series(family, FOUR_HOUR_ID, four_hour, four_hour_bars),
+        _trusted_series(family, DAILY_ID, daily, daily_bars),
+        _trusted_series(family, WEEKLY_ID, weekly, weekly_bars),
     )
 
 
@@ -269,7 +375,12 @@ def test_appending_future_bars_cannot_change_historical_context() -> None:
         next_session.open_timestamp + timedelta(minutes=5),
     )
     appended_series = tuple(
-        replace(item, bars=(*item.bars, future_bar))
+        _trusted_series(
+            family,
+            item.dataset_reference.dataset_id,
+            item.timeframe,
+            (*item.bars, future_bar),
+        )
         if item.timeframe == five_minute
         else item
         for item in original_series
@@ -293,7 +404,12 @@ def test_construction_is_deterministic_and_orders_requirements_and_bars() -> Non
     family = _family()
     first_series = _fixture_series(family)
     reverse_series = tuple(
-        replace(item, bars=tuple(reversed(item.bars)))
+        _trusted_series(
+            family,
+            item.dataset_reference.dataset_id,
+            item.timeframe,
+            tuple(reversed(item.bars)),
+        )
         for item in reversed(first_series)
     )
     five_minute, four_hour, daily, weekly = _timeframes()
@@ -321,7 +437,7 @@ def test_missing_and_stale_timeframes_are_explicit_and_access_is_guarded() -> No
     family = _family()
     five_minute, four_hour, daily, weekly = _timeframes()
     fixture_series = _fixture_series(family)
-    empty_daily = TimeframeBarSeries(family.reference(DAILY_ID), daily, ())
+    empty_daily = _trusted_series(family, DAILY_ID, daily, ())
     selected_series = tuple(
         empty_daily if item.timeframe == daily else item
         for item in fixture_series
@@ -354,7 +470,7 @@ def test_context_rejects_mixed_dataset_families() -> None:
     other_family = _family(feed_scope=FeedScope.single_venue("IEX"))
     series = _fixture_series(family)
     mixed = tuple(
-        replace(item, dataset_reference=other_family.reference(DAILY_ID))
+        _trusted_series(other_family, DAILY_ID, item.timeframe, item.bars)
         if item.timeframe == _timeframes()[2]
         else item
         for item in series
@@ -362,6 +478,89 @@ def test_context_rejects_mixed_dataset_families() -> None:
 
     with pytest.raises(MultiTimeframeContextValidationError, match="mixed dataset"):
         _context(family, mixed)
+
+
+def test_series_cannot_be_constructed_from_an_unbound_reference_and_bars() -> None:
+    family = _family()
+    five_minute = _timeframes()[0]
+
+    with pytest.raises(TypeError):
+        TimeframeBarSeries(family.reference(SOURCE_ID), five_minute, ())  # pyright: ignore[reportCallIssue]
+
+
+def test_source_series_validates_artifact_content_and_family_identity() -> None:
+    source = _complete_source_dataset()
+    family = _family()
+
+    series = TimeframeBarSeries.from_source_dataset(source, family=family)
+
+    assert series.dataset_reference.dataset_id == source.metadata.dataset_id
+    assert series.bars == source.bars
+
+    changed_bar = replace(source.bars[0], close=Decimal("100.5"))
+    tampered = replace(source, bars=(changed_bar, *source.bars[1:]))
+    with pytest.raises(
+        MultiTimeframeContextValidationError, match="metadata does not match"
+    ):
+        TimeframeBarSeries.from_source_dataset(tampered, family=family)
+
+    with pytest.raises(MultiTimeframeContextValidationError, match="family identity"):
+        TimeframeBarSeries.from_source_dataset(
+            source, family=replace(family, canonical_symbol="QQQ")
+        )
+
+
+def test_session_series_rejects_bars_unbound_from_derived_dataset() -> None:
+    source = _complete_source_dataset()
+    daily = _timeframes()[2]
+    derived = aggregate_session_dataset(
+        source, daily, policy=SessionAggregationPolicy()
+    )
+
+    context_family = _context_family_for_derived(
+        derived.dataset_family, derived.metadata.dataset_id, daily
+    )
+    series = TimeframeBarSeries.from_aggregated_session_dataset(
+        derived, family=context_family
+    )
+
+    assert series.dataset_reference.dataset_id == derived.metadata.dataset_id
+    assert series.dataset_reference.family_id == context_family.family_id
+    assert series.bars == derived.bars
+
+    foreign_bar = replace(derived.bars[0], source_dataset_id="foreign-source")
+    tampered = replace(derived, bars=(foreign_bar,))
+    with pytest.raises(
+        MultiTimeframeContextValidationError, match="provenance mismatch"
+    ):
+        TimeframeBarSeries.from_aggregated_session_dataset(tampered)
+
+
+def test_intraday_series_rejects_bars_unbound_from_derived_dataset() -> None:
+    source = _complete_source_dataset()
+    four_hour = _timeframes()[1]
+    derived = aggregate_intraday_dataset(
+        source, four_hour, policy=IntradayAggregationPolicy()
+    )
+
+    context_family = _context_family_for_derived(
+        derived.dataset_family, derived.metadata.dataset_id, four_hour
+    )
+    series = TimeframeBarSeries.from_aggregated_intraday_dataset(
+        derived, family=context_family
+    )
+
+    assert series.dataset_reference.dataset_id == derived.metadata.dataset_id
+    assert series.dataset_reference.family_id == context_family.family_id
+    assert series.bars == derived.bars
+
+    provenance = replace(
+        derived.bars[0].provenance, source_snapshot_id="foreign-source"
+    )
+    foreign_bar = replace(derived.bars[0], provenance=provenance)
+    tampered = replace(derived, bars=(foreign_bar, *derived.bars[1:]))
+    with pytest.raises(MultiTimeframeContextValidationError, match="validation failed"):
+        TimeframeBarSeries.from_aggregated_intraday_dataset(tampered)
 
 
 def test_context_rejects_incompatible_session_policies() -> None:

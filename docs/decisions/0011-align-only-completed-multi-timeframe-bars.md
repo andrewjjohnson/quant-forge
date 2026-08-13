@@ -25,6 +25,10 @@ Optional positive maximum ages define staleness without filling or removing
 observations. Missing and undeclared access raises dedicated domain errors.
 Input series must share one family identity and canonical source snapshot, and
 all declared timeframes must share the exact exchange-session policy.
+Series are created only from validated source, QF-18, or QF-19 dataset artifacts;
+bare family references cannot be paired with unbound bar tuples. The artifact's
+recomputed content, provenance, exact dataset ID, and family supply the context
+reference.
 
 The context is ordered independently of caller input order. Its deterministic
 identity binds `as_of`, primary and required timeframes, freshness limits,
@@ -64,4 +68,6 @@ Tuesday decision. Future daily/weekly sentinel bars remain inaccessible. The
 fixture includes the July 4 holiday and July 3 early close. Tests also cover
 future-appending invariance, deterministic ordering and serialization,
 available/stale/missing states, guarded access, incompatible sessions, and
-consolidated-versus-IEX family rejection.
+consolidated-versus-IEX family rejection. Regression tests also tamper source
+content, family symbol, and derived source provenance to prove a reference
+cannot authenticate unrelated bars.
