@@ -7,17 +7,13 @@ from itertools import pairwise
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.data.exceptions import ValidationError
-from quantforge.data.identity import canonical_json_bytes, sha256_hex
-from quantforge.data.intraday import IntradayBar, IntradayBarBatch
+from quantforge.data.exceptions import CacheError, ValidationError
+from quantforge.data.identity import canonical_json_bytes
+from quantforge.data.intraday import IntradayBar
 from quantforge.data.intraday_aggregation import AggregatedIntradayDataset
 from quantforge.data.intraday_ingestion import (
-    INTRADAY_DATASET_SCHEMA_VERSION,
     IntradayDataset,
-)
-from quantforge.data.intraday_validation import (
-    IntradayValidationMode,
-    validate_intraday_coverage,
+    IntradayMarketDataCache,
 )
 from quantforge.data.lineage import (
     DatasetFamily,
@@ -199,13 +195,14 @@ class TimeframeBarSeries:
         dataset: IntradayDataset,
         *,
         family: DatasetFamily,
+        cache: IntradayMarketDataCache,
     ) -> "TimeframeBarSeries":
-        """Validate and bind one canonical QF-15/QF-16 source dataset."""
-        _validate_source_artifact(dataset, family)
+        """Reload, validate, and bind one canonical QF-15/QF-16 dataset."""
+        validated_dataset = _validated_cached_source_artifact(dataset, family, cache)
         return cls._from_validated_artifact(
-            family.reference(dataset.metadata.dataset_id),
-            dataset.request.timeframe,
-            dataset.bars,
+            family.reference(validated_dataset.metadata.dataset_id),
+            validated_dataset.request.timeframe,
+            validated_dataset.bars,
         )
 
     @classmethod
@@ -295,9 +292,14 @@ def _reference_for_derived_artifact(
     return reference
 
 
-def _validate_source_artifact(dataset: IntradayDataset, family: DatasetFamily) -> None:
+def _validated_cached_source_artifact(
+    dataset: IntradayDataset,
+    family: DatasetFamily,
+    cache: IntradayMarketDataCache,
+) -> IntradayDataset:
     dataset_value = cast(object, dataset)
     family_value = cast(object, family)
+    cache_value = cast(object, cache)
     if not isinstance(dataset_value, IntradayDataset):
         raise MultiTimeframeContextValidationError(
             "source series requires an intraday dataset"
@@ -306,35 +308,16 @@ def _validate_source_artifact(dataset: IntradayDataset, family: DatasetFamily) -
         raise MultiTimeframeContextValidationError(
             "source series requires a dataset family"
         )
-    try:
-        batch = IntradayBarBatch(dataset_value.request, dataset_value.bars)
-        metadata = dataset_value.metadata
-        report = validate_intraday_coverage(
-            batch, mode=IntradayValidationMode.DIAGNOSTIC
+    if not isinstance(cache_value, IntradayMarketDataCache):
+        raise MultiTimeframeContextValidationError(
+            "source series requires an intraday market data cache"
         )
-        if metadata.schema_version != INTRADAY_DATASET_SCHEMA_VERSION:
+    try:
+        metadata = dataset_value.metadata
+        validated_dataset = cache_value.load(metadata.dataset_id, dataset_value.request)
+        if validated_dataset != dataset_value:
             raise MultiTimeframeContextValidationError(
-                "source dataset metadata schema is invalid"
-            )
-        if (
-            metadata.request_id != dataset_value.request.request_id
-            or metadata.batch_id != batch.batch_id
-            or metadata.bar_count != len(batch.bars)
-            or metadata.data_sha256 != sha256_hex(batch.serialize())
-            or metadata.quality_report != report
-        ):
-            raise MultiTimeframeContextValidationError(
-                "source dataset metadata does not match its bars"
-            )
-        if any(
-            bar.provenance.provider_name != metadata.provider_name
-            or bar.provenance.provider_symbol != metadata.provider_symbol
-            or bar.provenance.adapter_version != metadata.adapter_version
-            or bar.provenance.source_snapshot_id not in metadata.raw_snapshot_ids
-            for bar in batch.bars
-        ):
-            raise MultiTimeframeContextValidationError(
-                "source dataset bar provenance does not match its metadata"
+                "source dataset does not match its immutable cache artifact"
             )
         if (
             family_value.canonical_source_snapshot_id != metadata.dataset_id
@@ -348,11 +331,12 @@ def _validate_source_artifact(dataset: IntradayDataset, family: DatasetFamily) -
                 "source dataset does not match its family identity"
             )
         family_value.reference(metadata.dataset_id)
+        return validated_dataset
     except MultiTimeframeContextValidationError:
         raise
-    except (TypeError, ValueError) as error:
+    except (CacheError, TypeError, ValueError) as error:
         raise MultiTimeframeContextValidationError(
-            f"source dataset validation failed: {error}"
+            f"source dataset immutable cache validation failed: {error}"
         ) from error
 
 

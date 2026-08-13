@@ -28,7 +28,10 @@ all declared timeframes must share the exact exchange-session policy.
 Series are created only from validated source, QF-18, or QF-19 dataset artifacts;
 bare family references cannot be paired with unbound bar tuples. The artifact's
 recomputed content, provenance, exact dataset ID, and family supply the context
-reference.
+reference. Source artifacts are reloaded through their `IntradayMarketDataCache`
+and must equal the supplied in-memory dataset, so the complete content-addressed
+manifest identity, raw artifacts, and canonical paths are verified before the
+series is exposed.
 
 The context is ordered independently of caller input order. Its deterministic
 identity binds `as_of`, primary and required timeframes, freshness limits,
@@ -69,5 +72,6 @@ fixture includes the July 4 holiday and July 3 early close. Tests also cover
 future-appending invariance, deterministic ordering and serialization,
 available/stale/missing states, guarded access, incompatible sessions, and
 consolidated-versus-IEX family rejection. Regression tests also tamper source
-content, family symbol, and derived source provenance to prove a reference
+content together with matching digest evidence, forge source dataset IDs,
+change family symbols, and alter derived source provenance to prove a reference
 cannot authenticate unrelated bars.

@@ -33,6 +33,7 @@ from quantforge.data import (
 five_minute_series = TimeframeBarSeries.from_source_dataset(
     source_dataset,
     family=dataset_family,
+    cache=intraday_cache,
 )
 four_hour_series = TimeframeBarSeries.from_aggregated_intraday_dataset(
     four_hour_dataset,
@@ -66,13 +67,17 @@ series are likewise ordered by completion timestamp, start timestamp, and bar
 ID. Duplicate boundaries and overlaps fail construction.
 
 `TimeframeBarSeries` cannot be initialized from a bare family reference and bar
-tuple. Its public constructors validate the concrete immutable dataset first,
-recompute its content and provenance invariants, and derive the reference from
-that dataset's exact ID and embedded family. The source-dataset constructor also
-requires the QF-14 family containing that canonical source and checks symbol,
-provider, feed, adjustment, source timeframe, content digest, quality report,
-and per-bar provenance. This prevents a valid family reference from being
-attached to bars from another symbol, feed, revision, or derived artifact.
+tuple. Its public constructors validate the concrete immutable dataset first
+and derive the reference from that dataset's exact ID and embedded family. The
+source-dataset constructor requires both the QF-14 family containing that
+canonical source and its `IntradayMarketDataCache`. It reloads the exact
+content-addressed artifact through the cache, which verifies the manifest
+identity, canonical normalized and raw paths, raw payload checksums, normalized
+content digest, quality report, request, and batch identity. The reloaded value
+must equal the supplied dataset before its symbol, provider, feed, adjustment,
+and source timeframe are checked against the family. This prevents a forged
+in-memory dataset ID or coherently altered bars and metadata from authenticating
+bars that the referenced immutable artifact does not contain.
 When QF-18 and QF-19 artifacts carry their own partial lineage manifests, pass
 the one context family containing all exact derived dataset IDs to each
 constructor as shown above. The constructor verifies that the artifact ID and
