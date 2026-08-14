@@ -27,8 +27,11 @@ from quantforge.indicators.exceptions import (
 from quantforge.indicators.models import IndicatorFieldOutput, IndicatorValue
 
 _EMA_NAME = "exponential_moving_average"
+_EMA_MINIMUM_PERIOD = 1
+_EMA_MAXIMUM_PERIOD = 100_000
 type _TalibOutput = npt.NDArray[np.float64] | tuple[npt.NDArray[np.float64], ...]
 type _TalibFunction = Callable[..., _TalibOutput]
+type _ParameterValidator = Callable[[PrimitiveMapping], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +41,7 @@ class _TalibMapping:
     parameter_names: Mapping[str, str]
     input_parameter_names: frozenset[str]
     output_names: tuple[str, ...]
+    validate_parameters: _ParameterValidator
 
 
 _MAPPINGS = {
@@ -47,6 +51,7 @@ _MAPPINGS = {
         parameter_names={"period": "timeperiod"},
         input_parameter_names=frozenset(("source_field",)),
         output_names=("exponential_moving_average",),
+        validate_parameters=lambda parameters: _validate_ema_parameters(parameters),
     )
 }
 
@@ -65,6 +70,8 @@ class TalibIndicatorBackend:
             library_name="TA-Lib",
             library_version=talib.__version__,
             function_name=mapping.function_name,
+            runtime_library_name="TA-Lib C",
+            runtime_library_version=_talib_runtime_library_version(),
         )
 
     def compute(
@@ -75,7 +82,6 @@ class TalibIndicatorBackend:
         mapping = _mapping_for(definition)
         _validate_global_state(mapping)
         parameters = definition.parameters.to_primitive()
-        _validate_parameter_mapping(definition, mapping, parameters)
         inputs = tuple(
             _float_input(request, field.value) for field in definition.input_fields
         )
@@ -121,7 +127,32 @@ def _mapping_for(definition: StandardIndicatorDefinition) -> _TalibMapping:
             f"{TALIB_INDICATOR_BACKEND} output mapping is unavailable for "
             f"indicator: {definition.name}"
         )
+    parameters = definition.parameters.to_primitive()
+    _validate_parameter_mapping(definition, mapping, parameters)
+    mapping.validate_parameters(parameters)
     return mapping
+
+
+def _talib_runtime_library_version() -> str:
+    raw_version = cast(
+        object,
+        talib.__ta_version__,  # pyright: ignore[reportUnknownMemberType]
+    )
+    try:
+        decoded = (
+            raw_version.decode("ascii")
+            if isinstance(raw_version, bytes)
+            else raw_version
+        )
+    except UnicodeDecodeError as error:
+        raise InvalidIndicatorBackendError(
+            "talib_v1 native TA-Lib version is not valid ASCII"
+        ) from error
+    if not isinstance(decoded, str) or not decoded.strip():
+        raise InvalidIndicatorBackendError(
+            "talib_v1 native TA-Lib version is unavailable"
+        )
+    return decoded.split(maxsplit=1)[0]
 
 
 def _validate_global_state(mapping: _TalibMapping) -> None:
@@ -160,6 +191,19 @@ def _validate_parameter_mapping(
         raise UnsupportedIndicatorBackendError(
             f"{TALIB_INDICATOR_BACKEND} input mapping is unavailable for "
             f"indicator: {definition.name}"
+        )
+
+
+def _validate_ema_parameters(parameters: PrimitiveMapping) -> None:
+    period = parameters.get("period")
+    if (
+        isinstance(period, bool)
+        or not isinstance(period, int)
+        or not _EMA_MINIMUM_PERIOD <= period <= _EMA_MAXIMUM_PERIOD
+    ):
+        raise UnsupportedIndicatorBackendError(
+            f"{TALIB_INDICATOR_BACKEND} EMA period must be from "
+            f"{_EMA_MINIMUM_PERIOD} through {_EMA_MAXIMUM_PERIOD}"
         )
 
 

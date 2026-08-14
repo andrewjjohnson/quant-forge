@@ -122,6 +122,8 @@ def test_talib_ema_maps_inputs_parameters_and_aligned_output() -> None:
             "library_name": "TA-Lib",
             "library_version": "0.7.1",
             "function_name": "EMA",
+            "runtime_library_name": "TA-Lib C",
+            "runtime_library_version": "0.7.1",
         },
         "normalized_parameters": {"period": 3, "source_field": "open"},
         "normalized_input_fields": ["open"],
@@ -130,7 +132,9 @@ def test_talib_ema_maps_inputs_parameters_and_aligned_output() -> None:
     }
 
 
-def test_talib_exact_installed_version_participates_in_configuration_identity() -> None:
+def test_talib_exact_installed_versions_participate_in_configuration_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     indicator = ExponentialMovingAverage(
         ExponentialMovingAverageParameters(3),
         backend_id=TALIB_INDICATOR_BACKEND,
@@ -140,6 +144,16 @@ def test_talib_exact_installed_version_participates_in_configuration_identity() 
     assert talib.__version__ == "0.7.1"
     assert configuration["backend"] == indicator.backend_identity.to_primitive()
     assert indicator.backend_identity.library_version == talib.__version__
+    assert indicator.backend_identity.runtime_library_name == "TA-Lib C"
+    assert indicator.backend_identity.runtime_library_version == "0.7.1"
+
+    monkeypatch.setattr(talib, "__ta_version__", b"0.7.2 (different runtime)")
+    changed_runtime = ExponentialMovingAverage(
+        ExponentialMovingAverageParameters(3),
+        backend_id=TALIB_INDICATOR_BACKEND,
+    )
+    assert changed_runtime.backend_identity.runtime_library_version == "0.7.2"
+    assert changed_runtime.configuration_id != indicator.configuration_id
 
     version_one = ExponentialMovingAverage(
         ExponentialMovingAverageParameters(3),
@@ -152,6 +166,43 @@ def test_talib_exact_installed_version_participates_in_configuration_identity() 
         backend_registry=IndicatorBackendRegistry((FutureIndicatorBackend("2.0"),)),
     )
     assert version_one.configuration_id != version_two.configuration_id
+
+
+def test_talib_ema_period_range_is_validated_during_configuration() -> None:
+    period_one = ExponentialMovingAverage(
+        ExponentialMovingAverageParameters(1),
+        backend_id=TALIB_INDICATOR_BACKEND,
+    )
+    native_above_talib_limit = ExponentialMovingAverage(
+        ExponentialMovingAverageParameters(100_001),
+        backend_id=NATIVE_INDICATOR_BACKEND,
+    )
+    unsupported_parameters: PrimitiveMapping = {
+        "period": 100_001,
+        "source_field": "close",
+    }
+    unsupported_serialized: PrimitiveMapping = {
+        **period_one.configuration(),
+        "parameters": unsupported_parameters,
+    }
+
+    assert period_one.calculate(make_dataset(("1", "2", "3"))).values_for(
+        EXPONENTIAL_MOVING_AVERAGE_OUTPUT
+    ) == (Decimal(1), Decimal(2), Decimal(3))
+    assert native_above_talib_limit.backend_identity.backend_id == "native_v1"
+    with pytest.raises(
+        UnsupportedIndicatorBackendError,
+        match="EMA period must be from 1 through 100000",
+    ):
+        ExponentialMovingAverage(
+            ExponentialMovingAverageParameters(100_001),
+            backend_id=TALIB_INDICATOR_BACKEND,
+        )
+    with pytest.raises(
+        UnsupportedIndicatorBackendError,
+        match="EMA period must be from 1 through 100000",
+    ):
+        ExponentialMovingAverage.from_configuration(unsupported_serialized)
 
 
 def test_explicit_backend_configuration_round_trips_and_rejects_version_drift() -> None:

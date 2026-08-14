@@ -318,8 +318,9 @@ Responsibilities:
   aggregation provenance into configured evaluation identity;
 - own normalized standard-indicator names, canonical input fields, parameter
   names, output names, and immutable backend computation results;
-- resolve stable backend identities and bind exact library versions and mapped
-  function names into new explicit-backend configuration identities;
+- resolve stable backend identities and bind exact wrapper and native runtime
+  library versions plus mapped function names into new explicit-backend
+  configuration identities;
 - reject undeclared timeframes, changed lineage, and implicit developing-bar
   exposure;
 - avoid mutation of inputs.

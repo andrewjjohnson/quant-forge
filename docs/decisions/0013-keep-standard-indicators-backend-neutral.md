@@ -24,7 +24,8 @@ QF-35 defines `native_v1` and `talib_v1` and maps only EMA. Each adapter owns
 input extraction, parameter translation, library invocation, output
 normalization, and its stable function identity. TA-Lib is pinned to `0.7.1`.
 Explicit-backend configurations bind the backend id, backend-contract version,
-library name, exact installed library version, and mapped function name.
+Python-wrapper name and exact version, native runtime library name and exact
+version, and mapped function name.
 
 The omitted-backend EMA constructor and serialized QF-23 configuration remain
 unchanged and resolve explicitly to `native_v1`. A historical mapping without a
@@ -46,6 +47,9 @@ difference is visible in deterministic identity. The adapter converts finite
 outputs through their stable decimal string and converts `NaN` to QuantForge
 `None`. It rejects non-default TA-Lib compatibility or EMA unstable-period
 global state rather than letting hidden mutable state alter a study.
+The adapter also validates TA-Lib 0.7.1's supported EMA period range of `1`
+through `100000` at configuration time. Larger periods remain valid for the
+historical native backend and are rejected only when `talib_v1` is selected.
 
 Only EMA is mapped in QF-35. Migrating other indicators remains separate ticket
 scope, and dynamic third-party plugin loading is not introduced.

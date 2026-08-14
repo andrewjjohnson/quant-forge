@@ -55,13 +55,15 @@ class StandardIndicatorDefinition:
 
 @dataclass(frozen=True, slots=True)
 class IndicatorBackendIdentity:
-    """Stable backend and exact library identity for deterministic studies."""
+    """Stable backend plus wrapper and native runtime library identities."""
 
     backend_id: str
     library_name: str
     library_version: str
     function_name: str
     contract_version: str = INDICATOR_BACKEND_CONTRACT_VERSION
+    runtime_library_name: str | None = None
+    runtime_library_version: str | None = None
 
     def __post_init__(self) -> None:
         if not all(
@@ -76,16 +78,30 @@ class IndicatorBackendIdentity:
             raise InvalidIndicatorBackendError(
                 "indicator backend identity fields must be non-empty"
             )
+        if (self.runtime_library_name is None) != (
+            self.runtime_library_version is None
+        ) or (
+            self.runtime_library_name is not None
+            and (not self.runtime_library_name or not self.runtime_library_version)
+        ):
+            raise InvalidIndicatorBackendError(
+                "indicator backend runtime library name and version must be "
+                "non-empty and configured together"
+            )
 
     def to_primitive(self) -> PrimitiveMapping:
         """Return the complete deterministic backend identity."""
-        return {
+        identity: PrimitiveMapping = {
             "backend_id": self.backend_id,
             "contract_version": self.contract_version,
             "library_name": self.library_name,
             "library_version": self.library_version,
             "function_name": self.function_name,
         }
+        if self.runtime_library_name is not None:
+            identity["runtime_library_name"] = self.runtime_library_name
+            identity["runtime_library_version"] = self.runtime_library_version
+        return identity
 
 
 @dataclass(frozen=True, slots=True)

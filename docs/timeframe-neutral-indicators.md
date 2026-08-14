@@ -137,15 +137,22 @@ are passed as unavailable `NaN`, never as infinities. TA-Lib's own missing-gap
 propagation and float64 rounding therefore apply only when `talib_v1` is
 selected explicitly; `native_v1` values are not changed.
 
+The pinned TA-Lib 0.7.1 `EMA` accepts periods from `1` through `100000`.
+`talib_v1` validates that backend-specific range while the indicator is
+configured, so a native-valid larger period cannot produce an identity that
+will fail only when calculation begins. This restriction does not narrow
+`native_v1`; its historical positive-integer parameter contract is unchanged.
+
 The `talib_v1` adapter fails closed unless TA-Lib uses default compatibility
 and a zero `EMA` unstable period. This prevents mutable TA-Lib process-global
 settings from silently changing a configuration's result.
 
 TA-Lib is pinned to `0.7.1`. Explicit-backend serialization records the backend
-id, backend-contract version, library name, exact installed library version,
-and mapped function name. Those fields participate in both the base indicator
-identity and the outer timeframe-bound identity. `TimeframeIndicatorOutput`
-also exposes the resolved `backend_identity` metadata.
+id, backend-contract version, Python-wrapper name and exact version, native
+TA-Lib C runtime name and exact version, and mapped function name. Both library
+versions participate in the base indicator identity and the outer timeframe-
+bound identity. `TimeframeIndicatorOutput` also exposes the resolved
+`backend_identity` metadata.
 
 For compatibility, constructing EMA without a backend retains the exact QF-23
 configuration shape and identity while resolving execution to `native_v1`.
@@ -238,8 +245,9 @@ A configured timeframe indicator binds:
 - the indicator's developing-bar declaration;
 - the bar observation unit and warm-up count;
 - the QF-14 `DatasetFamilyReference` for the selected source series.
-- explicit standard-indicator backend id, exact library version, and mapped
-  function through the base indicator configuration, when present.
+- explicit standard-indicator backend id, exact wrapper/runtime library
+  versions, and mapped function through the base indicator configuration, when
+  present.
 
 The dataset-family reference retains dataset ID, canonical source snapshot,
 timeframe identity, and family identity. The family identity already binds the
