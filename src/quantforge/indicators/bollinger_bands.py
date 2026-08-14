@@ -50,6 +50,7 @@ _DECIMAL_EMIN = -999_999
 _DECIMAL_EMAX = 999_999
 _DECIMAL_CAPITALS = 1
 _DECIMAL_CLAMP = 0
+_EXACT_MOMENT_MAX_COEFFICIENT_DIGITS = _DECIMAL_PRECISION * 2
 _DECIMAL_TRAPS: tuple[type[DecimalException], ...] = (
     DivisionByZero,
     InvalidOperation,
@@ -93,7 +94,7 @@ class BollingerBands:
     """
 
     name = "bollinger_bands"
-    implementation_version = "5"
+    implementation_version = "6"
     output_fields = (
         BOLLINGER_MIDDLE_BAND_OUTPUT,
         BOLLINGER_UPPER_BAND_OUTPUT,
@@ -158,6 +159,15 @@ class BollingerBands:
                 "initial_flags": [],
                 "traps": list(_DECIMAL_TRAP_NAMES),
                 "rolling_moment_accumulation": "exact_rational",
+                "exact_moment_input_bounds": {
+                    "maximum_coefficient_digits": (
+                        _EXACT_MOMENT_MAX_COEFFICIENT_DIGITS
+                    ),
+                    "minimum_stored_exponent": _DECIMAL_EMIN,
+                    "maximum_stored_exponent": _DECIMAL_EMAX,
+                    "minimum_adjusted_exponent": _DECIMAL_EMIN,
+                    "maximum_adjusted_exponent": _DECIMAL_EMAX,
+                },
             },
         }
 
@@ -269,7 +279,9 @@ def _rebuild_window_moments(
     observations: tuple[Decimal, ...],
 ) -> tuple[Fraction, Fraction]:
     """Establish exact moments after warm-up or a missing-value gap."""
-    exact_observations = tuple(Fraction(observation) for observation in observations)
+    exact_observations = tuple(
+        _bounded_fraction(observation) for observation in observations
+    )
     return (
         sum(exact_observations, Fraction()),
         sum(
@@ -287,8 +299,8 @@ def _roll_window_moments(
     incoming: Decimal,
 ) -> tuple[Fraction, Fraction]:
     """Replace one observation in the exact moments without rescanning the window."""
-    outgoing_fraction = Fraction(outgoing)
-    incoming_fraction = Fraction(incoming)
+    outgoing_fraction = _bounded_fraction(outgoing)
+    incoming_fraction = _bounded_fraction(incoming)
     return (
         previous_sum - outgoing_fraction + incoming_fraction,
         previous_sum_of_squares
@@ -312,6 +324,27 @@ def _decimal_window_statistics(
 
 def _fraction_to_decimal(value: Fraction) -> Decimal:
     return Decimal(value.numerator) / Decimal(value.denominator)
+
+
+def _bounded_fraction(value: Decimal) -> Fraction:
+    """Reject resource-unbounded Decimal encodings before exact conversion."""
+    _, coefficient_digits, stored_exponent = value.as_tuple()
+    if not isinstance(stored_exponent, int):
+        raise IndicatorCalculationError(
+            "Bollinger Bands exact moments require a finite Decimal source"
+        )
+    adjusted_exponent = value.adjusted()
+    if (
+        len(coefficient_digits) > _EXACT_MOMENT_MAX_COEFFICIENT_DIGITS
+        or stored_exponent < _DECIMAL_EMIN
+        or stored_exponent > _DECIMAL_EMAX
+        or adjusted_exponent < _DECIMAL_EMIN
+        or adjusted_exponent > _DECIMAL_EMAX
+    ):
+        raise IndicatorCalculationError(
+            "Bollinger Bands source exceeds exact-moment resource bounds"
+        )
+    return Fraction(value)
 
 
 def _append_bands(

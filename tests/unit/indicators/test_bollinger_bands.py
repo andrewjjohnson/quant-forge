@@ -12,6 +12,7 @@ from quantforge.indicators import (
     BOLLINGER_UPPER_BAND_OUTPUT,
     BollingerBands,
     BollingerBandsParameters,
+    IndicatorCalculationError,
     InvalidIndicatorParametersError,
     MarketField,
 )
@@ -175,6 +176,31 @@ def test_scale_transition_result_depends_only_on_active_window(
         )
 
 
+@pytest.mark.parametrize(
+    "source_value",
+    [
+        Decimal("1E-1000000000"),
+        Decimal("1E+1000000000"),
+        Decimal("1" * 69),
+    ],
+)
+def test_rejects_resource_unbounded_source_before_exact_moment_conversion(
+    source_value: Decimal,
+) -> None:
+    indicator = BollingerBands(BollingerBandsParameters(1))
+    source_text = str(source_value)
+
+    with pytest.raises(IndicatorCalculationError, match="resource bounds"):
+        indicator.calculate(
+            make_dataset(
+                (source_text,),
+                opens=(source_text,),
+                highs=(source_text,),
+                lows=(source_text,),
+            )
+        )
+
+
 def test_constant_price_has_zero_width_and_zero_bandwidth() -> None:
     output = BollingerBands(BollingerBandsParameters(3)).calculate(
         make_dataset(("5", "5", "5"))
@@ -258,6 +284,13 @@ def test_configuration_serialization_and_identity_include_formula_parameters() -
     assert formula["window_update"] == ("exact_rational_rolling_sum_and_sum_of_squares")
     arithmetic = cast(dict[str, object], first.configuration()["arithmetic"])
     assert arithmetic["rolling_moment_accumulation"] == "exact_rational"
+    assert arithmetic["exact_moment_input_bounds"] == {
+        "maximum_coefficient_digits": 68,
+        "minimum_stored_exponent": -999999,
+        "maximum_stored_exponent": 999999,
+        "minimum_adjusted_exponent": -999999,
+        "maximum_adjusted_exponent": 999999,
+    }
 
 
 def test_output_rows_serialize_all_fields_stably() -> None:

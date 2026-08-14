@@ -126,6 +126,13 @@ window. Population variance is derived exactly as
 serialized 34-digit `Decimal` boundary once before square root and band
 arithmetic. Exact moment accumulation prevents scale-transition cancellation
 from making an output depend on bars that are no longer in the active window.
+A source value crosses a serialized resource boundary before exact conversion:
+its stored and adjusted exponents must remain within `-999999` through `999999`,
+and its coefficient may contain at most 68 digits. Values outside those bounds
+raise a controlled indicator-calculation error before a power-of-ten integer
+can be materialized. The coefficient allowance is twice the 34-digit output
+precision so exact moments retain lower-order source detail across large scale
+transitions without permitting unbounded integer allocation.
 A missing-value gap invalidates the moments; the first complete finite window
 after the gap establishes them again. Thus mature contiguous calculation uses
 `O(1)` rolling operations in the period length rather than rescanning every
