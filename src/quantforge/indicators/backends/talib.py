@@ -95,6 +95,8 @@ class TalibIndicatorBackend:
             raise IndicatorCalculationError(
                 f"{self.backend_id} {mapping.function_name} calculation failed"
             ) from error
+        finally:
+            _validate_global_state(mapping)
         raw_arrays = (raw_output,) if isinstance(raw_output, np.ndarray) else raw_output
         if len(raw_arrays) != len(mapping.output_names):
             raise IndicatorCalculationError(

@@ -172,6 +172,23 @@ def test_talib_ema_maps_inputs_parameters_and_aligned_output() -> None:
     }
 
 
+def test_talib_state_drift_during_calculation_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    indicator = ExponentialMovingAverage(
+        ExponentialMovingAverageParameters(3),
+        backend_id=TALIB_INDICATOR_BACKEND,
+    )
+    compatibility_states = iter((0, 1))
+    monkeypatch.setattr(talib, "get_compatibility", lambda: next(compatibility_states))
+
+    with pytest.raises(
+        InvalidIndicatorBackendError,
+        match="default compatibility and zero unstable period",
+    ):
+        indicator.calculate(make_dataset(("1", "2", "3", "4")))
+
+
 def test_talib_exact_installed_versions_participate_in_configuration_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
