@@ -19,6 +19,7 @@ from quantforge.data.multi_timeframe import (
     MultiTimeframeContext,
     MultiTimeframeContextError,
 )
+from quantforge.indicators.backends.base import IndicatorBackendIdentity
 from quantforge.indicators.base import (
     DevelopingBarSupport,
     IndicatorBar,
@@ -59,6 +60,7 @@ class TimeframeIndicatorOutput:
     bar_end_timestamps: tuple[datetime, ...]
     completion_states: tuple[BarCompletion, ...]
     fields: tuple[IndicatorFieldOutput, ...]
+    backend_identity: IndicatorBackendIdentity | None = None
 
     def __post_init__(self) -> None:
         if not self.indicator_name or not self.configuration_id:
@@ -151,6 +153,7 @@ class ConfiguredTimeframeIndicator:
     _output_fields: tuple[str, ...] = field(repr=False)
     _developing_bar_support: DevelopingBarSupport = field(repr=False)
     _warm_up_bars: int = field(repr=False)
+    _backend_identity: IndicatorBackendIdentity | None = field(repr=False)
 
     @classmethod
     def from_context(
@@ -181,6 +184,7 @@ class ConfiguredTimeframeIndicator:
             required_fields = indicator.required_fields
             output_fields = indicator.output_fields
             warm_up = indicator.warm_up_observations
+            backend_identity = getattr(indicator, "backend_identity", None)
         except (AttributeError, TypeError, ValueError) as error:
             raise IndicatorSourceError(
                 "indicator does not implement the timeframe-neutral contract"
@@ -205,6 +209,10 @@ class ConfiguredTimeframeIndicator:
             or isinstance(warm_up_value, bool)
             or not isinstance(warm_up_value, int)
             or warm_up < 1
+            or (
+                backend_identity is not None
+                and not isinstance(backend_identity, IndicatorBackendIdentity)
+            )
             or configuration_identity(snapshot.to_primitive()) != indicator_id
         ):
             raise IndicatorSourceError(
@@ -226,6 +234,7 @@ class ConfiguredTimeframeIndicator:
         object.__setattr__(instance, "_output_fields", output_fields)
         object.__setattr__(instance, "_developing_bar_support", support)
         object.__setattr__(instance, "_warm_up_bars", warm_up)
+        object.__setattr__(instance, "_backend_identity", backend_identity)
         return instance
 
     @property
@@ -303,6 +312,8 @@ class ConfiguredTimeframeIndicator:
             or self.indicator.output_fields != self._output_fields
             or self.indicator.developing_bar_support is not self._developing_bar_support
             or self.indicator.warm_up_observations != self._warm_up_bars
+            or getattr(self.indicator, "backend_identity", None)
+            != self._backend_identity
         ):
             raise IndicatorSourceError(
                 "indicator configuration changed after source binding"
@@ -334,6 +345,7 @@ class ConfiguredTimeframeIndicator:
             bar_end_timestamps=tuple(bar.end_timestamp for bar in bars),
             completion_states=tuple(bar.completion for bar in bars),
             fields=fields,
+            backend_identity=self._backend_identity,
         )
 
 
