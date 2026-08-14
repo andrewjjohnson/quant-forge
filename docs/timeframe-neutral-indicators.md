@@ -123,11 +123,14 @@ Each later contiguous finite bar removes the expired observation and adds the
 new observation with a constant-time sliding-variance update. A missing-value
 gap invalidates the statistics; the first complete finite window after the gap
 re-establishes them once. To bound fixed-precision cancellation residue, the
-calculation re-establishes statistics after every `N` rolling updates. It also
-detects a constant window from rolling value counts and resets its mean and
-centered sum of squares exactly in `O(1)`. The `O(N)` periodic rebuilds occur at
-least `N` bars apart, so mature contiguous calculation remains amortized
-`O(1)` per bar instead of rescanning every overlapping period.
+calculation maintains monotonic rolling minimum and maximum queues. A centered
+sum outside the range-based bound `N * (maximum - minimum) ** 2` is impossible
+for a valid window and triggers an immediate direct rebuild. The calculation
+also re-establishes statistics after every `N` rolling updates and resets exact
+constant windows in `O(1)`. Monotonic range maintenance is amortized `O(1)`, and
+the `O(N)` periodic rebuilds occur at least `N` bars apart, so mature contiguous
+calculation remains amortized `O(1)` per bar instead of rescanning every
+overlapping period.
 
 Constant-price windows have zero population deviation, equal middle/upper/lower
 bands, and bandwidth `0`. More generally, any zero-width band has bandwidth

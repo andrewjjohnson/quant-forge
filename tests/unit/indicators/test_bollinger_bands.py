@@ -140,6 +140,19 @@ def test_constant_window_rebases_positive_residue_after_scale_change() -> None:
     assert output.values_for(BOLLINGER_BANDWIDTH_OUTPUT)[-1] == Decimal(0)
 
 
+def test_near_constant_window_rebuilds_impossible_residue_after_scale_change() -> None:
+    output = BollingerBands(BollingerBandsParameters(2)).calculate(
+        make_dataset(("0", "1", "1E+34", "10000000000000000000000000000000001"))
+    )
+
+    assert output.values_for(BOLLINGER_MIDDLE_BAND_OUTPUT)[-1] == Decimal("1E+34")
+    assert output.values_for(BOLLINGER_UPPER_BAND_OUTPUT)[-1] == Decimal("1E+34")
+    assert output.values_for(BOLLINGER_LOWER_BAND_OUTPUT)[-1] == Decimal(
+        "9999999999999999999999999999999999"
+    )
+    assert output.values_for(BOLLINGER_BANDWIDTH_OUTPUT)[-1] == Decimal("1E-34")
+
+
 def test_constant_price_has_zero_width_and_zero_bandwidth() -> None:
     output = BollingerBands(BollingerBandsParameters(3)).calculate(
         make_dataset(("5", "5", "5"))
@@ -221,8 +234,8 @@ def test_configuration_serialization_and_identity_include_formula_parameters() -
     formula = cast(dict[str, object], first.configuration()["formula"])
     assert formula["standard_deviation_degrees_of_freedom"] == 0
     assert formula["window_update"] == (
-        "rolling_sum_and_centered_sum_of_squares_with_periodic_rebaseline_"
-        "and_exact_constant_window_reset"
+        "rolling_sum_and_centered_sum_of_squares_with_monotonic_range_guard_"
+        "periodic_rebaseline_and_exact_constant_reset"
     )
 
 

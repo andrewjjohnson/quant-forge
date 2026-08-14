@@ -92,7 +92,7 @@ class BollingerBands:
     """
 
     name = "bollinger_bands"
-    implementation_version = "2"
+    implementation_version = "3"
     output_fields = (
         BOLLINGER_MIDDLE_BAND_OUTPUT,
         BOLLINGER_UPPER_BAND_OUTPUT,
@@ -136,8 +136,8 @@ class BollingerBands:
                 ),
                 "standard_deviation_degrees_of_freedom": 0,
                 "window_update": (
-                    "rolling_sum_and_centered_sum_of_squares_with_periodic_"
-                    "rebaseline_and_exact_constant_window_reset"
+                    "rolling_sum_and_centered_sum_of_squares_with_monotonic_"
+                    "range_guard_periodic_rebaseline_and_exact_constant_reset"
                 ),
                 "upper_band": (
                     "middle_band + standard_deviation_multiplier * standard_deviation"
@@ -199,7 +199,8 @@ class BollingerBands:
         divisor = Decimal(period)
         multiplier = self._parameters.standard_deviation_multiplier
         window: deque[Decimal | None] = deque()
-        value_counts: dict[Decimal, int] = {}
+        minimum_candidates: deque[tuple[int, Decimal]] = deque()
+        maximum_candidates: deque[tuple[int, Decimal]] = deque()
         missing_count = 0
         statistics_are_valid = False
         rolling_updates_since_rebuild = 0
@@ -209,18 +210,24 @@ class BollingerBands:
 
         try:
             with localcontext(_arithmetic_context()):
-                for current in source:
+                for source_index, current in enumerate(source):
+                    expired_index = source_index - period
+                    _discard_expired_candidates(minimum_candidates, expired_index)
+                    _discard_expired_candidates(maximum_candidates, expired_index)
                     window_was_full = len(window) == period
                     outgoing = window.popleft() if window_was_full else None
                     if window_was_full and outgoing is None:
                         missing_count -= 1
-                    elif window_was_full:
-                        _decrement_count(value_counts, cast(Decimal, outgoing))
                     window.append(current)
                     if current is None:
                         missing_count += 1
                     else:
-                        value_counts[current] = value_counts.get(current, 0) + 1
+                        _append_minimum_candidate(
+                            minimum_candidates, source_index, current
+                        )
+                        _append_maximum_candidate(
+                            maximum_candidates, source_index, current
+                        )
 
                     if len(window) < period or missing_count:
                         statistics_are_valid = False
@@ -234,8 +241,10 @@ class BollingerBands:
                         continue
 
                     current_value = cast(Decimal, current)
-                    if len(value_counts) == 1:
-                        constant_value = next(iter(value_counts))
+                    window_minimum = minimum_candidates[0][1]
+                    window_maximum = maximum_candidates[0][1]
+                    if window_minimum == window_maximum:
+                        constant_value = window_minimum
                         rolling_sum = constant_value * divisor
                         middle = constant_value
                         centered_sum_of_squares = Decimal(0)
@@ -270,7 +279,15 @@ class BollingerBands:
                                 divisor=divisor,
                             )
                         )
-                        if centered_sum_of_squares < Decimal(0):
+                        maximum_centered_sum_of_squares = (
+                            divisor
+                            * (window_maximum - window_minimum)
+                            * (window_maximum - window_minimum)
+                        )
+                        if (
+                            centered_sum_of_squares < Decimal(0)
+                            or centered_sum_of_squares > maximum_centered_sum_of_squares
+                        ):
                             rolling_sum, middle, centered_sum_of_squares = (
                                 _rebuild_window_statistics(
                                     cast(tuple[Decimal, ...], tuple(window)), divisor
@@ -378,12 +395,27 @@ def _append_unavailable(*outputs: list[IndicatorValue]) -> None:
         output.append(None)
 
 
-def _decrement_count(counts: dict[Decimal, int], value: Decimal) -> None:
-    remaining = counts[value] - 1
-    if remaining:
-        counts[value] = remaining
-    else:
-        del counts[value]
+def _discard_expired_candidates(
+    candidates: deque[tuple[int, Decimal]], expired_index: int
+) -> None:
+    while candidates and candidates[0][0] <= expired_index:
+        candidates.popleft()
+
+
+def _append_minimum_candidate(
+    candidates: deque[tuple[int, Decimal]], source_index: int, value: Decimal
+) -> None:
+    while candidates and candidates[-1][1] > value:
+        candidates.pop()
+    candidates.append((source_index, value))
+
+
+def _append_maximum_candidate(
+    candidates: deque[tuple[int, Decimal]], source_index: int, value: Decimal
+) -> None:
+    while candidates and candidates[-1][1] < value:
+        candidates.pop()
+    candidates.append((source_index, value))
 
 
 def _arithmetic_context() -> Context:
