@@ -92,7 +92,7 @@ class BollingerBands:
     """
 
     name = "bollinger_bands"
-    implementation_version = "3"
+    implementation_version = "4"
     output_fields = (
         BOLLINGER_MIDDLE_BAND_OUTPUT,
         BOLLINGER_UPPER_BAND_OUTPUT,
@@ -137,7 +137,8 @@ class BollingerBands:
                 "standard_deviation_degrees_of_freedom": 0,
                 "window_update": (
                     "rolling_sum_and_centered_sum_of_squares_with_monotonic_"
-                    "range_guard_periodic_rebaseline_and_exact_constant_reset"
+                    "range_and_nonconstant_zero_guards_periodic_rebaseline_and_"
+                    "exact_constant_reset"
                 ),
                 "upper_band": (
                     "middle_band + standard_deviation_multiplier * standard_deviation"
@@ -286,6 +287,7 @@ class BollingerBands:
                         )
                         if (
                             centered_sum_of_squares < Decimal(0)
+                            or centered_sum_of_squares.is_zero()
                             or centered_sum_of_squares > maximum_centered_sum_of_squares
                         ):
                             rolling_sum, middle, centered_sum_of_squares = (

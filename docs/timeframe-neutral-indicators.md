@@ -125,12 +125,13 @@ gap invalidates the statistics; the first complete finite window after the gap
 re-establishes them once. To bound fixed-precision cancellation residue, the
 calculation maintains monotonic rolling minimum and maximum queues. A centered
 sum outside the range-based bound `N * (maximum - minimum) ** 2` is impossible
-for a valid window and triggers an immediate direct rebuild. The calculation
-also re-establishes statistics after every `N` rolling updates and resets exact
-constant windows in `O(1)`. Monotonic range maintenance is amortized `O(1)`, and
-the `O(N)` periodic rebuilds occur at least `N` bars apart, so mature contiguous
-calculation remains amortized `O(1)` per bar instead of rescanning every
-overlapping period.
+for a valid window and triggers an immediate direct rebuild. A zero centered
+sum with unequal minimum and maximum is likewise treated as cancellation and
+rebuilt. The calculation also re-establishes statistics after every `N` rolling
+updates and resets exact constant windows in `O(1)`. Monotonic range maintenance
+is amortized `O(1)`, and the `O(N)` periodic rebuilds occur at least `N` bars
+apart, so mature contiguous calculation remains amortized `O(1)` per bar
+instead of rescanning every overlapping period.
 
 Constant-price windows have zero population deviation, equal middle/upper/lower
 bands, and bandwidth `0`. More generally, any zero-width band has bandwidth

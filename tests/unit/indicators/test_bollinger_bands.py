@@ -153,6 +153,28 @@ def test_near_constant_window_rebuilds_impossible_residue_after_scale_change() -
     assert output.values_for(BOLLINGER_BANDWIDTH_OUTPUT)[-1] == Decimal("1E-34")
 
 
+@pytest.mark.parametrize(
+    "closes",
+    [
+        ("0", "1E+34", "9999999999999999999999999999999999"),
+        ("0", "1", "1E+34", "10000000000000000000000000000000001"),
+        ("0", "-1E+34", "-9999999999999999999999999999999999"),
+        ("0", "1E+20", "99999999999999999999"),
+    ],
+)
+def test_scale_transition_result_depends_only_on_active_window(
+    closes: tuple[str, ...],
+) -> None:
+    indicator = BollingerBands(BollingerBandsParameters(2))
+    transitioned = indicator.calculate(make_dataset(closes))
+    direct = indicator.calculate(make_dataset(closes[-2:]))
+
+    for field_name in indicator.output_fields:
+        assert (
+            transitioned.values_for(field_name)[-1] == direct.values_for(field_name)[-1]
+        )
+
+
 def test_constant_price_has_zero_width_and_zero_bandwidth() -> None:
     output = BollingerBands(BollingerBandsParameters(3)).calculate(
         make_dataset(("5", "5", "5"))
@@ -234,8 +256,8 @@ def test_configuration_serialization_and_identity_include_formula_parameters() -
     formula = cast(dict[str, object], first.configuration()["formula"])
     assert formula["standard_deviation_degrees_of_freedom"] == 0
     assert formula["window_update"] == (
-        "rolling_sum_and_centered_sum_of_squares_with_monotonic_range_guard_"
-        "periodic_rebaseline_and_exact_constant_reset"
+        "rolling_sum_and_centered_sum_of_squares_with_monotonic_range_and_"
+        "nonconstant_zero_guards_periodic_rebaseline_and_exact_constant_reset"
     )
 
 
