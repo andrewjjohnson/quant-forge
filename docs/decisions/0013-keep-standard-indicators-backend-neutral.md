@@ -20,7 +20,9 @@ canonical input fields, normalized parameters, and normalized output names.
 The QF-22 `ConfiguredTimeframeIndicator` remains the outer temporal and lineage
 boundary. A stable-id registry resolves adapters below it.
 
-QF-35 defines `native_v1` and `talib_v1` and maps only EMA. Each adapter owns
+QF-35 defines `native_v1` and `talib_v1` and initially maps EMA. QF-36 extends
+the same adapters and backend-neutral public classes to SMA, Wilder RSI, and
+Wilder ATR. Each adapter owns
 input extraction, parameter translation, library invocation, output
 normalization, and its stable function identity. TA-Lib is pinned to `0.7.1`.
 Explicit-backend configurations bind the backend id, backend-contract version,
@@ -51,8 +53,9 @@ The adapter also validates TA-Lib 0.7.1's supported EMA period range of `1`
 through `100000` at configuration time. Larger periods remain valid for the
 historical native backend and are rejected only when `talib_v1` is selected.
 
-Only EMA is mapped in QF-35. Migrating other indicators remains separate ticket
-scope, and dynamic third-party plugin loading is not introduced.
+QF-36 maps the existing core SMA, EMA, Wilder RSI, and Wilder ATR definitions.
+Bollinger Bands and directional movement/ADX remain separate migration scope,
+and dynamic third-party plugin loading is not introduced.
 
 ## Alternatives considered
 
@@ -75,3 +78,8 @@ canonical input and parameter translation, normalized output alignment, exact
 version identity, unsupported mappings, historical configuration and value
 compatibility, QF-22 timeframe/provenance preservation, and a future test
 adapter used by the same EMA class.
+
+QF-36 adds the same coverage for SMA, Wilder RSI, and Wilder ATR, including
+legacy identity fixtures, explicit-backend round trips, TA-Lib period limits,
+representative float64 comparisons, flat-series RSI differences, and
+append-future causality.

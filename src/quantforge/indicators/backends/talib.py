@@ -26,9 +26,11 @@ from quantforge.indicators.exceptions import (
 )
 from quantforge.indicators.models import IndicatorFieldOutput, IndicatorValue
 
+_SMA_NAME = "simple_moving_average"
 _EMA_NAME = "exponential_moving_average"
-_EMA_MINIMUM_PERIOD = 1
-_EMA_MAXIMUM_PERIOD = 100_000
+_RSI_NAME = "wilder_relative_strength_index"
+_ATR_NAME = "wilder_average_true_range"
+_MAXIMUM_PERIOD = 100_000
 type _TalibOutput = npt.NDArray[np.float64] | tuple[npt.NDArray[np.float64], ...]
 type _TalibFunction = Callable[..., _TalibOutput]
 type _ParameterValidator = Callable[[PrimitiveMapping], None]
@@ -40,19 +42,69 @@ class _TalibMapping:
     function: _TalibFunction
     parameter_names: Mapping[str, str]
     input_parameter_names: frozenset[str]
+    input_fields: tuple[str, ...] | None
+    source_field_parameter: str | None
     output_names: tuple[str, ...]
+    has_unstable_period: bool
     validate_parameters: _ParameterValidator
 
 
 _MAPPINGS = {
+    _SMA_NAME: _TalibMapping(
+        function_name="SMA",
+        function=cast(_TalibFunction, talib.SMA),
+        parameter_names={"window": "timeperiod"},
+        input_parameter_names=frozenset(("source_field",)),
+        input_fields=None,
+        source_field_parameter="source_field",
+        output_names=("simple_moving_average",),
+        has_unstable_period=False,
+        validate_parameters=lambda parameters: _validate_period_parameters(
+            parameters, parameter_name="window", indicator_label="SMA"
+        ),
+    ),
     _EMA_NAME: _TalibMapping(
         function_name="EMA",
         function=cast(_TalibFunction, talib.EMA),
         parameter_names={"period": "timeperiod"},
         input_parameter_names=frozenset(("source_field",)),
+        input_fields=None,
+        source_field_parameter="source_field",
         output_names=("exponential_moving_average",),
-        validate_parameters=lambda parameters: _validate_ema_parameters(parameters),
-    )
+        has_unstable_period=True,
+        validate_parameters=lambda parameters: _validate_period_parameters(
+            parameters, parameter_name="period", indicator_label="EMA"
+        ),
+    ),
+    _RSI_NAME: _TalibMapping(
+        function_name="RSI",
+        function=cast(_TalibFunction, talib.RSI),
+        parameter_names={"period": "timeperiod"},
+        input_parameter_names=frozenset(),
+        input_fields=("close",),
+        source_field_parameter=None,
+        output_names=("wilder_rsi",),
+        has_unstable_period=True,
+        validate_parameters=lambda parameters: _validate_period_parameters(
+            parameters,
+            parameter_name="period",
+            indicator_label="RSI",
+            minimum_period=2,
+        ),
+    ),
+    _ATR_NAME: _TalibMapping(
+        function_name="ATR",
+        function=cast(_TalibFunction, talib.ATR),
+        parameter_names={"period": "timeperiod"},
+        input_parameter_names=frozenset(),
+        input_fields=("high", "low", "close"),
+        source_field_parameter=None,
+        output_names=("wilder_average_true_range",),
+        has_unstable_period=True,
+        validate_parameters=lambda parameters: _validate_period_parameters(
+            parameters, parameter_name="period", indicator_label="ATR"
+        ),
+    ),
 }
 
 
@@ -167,7 +219,9 @@ def _validate_global_state(mapping: _TalibMapping) -> None:
         talib.get_unstable_period,  # pyright: ignore[reportUnknownMemberType]
     )
     compatibility = get_compatibility()
-    unstable_period = get_unstable_period(mapping.function_name)
+    unstable_period = (
+        get_unstable_period(mapping.function_name) if mapping.has_unstable_period else 0
+    )
     if compatibility != 0 or unstable_period != 0:
         raise InvalidIndicatorBackendError(
             "talib_v1 requires TA-Lib default compatibility and zero unstable period"
@@ -185,27 +239,34 @@ def _validate_parameter_mapping(
             f"{TALIB_INDICATOR_BACKEND} parameter mapping is unavailable for "
             f"indicator: {definition.name}"
         )
-    source_field = parameters.get("source_field")
-    if (
-        len(definition.input_fields) != 1
-        or source_field != definition.input_fields[0].value
-    ):
+    actual_input_fields = tuple(field.value for field in definition.input_fields)
+    expected_input_fields = mapping.input_fields
+    if mapping.source_field_parameter is not None:
+        source_field = parameters.get(mapping.source_field_parameter)
+        expected_input_fields = (source_field,) if isinstance(source_field, str) else ()
+    if actual_input_fields != expected_input_fields:
         raise UnsupportedIndicatorBackendError(
             f"{TALIB_INDICATOR_BACKEND} input mapping is unavailable for "
             f"indicator: {definition.name}"
         )
 
 
-def _validate_ema_parameters(parameters: PrimitiveMapping) -> None:
-    period = parameters.get("period")
+def _validate_period_parameters(
+    parameters: PrimitiveMapping,
+    *,
+    parameter_name: str,
+    indicator_label: str,
+    minimum_period: int = 1,
+) -> None:
+    period = parameters.get(parameter_name)
     if (
         isinstance(period, bool)
         or not isinstance(period, int)
-        or not _EMA_MINIMUM_PERIOD <= period <= _EMA_MAXIMUM_PERIOD
+        or not minimum_period <= period <= _MAXIMUM_PERIOD
     ):
         raise UnsupportedIndicatorBackendError(
-            f"{TALIB_INDICATOR_BACKEND} EMA period must be from "
-            f"{_EMA_MINIMUM_PERIOD} through {_EMA_MAXIMUM_PERIOD}"
+            f"{TALIB_INDICATOR_BACKEND} {indicator_label} {parameter_name} must be "
+            f"from {minimum_period} through {_MAXIMUM_PERIOD}"
         )
 
 

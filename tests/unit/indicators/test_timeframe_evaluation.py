@@ -445,6 +445,45 @@ def test_talib_ema_preserves_timeframe_completion_and_lineage_metadata() -> None
     )
 
 
+@pytest.mark.parametrize(
+    "indicator",
+    [
+        SimpleMovingAverage(
+            SimpleMovingAverageParameters(3),
+            backend_id=TALIB_INDICATOR_BACKEND,
+        ),
+        ExponentialMovingAverage(
+            ExponentialMovingAverageParameters(3),
+            backend_id=TALIB_INDICATOR_BACKEND,
+        ),
+        WilderRelativeStrengthIndex(
+            WilderRelativeStrengthIndexParameters(3),
+            backend_id=TALIB_INDICATOR_BACKEND,
+        ),
+        WilderAverageTrueRange(
+            WilderAverageTrueRangeParameters(3),
+            backend_id=TALIB_INDICATOR_BACKEND,
+        ),
+    ],
+)
+def test_talib_core_indicators_use_the_generic_timeframe_result_shape(
+    indicator: TimeframeNeutralIndicator,
+) -> None:
+    context = _all_completed_context()
+    _, four_hour, _, _ = _timeframes()
+
+    output = evaluate_indicator(indicator, context, four_hour)
+
+    assert output.backend_identity is not None
+    assert output.backend_identity.backend_id == TALIB_INDICATOR_BACKEND
+    assert output.source_timeframe == four_hour
+    assert output.source_fields == tuple(
+        sorted(indicator.required_fields, key=lambda field: field.value)
+    )
+    assert tuple(field.name for field in output.fields) == indicator.output_fields
+    assert len(output.bar_ids) == len(CLOSES)
+
+
 def test_bollinger_identity_binds_all_formula_and_source_parameters() -> None:
     context = _all_completed_context()
     _, four_hour, daily, _ = _timeframes()
