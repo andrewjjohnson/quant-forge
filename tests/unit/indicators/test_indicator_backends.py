@@ -16,7 +16,9 @@ from quantforge.indicators import (
     IndicatorComputationRequest,
     IndicatorComputationResult,
     IndicatorFieldOutput,
+    InvalidIndicatorBackendError,
     MarketField,
+    NativeIndicatorBackend,
     StandardIndicatorDefinition,
     TalibIndicatorBackend,
     UnsupportedIndicatorBackendError,
@@ -65,6 +67,44 @@ class FutureIndicatorBackend:
             normalized_input_fields=request.definition.input_fields,
             fields=fields,
             observation_count=len(request.bars),
+        )
+
+
+class MismatchedIdentityBackend(FutureIndicatorBackend):
+    """Malformed adapter whose resolved ID differs from its identity."""
+
+    def identity_for(
+        self, definition: StandardIndicatorDefinition
+    ) -> IndicatorBackendIdentity:
+        return IndicatorBackendIdentity(
+            backend_id="different_v1",
+            library_name="future-library",
+            library_version=self._library_version,
+            function_name=f"mapped_{definition.name}",
+        )
+
+
+class TruncatedIndicatorBackend(FutureIndicatorBackend):
+    """Malformed adapter returning internally aligned but truncated values."""
+
+    def compute(
+        self, request: IndicatorComputationRequest
+    ) -> IndicatorComputationResult:
+        observation_count = len(request.bars) - 1
+        fields = tuple(
+            IndicatorFieldOutput(
+                output_name,
+                tuple(Decimal(42) for _ in range(observation_count)),
+            )
+            for output_name in request.definition.output_fields
+        )
+        return IndicatorComputationResult(
+            definition_name=request.definition.name,
+            backend_identity=self.identity_for(request.definition),
+            normalized_parameters=request.definition.parameters,
+            normalized_input_fields=request.definition.input_fields,
+            fields=fields,
+            observation_count=observation_count,
         )
 
 
@@ -243,6 +283,32 @@ def test_unsupported_backend_indicator_combination_is_a_clear_domain_error() -> 
         TalibIndicatorBackend().identity_for(unsupported)
 
 
+@pytest.mark.parametrize(
+    "input_fields",
+    [
+        (MarketField.CLOSE, MarketField.OPEN),
+        (MarketField.OPEN,),
+    ],
+)
+def test_native_ema_rejects_noncanonical_input_mappings(
+    input_fields: tuple[MarketField, ...],
+) -> None:
+    definition = StandardIndicatorDefinition(
+        name="exponential_moving_average",
+        parameters=PrimitiveMappingSnapshot.capture(
+            {"period": 3, "source_field": "close"}
+        ),
+        input_fields=input_fields,
+        output_fields=(EXPONENTIAL_MOVING_AVERAGE_OUTPUT,),
+    )
+
+    with pytest.raises(
+        UnsupportedIndicatorBackendError,
+        match="native_v1 input mapping is unavailable",
+    ):
+        NativeIndicatorBackend().identity_for(definition)
+
+
 def test_legacy_configuration_resolves_explicit_native_semantics_unchanged() -> None:
     legacy = ExponentialMovingAverage(ExponentialMovingAverageParameters(3))
     legacy_configuration = legacy.configuration()
@@ -285,3 +351,33 @@ def test_future_backend_adapter_reuses_ema_without_backend_specific_class() -> N
         Decimal(42),
         Decimal(42),
     )
+
+
+def test_selected_registry_id_must_match_backend_identity() -> None:
+    registry = IndicatorBackendRegistry((MismatchedIdentityBackend("9.4"),))
+
+    with pytest.raises(
+        InvalidIndicatorBackendError,
+        match="identity does not match the selected registry id: future_v1",
+    ):
+        ExponentialMovingAverage(
+            ExponentialMovingAverageParameters(2),
+            backend_id="future_v1",
+            backend_registry=registry,
+        )
+
+
+def test_direct_calculation_rejects_truncated_backend_results() -> None:
+    registry = IndicatorBackendRegistry((TruncatedIndicatorBackend("9.4"),))
+    indicator = ExponentialMovingAverage(
+        ExponentialMovingAverageParameters(2),
+        backend_id="future_v1",
+        backend_registry=registry,
+    )
+    bars = make_dataset(("1", "2", "3")).bars
+
+    with pytest.raises(
+        InvalidIndicatorBackendError,
+        match="observation count does not match the canonical input bars",
+    ):
+        indicator.calculate_bar_fields(bars)

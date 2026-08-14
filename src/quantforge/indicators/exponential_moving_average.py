@@ -114,6 +114,11 @@ class ExponentialMovingAverage:
         registry = backend_registry or default_indicator_backend_registry()
         self._backend: IndicatorBackend = registry.resolve(selected_backend_id)
         self._backend_identity = self._backend.identity_for(self._definition)
+        if self._backend_identity.backend_id != selected_backend_id:
+            raise InvalidIndicatorBackendError(
+                "indicator backend identity does not match the selected registry id: "
+                f"{selected_backend_id}"
+            )
 
     @property
     def parameters(self) -> IndicatorParameters:
@@ -280,6 +285,11 @@ class ExponentialMovingAverage:
         result = self._backend.compute(
             IndicatorComputationRequest(self._definition, bars)
         )
+        if result.observation_count != len(bars):
+            raise InvalidIndicatorBackendError(
+                "indicator backend result observation count does not match the "
+                "canonical input bars"
+            )
         if (
             result.backend_identity != self._backend_identity
             or result.definition_name != self.name

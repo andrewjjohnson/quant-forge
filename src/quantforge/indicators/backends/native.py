@@ -85,11 +85,6 @@ class NativeIndicatorBackend:
         definition = request.definition
         mapping = _mapping_for(definition)
         parameters = definition.parameters.to_primitive()
-        if frozenset(parameters) != mapping.parameter_names:
-            raise UnsupportedIndicatorBackendError(
-                f"{self.backend_id} parameter mapping is unavailable for "
-                f"indicator: {definition.name}"
-            )
         inputs = tuple(
             _decimal_input(request, field.value) for field in definition.input_fields
         )
@@ -123,6 +118,21 @@ def _mapping_for(definition: StandardIndicatorDefinition) -> _NativeMapping:
     if definition.output_fields != (_EMA_OUTPUT,):
         raise UnsupportedIndicatorBackendError(
             f"{NATIVE_INDICATOR_BACKEND} output mapping is unavailable for "
+            f"indicator: {definition.name}"
+        )
+    parameters = definition.parameters.to_primitive()
+    if frozenset(parameters) != mapping.parameter_names:
+        raise UnsupportedIndicatorBackendError(
+            f"{NATIVE_INDICATOR_BACKEND} parameter mapping is unavailable for "
+            f"indicator: {definition.name}"
+        )
+    source_field = parameters.get("source_field")
+    if (
+        len(definition.input_fields) != 1
+        or source_field != definition.input_fields[0].value
+    ):
+        raise UnsupportedIndicatorBackendError(
+            f"{NATIVE_INDICATOR_BACKEND} input mapping is unavailable for "
             f"indicator: {definition.name}"
         )
     return mapping
