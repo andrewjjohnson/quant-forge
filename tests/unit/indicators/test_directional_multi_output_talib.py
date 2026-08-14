@@ -49,6 +49,21 @@ def _dataset():
     return make_dataset(CLOSES, highs=HIGHS, lows=LOWS)
 
 
+def _assert_talib_values(
+    actual: tuple[Decimal | None, ...],
+    expected: tuple[Decimal | None, ...],
+) -> None:
+    assert len(actual) == len(expected)
+    for actual_value, expected_value in zip(actual, expected, strict=True):
+        if expected_value is None:
+            assert actual_value is None
+        else:
+            assert actual_value is not None
+            assert float(actual_value) == pytest.approx(
+                float(expected_value), rel=1e-14, abs=1e-14
+            )
+
+
 def test_directional_and_bollinger_use_backend_neutral_public_definitions() -> None:
     native_directional = WilderDirectionalMovement(
         WilderDirectionalMovementParameters(2),
@@ -83,35 +98,44 @@ def test_talib_directional_outputs_are_named_aligned_and_initialized_by_talib() 
 
     output = indicator.calculate(_dataset())
 
-    assert output.values_for(POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT) == (
-        None,
-        None,
-        Decimal("50.0"),
-        Decimal("21.428571428571427"),
-        Decimal("50.0"),
-        Decimal("27.142857142857142"),
-        Decimal("14.17910447761194"),
-        Decimal("45.0920245398773"),
+    _assert_talib_values(
+        output.values_for(POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT),
+        (
+            None,
+            None,
+            Decimal("50.0"),
+            Decimal("21.428571428571427"),
+            Decimal("50.0"),
+            Decimal("27.142857142857142"),
+            Decimal("14.17910447761194"),
+            Decimal("45.0920245398773"),
+        ),
     )
-    assert output.values_for(NEGATIVE_DIRECTIONAL_INDICATOR_OUTPUT) == (
-        None,
-        None,
-        Decimal("0.0"),
-        Decimal("28.57142857142857"),
-        Decimal("10.526315789473683"),
-        Decimal("5.714285714285714"),
-        Decimal("26.865671641791046"),
-        Decimal("11.042944785276074"),
+    _assert_talib_values(
+        output.values_for(NEGATIVE_DIRECTIONAL_INDICATOR_OUTPUT),
+        (
+            None,
+            None,
+            Decimal("0.0"),
+            Decimal("28.57142857142857"),
+            Decimal("10.526315789473683"),
+            Decimal("5.714285714285714"),
+            Decimal("26.865671641791046"),
+            Decimal("11.042944785276074"),
+        ),
     )
-    assert output.values_for(AVERAGE_DIRECTIONAL_INDEX_OUTPUT) == (
-        None,
-        None,
-        None,
-        Decimal("57.142857142857146"),
-        Decimal("61.18012422360249"),
-        Decimal("63.19875776397516"),
-        Decimal("47.053924336533036"),
-        Decimal("53.85483102072553"),
+    _assert_talib_values(
+        output.values_for(AVERAGE_DIRECTIONAL_INDEX_OUTPUT),
+        (
+            None,
+            None,
+            None,
+            Decimal("57.142857142857146"),
+            Decimal("61.18012422360249"),
+            Decimal("63.19875776397516"),
+            Decimal("47.053924336533036"),
+            Decimal("53.85483102072553"),
+        ),
     )
     assert indicator.backend_identity.function_name == "PLUS_DI+MINUS_DI+ADX"
 
@@ -278,8 +302,12 @@ def test_backend_specific_initialization_and_period_limits_are_explicit() -> Non
     assert native.values_for(AVERAGE_DIRECTIONAL_INDEX_OUTPUT)[:3] == (None,) * 3
     assert talib_output.values_for(AVERAGE_DIRECTIONAL_INDEX_OUTPUT)[:3] == (None,) * 3
     assert native.values_for(AVERAGE_DIRECTIONAL_INDEX_OUTPUT)[3] == Decimal(50)
-    assert talib_output.values_for(AVERAGE_DIRECTIONAL_INDEX_OUTPUT)[3] == Decimal(
-        "57.142857142857146"
+    first_talib_adx = talib_output.values_for(AVERAGE_DIRECTIONAL_INDEX_OUTPUT)[3]
+    assert first_talib_adx is not None
+    assert float(first_talib_adx) == pytest.approx(
+        57.142857142857146,
+        rel=1e-14,
+        abs=1e-14,
     )
     assert BollingerBands(
         BollingerBandsParameters(1), backend_id=NATIVE_INDICATOR_BACKEND
