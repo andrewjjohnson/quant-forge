@@ -31,6 +31,7 @@ Do not create ADRs for routine implementation details that are easy to change.
 - [ADR 0010: Derive daily and weekly bars from exchange sessions](0010-derive-daily-weekly-bars-from-exchange-sessions.md)
 - [ADR 0011: Align only completed multi-timeframe bars by default](0011-align-only-completed-multi-timeframe-bars.md)
 - [ADR 0012: Reconstruct developing bars only from causal source intervals](0012-reconstruct-developing-bars-from-causal-source-intervals.md)
+- [ADR 0013: Keep standard indicator definitions backend-neutral](0013-keep-standard-indicators-backend-neutral.md)
 
 ## File naming
 

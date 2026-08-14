@@ -25,6 +25,18 @@ class IndicatorCalculationError(IndicatorError):
     """A canonical field cannot be represented by the indicator."""
 
 
+class InvalidIndicatorBackendError(IndicatorError):
+    """A backend contract, registry, or serialized identity is invalid."""
+
+
+class UnsupportedIndicatorBackendError(IndicatorError):
+    """A backend id or backend/indicator combination is unsupported."""
+
+
+class IndicatorBackendVersionError(IndicatorError):
+    """A serialized backend version differs from the installed implementation."""
+
+
 class IndicatorSourceError(IndicatorError):
     """A timeframe-bound indicator source is missing or incompatible."""
 

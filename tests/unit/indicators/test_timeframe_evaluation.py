@@ -31,6 +31,7 @@ from quantforge.indicators import (
     BOLLINGER_UPPER_BAND_OUTPUT,
     EXPONENTIAL_MOVING_AVERAGE_OUTPUT,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
+    TALIB_INDICATOR_BACKEND,
     BollingerBands,
     BollingerBandsParameters,
     ConfiguredTimeframeIndicator,
@@ -413,6 +414,35 @@ def test_ema_identity_binds_period_field_timeframe_and_completion_policy() -> No
     }
 
     assert len(identities) == 5
+
+
+def test_talib_ema_preserves_timeframe_completion_and_lineage_metadata() -> None:
+    context = _all_completed_context()
+    _, four_hour, _, _ = _timeframes()
+    indicator = ExponentialMovingAverage(
+        ExponentialMovingAverageParameters(3),
+        backend_id=TALIB_INDICATOR_BACKEND,
+    )
+
+    configured = bind_indicator(indicator, context, four_hour)
+    output = configured.calculate(context)
+
+    assert output.backend_identity == indicator.backend_identity
+    assert output.source_timeframe == four_hour
+    assert output.source_fields == (MarketField.CLOSE,)
+    assert output.completion_policy is ContextCompletionPolicy.COMPLETED_BARS_ONLY
+    assert output.dataset_reference == _reference(four_hour)
+    assert output.aggregation_provenance == _reference(four_hour).to_primitive()
+    assert output.configuration_id == configured.configuration_id
+    assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT) == (
+        None,
+        None,
+        Decimal("10.333333333333334"),
+        Decimal("11.166666666666668"),
+        Decimal("12.083333333333334"),
+        Decimal("12.041666666666668"),
+        Decimal("13.020833333333334"),
+    )
 
 
 def test_bollinger_identity_binds_all_formula_and_source_parameters() -> None:

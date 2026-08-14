@@ -300,8 +300,13 @@ QF-4 implements the reusable indicator boundary in `quantforge.indicators`.
 Indicators consume QF-3 `MarketDataset` values and return immutable, session-
 aligned fields with explicit unavailable values. QF-22 extends the same formulas
 to canonical QF-20/QF-21 bar series through a timeframe-bound evaluator; it does
-not add a parallel indicator implementation. See `docs/strategy-contracts.md`
-and `docs/timeframe-neutral-indicators.md`.
+not add a parallel indicator implementation. QF-35 places a backend-neutral
+standard-indicator definition and versioned backend resolver below that QF-22
+timeframe/provenance boundary. `native_v1` retains historical QuantForge math;
+`talib_v1` delegates mapped standard math to pinned TA-Lib. Backend adapters,
+not prediction, feature, data, strategy, or backtesting packages, import or
+translate library APIs. See `docs/strategy-contracts.md`,
+`docs/timeframe-neutral-indicators.md`, and ADR 0013.
 
 Responsibilities:
 
@@ -311,6 +316,11 @@ Responsibilities:
 - return aligned, typed outputs;
 - bind timeframe, source fields, completion policy, and compact dataset-family
   aggregation provenance into configured evaluation identity;
+- own normalized standard-indicator names, canonical input fields, parameter
+  names, output names, and immutable backend computation results;
+- resolve stable backend identities and bind exact wrapper and native runtime
+  library versions plus mapped function names into new explicit-backend
+  configuration identities;
 - reject undeclared timeframes, changed lineage, and implicit developing-bar
   exposure;
 - avoid mutation of inputs.
@@ -320,6 +330,7 @@ Must not:
 - use future rows;
 - accept a daily or other differently configured series for a bound intraday
   indicator;
+- expose TA-Lib arrays, parameter names, or functions to downstream consumers;
 - create orders;
 - own portfolio state;
 - calculate forward outcome labels in the same namespace as contemporaneous features.
