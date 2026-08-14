@@ -1,4 +1,5 @@
 from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
+from fractions import Fraction
 from typing import cast
 
 import pytest
@@ -107,26 +108,24 @@ def test_mature_windows_update_statistics_without_rescanning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rebuild = (
-        bollinger_module._rebuild_window_statistics  # pyright: ignore[reportPrivateUsage]
+        bollinger_module._rebuild_window_moments  # pyright: ignore[reportPrivateUsage]
     )
     rebuild_count = 0
 
     def counting_rebuild(
-        observations: tuple[Decimal, ...], divisor: Decimal
-    ) -> tuple[Decimal, Decimal, Decimal]:
+        observations: tuple[Decimal, ...],
+    ) -> tuple[Fraction, Fraction]:
         nonlocal rebuild_count
         rebuild_count += 1
-        return rebuild(observations, divisor)
+        return rebuild(observations)
 
-    monkeypatch.setattr(
-        bollinger_module, "_rebuild_window_statistics", counting_rebuild
-    )
+    monkeypatch.setattr(bollinger_module, "_rebuild_window_moments", counting_rebuild)
 
     BollingerBands(BollingerBandsParameters(7)).calculate(
         make_dataset(tuple(str(value) for value in range(1, 16)))
     )
 
-    assert rebuild_count == 2
+    assert rebuild_count == 1
 
 
 def test_constant_window_rebases_positive_residue_after_scale_change() -> None:
@@ -158,6 +157,7 @@ def test_near_constant_window_rebuilds_impossible_residue_after_scale_change() -
     [
         ("0", "1E+34", "9999999999999999999999999999999999"),
         ("0", "1", "1E+34", "10000000000000000000000000000000001"),
+        ("0", "1", "1E+34", "10000000000000000100000000000000000"),
         ("0", "-1E+34", "-9999999999999999999999999999999999"),
         ("0", "1E+20", "99999999999999999999"),
     ],
@@ -255,10 +255,9 @@ def test_configuration_serialization_and_identity_include_formula_parameters() -
     }
     formula = cast(dict[str, object], first.configuration()["formula"])
     assert formula["standard_deviation_degrees_of_freedom"] == 0
-    assert formula["window_update"] == (
-        "rolling_sum_and_centered_sum_of_squares_with_monotonic_range_and_"
-        "nonconstant_zero_guards_periodic_rebaseline_and_exact_constant_reset"
-    )
+    assert formula["window_update"] == ("exact_rational_rolling_sum_and_sum_of_squares")
+    arithmetic = cast(dict[str, object], first.configuration()["arithmetic"])
+    assert arithmetic["rolling_moment_accumulation"] == "exact_rational"
 
 
 def test_output_rows_serialize_all_fields_stably() -> None:

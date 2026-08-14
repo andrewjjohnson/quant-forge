@@ -12,6 +12,7 @@ from decimal import (
     Overflow,
     localcontext,
 )
+from fractions import Fraction
 from typing import cast
 
 from quantforge.configuration import (
@@ -92,7 +93,7 @@ class BollingerBands:
     """
 
     name = "bollinger_bands"
-    implementation_version = "4"
+    implementation_version = "5"
     output_fields = (
         BOLLINGER_MIDDLE_BAND_OUTPUT,
         BOLLINGER_UPPER_BAND_OUTPUT,
@@ -135,11 +136,7 @@ class BollingerBands:
                     "sqrt(sum((observation - middle_band) ** 2) / period)"
                 ),
                 "standard_deviation_degrees_of_freedom": 0,
-                "window_update": (
-                    "rolling_sum_and_centered_sum_of_squares_with_monotonic_"
-                    "range_and_nonconstant_zero_guards_periodic_rebaseline_and_"
-                    "exact_constant_reset"
-                ),
+                "window_update": "exact_rational_rolling_sum_and_sum_of_squares",
                 "upper_band": (
                     "middle_band + standard_deviation_multiplier * standard_deviation"
                 ),
@@ -160,6 +157,7 @@ class BollingerBands:
                 "clamp": _DECIMAL_CLAMP,
                 "initial_flags": [],
                 "traps": list(_DECIMAL_TRAP_NAMES),
+                "rolling_moment_accumulation": "exact_rational",
             },
         }
 
@@ -197,24 +195,16 @@ class BollingerBands:
         lower_values: list[IndicatorValue] = []
         bandwidth_values: list[IndicatorValue] = []
         period = self._parameters.period
-        divisor = Decimal(period)
         multiplier = self._parameters.standard_deviation_multiplier
         window: deque[Decimal | None] = deque()
-        minimum_candidates: deque[tuple[int, Decimal]] = deque()
-        maximum_candidates: deque[tuple[int, Decimal]] = deque()
         missing_count = 0
         statistics_are_valid = False
-        rolling_updates_since_rebuild = 0
-        rolling_sum: Decimal | None = None
-        middle: Decimal | None = None
-        centered_sum_of_squares: Decimal | None = None
+        rolling_sum: Fraction | None = None
+        rolling_sum_of_squares: Fraction | None = None
 
         try:
             with localcontext(_arithmetic_context()):
-                for source_index, current in enumerate(source):
-                    expired_index = source_index - period
-                    _discard_expired_candidates(minimum_candidates, expired_index)
-                    _discard_expired_candidates(maximum_candidates, expired_index)
+                for current in source:
                     window_was_full = len(window) == period
                     outgoing = window.popleft() if window_was_full else None
                     if window_was_full and outgoing is None:
@@ -222,17 +212,9 @@ class BollingerBands:
                     window.append(current)
                     if current is None:
                         missing_count += 1
-                    else:
-                        _append_minimum_candidate(
-                            minimum_candidates, source_index, current
-                        )
-                        _append_maximum_candidate(
-                            maximum_candidates, source_index, current
-                        )
 
                     if len(window) < period or missing_count:
                         statistics_are_valid = False
-                        rolling_updates_since_rebuild = 0
                         _append_unavailable(
                             middle_values,
                             upper_values,
@@ -242,74 +224,28 @@ class BollingerBands:
                         continue
 
                     current_value = cast(Decimal, current)
-                    window_minimum = minimum_candidates[0][1]
-                    window_maximum = maximum_candidates[0][1]
-                    if window_minimum == window_maximum:
-                        constant_value = window_minimum
-                        rolling_sum = constant_value * divisor
-                        middle = constant_value
-                        centered_sum_of_squares = Decimal(0)
-                        rolling_updates_since_rebuild = 0
-                        statistics_are_valid = True
-                        _append_bands(
-                            middle=middle,
-                            centered_sum_of_squares=centered_sum_of_squares,
-                            divisor=divisor,
-                            multiplier=multiplier,
-                            middle_values=middle_values,
-                            upper_values=upper_values,
-                            lower_values=lower_values,
-                            bandwidth_values=bandwidth_values,
+                    if statistics_are_valid and window_was_full:
+                        rolling_sum, rolling_sum_of_squares = _roll_window_moments(
+                            previous_sum=cast(Fraction, rolling_sum),
+                            previous_sum_of_squares=cast(
+                                Fraction, rolling_sum_of_squares
+                            ),
+                            outgoing=cast(Decimal, outgoing),
+                            incoming=current_value,
                         )
-                        continue
-                    should_roll = (
-                        statistics_are_valid
-                        and window_was_full
-                        and rolling_updates_since_rebuild < period
-                    )
-                    if should_roll:
-                        rolling_sum, middle, centered_sum_of_squares = (
-                            _roll_window_statistics(
-                                previous_sum=cast(Decimal, rolling_sum),
-                                previous_middle=cast(Decimal, middle),
-                                previous_centered_sum_of_squares=cast(
-                                    Decimal, centered_sum_of_squares
-                                ),
-                                outgoing=cast(Decimal, outgoing),
-                                incoming=current_value,
-                                divisor=divisor,
-                            )
-                        )
-                        maximum_centered_sum_of_squares = (
-                            divisor
-                            * (window_maximum - window_minimum)
-                            * (window_maximum - window_minimum)
-                        )
-                        if (
-                            centered_sum_of_squares < Decimal(0)
-                            or centered_sum_of_squares.is_zero()
-                            or centered_sum_of_squares > maximum_centered_sum_of_squares
-                        ):
-                            rolling_sum, middle, centered_sum_of_squares = (
-                                _rebuild_window_statistics(
-                                    cast(tuple[Decimal, ...], tuple(window)), divisor
-                                )
-                            )
-                            rolling_updates_since_rebuild = 0
-                        else:
-                            rolling_updates_since_rebuild += 1
                     else:
-                        rolling_sum, middle, centered_sum_of_squares = (
-                            _rebuild_window_statistics(
-                                cast(tuple[Decimal, ...], tuple(window)), divisor
-                            )
+                        rolling_sum, rolling_sum_of_squares = _rebuild_window_moments(
+                            cast(tuple[Decimal, ...], tuple(window))
                         )
-                        rolling_updates_since_rebuild = 0
                     statistics_are_valid = True
+                    middle, population_variance = _decimal_window_statistics(
+                        total=rolling_sum,
+                        sum_of_squares=rolling_sum_of_squares,
+                        period=period,
+                    )
                     _append_bands(
                         middle=middle,
-                        centered_sum_of_squares=centered_sum_of_squares,
-                        divisor=divisor,
+                        population_variance=population_variance,
                         multiplier=multiplier,
                         middle_values=middle_values,
                         upper_values=upper_values,
@@ -329,35 +265,66 @@ class BollingerBands:
         )
 
 
-def _rebuild_window_statistics(
-    observations: tuple[Decimal, ...], divisor: Decimal
-) -> tuple[Decimal, Decimal, Decimal]:
-    """Establish rolling statistics after warm-up or a missing-value gap."""
-    total = sum(observations, Decimal(0))
-    middle = total / divisor
-    centered_sum_of_squares = sum(
-        (
-            (observation - middle) * (observation - middle)
-            for observation in observations
+def _rebuild_window_moments(
+    observations: tuple[Decimal, ...],
+) -> tuple[Fraction, Fraction]:
+    """Establish exact moments after warm-up or a missing-value gap."""
+    exact_observations = tuple(Fraction(observation) for observation in observations)
+    return (
+        sum(exact_observations, Fraction()),
+        sum(
+            (observation * observation for observation in exact_observations),
+            Fraction(),
         ),
-        Decimal(0),
     )
-    return total, middle, centered_sum_of_squares
+
+
+def _roll_window_moments(
+    *,
+    previous_sum: Fraction,
+    previous_sum_of_squares: Fraction,
+    outgoing: Decimal,
+    incoming: Decimal,
+) -> tuple[Fraction, Fraction]:
+    """Replace one observation in the exact moments without rescanning the window."""
+    outgoing_fraction = Fraction(outgoing)
+    incoming_fraction = Fraction(incoming)
+    return (
+        previous_sum - outgoing_fraction + incoming_fraction,
+        previous_sum_of_squares
+        - outgoing_fraction * outgoing_fraction
+        + incoming_fraction * incoming_fraction,
+    )
+
+
+def _decimal_window_statistics(
+    *, total: Fraction, sum_of_squares: Fraction, period: int
+) -> tuple[Decimal, Decimal]:
+    """Round exact window moments once at the declared Decimal boundary."""
+    divisor = Fraction(period)
+    exact_middle = total / divisor
+    exact_population_variance = sum_of_squares / divisor - exact_middle * exact_middle
+    return (
+        _fraction_to_decimal(exact_middle),
+        _fraction_to_decimal(exact_population_variance),
+    )
+
+
+def _fraction_to_decimal(value: Fraction) -> Decimal:
+    return Decimal(value.numerator) / Decimal(value.denominator)
 
 
 def _append_bands(
     *,
     middle: Decimal,
-    centered_sum_of_squares: Decimal,
-    divisor: Decimal,
+    population_variance: Decimal,
     multiplier: Decimal,
     middle_values: list[IndicatorValue],
     upper_values: list[IndicatorValue],
     lower_values: list[IndicatorValue],
     bandwidth_values: list[IndicatorValue],
 ) -> None:
-    variance = centered_sum_of_squares / divisor
-    standard_deviation = variance.sqrt()
+    standard_deviation = population_variance.sqrt()
     offset = multiplier * standard_deviation
     upper = middle + offset
     lower = middle - offset
@@ -374,50 +341,9 @@ def _append_bands(
     bandwidth_values.append(bandwidth)
 
 
-def _roll_window_statistics(
-    *,
-    previous_sum: Decimal,
-    previous_middle: Decimal,
-    previous_centered_sum_of_squares: Decimal,
-    outgoing: Decimal,
-    incoming: Decimal,
-    divisor: Decimal,
-) -> tuple[Decimal, Decimal, Decimal]:
-    """Replace one observation using constant-time sliding variance updates."""
-    total = previous_sum - outgoing + incoming
-    middle = total / divisor
-    centered_sum_of_squares = previous_centered_sum_of_squares + (
-        (incoming - outgoing) * (incoming - middle + outgoing - previous_middle)
-    )
-    return total, middle, centered_sum_of_squares
-
-
 def _append_unavailable(*outputs: list[IndicatorValue]) -> None:
     for output in outputs:
         output.append(None)
-
-
-def _discard_expired_candidates(
-    candidates: deque[tuple[int, Decimal]], expired_index: int
-) -> None:
-    while candidates and candidates[0][0] <= expired_index:
-        candidates.popleft()
-
-
-def _append_minimum_candidate(
-    candidates: deque[tuple[int, Decimal]], source_index: int, value: Decimal
-) -> None:
-    while candidates and candidates[-1][1] > value:
-        candidates.pop()
-    candidates.append((source_index, value))
-
-
-def _append_maximum_candidate(
-    candidates: deque[tuple[int, Decimal]], source_index: int, value: Decimal
-) -> None:
-    while candidates and candidates[-1][1] < value:
-        candidates.pop()
-    candidates.append((source_index, value))
 
 
 def _arithmetic_context() -> Context:
