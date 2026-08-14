@@ -10,8 +10,8 @@ data itself.
 QF-35 adds a pluggable standard-indicator backend below the same QF-22 binding.
 QF-36 exposes the existing SMA, EMA, Wilder RSI, and Wilder ATR definitions
 through that backend while preserving their historical native configurations.
-Directional movement/ADX and Bollinger Bands keep their existing native-only
-implementations.
+QF-37 applies the same contract to directional movement/ADX and Bollinger
+Bands, including generic named normalization for multiple backend outputs.
 
 ## Standard-indicator backend boundary
 
@@ -24,10 +24,10 @@ QuantForge fields plus normalized request and backend metadata.
 
 `IndicatorBackendRegistry` resolves stable identifiers:
 
-- `native_v1` maps SMA, EMA, Wilder RSI, and Wilder ATR to their historical
-  QuantForge Decimal implementations;
-- `talib_v1` maps those same definitions to TA-Lib `SMA`, `EMA`, `RSI`, and
-  `ATR`.
+- `native_v1` maps SMA, EMA, Wilder RSI, Wilder ATR, directional movement/ADX,
+  and Bollinger Bands to their historical QuantForge Decimal implementations;
+- `talib_v1` maps those same definitions to TA-Lib `SMA`, `EMA`, `RSI`, `ATR`,
+  `PLUS_DI`, `MINUS_DI`, `ADX`, and `BBANDS`.
 
 Backend selection occurs when one of those backend-neutral indicators is
 configured. The QF-22 `ConfiguredTimeframeIndicator` remains above it and
@@ -165,7 +165,7 @@ without `backend` the same way. An explicitly selected backend uses the new
 versioned configuration shape; deserialization fails if its recorded backend
 or library identity differs from the installed resolver.
 
-## Core TA-Lib mappings and migration
+## TA-Lib mappings and migration
 
 QF-36 applies the same normalization contract to the previously existing core
 standard indicators:
@@ -176,6 +176,8 @@ standard indicators:
 | `exponential_moving_average` | configured market field | `period`, `source_field` | `exponential_moving_average` | `EMA(real, timeperiod=period)` |
 | `wilder_relative_strength_index` | `close` | `period` | `wilder_rsi` | `RSI(close, timeperiod=period)` |
 | `wilder_average_true_range` | `high`, `low`, `close` | `period` | `wilder_average_true_range` | `ATR(high, low, close, timeperiod=period)` |
+| `wilder_directional_movement` | `high`, `low`, `close` | `period` | `positive_directional_indicator`, `negative_directional_indicator`, `average_directional_index` | one request invoking `PLUS_DI`, `MINUS_DI`, and `ADX` once each |
+| `bollinger_bands` | configured market field | `period`, `source_field`, `standard_deviation_multiplier` | `bollinger_middle_band`, `bollinger_upper_band`, `bollinger_lower_band`, `bollinger_bandwidth` | `BBANDS(real, timeperiod=period, nbdevup=multiplier, nbdevdn=multiplier)` plus normalized bandwidth |
 
 The adapter converts canonical `Decimal` inputs to float64, converts TA-Lib
 `NaN` outputs to aligned `None` values, rejects infinite outputs, and converts
@@ -187,12 +189,23 @@ version. The same backend identity and parameters are retained in explicit
 indicator configurations embedded by study manifests and timeframe-bound
 configurations.
 
+For functions returning tuples, the adapter first assigns backend-local names
+to every returned array and then maps those names to QuantForge output names.
+Downstream consumers never depend on TA-Lib tuple positions. Bollinger
+bandwidth is derived from the named `upper`, `middle`, and `lower` arrays using
+the existing QuantForge zero-width and zero-middle policies. A directional
+request exposes all three normalized series without recalculating any one
+TA-Lib function.
+
 TA-Lib 0.7.1 accepts periods through `100000`. SMA, EMA, and ATR accept a
 minimum period of `1`; RSI accepts a minimum period of `2`. These
 backend-specific limits are checked during explicit `talib_v1` configuration.
+Directional movement and Bollinger Bands accept a minimum period of `2` in
+TA-Lib 0.7.1; the historical native implementations still accept period `1`.
 The broader historical native contracts are unchanged. The adapter requires
-default TA-Lib compatibility and, for EMA, RSI, and ATR, a zero unstable period.
-SMA has no TA-Lib unstable-period setting.
+default TA-Lib compatibility and zero unstable periods for EMA, RSI, ATR,
+`PLUS_DI`, `MINUS_DI`, and `ADX`. SMA and BBANDS have no TA-Lib unstable-period
+setting.
 
 ### Numerical and unavailable-region differences
 
@@ -213,15 +226,25 @@ The two backends intentionally do not promise bit-for-bit equality:
 - Wilder ATR and TA-Lib ATR both first produce a period-`N` value on bar
   `N + 1`; representative finite fixtures agree within float64 precision rather
   than exact Decimal equality.
+- Native and TA-Lib +DI/-DI both first become available on bar `N + 1`, and ADX
+  first becomes available on bar `2N`, but TA-Lib's directional initialization
+  can produce materially different early values from the historical native
+  Wilder smoothing. Those values are backend semantics, not normalized toward
+  equality.
+- Native and TA-Lib Bollinger Bands have the same `N - 1` unavailable leading
+  rows for supported periods. Native uses exact rolling moments followed by
+  34-digit Decimal arithmetic; TA-Lib uses float64, so band and derived
+  bandwidth values can differ in their final digits. TA-Lib does not support
+  the native period-`1` configuration.
 
-Constructing SMA, EMA, Wilder RSI, or Wilder ATR without `backend_id` remains
-the compatibility path. It resolves execution to `native_v1` but emits the
-exact pre-backend configuration shape and deterministic ID. Each class's
-`from_configuration()` method treats a historical mapping without `backend` as
-that legacy path. A newly created study must select `backend_id="talib_v1"`
-explicitly. Explicit native and TA-Lib configurations use contract version `2`,
-have distinct deterministic IDs, and fail deserialization if the installed
-backend or library identity has drifted.
+Constructing SMA, EMA, Wilder RSI, Wilder ATR, directional movement, or
+Bollinger Bands without `backend_id` remains the compatibility path. It resolves
+execution to `native_v1` but emits the exact pre-backend configuration shape and
+deterministic ID. Each class's `from_configuration()` method treats a historical
+mapping without `backend` as that legacy path. A newly created study must select
+`backend_id="talib_v1"` explicitly. Explicit native and TA-Lib configurations
+use contract version `2`, have distinct deterministic IDs, and fail
+deserialization if the installed backend or library identity has drifted.
 
 ## Bollinger Bands
 
@@ -356,8 +379,7 @@ presented as the eventual completed candle. An indicator declaring
 
 ## Deliberate limits
 
-QF-22 through QF-24 and QF-35/QF-36 do not add MACD, stochastic, volume
+QF-22 through QF-24 and QF-35 through QF-37 do not add MACD, stochastic, volume
 formulas, Bollinger-based prediction or squeeze-classification rules,
 prediction integration, feature export, or strategy/backtest multi-timeframe
-integration. QF-36 does not migrate Bollinger Bands or directional
-movement/ADX to a backend. Those remain sibling-ticket concerns under QF-12.
+integration. Those remain sibling-ticket concerns under QF-12.

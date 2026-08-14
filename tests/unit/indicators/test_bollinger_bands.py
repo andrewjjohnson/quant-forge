@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 
-import quantforge.indicators.bollinger_bands as bollinger_module
+import quantforge.indicators.backends.native as native_backend_module
 from quantforge.indicators import (
     BOLLINGER_BANDWIDTH_OUTPUT,
     BOLLINGER_LOWER_BAND_OUTPUT,
@@ -133,7 +133,7 @@ def test_mature_windows_update_statistics_without_rescanning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rebuild = (
-        bollinger_module._rebuild_window_moments  # pyright: ignore[reportPrivateUsage]
+        native_backend_module._rebuild_window_moments  # pyright: ignore[reportPrivateUsage]
     )
     rebuild_count = 0
 
@@ -144,7 +144,11 @@ def test_mature_windows_update_statistics_without_rescanning(
         rebuild_count += 1
         return rebuild(observations)
 
-    monkeypatch.setattr(bollinger_module, "_rebuild_window_moments", counting_rebuild)
+    monkeypatch.setattr(
+        native_backend_module,
+        "_rebuild_window_moments",
+        counting_rebuild,
+    )
 
     BollingerBands(BollingerBandsParameters(7)).calculate(
         make_dataset(tuple(str(value) for value in range(1, 16)))
