@@ -2,9 +2,10 @@
 
 QF-22 generalizes the existing QF-4 SMA, Wilder RSI, Wilder ATR, and Wilder
 directional-movement/ADX formulas for canonical intraday, exchange-session
-daily, and exchange-week bars. QF-23 adds EMA through the same contract. The
-indicator layer consumes the leakage-safe QF-20/QF-21 context boundary and does
-not retrieve, aggregate, or align market data itself.
+daily, and exchange-week bars. QF-23 adds EMA and QF-24 adds Bollinger Bands
+through the same contract. The indicator layer consumes the leakage-safe
+QF-20/QF-21 context boundary and does not retrieve, aggregate, or align market
+data itself.
 
 ## Contracts
 
@@ -36,6 +37,7 @@ Every period, window, and warm-up is measured in input observations/bars:
 | --- | --- | --- |
 | SMA | `window=N` | bar `N` |
 | EMA | `period=N` | bar `N` |
+| Bollinger Bands | `period=N` | bar `N` |
 | Wilder RSI | `period=N` | bar `N + 1` |
 | Wilder ATR | `period=N` | bar `N + 1` |
 | +DI / -DI | `period=N` | bar `N + 1` |
@@ -87,13 +89,86 @@ input is the structurally distinct as-of bar already reconstructed by QF-21
 from completed lower-timeframe constituents. The recurrence never sees or
 infers the eventual completed close.
 
+## Bollinger Bands
+
+`BollingerBandsParameters` contains a positive integer `period`, a finite
+positive `Decimal` `standard_deviation_multiplier` (default `2`), and one
+canonical OHLCV `source_field` (default `close`). The QF-22 binding supplies the
+typed source timeframe and context completion policy. The bound configuration
+identity therefore includes period, multiplier, field, complete timeframe
+semantics, completed-only or developing-as-of policy, and dataset-family
+provenance.
+
+Multiplier validation also bounds configuration-serialization resources before
+fixed-point formatting: the coefficient may contain at most 68 digits and its
+raw fixed-point representation may contain at most 256 characters. Larger
+finite values raise a controlled invalid-parameters error instead of attempting
+an exponent-sized string allocation. These limits are serialized in the
+indicator configuration.
+
+For each full trailing window of `N` consecutive finite observations, the
+middle band is the arithmetic mean. The standard deviation is the population
+standard deviation (`ddof=0`), not the sample estimate:
+
+```text
+middle = sum(window) / N
+population_variance = sum((observation - middle) ** 2) / N
+population_standard_deviation = sqrt(population_variance)
+upper = middle + multiplier * population_standard_deviation
+lower = middle - multiplier * population_standard_deviation
+bandwidth = (upper - lower) / middle
+```
+
+The first `N - 1` aligned rows are `None` for all four outputs. A non-finite
+source observation makes every full window containing it unavailable; values
+are not filled, backfilled, or carried across the gap. Calculations use the
+indicator's serialized 34-digit `Decimal`, round-half-even arithmetic policy,
+including square root.
+
+The first complete window establishes exact rational sums of observations and
+squared observations. Each later contiguous finite bar removes the expired
+observation and adds the new observation to both moments without rescanning the
+window. Population variance is derived exactly as
+`sum_of_squares / N - (sum / N) ** 2`, then the mean and variance cross the
+serialized 34-digit `Decimal` boundary once before square root and band
+arithmetic. Exact moment accumulation prevents scale-transition cancellation
+from making an output depend on bars that are no longer in the active window.
+A source value crosses a serialized resource boundary before exact conversion:
+its stored and adjusted exponents must remain within `-999999` through `999999`,
+its coefficient may contain at most 68 digits, and either integer component of
+its exact fraction may require at most 2048 decimal digits (4096 after
+squaring). Values outside those bounds raise a controlled indicator-calculation
+error before a power-of-ten integer can be materialized. The coefficient
+allowance is twice the 34-digit output precision so exact moments retain
+lower-order source detail across large scale transitions. The separate 2048
+digit allocation ceiling prevents the intentionally broad Decimal exponent
+range from becoming an equally broad exact-integer resource allowance. Initial
+window moments are accumulated as a stream, so the calculation does not retain
+one exact fraction allocation per observation.
+A missing-value gap invalidates the moments; the first complete finite window
+after the gap establishes them again. Thus mature contiguous calculation uses
+`O(1)` rolling operations in the period length rather than rescanning every
+overlapping window.
+
+Constant-price windows have zero population deviation, equal middle/upper/lower
+bands, and bandwidth `0`. More generally, any zero-width band has bandwidth
+`0`, including a zero-price window. If a mathematically possible input has a
+zero middle but nonzero width, bandwidth is `None` because the ratio is
+undefined; the three price bands remain available. Percent-B is not emitted:
+QF-24 makes it optional, and QuantForge does not yet have a project-wide
+zero-width percent-B convention.
+
+Bollinger Bands declare `DEVELOPING_AS_OF` support. A developing result uses
+only the causal as-of bar exposed by QF-21; appending later constituents or the
+eventual completed candle cannot revise the earlier historical prefix.
+
 ## Source binding and identity
 
 A configured timeframe indicator binds:
 
 - the complete base indicator configuration and identity;
 - the complete canonical source `Timeframe` and its configuration identity;
-- required source fields, including an SMA's selected `source_field`;
+- required source fields, including an indicator's selected `source_field`;
 - the context completion policy;
 - the indicator's developing-bar declaration;
 - the bar observation unit and warm-up count;
@@ -143,7 +218,7 @@ presented as the eventual completed candle. An indicator declaring
 
 ## Deliberate limits
 
-QF-22/QF-23 do not add Bollinger Bands, MACD, stochastic, volume formulas,
-prediction integration, feature export, EMA-based prediction rules, or
-strategy/backtest multi-timeframe integration. Those are sibling-ticket
-concerns under QF-12.
+QF-22 through QF-24 do not add MACD, stochastic, volume formulas,
+Bollinger-based prediction or squeeze-classification rules, prediction
+integration, feature export, or strategy/backtest multi-timeframe integration.
+Those are sibling-ticket concerns under QF-12.
