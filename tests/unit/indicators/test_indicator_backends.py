@@ -309,6 +309,26 @@ def test_native_ema_rejects_noncanonical_input_mappings(
         NativeIndicatorBackend().identity_for(definition)
 
 
+@pytest.mark.parametrize("period", [-2, 0, True])
+def test_native_ema_rejects_invalid_periods_through_direct_backend_contract(
+    period: int | bool,
+) -> None:
+    definition = StandardIndicatorDefinition(
+        name="exponential_moving_average",
+        parameters=PrimitiveMappingSnapshot.capture(
+            {"period": period, "source_field": "close"}
+        ),
+        input_fields=(MarketField.CLOSE,),
+        output_fields=(EXPONENTIAL_MOVING_AVERAGE_OUTPUT,),
+    )
+
+    with pytest.raises(
+        UnsupportedIndicatorBackendError,
+        match="native_v1 EMA period must be a positive integer",
+    ):
+        NativeIndicatorBackend().identity_for(definition)
+
+
 def test_legacy_configuration_resolves_explicit_native_semantics_unchanged() -> None:
     legacy = ExponentialMovingAverage(ExponentialMovingAverageParameters(3))
     legacy_configuration = legacy.configuration()

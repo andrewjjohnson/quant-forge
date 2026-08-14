@@ -126,6 +126,11 @@ def _mapping_for(definition: StandardIndicatorDefinition) -> _NativeMapping:
             f"{NATIVE_INDICATOR_BACKEND} parameter mapping is unavailable for "
             f"indicator: {definition.name}"
         )
+    period = parameters.get("period")
+    if isinstance(period, bool) or not isinstance(period, int) or period < 1:
+        raise UnsupportedIndicatorBackendError(
+            f"{NATIVE_INDICATOR_BACKEND} EMA period must be a positive integer"
+        )
     source_field = parameters.get("source_field")
     if (
         len(definition.input_fields) != 1
