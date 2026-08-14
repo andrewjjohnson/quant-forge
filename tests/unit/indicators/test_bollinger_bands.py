@@ -181,6 +181,7 @@ def test_scale_transition_result_depends_only_on_active_window(
     [
         Decimal("1E-1000000000"),
         Decimal("1E+1000000000"),
+        Decimal("1E-999999"),
         Decimal("1" * 69),
     ],
 )
@@ -199,6 +200,20 @@ def test_rejects_resource_unbounded_source_before_exact_moment_conversion(
                 lows=(source_text,),
             )
         )
+
+
+def test_accepts_source_at_practical_exact_moment_boundary() -> None:
+    source_text = "1E-2047"
+    output = BollingerBands(BollingerBandsParameters(1)).calculate(
+        make_dataset(
+            (source_text,),
+            opens=(source_text,),
+            highs=(source_text,),
+            lows=(source_text,),
+        )
+    )
+
+    assert output.values_for(BOLLINGER_MIDDLE_BAND_OUTPUT) == (Decimal(source_text),)
 
 
 def test_constant_price_has_zero_width_and_zero_bandwidth() -> None:
@@ -286,6 +301,8 @@ def test_configuration_serialization_and_identity_include_formula_parameters() -
     assert arithmetic["rolling_moment_accumulation"] == "exact_rational"
     assert arithmetic["exact_moment_input_bounds"] == {
         "maximum_coefficient_digits": 68,
+        "maximum_source_integer_digits": 2048,
+        "maximum_squared_integer_digits": 4096,
         "minimum_stored_exponent": -999999,
         "maximum_stored_exponent": 999999,
         "minimum_adjusted_exponent": -999999,

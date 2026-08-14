@@ -51,6 +51,7 @@ _DECIMAL_EMAX = 999_999
 _DECIMAL_CAPITALS = 1
 _DECIMAL_CLAMP = 0
 _EXACT_MOMENT_MAX_COEFFICIENT_DIGITS = _DECIMAL_PRECISION * 2
+_EXACT_MOMENT_MAX_SOURCE_INTEGER_DIGITS = 2_048
 _DECIMAL_TRAPS: tuple[type[DecimalException], ...] = (
     DivisionByZero,
     InvalidOperation,
@@ -94,7 +95,7 @@ class BollingerBands:
     """
 
     name = "bollinger_bands"
-    implementation_version = "6"
+    implementation_version = "7"
     output_fields = (
         BOLLINGER_MIDDLE_BAND_OUTPUT,
         BOLLINGER_UPPER_BAND_OUTPUT,
@@ -162,6 +163,12 @@ class BollingerBands:
                 "exact_moment_input_bounds": {
                     "maximum_coefficient_digits": (
                         _EXACT_MOMENT_MAX_COEFFICIENT_DIGITS
+                    ),
+                    "maximum_source_integer_digits": (
+                        _EXACT_MOMENT_MAX_SOURCE_INTEGER_DIGITS
+                    ),
+                    "maximum_squared_integer_digits": (
+                        _EXACT_MOMENT_MAX_SOURCE_INTEGER_DIGITS * 2
                     ),
                     "minimum_stored_exponent": _DECIMAL_EMIN,
                     "maximum_stored_exponent": _DECIMAL_EMAX,
@@ -279,16 +286,13 @@ def _rebuild_window_moments(
     observations: tuple[Decimal, ...],
 ) -> tuple[Fraction, Fraction]:
     """Establish exact moments after warm-up or a missing-value gap."""
-    exact_observations = tuple(
-        _bounded_fraction(observation) for observation in observations
-    )
-    return (
-        sum(exact_observations, Fraction()),
-        sum(
-            (observation * observation for observation in exact_observations),
-            Fraction(),
-        ),
-    )
+    total = Fraction()
+    sum_of_squares = Fraction()
+    for observation in observations:
+        exact_observation = _bounded_fraction(observation)
+        total += exact_observation
+        sum_of_squares += exact_observation * exact_observation
+    return total, sum_of_squares
 
 
 def _roll_window_moments(
@@ -336,6 +340,8 @@ def _bounded_fraction(value: Decimal) -> Fraction:
     adjusted_exponent = value.adjusted()
     if (
         len(coefficient_digits) > _EXACT_MOMENT_MAX_COEFFICIENT_DIGITS
+        or _source_integer_digit_bound(coefficient_digits, stored_exponent)
+        > _EXACT_MOMENT_MAX_SOURCE_INTEGER_DIGITS
         or stored_exponent < _DECIMAL_EMIN
         or stored_exponent > _DECIMAL_EMAX
         or adjusted_exponent < _DECIMAL_EMIN
@@ -345,6 +351,24 @@ def _bounded_fraction(value: Decimal) -> Fraction:
             "Bollinger Bands source exceeds exact-moment resource bounds"
         )
     return Fraction(value)
+
+
+def _source_integer_digit_bound(
+    coefficient_digits: tuple[int, ...], stored_exponent: int
+) -> int:
+    """Bound either integer component of the exact source fraction."""
+    if not any(coefficient_digits):
+        return 1
+    trailing_zero_count = 0
+    for digit in reversed(coefficient_digits):
+        if digit:
+            break
+        trailing_zero_count += 1
+    normalized_digit_count = len(coefficient_digits) - trailing_zero_count
+    normalized_exponent = stored_exponent + trailing_zero_count
+    numerator_digits = normalized_digit_count + max(normalized_exponent, 0)
+    denominator_digits = 1 + max(-normalized_exponent, 0)
+    return max(numerator_digits, denominator_digits)
 
 
 def _append_bands(
