@@ -75,6 +75,30 @@ def test_rejects_non_decimal_multiplier() -> None:
         BollingerBandsParameters(2, cast(Decimal, 2))
 
 
+@pytest.mark.parametrize(
+    "multiplier",
+    [
+        Decimal("1E+1000000000"),
+        Decimal("1E-1000000000"),
+        Decimal("1" * 69),
+    ],
+)
+def test_rejects_resource_unbounded_multiplier_before_serialization(
+    multiplier: Decimal,
+) -> None:
+    with pytest.raises(InvalidIndicatorParametersError, match="resource bounds"):
+        BollingerBandsParameters(2, multiplier)
+
+
+def test_accepts_multiplier_at_fixed_point_serialization_boundary() -> None:
+    parameters = BollingerBandsParameters(2, Decimal("1E+255"))
+    serialized_multiplier = cast(
+        str, parameters.to_primitive()["standard_deviation_multiplier"]
+    )
+
+    assert len(serialized_multiplier) == 256
+
+
 def test_selected_source_field_controls_every_band() -> None:
     dataset = make_dataset(("100", "100"), opens=("1", "3"))
     output = BollingerBands(
@@ -293,6 +317,12 @@ def test_configuration_serialization_and_identity_include_formula_parameters() -
         "period": 3,
         "source_field": "close",
         "standard_deviation_multiplier": "2",
+    }
+    assert first.configuration()["parameter_bounds"] == {
+        "standard_deviation_multiplier": {
+            "maximum_coefficient_digits": 68,
+            "maximum_fixed_point_characters": 256,
+        },
     }
     formula = cast(dict[str, object], first.configuration()["formula"])
     assert formula["standard_deviation_degrees_of_freedom"] == 0

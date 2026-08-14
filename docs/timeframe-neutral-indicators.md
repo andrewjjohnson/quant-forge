@@ -99,6 +99,13 @@ identity therefore includes period, multiplier, field, complete timeframe
 semantics, completed-only or developing-as-of policy, and dataset-family
 provenance.
 
+Multiplier validation also bounds configuration-serialization resources before
+fixed-point formatting: the coefficient may contain at most 68 digits and its
+raw fixed-point representation may contain at most 256 characters. Larger
+finite values raise a controlled invalid-parameters error instead of attempting
+an exponent-sized string allocation. These limits are serialized in the
+indicator configuration.
+
 For each full trailing window of `N` consecutive finite observations, the
 middle band is the arithmetic mean. The standard deviation is the population
 standard deviation (`ddof=0`), not the sample estimate:

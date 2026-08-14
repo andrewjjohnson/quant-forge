@@ -52,6 +52,8 @@ _DECIMAL_CAPITALS = 1
 _DECIMAL_CLAMP = 0
 _EXACT_MOMENT_MAX_COEFFICIENT_DIGITS = _DECIMAL_PRECISION * 2
 _EXACT_MOMENT_MAX_SOURCE_INTEGER_DIGITS = 2_048
+_MULTIPLIER_MAX_COEFFICIENT_DIGITS = _DECIMAL_PRECISION * 2
+_MULTIPLIER_MAX_FIXED_POINT_CHARACTERS = 256
 _DECIMAL_TRAPS: tuple[type[DecimalException], ...] = (
     DivisionByZero,
     InvalidOperation,
@@ -95,7 +97,7 @@ class BollingerBands:
     """
 
     name = "bollinger_bands"
-    implementation_version = "7"
+    implementation_version = "8"
     output_fields = (
         BOLLINGER_MIDDLE_BAND_OUTPUT,
         BOLLINGER_UPPER_BAND_OUTPUT,
@@ -132,6 +134,14 @@ class BollingerBands:
             "warm_up_observations": self.warm_up_observations,
             "output_fields": list(self.output_fields),
             "missing_value": None,
+            "parameter_bounds": {
+                "standard_deviation_multiplier": {
+                    "maximum_coefficient_digits": (_MULTIPLIER_MAX_COEFFICIENT_DIGITS),
+                    "maximum_fixed_point_characters": (
+                        _MULTIPLIER_MAX_FIXED_POINT_CHARACTERS
+                    ),
+                },
+            },
             "formula": {
                 "middle_band": "sum(window) / period",
                 "standard_deviation": (
@@ -431,6 +441,32 @@ def _validate_multiplier(value: object) -> None:
         raise InvalidIndicatorParametersError(
             "standard_deviation_multiplier must be finite and greater than zero"
         )
+    _, coefficient_digits, stored_exponent = value.as_tuple()
+    if not isinstance(stored_exponent, int):
+        raise InvalidIndicatorParametersError(
+            "standard_deviation_multiplier must be a finite Decimal"
+        )
+    if (
+        len(coefficient_digits) > _MULTIPLIER_MAX_COEFFICIENT_DIGITS
+        or _fixed_point_render_length(coefficient_digits, stored_exponent)
+        > _MULTIPLIER_MAX_FIXED_POINT_CHARACTERS
+    ):
+        raise InvalidIndicatorParametersError(
+            "standard_deviation_multiplier exceeds serialization resource bounds"
+        )
+
+
+def _fixed_point_render_length(
+    coefficient_digits: tuple[int, ...], stored_exponent: int
+) -> int:
+    """Return the allocation length of ``format(value, 'f')`` without formatting."""
+    coefficient_length = len(coefficient_digits)
+    if stored_exponent >= 0:
+        return coefficient_length + stored_exponent
+    decimal_point_position = coefficient_length + stored_exponent
+    if decimal_point_position > 0:
+        return coefficient_length + 1
+    return 2 - decimal_point_position + coefficient_length
 
 
 def _validate_source_field(value: object) -> None:
