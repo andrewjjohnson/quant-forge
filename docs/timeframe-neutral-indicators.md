@@ -12,6 +12,8 @@ QF-36 exposes the existing SMA, EMA, Wilder RSI, and Wilder ATR definitions
 through that backend while preserving their historical native configurations.
 QF-37 applies the same contract to directional movement/ADX and Bollinger
 Bands, including generic named normalization for multiple backend outputs.
+QF-38 adds descriptive parity tooling over that contract; it does not add
+backend-specific indicator classes or alter either backend's mathematics.
 
 ## Standard-indicator backend boundary
 
@@ -41,6 +43,42 @@ A future library integrates by implementing one backend adapter and registering
 its mappings for normalized definitions. It does not require classes such as
 `FutureEMA` or `TalibEMA`. Dynamic third-party discovery is deliberately out of
 scope; registries are assembled explicitly.
+
+## Backend parity comparisons
+
+`compare_indicator_backends()` runs one `StandardIndicatorDefinition` against
+two explicit backend IDs over the same canonical bars. The comparison binds the
+QF-3 bar fingerprint and complete canonical timeframe configuration, then
+records normalized parameters, output names, tolerances, and exact backend
+wrapper/runtime versions. `compare_standard_indicator_backends()` exposes the
+same operation for an already constructed `IndicatorComparisonSource`.
+
+Each normalized output name is compared independently. Backend tuple positions
+are never used for matching. The field report includes each backend's first
+valid timestamp, leading unavailable count, valid count, overlapping valid
+count, and timestamps available on only one side. Those availability records
+are explicitly excluded from numerical-divergence counts, so different
+lookbacks are visible without being mislabeled as formula errors.
+
+For overlapping finite values, absolute difference is `abs(a - b)`. Symmetric
+relative difference is `abs(a - b) / max(abs(a), abs(b))`; it is unavailable
+when both values are zero. A row diverges when:
+
+```text
+absolute_difference > absolute_tolerance
+                      + relative_tolerance * max(abs(a), abs(b))
+```
+
+Mean and median statistics use a fixed 34-digit Decimal, round-half-even
+policy. Appending future bars can add later rows but cannot revise an already
+reported historical pair. `export_indicator_backend_comparison()` writes an
+immutable directory containing `comparison.json`, `field_summary.csv`,
+`divergences.csv`, and `summary.txt`; byte-for-byte validation is available
+through `validate_indicator_backend_comparison_export()`.
+
+The artifacts are comparison evidence only. Backend A/B ordering is not a
+ranking, no backend is promoted, and legacy omitted-backend configurations
+continue to resolve through the unchanged `native_v1` compatibility path.
 
 ## Contracts
 

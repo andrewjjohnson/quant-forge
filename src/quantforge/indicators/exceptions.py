@@ -37,6 +37,10 @@ class IndicatorBackendVersionError(IndicatorError):
     """A serialized backend version differs from the installed implementation."""
 
 
+class IndicatorComparisonError(IndicatorError):
+    """A backend comparison or its immutable export is invalid."""
+
+
 class IndicatorSourceError(IndicatorError):
     """A timeframe-bound indicator source is missing or incompatible."""
 

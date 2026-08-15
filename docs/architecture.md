@@ -307,6 +307,9 @@ and Wilder ATR definitions through that boundary. QF-37 adds directional
 movement/ADX and Bollinger Bands through the same definitions and generic
 named multi-output normalization. `native_v1` retains historical QuantForge
 math; `talib_v1` delegates explicitly selected standard math to pinned TA-Lib.
+QF-38 compares two explicit adapters below the same definition and reports
+availability, numerical, and optional prediction-study impact without selecting
+or migrating a backend.
 Backend adapters, not prediction, feature, data, strategy, or backtesting
 packages, import or translate library APIs. See
 `docs/strategy-contracts.md`,
@@ -325,6 +328,8 @@ Responsibilities:
 - resolve stable backend identities and bind exact wrapper and native runtime
   library versions plus mapped function names into new explicit-backend
   configuration identities;
+- compare normalized named outputs deterministically while keeping warm-up and
+  unavailable-region differences separate from overlapping formula differences;
 - reject undeclared timeframes, changed lineage, and implicit developing-bar
   exposure;
 - avoid mutation of inputs.

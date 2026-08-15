@@ -16,6 +16,7 @@ from quantforge.indicators import (
     POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT,
     WILDER_RSI_OUTPUT,
     Indicator,
+    IndicatorBackendRegistry,
     WilderDirectionalMovement,
     WilderDirectionalMovementParameters,
     WilderRelativeStrengthIndex,
@@ -94,14 +95,24 @@ class OvernightGapPredictionStrategy:
     name = "overnight_gap_direction"
     implementation_version = "1"
 
-    def __init__(self, parameters: OvernightGapPredictionParameters) -> None:
+    def __init__(
+        self,
+        parameters: OvernightGapPredictionParameters,
+        *,
+        backend_id: str | None = None,
+        backend_registry: IndicatorBackendRegistry | None = None,
+    ) -> None:
         self._parameters = parameters
         self._required_indicators: tuple[Indicator, ...] = (
             WilderRelativeStrengthIndex(
-                WilderRelativeStrengthIndexParameters(parameters.rsi_period)
+                WilderRelativeStrengthIndexParameters(parameters.rsi_period),
+                backend_id=backend_id,
+                backend_registry=backend_registry,
             ),
             WilderDirectionalMovement(
-                WilderDirectionalMovementParameters(parameters.adx_period)
+                WilderDirectionalMovementParameters(parameters.adx_period),
+                backend_id=backend_id,
+                backend_registry=backend_registry,
             ),
         )
 

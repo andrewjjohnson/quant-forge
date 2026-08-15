@@ -269,6 +269,47 @@ and provenance to `run_prediction_study`, then adapts the typed gap outcome and
 directional evaluation back into that public result. Existing callers remain
 runnable and numerical results remain directly comparable.
 
+### Native/TA-Lib overnight-gap compatibility example
+
+QF-38 uses the unchanged `OvernightGapPredictionStrategy` as the first
+end-to-end backend-impact example. Omitting `backend_id` still produces the
+exact legacy native configuration. The comparison helper instead constructs
+two explicit strategies with the same logical parameters and dataset, then
+reports RSI and directional/ADX value differences together with prediction
+dates present on only one backend, matched directions, changed directions,
+accuracy, and average prediction-signed return.
+Date and direction counts include generated end-of-data signals; metric sample
+counts remain limited to predictions with an available next-session outcome.
+
+```python
+from decimal import Decimal
+from pathlib import Path
+
+from quantforge.data import MarketDataCache
+from quantforge.indicators import IndicatorComparisonTolerances
+from quantforge.prediction import (
+    export_overnight_gap_backend_comparison,
+    run_overnight_gap_backend_comparison,
+)
+
+dataset = MarketDataCache(Path("data/market-data")).load("<dataset-id>")
+result = run_overnight_gap_backend_comparison(
+    dataset,
+    tolerances=IndicatorComparisonTolerances(
+        absolute=Decimal("1e-12"),
+        relative=Decimal("1e-12"),
+    ),
+)
+artifact_path = export_overnight_gap_backend_comparison(
+    result, Path("reports/backend-comparisons")
+)
+```
+
+The example writes deterministic JSON, CSV, and text artifacts. Its signed
+return and accuracy differences remain prediction-study statistics, not fills,
+orders, option returns, or evidence that one backend is superior. It performs
+no migration and does not change existing native study identities or results.
+
 The pre-merge schema-v2 integrity fix adds QF-3 retrieval time and provider
 timezone to prediction manifests. The legacy gap engine/result versions and the
 generic study engine therefore advance to `2`; the generic engine also enforces
