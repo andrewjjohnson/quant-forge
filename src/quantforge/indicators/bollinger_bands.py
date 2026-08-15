@@ -1,26 +1,33 @@
 """Full-window, population-standard-deviation Bollinger Bands."""
 
-from collections import deque
 from dataclasses import dataclass
 from decimal import (
     ROUND_HALF_EVEN,
-    Context,
     Decimal,
     DecimalException,
     DivisionByZero,
     InvalidOperation,
     Overflow,
-    localcontext,
 )
-from fractions import Fraction
 from typing import cast
 
 from quantforge.configuration import (
+    Primitive,
     PrimitiveMapping,
+    PrimitiveMappingSnapshot,
     configuration_identity,
     decimal_to_primitive,
 )
 from quantforge.data.models import MarketDataset
+from quantforge.indicators.backends import (
+    NATIVE_INDICATOR_BACKEND,
+    IndicatorBackend,
+    IndicatorBackendIdentity,
+    IndicatorBackendRegistry,
+    IndicatorComputationRequest,
+    StandardIndicatorDefinition,
+    default_indicator_backend_registry,
+)
 from quantforge.indicators.base import (
     DevelopingBarSupport,
     IndicatorBar,
@@ -30,13 +37,13 @@ from quantforge.indicators.base import (
     validate_market_input,
 )
 from quantforge.indicators.exceptions import (
-    IndicatorCalculationError,
+    IndicatorBackendVersionError,
+    InvalidIndicatorBackendError,
     InvalidIndicatorParametersError,
 )
 from quantforge.indicators.models import (
     IndicatorFieldOutput,
     IndicatorOutput,
-    IndicatorValue,
     MarketField,
 )
 
@@ -107,8 +114,32 @@ class BollingerBands:
     missing_value = None
     developing_bar_support = DevelopingBarSupport.DEVELOPING_AS_OF
 
-    def __init__(self, parameters: BollingerBandsParameters) -> None:
+    def __init__(
+        self,
+        parameters: BollingerBandsParameters,
+        *,
+        backend_id: str | None = None,
+        backend_registry: IndicatorBackendRegistry | None = None,
+    ) -> None:
         self._parameters = parameters
+        self._legacy_native_configuration = backend_id is None
+        selected_backend_id = _validate_backend_id(
+            NATIVE_INDICATOR_BACKEND if backend_id is None else backend_id
+        )
+        self._definition = StandardIndicatorDefinition(
+            name=self.name,
+            parameters=PrimitiveMappingSnapshot.capture(parameters.to_primitive()),
+            input_fields=(parameters.source_field,),
+            output_fields=self.output_fields,
+        )
+        registry = backend_registry or default_indicator_backend_registry()
+        self._backend: IndicatorBackend = registry.resolve(selected_backend_id)
+        self._backend_identity = self._backend.identity_for(self._definition)
+        if self._backend_identity.backend_id != selected_backend_id:
+            raise InvalidIndicatorBackendError(
+                "indicator backend identity does not match the selected registry id: "
+                f"{selected_backend_id}"
+            )
 
     @property
     def parameters(self) -> IndicatorParameters:
@@ -123,8 +154,23 @@ class BollingerBands:
         """Consecutive observations required for the first complete window."""
         return self._parameters.period
 
+    @property
+    def standard_definition(self) -> StandardIndicatorDefinition:
+        """Return the canonical Bollinger definition shared by every backend."""
+        return self._definition
+
+    @property
+    def backend_identity(self) -> IndicatorBackendIdentity:
+        """Return the resolved backend and exact library identity."""
+        return self._backend_identity
+
+    @property
+    def uses_legacy_native_configuration(self) -> bool:
+        """Whether serialization intentionally preserves the pre-QF-37 identity."""
+        return self._legacy_native_configuration
+
     def configuration(self) -> PrimitiveMapping:
-        return {
+        legacy_configuration: PrimitiveMapping = {
             "component_type": "indicator",
             "component_name": self.name,
             "contract_version": "1",
@@ -187,10 +233,95 @@ class BollingerBands:
                 },
             },
         }
+        if self._legacy_native_configuration:
+            return legacy_configuration
+        normalized_input_fields: list[Primitive] = [
+            field.value for field in self._definition.input_fields
+        ]
+        normalized_parameter_names: list[Primitive] = []
+        normalized_parameter_names.extend(sorted(self._parameters.to_primitive()))
+        return {
+            "component_type": "indicator",
+            "component_name": self.name,
+            "contract_version": "2",
+            "definition_version": self.implementation_version,
+            "parameters": self._parameters.to_primitive(),
+            "required_fields": [field.value for field in sorted(self.required_fields)],
+            "warm_up_observations": self.warm_up_observations,
+            "output_fields": list(self.output_fields),
+            "missing_value": None,
+            "backend": self._backend_identity.to_primitive(),
+            "normalization": {
+                "input_fields": normalized_input_fields,
+                "parameter_names": normalized_parameter_names,
+                "output_fields": list(self.output_fields),
+                "unavailable_output": None,
+            },
+        }
 
     @property
     def configuration_id(self) -> str:
         return configuration_identity(self.configuration())
+
+    @classmethod
+    def from_configuration(
+        cls,
+        configuration: PrimitiveMapping,
+        *,
+        backend_registry: IndicatorBackendRegistry | None = None,
+    ) -> "BollingerBands":
+        """Restore legacy/native or explicit backend semantics without drift."""
+        parameters_value = configuration.get("parameters")
+        if not isinstance(parameters_value, dict):
+            raise InvalidIndicatorBackendError(
+                "serialized Bollinger Bands parameters must be an object"
+            )
+        period = parameters_value.get("period")
+        source_field = parameters_value.get("source_field")
+        multiplier = parameters_value.get("standard_deviation_multiplier")
+        if isinstance(period, bool) or not isinstance(period, int):
+            raise InvalidIndicatorBackendError(
+                "serialized Bollinger Bands period must be an integer"
+            )
+        if not isinstance(source_field, str) or not isinstance(multiplier, str):
+            raise InvalidIndicatorBackendError(
+                "serialized Bollinger Bands field or multiplier is invalid"
+            )
+        try:
+            normalized_source_field = MarketField(source_field)
+            normalized_multiplier = Decimal(multiplier)
+        except (InvalidOperation, ValueError) as error:
+            raise InvalidIndicatorBackendError(
+                "serialized Bollinger Bands parameters are invalid"
+            ) from error
+        backend_value = configuration.get("backend")
+        if backend_value is None:
+            backend_id = None
+        elif isinstance(backend_value, dict):
+            backend_id = backend_value.get("backend_id")
+            if not isinstance(backend_id, str):
+                raise InvalidIndicatorBackendError(
+                    "serialized Bollinger Bands backend id is invalid"
+                )
+        else:
+            raise InvalidIndicatorBackendError(
+                "serialized Bollinger Bands backend must be an object"
+            )
+        indicator = cls(
+            BollingerBandsParameters(
+                period,
+                normalized_multiplier,
+                normalized_source_field,
+            ),
+            backend_id=backend_id,
+            backend_registry=backend_registry,
+        )
+        if indicator.configuration() != configuration:
+            raise IndicatorBackendVersionError(
+                "serialized Bollinger Bands configuration does not match the "
+                "installed backend"
+            )
+        return indicator
 
     def calculate(self, dataset: MarketDataset) -> IndicatorOutput:
         """Return causally aligned bands without partial or filled windows."""
@@ -210,221 +341,25 @@ class BollingerBands:
     ) -> tuple[IndicatorFieldOutput, ...]:
         """Calculate against canonical bars whose timeframe is validated upstream."""
         validate_indicator_bars(bars, self.required_fields, require_finite=False)
-        source = tuple(
-            value if value.is_finite() else None
-            for bar in bars
-            for value in (
-                cast(Decimal, getattr(bar, self._parameters.source_field.value)),
+        result = self._backend.compute(
+            IndicatorComputationRequest(self._definition, bars)
+        )
+        if result.observation_count != len(bars):
+            raise InvalidIndicatorBackendError(
+                "indicator backend result observation count does not match the "
+                "canonical input bars"
             )
-        )
-        middle_values: list[IndicatorValue] = []
-        upper_values: list[IndicatorValue] = []
-        lower_values: list[IndicatorValue] = []
-        bandwidth_values: list[IndicatorValue] = []
-        period = self._parameters.period
-        multiplier = self._parameters.standard_deviation_multiplier
-        window: deque[Decimal | None] = deque()
-        missing_count = 0
-        statistics_are_valid = False
-        rolling_sum: Fraction | None = None
-        rolling_sum_of_squares: Fraction | None = None
-
-        try:
-            with localcontext(_arithmetic_context()):
-                for current in source:
-                    window_was_full = len(window) == period
-                    outgoing = window.popleft() if window_was_full else None
-                    if window_was_full and outgoing is None:
-                        missing_count -= 1
-                    window.append(current)
-                    if current is None:
-                        missing_count += 1
-
-                    if len(window) < period or missing_count:
-                        statistics_are_valid = False
-                        _append_unavailable(
-                            middle_values,
-                            upper_values,
-                            lower_values,
-                            bandwidth_values,
-                        )
-                        continue
-
-                    current_value = cast(Decimal, current)
-                    if statistics_are_valid and window_was_full:
-                        rolling_sum, rolling_sum_of_squares = _roll_window_moments(
-                            previous_sum=cast(Fraction, rolling_sum),
-                            previous_sum_of_squares=cast(
-                                Fraction, rolling_sum_of_squares
-                            ),
-                            outgoing=cast(Decimal, outgoing),
-                            incoming=current_value,
-                        )
-                    else:
-                        rolling_sum, rolling_sum_of_squares = _rebuild_window_moments(
-                            cast(tuple[Decimal, ...], tuple(window))
-                        )
-                    statistics_are_valid = True
-                    middle, population_variance = _decimal_window_statistics(
-                        total=rolling_sum,
-                        sum_of_squares=rolling_sum_of_squares,
-                        period=period,
-                    )
-                    _append_bands(
-                        middle=middle,
-                        population_variance=population_variance,
-                        multiplier=multiplier,
-                        middle_values=middle_values,
-                        upper_values=upper_values,
-                        lower_values=lower_values,
-                        bandwidth_values=bandwidth_values,
-                    )
-        except DecimalException as error:
-            raise IndicatorCalculationError(
-                "Bollinger Bands arithmetic failed under its configured decimal policy"
-            ) from error
-
-        return (
-            IndicatorFieldOutput(BOLLINGER_MIDDLE_BAND_OUTPUT, tuple(middle_values)),
-            IndicatorFieldOutput(BOLLINGER_UPPER_BAND_OUTPUT, tuple(upper_values)),
-            IndicatorFieldOutput(BOLLINGER_LOWER_BAND_OUTPUT, tuple(lower_values)),
-            IndicatorFieldOutput(BOLLINGER_BANDWIDTH_OUTPUT, tuple(bandwidth_values)),
-        )
-
-
-def _rebuild_window_moments(
-    observations: tuple[Decimal, ...],
-) -> tuple[Fraction, Fraction]:
-    """Establish exact moments after warm-up or a missing-value gap."""
-    total = Fraction()
-    sum_of_squares = Fraction()
-    for observation in observations:
-        exact_observation = _bounded_fraction(observation)
-        total += exact_observation
-        sum_of_squares += exact_observation * exact_observation
-    return total, sum_of_squares
-
-
-def _roll_window_moments(
-    *,
-    previous_sum: Fraction,
-    previous_sum_of_squares: Fraction,
-    outgoing: Decimal,
-    incoming: Decimal,
-) -> tuple[Fraction, Fraction]:
-    """Replace one observation in the exact moments without rescanning the window."""
-    outgoing_fraction = _bounded_fraction(outgoing)
-    incoming_fraction = _bounded_fraction(incoming)
-    return (
-        previous_sum - outgoing_fraction + incoming_fraction,
-        previous_sum_of_squares
-        - outgoing_fraction * outgoing_fraction
-        + incoming_fraction * incoming_fraction,
-    )
-
-
-def _decimal_window_statistics(
-    *, total: Fraction, sum_of_squares: Fraction, period: int
-) -> tuple[Decimal, Decimal]:
-    """Round exact window moments once at the declared Decimal boundary."""
-    divisor = Fraction(period)
-    exact_middle = total / divisor
-    exact_population_variance = sum_of_squares / divisor - exact_middle * exact_middle
-    return (
-        _fraction_to_decimal(exact_middle),
-        _fraction_to_decimal(exact_population_variance),
-    )
-
-
-def _fraction_to_decimal(value: Fraction) -> Decimal:
-    return Decimal(value.numerator) / Decimal(value.denominator)
-
-
-def _bounded_fraction(value: Decimal) -> Fraction:
-    """Reject resource-unbounded Decimal encodings before exact conversion."""
-    _, coefficient_digits, stored_exponent = value.as_tuple()
-    if not isinstance(stored_exponent, int):
-        raise IndicatorCalculationError(
-            "Bollinger Bands exact moments require a finite Decimal source"
-        )
-    adjusted_exponent = value.adjusted()
-    if (
-        len(coefficient_digits) > _EXACT_MOMENT_MAX_COEFFICIENT_DIGITS
-        or _source_integer_digit_bound(coefficient_digits, stored_exponent)
-        > _EXACT_MOMENT_MAX_SOURCE_INTEGER_DIGITS
-        or stored_exponent < _DECIMAL_EMIN
-        or stored_exponent > _DECIMAL_EMAX
-        or adjusted_exponent < _DECIMAL_EMIN
-        or adjusted_exponent > _DECIMAL_EMAX
-    ):
-        raise IndicatorCalculationError(
-            "Bollinger Bands source exceeds exact-moment resource bounds"
-        )
-    return Fraction(value)
-
-
-def _source_integer_digit_bound(
-    coefficient_digits: tuple[int, ...], stored_exponent: int
-) -> int:
-    """Bound either integer component of the exact source fraction."""
-    if not any(coefficient_digits):
-        return 1
-    trailing_zero_count = 0
-    for digit in reversed(coefficient_digits):
-        if digit:
-            break
-        trailing_zero_count += 1
-    normalized_digit_count = len(coefficient_digits) - trailing_zero_count
-    normalized_exponent = stored_exponent + trailing_zero_count
-    numerator_digits = normalized_digit_count + max(normalized_exponent, 0)
-    denominator_digits = 1 + max(-normalized_exponent, 0)
-    return max(numerator_digits, denominator_digits)
-
-
-def _append_bands(
-    *,
-    middle: Decimal,
-    population_variance: Decimal,
-    multiplier: Decimal,
-    middle_values: list[IndicatorValue],
-    upper_values: list[IndicatorValue],
-    lower_values: list[IndicatorValue],
-    bandwidth_values: list[IndicatorValue],
-) -> None:
-    standard_deviation = population_variance.sqrt()
-    offset = multiplier * standard_deviation
-    upper = middle + offset
-    lower = middle - offset
-    width = upper - lower
-    if width.is_zero():
-        bandwidth: IndicatorValue = Decimal(0)
-    elif middle.is_zero():
-        bandwidth = None
-    else:
-        bandwidth = width / middle
-    middle_values.append(middle)
-    upper_values.append(upper)
-    lower_values.append(lower)
-    bandwidth_values.append(bandwidth)
-
-
-def _append_unavailable(*outputs: list[IndicatorValue]) -> None:
-    for output in outputs:
-        output.append(None)
-
-
-def _arithmetic_context() -> Context:
-    """Build the complete deterministic Decimal policy for Bollinger arithmetic."""
-    return Context(
-        prec=_DECIMAL_PRECISION,
-        rounding=_DECIMAL_ROUNDING,
-        Emin=_DECIMAL_EMIN,
-        Emax=_DECIMAL_EMAX,
-        capitals=_DECIMAL_CAPITALS,
-        clamp=_DECIMAL_CLAMP,
-        flags=[],
-        traps=list(_DECIMAL_TRAPS),
-    )
+        if (
+            result.backend_identity != self._backend_identity
+            or result.definition_name != self.name
+            or result.normalized_parameters != self._definition.parameters
+            or result.normalized_input_fields != self._definition.input_fields
+            or tuple(field.name for field in result.fields) != self.output_fields
+        ):
+            raise InvalidIndicatorBackendError(
+                "indicator backend result metadata changed during calculation"
+            )
+        return result.fields
 
 
 def _validate_period_type(value: object) -> None:
@@ -474,6 +409,14 @@ def _validate_source_field(value: object) -> None:
         raise InvalidIndicatorParametersError(
             "source_field must be a normalized market field"
         )
+
+
+def _validate_backend_id(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise InvalidIndicatorBackendError(
+            "indicator backend id must be a non-empty string"
+        )
+    return value
 
 
 __all__ = [

@@ -2,7 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-08-14
-- Jira: [QF-35](https://frostfiredigital-37308542.atlassian.net/browse/QF-35)
+- Jira: [QF-35](https://frostfiredigital-37308542.atlassian.net/browse/QF-35),
+  [QF-37](https://frostfiredigital-37308542.atlassian.net/browse/QF-37)
 
 ## Context
 
@@ -22,16 +23,18 @@ boundary. A stable-id registry resolves adapters below it.
 
 QF-35 defines `native_v1` and `talib_v1` and initially maps EMA. QF-36 extends
 the same adapters and backend-neutral public classes to SMA, Wilder RSI, and
-Wilder ATR. Each adapter owns
+Wilder ATR. QF-37 extends them to directional movement/ADX and Bollinger Bands.
+Multiple library outputs receive backend-local names before they map to stable
+QuantForge names, so tuple positions remain adapter details. Each adapter owns
 input extraction, parameter translation, library invocation, output
 normalization, and its stable function identity. TA-Lib is pinned to `0.7.1`.
 Explicit-backend configurations bind the backend id, backend-contract version,
 Python-wrapper name and exact version, native runtime library name and exact
 version, and mapped function name.
 
-The omitted-backend EMA constructor and serialized QF-23 configuration remain
-unchanged and resolve explicitly to `native_v1`. A historical mapping without a
-`backend` field deserializes through that compatibility path. New explicit
+Omitted-backend constructors and serialized historical configurations remain
+unchanged and resolve explicitly to `native_v1`. A historical mapping without
+a `backend` field deserializes through that compatibility path. New explicit
 backend mappings use a new configuration contract and fail closed if the
 installed identity does not reproduce the serialized mapping.
 
@@ -54,8 +57,9 @@ through `100000` at configuration time. Larger periods remain valid for the
 historical native backend and are rejected only when `talib_v1` is selected.
 
 QF-36 maps the existing core SMA, EMA, Wilder RSI, and Wilder ATR definitions.
-Bollinger Bands and directional movement/ADX remain separate migration scope,
-and dynamic third-party plugin loading is not introduced.
+QF-37 maps directional movement to one normalized three-output request and
+Bollinger Bands to normalized middle/upper/lower/bandwidth outputs. Dynamic
+third-party plugin loading is not introduced.
 
 ## Alternatives considered
 
@@ -83,3 +87,8 @@ QF-36 adds the same coverage for SMA, Wilder RSI, and Wilder ATR, including
 legacy identity fixtures, explicit-backend round trips, TA-Lib period limits,
 representative float64 comparisons, flat-series RSI differences, and
 append-future causality.
+
+QF-37 adds named multi-output normalization, directional single-call-count
+coverage, native fixture and overnight-study compatibility, Bollinger derived
+output coverage, input immutability, backend-specific initialization and
+lookback expectations, timeframe lineage metadata, and append-future causality.

@@ -30,35 +30,122 @@ _SMA_NAME = "simple_moving_average"
 _EMA_NAME = "exponential_moving_average"
 _RSI_NAME = "wilder_relative_strength_index"
 _ATR_NAME = "wilder_average_true_range"
+_DIRECTIONAL_MOVEMENT_NAME = "wilder_directional_movement"
+_BOLLINGER_NAME = "bollinger_bands"
 _MAXIMUM_PERIOD = 100_000
 type _TalibOutput = npt.NDArray[np.float64] | tuple[npt.NDArray[np.float64], ...]
 type _TalibFunction = Callable[..., _TalibOutput]
 type _ParameterValidator = Callable[[PrimitiveMapping], None]
+type _ParameterNormalizer = Callable[[object], int | float]
+type _DerivedOutput = Callable[
+    [Mapping[str, npt.NDArray[np.float64]]], npt.NDArray[np.float64]
+]
 
 
 @dataclass(frozen=True, slots=True)
 class _TalibMapping:
     function_name: str
     function: _TalibFunction
-    parameter_names: Mapping[str, str]
+    parameter_mappings: tuple[tuple[str, tuple[str, ...], _ParameterNormalizer], ...]
     input_parameter_names: frozenset[str]
     input_fields: tuple[str, ...] | None
     source_field_parameter: str | None
-    output_names: tuple[str, ...]
-    has_unstable_period: bool
+    backend_output_names: tuple[str, ...]
+    output_sources: tuple[tuple[str, str], ...]
+    derived_outputs: tuple[tuple[str, _DerivedOutput], ...]
+    unstable_function_names: tuple[str, ...]
     validate_parameters: _ParameterValidator
+
+    @property
+    def output_names(self) -> tuple[str, ...]:
+        return tuple(name for name, _ in self.output_sources) + tuple(
+            name for name, _ in self.derived_outputs
+        )
+
+
+def _integer_parameter(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("TA-Lib integer parameter is invalid")
+    return value
+
+
+def _decimal_parameter(value: object) -> float:
+    if not isinstance(value, str):
+        raise TypeError("TA-Lib decimal parameter is invalid")
+    converted = float(value)
+    if not isfinite(converted):
+        raise ValueError("TA-Lib decimal parameter cannot be represented as float64")
+    return converted
+
+
+def _talib_directional_movement(
+    high: npt.NDArray[np.float64],
+    low: npt.NDArray[np.float64],
+    close: npt.NDArray[np.float64],
+    *,
+    timeperiod: int,
+) -> tuple[npt.NDArray[np.float64], ...]:
+    plus_di = cast(_TalibFunction, talib.PLUS_DI)(
+        high, low, close, timeperiod=timeperiod
+    )
+    minus_di = cast(_TalibFunction, talib.MINUS_DI)(
+        high, low, close, timeperiod=timeperiod
+    )
+    adx = cast(_TalibFunction, talib.ADX)(high, low, close, timeperiod=timeperiod)
+    if not all(isinstance(output, np.ndarray) for output in (plus_di, minus_di, adx)):
+        raise TypeError("TA-Lib directional movement returned invalid outputs")
+    return cast(tuple[npt.NDArray[np.float64], ...], (plus_di, minus_di, adx))
+
+
+def _bollinger_bandwidth(
+    outputs: Mapping[str, npt.NDArray[np.float64]],
+) -> npt.NDArray[np.float64]:
+    upper = outputs["upper"]
+    middle = outputs["middle"]
+    lower = outputs["lower"]
+    width = upper - lower
+    bandwidth = np.full(middle.shape, np.nan, dtype=np.float64)
+    zero_width = np.isfinite(width) & (width == 0)
+    defined = np.isfinite(width) & np.isfinite(middle) & (middle != 0)
+    bandwidth[zero_width] = 0
+    bandwidth[defined] = width[defined] / middle[defined]
+    return bandwidth
+
+
+def _validate_bollinger_parameters(parameters: PrimitiveMapping) -> None:
+    _validate_period_parameters(
+        parameters,
+        parameter_name="period",
+        indicator_label="Bollinger Bands",
+        minimum_period=2,
+    )
+    raw_multiplier = parameters.get("standard_deviation_multiplier")
+    try:
+        multiplier = _decimal_parameter(raw_multiplier)
+    except (TypeError, ValueError) as error:
+        raise UnsupportedIndicatorBackendError(
+            f"{TALIB_INDICATOR_BACKEND} Bollinger Bands multiplier must be a "
+            "positive finite float64 value"
+        ) from error
+    if multiplier <= 0:
+        raise UnsupportedIndicatorBackendError(
+            f"{TALIB_INDICATOR_BACKEND} Bollinger Bands multiplier must be a "
+            "positive finite float64 value"
+        )
 
 
 _MAPPINGS = {
     _SMA_NAME: _TalibMapping(
         function_name="SMA",
         function=cast(_TalibFunction, talib.SMA),
-        parameter_names={"window": "timeperiod"},
+        parameter_mappings=(("window", ("timeperiod",), _integer_parameter),),
         input_parameter_names=frozenset(("source_field",)),
         input_fields=None,
         source_field_parameter="source_field",
-        output_names=("simple_moving_average",),
-        has_unstable_period=False,
+        backend_output_names=("real",),
+        output_sources=(("simple_moving_average", "real"),),
+        derived_outputs=(),
+        unstable_function_names=(),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters, parameter_name="window", indicator_label="SMA"
         ),
@@ -66,12 +153,14 @@ _MAPPINGS = {
     _EMA_NAME: _TalibMapping(
         function_name="EMA",
         function=cast(_TalibFunction, talib.EMA),
-        parameter_names={"period": "timeperiod"},
+        parameter_mappings=(("period", ("timeperiod",), _integer_parameter),),
         input_parameter_names=frozenset(("source_field",)),
         input_fields=None,
         source_field_parameter="source_field",
-        output_names=("exponential_moving_average",),
-        has_unstable_period=True,
+        backend_output_names=("real",),
+        output_sources=(("exponential_moving_average", "real"),),
+        derived_outputs=(),
+        unstable_function_names=("EMA",),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters, parameter_name="period", indicator_label="EMA"
         ),
@@ -79,12 +168,14 @@ _MAPPINGS = {
     _RSI_NAME: _TalibMapping(
         function_name="RSI",
         function=cast(_TalibFunction, talib.RSI),
-        parameter_names={"period": "timeperiod"},
+        parameter_mappings=(("period", ("timeperiod",), _integer_parameter),),
         input_parameter_names=frozenset(),
         input_fields=("close",),
         source_field_parameter=None,
-        output_names=("wilder_rsi",),
-        has_unstable_period=True,
+        backend_output_names=("real",),
+        output_sources=(("wilder_rsi", "real"),),
+        derived_outputs=(),
+        unstable_function_names=("RSI",),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters,
             parameter_name="period",
@@ -95,15 +186,63 @@ _MAPPINGS = {
     _ATR_NAME: _TalibMapping(
         function_name="ATR",
         function=cast(_TalibFunction, talib.ATR),
-        parameter_names={"period": "timeperiod"},
+        parameter_mappings=(("period", ("timeperiod",), _integer_parameter),),
         input_parameter_names=frozenset(),
         input_fields=("high", "low", "close"),
         source_field_parameter=None,
-        output_names=("wilder_average_true_range",),
-        has_unstable_period=True,
+        backend_output_names=("real",),
+        output_sources=(("wilder_average_true_range", "real"),),
+        derived_outputs=(),
+        unstable_function_names=("ATR",),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters, parameter_name="period", indicator_label="ATR"
         ),
+    ),
+    _DIRECTIONAL_MOVEMENT_NAME: _TalibMapping(
+        function_name="PLUS_DI+MINUS_DI+ADX",
+        function=_talib_directional_movement,
+        parameter_mappings=(("period", ("timeperiod",), _integer_parameter),),
+        input_parameter_names=frozenset(),
+        input_fields=("high", "low", "close"),
+        source_field_parameter=None,
+        backend_output_names=("plus_di", "minus_di", "adx"),
+        output_sources=(
+            ("positive_directional_indicator", "plus_di"),
+            ("negative_directional_indicator", "minus_di"),
+            ("average_directional_index", "adx"),
+        ),
+        derived_outputs=(),
+        unstable_function_names=("PLUS_DI", "MINUS_DI", "ADX"),
+        validate_parameters=lambda parameters: _validate_period_parameters(
+            parameters,
+            parameter_name="period",
+            indicator_label="directional movement",
+            minimum_period=2,
+        ),
+    ),
+    _BOLLINGER_NAME: _TalibMapping(
+        function_name="BBANDS",
+        function=cast(_TalibFunction, talib.BBANDS),
+        parameter_mappings=(
+            ("period", ("timeperiod",), _integer_parameter),
+            (
+                "standard_deviation_multiplier",
+                ("nbdevup", "nbdevdn"),
+                _decimal_parameter,
+            ),
+        ),
+        input_parameter_names=frozenset(("source_field",)),
+        input_fields=None,
+        source_field_parameter="source_field",
+        backend_output_names=("upper", "middle", "lower"),
+        output_sources=(
+            ("bollinger_middle_band", "middle"),
+            ("bollinger_upper_band", "upper"),
+            ("bollinger_lower_band", "lower"),
+        ),
+        derived_outputs=(("bollinger_bandwidth", _bollinger_bandwidth),),
+        unstable_function_names=(),
+        validate_parameters=_validate_bollinger_parameters,
     ),
 }
 
@@ -138,8 +277,9 @@ class TalibIndicatorBackend:
             _float_input(request, field.value) for field in definition.input_fields
         )
         translated_parameters = {
-            backend_name: parameters[normalized_name]
-            for normalized_name, backend_name in mapping.parameter_names.items()
+            backend_name: normalize(parameters[normalized_name])
+            for normalized_name, backend_names, normalize in mapping.parameter_mappings
+            for backend_name in backend_names
         }
         try:
             raw_output = mapping.function(*inputs, **translated_parameters)
@@ -150,14 +290,30 @@ class TalibIndicatorBackend:
         finally:
             _validate_global_state(mapping)
         raw_arrays = (raw_output,) if isinstance(raw_output, np.ndarray) else raw_output
-        if len(raw_arrays) != len(mapping.output_names):
+        if len(raw_arrays) != len(mapping.backend_output_names):
             raise IndicatorCalculationError(
                 f"{self.backend_id} returned an unexpected output count for "
                 f"indicator: {definition.name}"
             )
+        backend_outputs = dict(
+            zip(mapping.backend_output_names, raw_arrays, strict=True)
+        )
+        normalized_outputs = {
+            normalized_name: backend_outputs[backend_name]
+            for normalized_name, backend_name in mapping.output_sources
+        }
+        normalized_outputs.update(
+            {
+                normalized_name: derive(backend_outputs)
+                for normalized_name, derive in mapping.derived_outputs
+            }
+        )
         fields = tuple(
-            IndicatorFieldOutput(name, _normalize_array(values, len(request.bars)))
-            for name, values in zip(mapping.output_names, raw_arrays, strict=True)
+            IndicatorFieldOutput(
+                name,
+                _normalize_array(normalized_outputs[name], len(request.bars)),
+            )
+            for name in definition.output_fields
         )
         return IndicatorComputationResult(
             definition_name=definition.name,
@@ -219,10 +375,11 @@ def _validate_global_state(mapping: _TalibMapping) -> None:
         talib.get_unstable_period,  # pyright: ignore[reportUnknownMemberType]
     )
     compatibility = get_compatibility()
-    unstable_period = (
-        get_unstable_period(mapping.function_name) if mapping.has_unstable_period else 0
+    unstable_periods = tuple(
+        get_unstable_period(function_name)
+        for function_name in mapping.unstable_function_names
     )
-    if compatibility != 0 or unstable_period != 0:
+    if compatibility != 0 or any(period != 0 for period in unstable_periods):
         raise InvalidIndicatorBackendError(
             "talib_v1 requires TA-Lib default compatibility and zero unstable period"
         )
@@ -233,7 +390,9 @@ def _validate_parameter_mapping(
     mapping: _TalibMapping,
     parameters: PrimitiveMapping,
 ) -> None:
-    mapped = frozenset(mapping.parameter_names).union(mapping.input_parameter_names)
+    mapped = frozenset(
+        normalized_name for normalized_name, _, _ in mapping.parameter_mappings
+    ).union(mapping.input_parameter_names)
     if frozenset(parameters) != mapped:
         raise UnsupportedIndicatorBackendError(
             f"{TALIB_INDICATOR_BACKEND} parameter mapping is unavailable for "

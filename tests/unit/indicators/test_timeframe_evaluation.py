@@ -464,9 +464,17 @@ def test_talib_ema_preserves_timeframe_completion_and_lineage_metadata() -> None
             WilderAverageTrueRangeParameters(3),
             backend_id=TALIB_INDICATOR_BACKEND,
         ),
+        WilderDirectionalMovement(
+            WilderDirectionalMovementParameters(3),
+            backend_id=TALIB_INDICATOR_BACKEND,
+        ),
+        BollingerBands(
+            BollingerBandsParameters(3),
+            backend_id=TALIB_INDICATOR_BACKEND,
+        ),
     ],
 )
-def test_talib_core_indicators_use_the_generic_timeframe_result_shape(
+def test_talib_standard_indicators_use_the_generic_timeframe_result_shape(
     indicator: TimeframeNeutralIndicator,
 ) -> None:
     context = _all_completed_context()

@@ -303,10 +303,12 @@ to canonical QF-20/QF-21 bar series through a timeframe-bound evaluator; it does
 not add a parallel indicator implementation. QF-35 places a backend-neutral
 standard-indicator definition and versioned backend resolver below that QF-22
 timeframe/provenance boundary. QF-36 maps the existing SMA, EMA, Wilder RSI,
-and Wilder ATR definitions through that boundary. `native_v1` retains
-historical QuantForge math; `talib_v1` delegates explicitly selected standard
-math to pinned TA-Lib. Backend adapters, not prediction, feature, data,
-strategy, or backtesting packages, import or translate library APIs. See
+and Wilder ATR definitions through that boundary. QF-37 adds directional
+movement/ADX and Bollinger Bands through the same definitions and generic
+named multi-output normalization. `native_v1` retains historical QuantForge
+math; `talib_v1` delegates explicitly selected standard math to pinned TA-Lib.
+Backend adapters, not prediction, feature, data, strategy, or backtesting
+packages, import or translate library APIs. See
 `docs/strategy-contracts.md`,
 `docs/timeframe-neutral-indicators.md`, and ADR 0013.
 
