@@ -12,9 +12,14 @@ from quantforge.data.models import MarketDataset
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
     TALIB_INDICATOR_BACKEND,
+    IndicatorBackendIdentity,
     IndicatorBackendRegistry,
     IndicatorComparisonTolerances,
+    IndicatorComputationRequest,
+    IndicatorComputationResult,
     NativeIndicatorBackend,
+    StandardIndicatorDefinition,
+    TalibIndicatorBackend,
 )
 from quantforge.prediction import (
     PREDICTION_BACKEND_COMPARISON_ARTIFACT_FILENAMES,
@@ -30,6 +35,30 @@ from quantforge.prediction import (
 )
 
 from ..helpers import make_dataset
+
+
+class CountingBackend:
+    def __init__(
+        self,
+        delegate: NativeIndicatorBackend | TalibIndicatorBackend,
+    ) -> None:
+        self._delegate = delegate
+        self.compute_count = 0
+
+    @property
+    def backend_id(self) -> str:
+        return self._delegate.backend_id
+
+    def identity_for(
+        self, definition: StandardIndicatorDefinition
+    ) -> IndicatorBackendIdentity:
+        return self._delegate.identity_for(definition)
+
+    def compute(
+        self, request: IndicatorComputationRequest
+    ) -> IndicatorComputationResult:
+        self.compute_count += 1
+        return self._delegate.compute(request)
 
 
 def _overnight_dataset() -> MarketDataset:
@@ -284,6 +313,19 @@ def test_overnight_gap_report_quantifies_value_signal_and_metric_impact() -> Non
     )
     assert dataset.metadata.data_sha256 in result.source_snapshot.canonical_json
     assert prediction.matched_prediction_count >= 0
+
+
+def test_overnight_gap_report_reuses_each_compared_backend_computation() -> None:
+    native = CountingBackend(NativeIndicatorBackend())
+    talib = CountingBackend(TalibIndicatorBackend())
+
+    run_overnight_gap_backend_comparison(
+        _overnight_dataset(),
+        backend_registry=IndicatorBackendRegistry((native, talib)),
+    )
+
+    assert native.compute_count == 2
+    assert talib.compute_count == 2
 
 
 def test_overnight_gap_backend_artifacts_are_deterministic(tmp_path: Path) -> None:

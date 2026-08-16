@@ -326,6 +326,8 @@ class IndicatorBackendComparisonResult:
     definition: StandardIndicatorDefinition
     backend_a_identity: IndicatorBackendIdentity
     backend_b_identity: IndicatorBackendIdentity
+    backend_a_computation: IndicatorComputationResult
+    backend_b_computation: IndicatorComputationResult
     tolerances: IndicatorComparisonTolerances
     field_comparisons: tuple[IndicatorFieldComparison, ...]
     engine_version: str = INDICATOR_COMPARISON_ENGINE_VERSION
@@ -437,11 +439,13 @@ def compare_standard_indicator_backends(
     registry = backend_registry or default_indicator_backend_registry()
     backend_a = registry.resolve(backend_a_id)
     backend_b = registry.resolve(backend_b_id)
+    backend_a_identity = backend_a.identity_for(definition)
+    backend_b_identity = backend_b.identity_for(definition)
     request = IndicatorComputationRequest(definition, source.bars)
     result_a = backend_a.compute(request)
     result_b = backend_b.compute(request)
-    _validate_backend_result(result_a, definition, backend_a_id, len(source.bars))
-    _validate_backend_result(result_b, definition, backend_b_id, len(source.bars))
+    _validate_backend_result(result_a, definition, backend_a_identity, len(source.bars))
+    _validate_backend_result(result_b, definition, backend_b_identity, len(source.bars))
     fields_a = {field.name: field.values for field in result_a.fields}
     fields_b = {field.name: field.values for field in result_b.fields}
     field_comparisons = tuple(
@@ -474,6 +478,8 @@ def compare_standard_indicator_backends(
         definition=definition,
         backend_a_identity=result_a.backend_identity,
         backend_b_identity=result_b.backend_identity,
+        backend_a_computation=result_a,
+        backend_b_computation=result_b,
         tolerances=selected_tolerances,
         field_comparisons=field_comparisons,
     )
@@ -558,19 +564,20 @@ def validate_indicator_backend_comparison_export(
 def _validate_backend_result(
     result: IndicatorComputationResult,
     definition: StandardIndicatorDefinition,
-    backend_id: str,
+    expected_backend_identity: IndicatorBackendIdentity,
     observation_count: int,
 ) -> None:
     if (
         result.definition_name != definition.name
-        or result.backend_identity.backend_id != backend_id
+        or result.backend_identity != expected_backend_identity
         or result.normalized_parameters != definition.parameters
         or result.normalized_input_fields != definition.input_fields
         or {field.name for field in result.fields} != set(definition.output_fields)
         or result.observation_count != observation_count
     ):
         raise IndicatorComparisonError(
-            f"backend comparison result violates the normalized contract: {backend_id}"
+            "backend comparison result violates the normalized contract: "
+            f"{expected_backend_identity.backend_id}"
         )
 
 

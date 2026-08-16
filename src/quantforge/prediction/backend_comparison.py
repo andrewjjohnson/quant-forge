@@ -23,9 +23,12 @@ from quantforge.data.models import MarketDataset
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
     TALIB_INDICATOR_BACKEND,
+    Indicator,
     IndicatorBackendComparisonResult,
     IndicatorBackendRegistry,
     IndicatorComparisonTolerances,
+    IndicatorComputationResult,
+    IndicatorOutput,
     WilderDirectionalMovement,
     WilderDirectionalMovementParameters,
     WilderRelativeStrengthIndex,
@@ -429,9 +432,35 @@ def run_overnight_gap_backend_comparison(
         backend_id=backend_b_id,
         backend_registry=backend_registry,
     )
+    strategy_output_a = strategy_a.generate_from_indicator_outputs(
+        dataset,
+        _comparison_indicator_output(
+            dataset,
+            strategy_a.required_indicators[0],
+            indicator_comparisons[0].backend_a_computation,
+        ),
+        _comparison_indicator_output(
+            dataset,
+            strategy_a.required_indicators[1],
+            indicator_comparisons[1].backend_a_computation,
+        ),
+    )
+    strategy_output_b = strategy_b.generate_from_indicator_outputs(
+        dataset,
+        _comparison_indicator_output(
+            dataset,
+            strategy_b.required_indicators[0],
+            indicator_comparisons[0].backend_b_computation,
+        ),
+        _comparison_indicator_output(
+            dataset,
+            strategy_b.required_indicators[1],
+            indicator_comparisons[1].backend_b_computation,
+        ),
+    )
     prediction_comparison = compare_prediction_backends(
-        run_prediction_analysis(dataset, strategy_a),
-        run_prediction_analysis(dataset, strategy_b),
+        run_prediction_analysis(dataset, strategy_a, strategy_output=strategy_output_a),
+        run_prediction_analysis(dataset, strategy_b, strategy_output=strategy_output_b),
         backend_a_id=backend_a_id,
         backend_b_id=backend_b_id,
     )
@@ -582,6 +611,19 @@ def _signals_by_session(
             f"prediction backend emitted duplicate signal sessions: {backend_id}"
         )
     return mapped
+
+
+def _comparison_indicator_output(
+    dataset: MarketDataset,
+    indicator: Indicator,
+    computation: IndicatorComputationResult,
+) -> IndicatorOutput:
+    return IndicatorOutput(
+        indicator_name=indicator.name,
+        configuration_id=indicator.configuration_id,
+        session_dates=tuple(bar.session_date for bar in dataset.bars),
+        fields=computation.fields,
+    )
 
 
 def _normalized_strategy_configuration(

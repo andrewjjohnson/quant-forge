@@ -95,6 +95,19 @@ class FixtureComparisonBackend:
         )
 
 
+class DriftingIdentityBackend(FixtureComparisonBackend):
+    def compute(
+        self, request: IndicatorComputationRequest
+    ) -> IndicatorComputationResult:
+        result = super().compute(request)
+        return replace(
+            result,
+            backend_identity=replace(
+                result.backend_identity, library_version="changed-during-compute"
+            ),
+        )
+
+
 def _definition() -> StandardIndicatorDefinition:
     return StandardIndicatorDefinition(
         name="comparison_fixture",
@@ -165,6 +178,33 @@ def test_native_and_talib_exact_match_uses_one_normalized_configuration() -> Non
     assert field.overlapping_valid_count == 3
     assert field.maximum_absolute_difference == 0
     assert field.divergences == ()
+
+
+def test_comparison_rejects_complete_backend_identity_drift() -> None:
+    dataset = make_dataset(("1", "2", "3", "4"))
+    registry = IndicatorBackendRegistry(
+        (
+            DriftingIdentityBackend(
+                "drifting",
+                leading_unavailable=1,
+                offsets={"alpha": Decimal(0), "beta": Decimal(0)},
+            ),
+            FixtureComparisonBackend(
+                "stable",
+                leading_unavailable=1,
+                offsets={"alpha": Decimal(0), "beta": Decimal(0)},
+            ),
+        )
+    )
+
+    with pytest.raises(IndicatorComparisonError, match="normalized contract"):
+        compare_standard_indicator_backends(
+            IndicatorComparisonSource.from_market_dataset(dataset),
+            _definition(),
+            backend_a_id="drifting",
+            backend_b_id="stable",
+            backend_registry=registry,
+        )
 
 
 def test_warm_up_is_separate_from_named_multi_output_numerical_differences() -> None:

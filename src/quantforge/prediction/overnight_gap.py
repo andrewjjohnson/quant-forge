@@ -17,12 +17,16 @@ from quantforge.indicators import (
     WILDER_RSI_OUTPUT,
     Indicator,
     IndicatorBackendRegistry,
+    IndicatorOutput,
     WilderDirectionalMovement,
     WilderDirectionalMovementParameters,
     WilderRelativeStrengthIndex,
     WilderRelativeStrengthIndexParameters,
 )
-from quantforge.prediction.errors import InvalidPredictionConfigurationError
+from quantforge.prediction.errors import (
+    InvalidPredictionConfigurationError,
+    InvalidPredictionOutputError,
+)
 from quantforge.prediction.models import (
     PredictionDirection,
     PredictionFeature,
@@ -157,8 +161,33 @@ class OvernightGapPredictionStrategy:
         return configuration_identity(self.configuration())
 
     def generate(self, dataset: MarketDataset) -> PredictionStrategyOutput:
-        rsi_output = self.required_indicators[0].calculate(dataset)
-        dmi_output = self.required_indicators[1].calculate(dataset)
+        return self.generate_from_indicator_outputs(
+            dataset,
+            self.required_indicators[0].calculate(dataset),
+            self.required_indicators[1].calculate(dataset),
+        )
+
+    def generate_from_indicator_outputs(
+        self,
+        dataset: MarketDataset,
+        rsi_output: IndicatorOutput,
+        dmi_output: IndicatorOutput,
+    ) -> PredictionStrategyOutput:
+        """Generate signals from already-captured aligned indicator evidence."""
+        expected_sessions = tuple(bar.session_date for bar in dataset.bars)
+        expected_outputs = (
+            (self.required_indicators[0], rsi_output),
+            (self.required_indicators[1], dmi_output),
+        )
+        if any(
+            output.indicator_name != indicator.name
+            or output.configuration_id != indicator.configuration_id
+            or output.session_dates != expected_sessions
+            for indicator, output in expected_outputs
+        ):
+            raise InvalidPredictionOutputError(
+                "precomputed indicator output does not match the strategy and dataset"
+            )
         rsi_values = rsi_output.values_for(WILDER_RSI_OUTPUT)
         positive_di_values = dmi_output.values_for(
             POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT

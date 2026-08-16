@@ -287,8 +287,11 @@ The in-memory `PredictionAnalysisResult.generated_signals` retains the complete
 fixed signal set from the same generic study run used to construct its rows and
 metrics. The backend comparison validates its generated count and every labeled
 signal before including end-of-data signals in date and direction counts; it
-never performs a second strategy generation. This additive in-memory field is
-not added to the backward-compatible QF-11 manifest or prediction CSV schema.
+never performs a second strategy generation. Each strategy consumes the exact
+normalized indicator fields already captured for the value comparison, and
+each computation must match the resolved backend's complete identity rather
+than only its stable backend ID. This additive in-memory evidence is not added
+to the backward-compatible QF-11 manifest or prediction CSV schema.
 A custom indicator backend registry requires an explicit backend ID so the
 strategy configuration records the resolved backend identity; omitting both
 continues to preserve the legacy native configuration.
