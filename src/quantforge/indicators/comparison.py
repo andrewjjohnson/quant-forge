@@ -35,6 +35,7 @@ from quantforge.indicators.base import IndicatorBar
 from quantforge.indicators.exceptions import IndicatorComparisonError
 from quantforge.timeframes import (
     DEFAULT_US_EQUITY_TIMEFRAME,
+    ExchangeSessionPolicy,
     SessionInterval,
     Timeframe,
 )
@@ -144,13 +145,20 @@ class IndicatorComparisonSource:
             raise IndicatorComparisonError(
                 "comparison bars and provenance do not reproduce the dataset identity"
             )
+        canonical_daily_timeframe = Timeframe(
+            interval=SessionInterval(),
+            session_policy=ExchangeSessionPolicy(
+                calendar_name=timeframe.session_policy.calendar_name,
+                timezone_name=timeframe.session_policy.timezone_name,
+            ),
+        )
         if (
             timeframe.session_policy.calendar_name != dataset.metadata.calendar
-            or not isinstance(timeframe.interval, SessionInterval)
-            or timeframe.interval.session_count != 1
+            or timeframe != canonical_daily_timeframe
         ):
             raise IndicatorComparisonError(
-                "QF-3 daily comparison requires its matching one-session timeframe"
+                "QF-3 daily comparison requires its matching canonical one-session "
+                "regular-hours, bar-start, completed-only timeframe"
             )
         return cls(
             bars=cast(tuple[IndicatorBar, ...], dataset.bars),

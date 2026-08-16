@@ -1,5 +1,9 @@
+from dataclasses import replace
+from datetime import time
 from decimal import Decimal
 from pathlib import Path
+
+import pytest
 
 from quantforge.configuration import PrimitiveMappingSnapshot
 from quantforge.indicators import (
@@ -8,6 +12,7 @@ from quantforge.indicators import (
     TALIB_INDICATOR_BACKEND,
     IndicatorBackendIdentity,
     IndicatorBackendRegistry,
+    IndicatorComparisonError,
     IndicatorComparisonSource,
     IndicatorComparisonTolerances,
     IndicatorComputationRequest,
@@ -21,6 +26,14 @@ from quantforge.indicators import (
     compare_standard_indicator_backends,
     export_indicator_backend_comparison,
     validate_indicator_backend_comparison_export,
+)
+from quantforge.timeframes import (
+    DEFAULT_US_EQUITY_TIMEFRAME,
+    BarLabel,
+    DevelopingBarExposure,
+    ExchangeSessionPolicy,
+    SessionScope,
+    Timeframe,
 )
 
 from ..helpers import make_dataset
@@ -107,6 +120,34 @@ def _registry() -> IndicatorBackendRegistry:
             ),
         )
     )
+
+
+@pytest.mark.parametrize(
+    "timeframe",
+    [
+        replace(
+            DEFAULT_US_EQUITY_TIMEFRAME,
+            session_policy=ExchangeSessionPolicy(
+                scope=SessionScope.EXTENDED_HOURS,
+                extended_hours_start=time(4),
+                extended_hours_end=time(20),
+            ),
+        ),
+        replace(DEFAULT_US_EQUITY_TIMEFRAME, bar_label=BarLabel.END),
+        replace(
+            DEFAULT_US_EQUITY_TIMEFRAME,
+            developing_bar_exposure=DevelopingBarExposure.INCLUDE,
+        ),
+    ],
+)
+def test_qf3_daily_comparison_rejects_noncanonical_policy(
+    timeframe: Timeframe,
+) -> None:
+    dataset = make_dataset(("1", "2", "3", "4"))
+    indicator = SimpleMovingAverage(SimpleMovingAverageParameters(2))
+
+    with pytest.raises(IndicatorComparisonError, match="canonical one-session"):
+        compare_indicator_backends(dataset, indicator, timeframe=timeframe)
 
 
 def test_native_and_talib_exact_match_uses_one_normalized_configuration() -> None:

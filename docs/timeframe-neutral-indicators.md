@@ -53,6 +53,13 @@ records normalized parameters, output names, tolerances, and exact backend
 wrapper/runtime versions. `compare_standard_indicator_backends()` exposes the
 same operation for an already constructed `IndicatorComparisonSource`.
 
+The QF-3 `MarketDataset` convenience path accepts only the matching canonical
+one-session, regular-hours, bar-start, completed-only timeframe. QF-3 daily
+values cannot be reinterpreted as extended-hours, end-labeled, or developing
+bars merely by attaching a different timeframe identity. Consumers of another
+canonical bar source must construct an `IndicatorComparisonSource` with that
+source's own explicit provenance and timeframe.
+
 Each normalized output name is compared independently. Backend tuple positions
 are never used for matching. The field report includes each backend's first
 valid timestamp, leading unavailable count, valid count, overlapping valid
