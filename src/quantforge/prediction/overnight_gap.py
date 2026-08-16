@@ -102,6 +102,10 @@ class OvernightGapPredictionStrategy:
         backend_id: str | None = None,
         backend_registry: IndicatorBackendRegistry | None = None,
     ) -> None:
+        if backend_registry is not None and backend_id is None:
+            raise InvalidPredictionConfigurationError(
+                "a custom indicator backend registry requires an explicit backend_id"
+            )
         self._parameters = parameters
         self._required_indicators: tuple[Indicator, ...] = (
             WilderRelativeStrengthIndex(

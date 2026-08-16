@@ -285,7 +285,11 @@ required-indicator configurations. It compares the complete logical strategy
 and analysis configurations after removing only those backend identity objects.
 Optional complete signal sets use `PredictionStrategyOutput`, whose dataset and
 strategy identities prevent signals from another dataset or rule from being
-combined with the analysis metrics.
+combined with the analysis metrics. Their generated count and every labeled
+signal must also match the analyzed run before end-of-data signals are included
+in date and direction counts. A custom indicator backend registry requires an
+explicit backend ID so the strategy configuration records the resolved backend
+identity; omitting both continues to preserve the legacy native configuration.
 
 ```python
 from decimal import Decimal

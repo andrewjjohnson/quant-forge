@@ -649,7 +649,45 @@ def _comparison_signals(
         raise InvalidPredictionOutputError(
             f"prediction signal output does not match analysis provenance: {label}"
         )
+    if (
+        len(signal_output.signals) != analysis.generated_signal_count
+        or len(analysis.rows) + analysis.unlabeled_end_of_data_count
+        != analysis.generated_signal_count
+    ):
+        raise InvalidPredictionOutputError(
+            f"prediction signal output does not match analyzed run: {label}"
+        )
+    signals_by_session = {
+        signal.signal_session: signal for signal in signal_output.signals
+    }
+    if len(signals_by_session) != len(signal_output.signals) or any(
+        not _signal_matches_analysis_row(
+            signals_by_session.get(row.signal_session), row
+        )
+        for row in analysis.rows
+    ):
+        raise InvalidPredictionOutputError(
+            f"prediction signal output does not match analyzed run: {label}"
+        )
     return signal_output.signals
+
+
+def _signal_matches_analysis_row(
+    signal: PredictionSignal | None,
+    row: PredictionRow,
+) -> bool:
+    return signal is not None and (
+        signal.symbol == row.symbol
+        and signal.signal_session == row.signal_session
+        and signal.direction is row.direction
+        and signal.strategy_id == row.strategy_id
+        and signal.strategy_implementation_version
+        == row.strategy_implementation_version
+        and signal.strategy_configuration_id == row.strategy_configuration_id
+        and signal.strategy_parameters == row.strategy_parameters
+        and signal.reason == row.reason
+        and signal.feature_values == row.feature_values
+    )
 
 
 def _average_signed_return(rows: tuple[PredictionRow, ...]) -> Decimal | None:

@@ -12,10 +12,13 @@ from quantforge.data.models import MarketDataset
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
     TALIB_INDICATOR_BACKEND,
+    IndicatorBackendRegistry,
     IndicatorComparisonTolerances,
+    NativeIndicatorBackend,
 )
 from quantforge.prediction import (
     PREDICTION_BACKEND_COMPARISON_ARTIFACT_FILENAMES,
+    InvalidPredictionConfigurationError,
     InvalidPredictionOutputError,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
@@ -68,6 +71,28 @@ def test_implicit_overnight_strategy_remains_the_legacy_native_path() -> None:
         for indicator in explicit_native.required_indicators
     )
     assert default.configuration()["contract_version"] == "1"
+
+
+def test_custom_backend_registry_requires_an_explicit_backend_id() -> None:
+    registry = IndicatorBackendRegistry((NativeIndicatorBackend(),))
+
+    with pytest.raises(
+        InvalidPredictionConfigurationError,
+        match="custom indicator backend registry requires an explicit backend_id",
+    ):
+        OvernightGapPredictionStrategy(
+            OvernightGapPredictionParameters(), backend_registry=registry
+        )
+
+    explicit = OvernightGapPredictionStrategy(
+        OvernightGapPredictionParameters(),
+        backend_id=NATIVE_INDICATOR_BACKEND,
+        backend_registry=registry,
+    )
+    for indicator in explicit.required_indicators:
+        backend_configuration = indicator.configuration().get("backend")
+        assert isinstance(backend_configuration, dict)
+        assert backend_configuration.get("backend_id") == NATIVE_INDICATOR_BACKEND
 
 
 def test_prediction_comparison_rejects_backend_labels_not_bound_to_results() -> None:
@@ -162,6 +187,66 @@ def test_prediction_comparison_rejects_signal_output_from_another_dataset() -> N
             backend_a_id=NATIVE_INDICATOR_BACKEND,
             backend_b_id=TALIB_INDICATOR_BACKEND,
             backend_a_signal_output=native_strategy.generate(foreign_dataset),
+        )
+
+
+def test_prediction_comparison_rejects_truncated_signal_output() -> None:
+    dataset = _overnight_dataset()
+    parameters = OvernightGapPredictionParameters()
+    native_strategy = OvernightGapPredictionStrategy(
+        parameters, backend_id=NATIVE_INDICATOR_BACKEND
+    )
+    talib_strategy = OvernightGapPredictionStrategy(
+        parameters, backend_id=TALIB_INDICATOR_BACKEND
+    )
+    native_result = run_prediction_analysis(dataset, native_strategy)
+    talib_result = run_prediction_analysis(dataset, talib_strategy)
+    native_output = native_strategy.generate(dataset)
+    truncated_output = replace(native_output, signals=native_output.signals[:-1])
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="does not match analyzed run: backend A",
+    ):
+        compare_prediction_backends(
+            native_result,
+            talib_result,
+            backend_a_id=NATIVE_INDICATOR_BACKEND,
+            backend_b_id=TALIB_INDICATOR_BACKEND,
+            backend_a_signal_output=truncated_output,
+        )
+
+
+def test_prediction_comparison_rejects_altered_labeled_signal() -> None:
+    dataset = _overnight_dataset()
+    parameters = OvernightGapPredictionParameters()
+    native_strategy = OvernightGapPredictionStrategy(
+        parameters, backend_id=NATIVE_INDICATOR_BACKEND
+    )
+    talib_strategy = OvernightGapPredictionStrategy(
+        parameters, backend_id=TALIB_INDICATOR_BACKEND
+    )
+    native_result = run_prediction_analysis(dataset, native_strategy)
+    talib_result = run_prediction_analysis(dataset, talib_strategy)
+    native_output = native_strategy.generate(dataset)
+    labeled_session = native_result.rows[0].signal_session
+    altered_signals = tuple(
+        replace(signal, reason=f"{signal.reason} altered")
+        if signal.signal_session == labeled_session
+        else signal
+        for signal in native_output.signals
+    )
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="does not match analyzed run: backend A",
+    ):
+        compare_prediction_backends(
+            native_result,
+            talib_result,
+            backend_a_id=NATIVE_INDICATOR_BACKEND,
+            backend_b_id=TALIB_INDICATOR_BACKEND,
+            backend_a_signal_output=replace(native_output, signals=altered_signals),
         )
 
 
