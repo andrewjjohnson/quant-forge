@@ -329,6 +329,35 @@ def test_prediction_comparison_rejects_altered_retained_labeled_signal() -> None
         )
 
 
+def test_prediction_comparison_derives_accuracy_from_analyzed_rows() -> None:
+    dataset = _overnight_dataset()
+    parameters = OvernightGapPredictionParameters()
+    native_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=NATIVE_INDICATOR_BACKEND),
+    )
+    talib_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=TALIB_INDICATOR_BACKEND),
+    )
+    stale_native_result = replace(
+        native_result,
+        metrics=replace(native_result.metrics, accuracy=None),
+    )
+
+    comparison = compare_prediction_backends(
+        stale_native_result,
+        talib_result,
+        backend_a_id=NATIVE_INDICATOR_BACKEND,
+        backend_b_id=TALIB_INDICATOR_BACKEND,
+    )
+
+    accuracy = next(
+        metric for metric in comparison.metrics if metric.metric_name == "accuracy"
+    )
+    assert accuracy.backend_a_value == native_result.metrics.accuracy
+
+
 def test_overnight_gap_report_quantifies_value_signal_and_metric_impact() -> None:
     dataset = _overnight_dataset()
 

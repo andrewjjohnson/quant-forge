@@ -352,8 +352,8 @@ def compare_prediction_backends(
                 backend_b_reason=None if row_b is None else row_b.reason,
             )
         )
-    accuracy_a = backend_a_result.metrics.accuracy
-    accuracy_b = backend_b_result.metrics.accuracy
+    accuracy_a = _accuracy(backend_a_result.rows)
+    accuracy_b = _accuracy(backend_b_result.rows)
     average_signed_a = _average_signed_return(backend_a_result.rows)
     average_signed_b = _average_signed_return(backend_b_result.rows)
     return PredictionBackendComparison(
@@ -742,6 +742,13 @@ def _average_signed_return(rows: tuple[PredictionRow, ...]) -> Decimal | None:
         return sum(
             (row.signed_prediction_return for row in rows), Decimal(0)
         ) / Decimal(len(rows))
+
+
+def _accuracy(rows: tuple[PredictionRow, ...]) -> Decimal | None:
+    if not rows:
+        return None
+    with localcontext(_ARITHMETIC_CONTEXT):
+        return Decimal(sum(row.correct for row in rows)) / Decimal(len(rows))
 
 
 def _difference(value_a: Decimal | None, value_b: Decimal | None) -> Decimal | None:
