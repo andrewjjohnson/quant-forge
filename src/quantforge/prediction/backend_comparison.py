@@ -25,6 +25,7 @@ from quantforge.indicators import (
     TALIB_INDICATOR_BACKEND,
     Indicator,
     IndicatorBackendComparisonResult,
+    IndicatorBackendIdentity,
     IndicatorBackendRegistry,
     IndicatorComparisonTolerances,
     IndicatorComputationResult,
@@ -204,6 +205,7 @@ class OvernightGapBackendComparisonResult:
     comparison_id: str
     source_snapshot: PrimitiveMappingSnapshot
     parameters_snapshot: PrimitiveMappingSnapshot
+    prediction_rule_snapshot: PrimitiveMappingSnapshot
     indicator_comparisons: tuple[IndicatorBackendComparisonResult, ...]
     prediction_comparison: PredictionBackendComparison
     engine_version: str = PREDICTION_BACKEND_COMPARISON_ENGINE_VERSION
@@ -217,6 +219,10 @@ class OvernightGapBackendComparisonResult:
     def parameters(self) -> PrimitiveMapping:
         return self.parameters_snapshot.to_primitive()
 
+    @property
+    def prediction_rule(self) -> PrimitiveMapping:
+        return self.prediction_rule_snapshot.to_primitive()
+
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "comparison_id": self.comparison_id,
@@ -224,13 +230,7 @@ class OvernightGapBackendComparisonResult:
             "engine_version": self.engine_version,
             "schema_version": self.schema_version,
             "source": self.source,
-            "prediction_rule": {
-                "name": OvernightGapPredictionStrategy.name,
-                "implementation_version": (
-                    OvernightGapPredictionStrategy.implementation_version
-                ),
-                "parameters": self.parameters,
-            },
+            "prediction_rule": self.prediction_rule,
             "indicator_comparisons": cast(
                 list[Primitive],
                 [item.to_primitive() for item in self.indicator_comparisons],
@@ -477,12 +477,20 @@ def run_overnight_gap_backend_comparison(
     parameters_snapshot = PrimitiveMappingSnapshot.capture(
         selected_parameters.to_primitive()
     )
+    prediction_rule_snapshot = PrimitiveMappingSnapshot.capture(
+        {
+            "name": strategy_a.name,
+            "implementation_version": strategy_a.implementation_version,
+            "parameters": parameters_snapshot.to_primitive(),
+        }
+    )
     identity_values: PrimitiveMapping = {
         "component": "quantforge_overnight_gap_backend_comparison",
         "engine_version": PREDICTION_BACKEND_COMPARISON_ENGINE_VERSION,
         "schema_version": PREDICTION_BACKEND_COMPARISON_SCHEMA_VERSION,
         "source": source_snapshot.to_primitive(),
         "parameters": parameters_snapshot.to_primitive(),
+        "prediction_rule": prediction_rule_snapshot.to_primitive(),
         "indicator_comparisons": [
             item.to_primitive() for item in indicator_comparisons
         ],
@@ -492,6 +500,7 @@ def run_overnight_gap_backend_comparison(
         comparison_id=configuration_identity(identity_values),
         source_snapshot=source_snapshot,
         parameters_snapshot=parameters_snapshot,
+        prediction_rule_snapshot=prediction_rule_snapshot,
         indicator_comparisons=indicator_comparisons,
         prediction_comparison=prediction_comparison,
     )
@@ -627,6 +636,16 @@ def _comparison_indicator_output(
     indicator: Indicator,
     computation: IndicatorComputationResult,
 ) -> IndicatorOutput:
+    indicator_backend_identity = cast(
+        object, getattr(indicator, "backend_identity", None)
+    )
+    if (
+        not isinstance(indicator_backend_identity, IndicatorBackendIdentity)
+        or computation.backend_identity != indicator_backend_identity
+    ):
+        raise InvalidPredictionOutputError(
+            "compared computation backend identity does not match the strategy"
+        )
     return IndicatorOutput(
         indicator_name=indicator.name,
         configuration_id=indicator.configuration_id,

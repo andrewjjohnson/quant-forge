@@ -290,7 +290,10 @@ signal before including end-of-data signals in date and direction counts; it
 never performs a second strategy generation. Each strategy consumes the exact
 normalized indicator fields already captured for the value comparison, and
 each computation must match the resolved backend's complete identity rather
-than only its stable backend ID. Precomputed RSI and directional fields are
+than only its stable backend ID, including when the strategy indicators are
+constructed later. The prediction rule name, implementation version, and
+parameters are snapshotted into both the result and its comparison identity.
+Precomputed RSI and directional fields are
 carried in immutable evidence bound to the source dataset ID and bar
 fingerprint, preventing same-session values from another dataset from entering
 signal generation. This additive in-memory evidence is not added to the

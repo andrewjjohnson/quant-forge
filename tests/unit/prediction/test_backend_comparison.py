@@ -62,6 +62,39 @@ class CountingBackend:
         return self._delegate.compute(request)
 
 
+class ChangingIdentityBackend(CountingBackend):
+    def __init__(self, delegate: NativeIndicatorBackend) -> None:
+        super().__init__(delegate)
+        self._identity_calls: dict[str, int] = {}
+
+    def identity_for(
+        self, definition: StandardIndicatorDefinition
+    ) -> IndicatorBackendIdentity:
+        call_count = self._identity_calls.get(definition.name, 0) + 1
+        self._identity_calls[definition.name] = call_count
+        identity = self._delegate.identity_for(definition)
+        return replace(
+            identity,
+            library_version=f"{identity.library_version}-identity-{call_count}",
+        )
+
+    def compute(
+        self, request: IndicatorComputationRequest
+    ) -> IndicatorComputationResult:
+        self.compute_count += 1
+        result = self._delegate.compute(request)
+        call_count = self._identity_calls[request.definition.name]
+        return replace(
+            result,
+            backend_identity=replace(
+                result.backend_identity,
+                library_version=(
+                    f"{result.backend_identity.library_version}-identity-{call_count}"
+                ),
+            ),
+        )
+
+
 def _overnight_dataset() -> MarketDataset:
     closes = (
         "100",
@@ -347,6 +380,40 @@ def test_overnight_gap_report_reuses_each_compared_backend_computation() -> None
 
     assert native.compute_count == 2
     assert talib.compute_count == 2
+
+
+def test_reused_computation_must_match_later_strategy_backend_identity() -> None:
+    registry = IndicatorBackendRegistry(
+        (
+            ChangingIdentityBackend(NativeIndicatorBackend()),
+            CountingBackend(TalibIndicatorBackend()),
+        )
+    )
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="computation backend identity does not match the strategy",
+    ):
+        run_overnight_gap_backend_comparison(
+            _overnight_dataset(), backend_registry=registry
+        )
+
+
+def test_prediction_rule_identity_is_snapshotted_and_changes_comparison_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = run_overnight_gap_backend_comparison(_overnight_dataset())
+    first_primitive = first.to_primitive()
+
+    monkeypatch.setattr(
+        OvernightGapPredictionStrategy, "implementation_version", "changed-version"
+    )
+    second = run_overnight_gap_backend_comparison(_overnight_dataset())
+
+    assert first.to_primitive() == first_primitive
+    assert first.prediction_rule["implementation_version"] == "1"
+    assert second.prediction_rule["implementation_version"] == "changed-version"
+    assert first.comparison_id != second.comparison_id
 
 
 def test_overnight_gap_backend_artifacts_are_deterministic(tmp_path: Path) -> None:
