@@ -41,16 +41,13 @@ from quantforge.prediction.models import (
     PredictionDirection,
     PredictionRow,
     PredictionSignal,
-)
-from quantforge.prediction.outcomes.overnight_gap import (
-    create_overnight_gap_prediction_study,
+    PredictionStrategyOutput,
 )
 from quantforge.prediction.overnight_gap import (
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
 )
 from quantforge.prediction.runner import run_prediction_analysis
-from quantforge.prediction.study import run_prediction_study
 from quantforge.timeframes import DEFAULT_US_EQUITY_TIMEFRAME, Timeframe
 
 PREDICTION_BACKEND_COMPARISON_ENGINE_VERSION = "1"
@@ -288,14 +285,20 @@ def compare_prediction_backends(
     *,
     backend_a_id: str,
     backend_b_id: str,
-    backend_a_signals: tuple[PredictionSignal, ...] | None = None,
-    backend_b_signals: tuple[PredictionSignal, ...] | None = None,
+    backend_a_signal_output: PredictionStrategyOutput | None = None,
+    backend_b_signal_output: PredictionStrategyOutput | None = None,
 ) -> PredictionBackendComparison:
     """Compare prediction dates, directions, and requested summary metrics."""
     if not backend_a_id or not backend_b_id or backend_a_id == backend_b_id:
         raise InvalidPredictionOutputError(
             "prediction comparison requires two distinct non-empty backend ids"
         )
+    normalized_configuration_a = _normalized_strategy_configuration(
+        backend_a_result, backend_a_id, "backend A"
+    )
+    normalized_configuration_b = _normalized_strategy_configuration(
+        backend_b_result, backend_b_id, "backend B"
+    )
     if (
         backend_a_result.market_data.dataset_id
         != backend_b_result.market_data.dataset_id
@@ -304,19 +307,25 @@ def compare_prediction_backends(
         or backend_a_result.strategy_id != backend_b_result.strategy_id
         or backend_a_result.strategy_implementation_version
         != backend_b_result.strategy_implementation_version
-        or backend_a_result.strategy_configuration.get("parameters")
-        != backend_b_result.strategy_configuration.get("parameters")
+        or normalized_configuration_a != normalized_configuration_b
+        or backend_a_result.strategy_warm_up_observations
+        != backend_b_result.strategy_warm_up_observations
+        or backend_a_result.analysis_configuration
+        != backend_b_result.analysis_configuration
+        or backend_a_result.engine_version != backend_b_result.engine_version
+        or backend_a_result.result_schema_version
+        != backend_b_result.result_schema_version
     ):
         raise InvalidPredictionOutputError(
             "prediction backend comparison requires the same dataset and logical rule"
         )
     rows_a = _signals_by_session(
-        backend_a_result.rows if backend_a_signals is None else backend_a_signals,
+        _comparison_signals(backend_a_result, backend_a_signal_output, "backend A"),
         backend_a_id,
         backend_a_result,
     )
     rows_b = _signals_by_session(
-        backend_b_result.rows if backend_b_signals is None else backend_b_signals,
+        _comparison_signals(backend_b_result, backend_b_signal_output, "backend B"),
         backend_b_id,
         backend_b_result,
     )
@@ -423,19 +432,15 @@ def run_overnight_gap_backend_comparison(
         backend_id=backend_b_id,
         backend_registry=backend_registry,
     )
-    study_a = run_prediction_study(
-        dataset, create_overnight_gap_prediction_study(strategy_a)
-    )
-    study_b = run_prediction_study(
-        dataset, create_overnight_gap_prediction_study(strategy_b)
-    )
+    signal_output_a = strategy_a.generate(dataset)
+    signal_output_b = strategy_b.generate(dataset)
     prediction_comparison = compare_prediction_backends(
         run_prediction_analysis(dataset, strategy_a),
         run_prediction_analysis(dataset, strategy_b),
         backend_a_id=backend_a_id,
         backend_b_id=backend_b_id,
-        backend_a_signals=study_a.signals,
-        backend_b_signals=study_b.signals,
+        backend_a_signal_output=signal_output_a,
+        backend_b_signal_output=signal_output_b,
     )
     source_snapshot = PrimitiveMappingSnapshot.capture(indicator_comparisons[0].source)
     parameters_snapshot = PrimitiveMappingSnapshot.capture(
@@ -584,6 +589,67 @@ def _signals_by_session(
             f"prediction backend emitted duplicate signal sessions: {backend_id}"
         )
     return mapped
+
+
+def _normalized_strategy_configuration(
+    analysis: PredictionAnalysisResult,
+    backend_id: str,
+    label: str,
+) -> PrimitiveMapping:
+    configuration = analysis.strategy_configuration
+    if configuration_identity(configuration) != analysis.strategy_configuration_id:
+        raise InvalidPredictionOutputError(
+            f"prediction strategy configuration identity is invalid: {label}"
+        )
+    required_indicators = configuration.get("required_indicators")
+    if not isinstance(required_indicators, list) or not required_indicators:
+        raise InvalidPredictionOutputError(
+            f"prediction analysis lacks backend-bound required indicators: {label}"
+        )
+    normalized_indicators: list[Primitive] = []
+    for indicator_value in required_indicators:
+        if not isinstance(indicator_value, dict):
+            raise InvalidPredictionOutputError(
+                f"prediction required-indicator configuration is invalid: {label}"
+            )
+        backend_value = indicator_value.get("backend")
+        if (
+            not isinstance(backend_value, dict)
+            or backend_value.get("backend_id") != backend_id
+        ):
+            raise InvalidPredictionOutputError(
+                f"prediction backend id does not match analyzed configuration: {label}"
+            )
+        normalized_indicator = dict(indicator_value)
+        del normalized_indicator["backend"]
+        normalized_indicators.append(normalized_indicator)
+    normalized_configuration = dict(configuration)
+    normalized_configuration["required_indicators"] = normalized_indicators
+    return normalized_configuration
+
+
+def _comparison_signals(
+    analysis: PredictionAnalysisResult,
+    signal_output: PredictionStrategyOutput | None,
+    label: str,
+) -> tuple[PredictionRow, ...] | tuple[PredictionSignal, ...]:
+    if signal_output is None:
+        return analysis.rows
+    output_value = cast(object, signal_output)
+    if not isinstance(output_value, PredictionStrategyOutput):
+        raise InvalidPredictionOutputError(
+            f"optional prediction signals require provenance-bearing output: {label}"
+        )
+    if (
+        signal_output.contract_version != "1"
+        or signal_output.dataset_id != analysis.market_data.dataset_id
+        or signal_output.strategy_id != analysis.strategy_id
+        or signal_output.strategy_configuration_id != analysis.strategy_configuration_id
+    ):
+        raise InvalidPredictionOutputError(
+            f"prediction signal output does not match analysis provenance: {label}"
+        )
+    return signal_output.signals
 
 
 def _average_signed_return(rows: tuple[PredictionRow, ...]) -> Decimal | None:

@@ -280,6 +280,12 @@ dates present on only one backend, matched directions, changed directions,
 accuracy, and average prediction-signed return.
 Date and direction counts include generated end-of-data signals; metric sample
 counts remain limited to predictions with an available next-session outcome.
+The helper binds each backend label to the backend identities in its analyzed
+required-indicator configurations. It compares the complete logical strategy
+and analysis configurations after removing only those backend identity objects.
+Optional complete signal sets use `PredictionStrategyOutput`, whose dataset and
+strategy identities prevent signals from another dataset or rule from being
+combined with the analysis metrics.
 
 ```python
 from decimal import Decimal
