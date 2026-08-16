@@ -130,6 +130,7 @@ def run_prediction_analysis(
         analysis_configuration_snapshot=analysis_configuration_snapshot,
         generated_signal_count=study_result.generated_prediction_count,
         unlabeled_end_of_data_count=study_result.unavailable_outcome_count,
+        generated_signals=study_result.signals,
         rows=tuple(rows),
         metrics=metrics,
         limitations=LIMITATIONS,

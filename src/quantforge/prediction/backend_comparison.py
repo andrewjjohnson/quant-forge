@@ -41,7 +41,6 @@ from quantforge.prediction.models import (
     PredictionDirection,
     PredictionRow,
     PredictionSignal,
-    PredictionStrategyOutput,
 )
 from quantforge.prediction.overnight_gap import (
     OvernightGapPredictionParameters,
@@ -285,8 +284,6 @@ def compare_prediction_backends(
     *,
     backend_a_id: str,
     backend_b_id: str,
-    backend_a_signal_output: PredictionStrategyOutput | None = None,
-    backend_b_signal_output: PredictionStrategyOutput | None = None,
 ) -> PredictionBackendComparison:
     """Compare prediction dates, directions, and requested summary metrics."""
     if not backend_a_id or not backend_b_id or backend_a_id == backend_b_id:
@@ -320,12 +317,12 @@ def compare_prediction_backends(
             "prediction backend comparison requires the same dataset and logical rule"
         )
     rows_a = _signals_by_session(
-        _comparison_signals(backend_a_result, backend_a_signal_output, "backend A"),
+        _comparison_signals(backend_a_result, "backend A"),
         backend_a_id,
         backend_a_result,
     )
     rows_b = _signals_by_session(
-        _comparison_signals(backend_b_result, backend_b_signal_output, "backend B"),
+        _comparison_signals(backend_b_result, "backend B"),
         backend_b_id,
         backend_b_result,
     )
@@ -432,15 +429,11 @@ def run_overnight_gap_backend_comparison(
         backend_id=backend_b_id,
         backend_registry=backend_registry,
     )
-    signal_output_a = strategy_a.generate(dataset)
-    signal_output_b = strategy_b.generate(dataset)
     prediction_comparison = compare_prediction_backends(
         run_prediction_analysis(dataset, strategy_a),
         run_prediction_analysis(dataset, strategy_b),
         backend_a_id=backend_a_id,
         backend_b_id=backend_b_id,
-        backend_a_signal_output=signal_output_a,
-        backend_b_signal_output=signal_output_b,
     )
     source_snapshot = PrimitiveMappingSnapshot.capture(indicator_comparisons[0].source)
     parameters_snapshot = PrimitiveMappingSnapshot.capture(
@@ -630,37 +623,19 @@ def _normalized_strategy_configuration(
 
 def _comparison_signals(
     analysis: PredictionAnalysisResult,
-    signal_output: PredictionStrategyOutput | None,
     label: str,
-) -> tuple[PredictionRow, ...] | tuple[PredictionSignal, ...]:
-    if signal_output is None:
-        return analysis.rows
-    output_value = cast(object, signal_output)
-    if not isinstance(output_value, PredictionStrategyOutput):
-        raise InvalidPredictionOutputError(
-            f"optional prediction signals require provenance-bearing output: {label}"
-        )
+) -> tuple[PredictionSignal, ...]:
+    generated_signals = analysis.generated_signals
     if (
-        signal_output.contract_version != "1"
-        or signal_output.dataset_id != analysis.market_data.dataset_id
-        or signal_output.strategy_id != analysis.strategy_id
-        or signal_output.strategy_configuration_id != analysis.strategy_configuration_id
-    ):
-        raise InvalidPredictionOutputError(
-            f"prediction signal output does not match analysis provenance: {label}"
-        )
-    if (
-        len(signal_output.signals) != analysis.generated_signal_count
+        len(generated_signals) != analysis.generated_signal_count
         or len(analysis.rows) + analysis.unlabeled_end_of_data_count
         != analysis.generated_signal_count
     ):
         raise InvalidPredictionOutputError(
             f"prediction signal output does not match analyzed run: {label}"
         )
-    signals_by_session = {
-        signal.signal_session: signal for signal in signal_output.signals
-    }
-    if len(signals_by_session) != len(signal_output.signals) or any(
+    signals_by_session = {signal.signal_session: signal for signal in generated_signals}
+    if len(signals_by_session) != len(generated_signals) or any(
         not _signal_matches_analysis_row(
             signals_by_session.get(row.signal_session), row
         )
@@ -669,7 +644,7 @@ def _comparison_signals(
         raise InvalidPredictionOutputError(
             f"prediction signal output does not match analyzed run: {label}"
         )
-    return signal_output.signals
+    return generated_signals
 
 
 def _signal_matches_analysis_row(

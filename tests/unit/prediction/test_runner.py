@@ -120,6 +120,16 @@ def test_next_session_labels_and_requested_gap_metrics() -> None:
 
     assert result.generated_signal_count == 4
     assert result.unlabeled_end_of_data_count == 1
+    assert tuple(signal.direction for signal in result.generated_signals) == (
+        PredictionDirection.UP,
+        PredictionDirection.DOWN,
+        PredictionDirection.UP,
+        PredictionDirection.DOWN,
+    )
+    assert result.generated_signals[-1].signal_session == date(2024, 7, 5)
+    serialized_manifest = result.to_primitive()["manifest"]
+    assert isinstance(serialized_manifest, dict)
+    assert "generated_signals" not in serialized_manifest
     assert [row.overnight_gap_percentage for row in result.rows] == [
         Decimal("0.02"),
         Decimal("-0.01"),

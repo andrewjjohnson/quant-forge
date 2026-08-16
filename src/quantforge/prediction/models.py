@@ -316,6 +316,7 @@ class PredictionAnalysisResult:
     analysis_configuration_snapshot: PrimitiveMappingSnapshot
     generated_signal_count: int
     unlabeled_end_of_data_count: int
+    generated_signals: tuple[PredictionSignal, ...]
     rows: tuple[PredictionRow, ...]
     metrics: PredictionMetrics
     limitations: tuple[str, ...]

@@ -164,7 +164,7 @@ def test_prediction_comparison_rejects_non_backend_configuration_difference(
         )
 
 
-def test_prediction_comparison_rejects_signal_output_from_another_dataset() -> None:
+def test_prediction_comparison_uses_complete_signals_from_analyzed_runs() -> None:
     dataset = _overnight_dataset()
     parameters = OvernightGapPredictionParameters()
     native_strategy = OvernightGapPredictionStrategy(
@@ -175,22 +175,20 @@ def test_prediction_comparison_rejects_signal_output_from_another_dataset() -> N
     )
     native_result = run_prediction_analysis(dataset, native_strategy)
     talib_result = run_prediction_analysis(dataset, talib_strategy)
-    foreign_dataset = make_dataset(tuple("101" for _ in dataset.bars))
+    comparison = compare_prediction_backends(
+        native_result,
+        talib_result,
+        backend_a_id=NATIVE_INDICATOR_BACKEND,
+        backend_b_id=TALIB_INDICATOR_BACKEND,
+    )
 
-    with pytest.raises(
-        InvalidPredictionOutputError,
-        match="does not match analysis provenance: backend A",
-    ):
-        compare_prediction_backends(
-            native_result,
-            talib_result,
-            backend_a_id=NATIVE_INDICATOR_BACKEND,
-            backend_b_id=TALIB_INDICATOR_BACKEND,
-            backend_a_signal_output=native_strategy.generate(foreign_dataset),
-        )
+    assert comparison.backend_a_prediction_count == len(native_result.generated_signals)
+    assert comparison.backend_b_prediction_count == len(talib_result.generated_signals)
+    assert len(native_result.generated_signals) > len(native_result.rows)
+    assert len(talib_result.generated_signals) > len(talib_result.rows)
 
 
-def test_prediction_comparison_rejects_truncated_signal_output() -> None:
+def test_prediction_comparison_rejects_truncated_retained_signal_set() -> None:
     dataset = _overnight_dataset()
     parameters = OvernightGapPredictionParameters()
     native_strategy = OvernightGapPredictionStrategy(
@@ -201,23 +199,23 @@ def test_prediction_comparison_rejects_truncated_signal_output() -> None:
     )
     native_result = run_prediction_analysis(dataset, native_strategy)
     talib_result = run_prediction_analysis(dataset, talib_strategy)
-    native_output = native_strategy.generate(dataset)
-    truncated_output = replace(native_output, signals=native_output.signals[:-1])
+    truncated_result = replace(
+        native_result, generated_signals=native_result.generated_signals[:-1]
+    )
 
     with pytest.raises(
         InvalidPredictionOutputError,
         match="does not match analyzed run: backend A",
     ):
         compare_prediction_backends(
-            native_result,
+            truncated_result,
             talib_result,
             backend_a_id=NATIVE_INDICATOR_BACKEND,
             backend_b_id=TALIB_INDICATOR_BACKEND,
-            backend_a_signal_output=truncated_output,
         )
 
 
-def test_prediction_comparison_rejects_altered_labeled_signal() -> None:
+def test_prediction_comparison_rejects_altered_retained_labeled_signal() -> None:
     dataset = _overnight_dataset()
     parameters = OvernightGapPredictionParameters()
     native_strategy = OvernightGapPredictionStrategy(
@@ -228,13 +226,12 @@ def test_prediction_comparison_rejects_altered_labeled_signal() -> None:
     )
     native_result = run_prediction_analysis(dataset, native_strategy)
     talib_result = run_prediction_analysis(dataset, talib_strategy)
-    native_output = native_strategy.generate(dataset)
     labeled_session = native_result.rows[0].signal_session
     altered_signals = tuple(
         replace(signal, reason=f"{signal.reason} altered")
         if signal.signal_session == labeled_session
         else signal
-        for signal in native_output.signals
+        for signal in native_result.generated_signals
     )
 
     with pytest.raises(
@@ -242,11 +239,10 @@ def test_prediction_comparison_rejects_altered_labeled_signal() -> None:
         match="does not match analyzed run: backend A",
     ):
         compare_prediction_backends(
-            native_result,
+            replace(native_result, generated_signals=altered_signals),
             talib_result,
             backend_a_id=NATIVE_INDICATOR_BACKEND,
             backend_b_id=TALIB_INDICATOR_BACKEND,
-            backend_a_signal_output=replace(native_output, signals=altered_signals),
         )
 
 
