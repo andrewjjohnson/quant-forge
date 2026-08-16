@@ -155,6 +155,7 @@ from quantforge.prediction.outcomes import (
     create_overnight_gap_prediction_study,
 )
 from quantforge.prediction.overnight_gap import (
+    OvernightGapIndicatorEvidence,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
     OvernightGapRuleEvaluation,
@@ -263,6 +264,7 @@ __all__ = [
     "OvernightGapBackendComparisonResult",
     "OvernightGapDirectionEvaluationValues",
     "OvernightGapDirectionEvaluator",
+    "OvernightGapIndicatorEvidence",
     "OvernightGapPredictionParameters",
     "OvernightGapPredictionStrategy",
     "OvernightGapRuleEvaluation",

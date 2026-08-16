@@ -290,8 +290,11 @@ signal before including end-of-data signals in date and direction counts; it
 never performs a second strategy generation. Each strategy consumes the exact
 normalized indicator fields already captured for the value comparison, and
 each computation must match the resolved backend's complete identity rather
-than only its stable backend ID. This additive in-memory evidence is not added
-to the backward-compatible QF-11 manifest or prediction CSV schema.
+than only its stable backend ID. Precomputed RSI and directional fields are
+carried in immutable evidence bound to the source dataset ID and bar
+fingerprint, preventing same-session values from another dataset from entering
+signal generation. This additive in-memory evidence is not added to the
+backward-compatible QF-11 manifest or prediction CSV schema.
 A custom indicator backend registry requires an explicit backend ID so the
 strategy configuration records the resolved backend identity; omitting both
 continues to preserve the legacy native configuration.

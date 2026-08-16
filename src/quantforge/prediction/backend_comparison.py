@@ -46,6 +46,7 @@ from quantforge.prediction.models import (
     PredictionSignal,
 )
 from quantforge.prediction.overnight_gap import (
+    OvernightGapIndicatorEvidence,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
 )
@@ -432,30 +433,38 @@ def run_overnight_gap_backend_comparison(
         backend_id=backend_b_id,
         backend_registry=backend_registry,
     )
-    strategy_output_a = strategy_a.generate_from_indicator_outputs(
+    strategy_output_a = strategy_a.generate_from_indicator_evidence(
         dataset,
-        _comparison_indicator_output(
-            dataset,
-            strategy_a.required_indicators[0],
-            indicator_comparisons[0].backend_a_computation,
-        ),
-        _comparison_indicator_output(
-            dataset,
-            strategy_a.required_indicators[1],
-            indicator_comparisons[1].backend_a_computation,
+        OvernightGapIndicatorEvidence(
+            dataset_id=dataset.metadata.dataset_id,
+            dataset_fingerprint=dataset.metadata.data_sha256,
+            rsi_output=_comparison_indicator_output(
+                dataset,
+                strategy_a.required_indicators[0],
+                indicator_comparisons[0].backend_a_computation,
+            ),
+            directional_output=_comparison_indicator_output(
+                dataset,
+                strategy_a.required_indicators[1],
+                indicator_comparisons[1].backend_a_computation,
+            ),
         ),
     )
-    strategy_output_b = strategy_b.generate_from_indicator_outputs(
+    strategy_output_b = strategy_b.generate_from_indicator_evidence(
         dataset,
-        _comparison_indicator_output(
-            dataset,
-            strategy_b.required_indicators[0],
-            indicator_comparisons[0].backend_b_computation,
-        ),
-        _comparison_indicator_output(
-            dataset,
-            strategy_b.required_indicators[1],
-            indicator_comparisons[1].backend_b_computation,
+        OvernightGapIndicatorEvidence(
+            dataset_id=dataset.metadata.dataset_id,
+            dataset_fingerprint=dataset.metadata.data_sha256,
+            rsi_output=_comparison_indicator_output(
+                dataset,
+                strategy_b.required_indicators[0],
+                indicator_comparisons[0].backend_b_computation,
+            ),
+            directional_output=_comparison_indicator_output(
+                dataset,
+                strategy_b.required_indicators[1],
+                indicator_comparisons[1].backend_b_computation,
+            ),
         ),
     )
     prediction_comparison = compare_prediction_backends(
