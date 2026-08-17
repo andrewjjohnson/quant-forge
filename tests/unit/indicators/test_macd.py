@@ -273,11 +273,11 @@ def test_configuration_round_trip_binds_parameters_and_exact_backend_version() -
             MarketField.OPEN,
         )
     )
-    restored = MovingAverageConvergenceDivergence.from_configuration(
-        indicator.configuration()
-    )
+    configuration = indicator.configuration()
+    restored = MovingAverageConvergenceDivergence.from_configuration(configuration)
 
-    assert restored.configuration() == indicator.configuration()
+    assert configuration["contract_version"] == "2"
+    assert restored.configuration() == configuration
     assert restored.configuration_id == indicator.configuration_id
     assert indicator.configuration()["backend"] == (
         indicator.backend_identity.to_primitive()

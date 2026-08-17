@@ -147,7 +147,7 @@ class MovingAverageConvergenceDivergence:
         return {
             "component_type": "indicator",
             "component_name": self.name,
-            "contract_version": "1",
+            "contract_version": "2",
             "definition_version": self.implementation_version,
             "parameters": self._parameters.to_primitive(),
             "required_fields": [field.value for field in sorted(self.required_fields)],
