@@ -81,6 +81,13 @@ from quantforge.indicators.moving_average import (
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
 )
+from quantforge.indicators.stochastic import (
+    STOCHASTIC_D_OUTPUT,
+    STOCHASTIC_K_OUTPUT,
+    STOCHASTIC_SMOOTHING_METHOD,
+    StochasticOscillator,
+    StochasticOscillatorParameters,
+)
 from quantforge.indicators.timeframe import (
     TIMEFRAME_INDICATOR_CONTRACT_VERSION,
     ConfiguredTimeframeIndicator,
@@ -120,6 +127,9 @@ __all__ = [
     "NEGATIVE_DIRECTIONAL_INDICATOR_OUTPUT",
     "POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT",
     "SIMPLE_MOVING_AVERAGE_OUTPUT",
+    "STOCHASTIC_D_OUTPUT",
+    "STOCHASTIC_K_OUTPUT",
+    "STOCHASTIC_SMOOTHING_METHOD",
     "TALIB_INDICATOR_BACKEND",
     "TIMEFRAME_INDICATOR_CONTRACT_VERSION",
     "WILDER_AVERAGE_TRUE_RANGE_OUTPUT",
@@ -163,6 +173,8 @@ __all__ = [
     "SimpleMovingAverage",
     "SimpleMovingAverageParameters",
     "StandardIndicatorDefinition",
+    "StochasticOscillator",
+    "StochasticOscillatorParameters",
     "TalibIndicatorBackend",
     "TimeframeIndicatorOutput",
     "TimeframeNeutralIndicator",

@@ -42,6 +42,8 @@ _ATR_NAME = "wilder_average_true_range"
 _DIRECTIONAL_MOVEMENT_NAME = "wilder_directional_movement"
 _BOLLINGER_NAME = "bollinger_bands"
 _MACD_NAME = "moving_average_convergence_divergence"
+_STOCHASTIC_NAME = "stochastic_oscillator"
+_SIMPLE_MOVING_AVERAGE = "simple_moving_average"
 _MAXIMUM_PERIOD = 100_000
 _DECIMAL_PRECISION = 34
 _DECIMAL_EMIN = -999_999
@@ -61,6 +63,8 @@ type _DerivedOutput = Callable[
 type _NormalizedDerivedOutput = Callable[
     [Mapping[str, tuple[IndicatorValue, ...]]], tuple[IndicatorValue, ...]
 ]
+type _InputDependencyWindow = Callable[[PrimitiveMapping], int]
+type _InputDependency = tuple[str, _InputDependencyWindow]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +81,7 @@ class _TalibMapping:
     normalized_derived_outputs: tuple[tuple[str, _NormalizedDerivedOutput], ...]
     unstable_function_names: tuple[str, ...]
     validate_parameters: _ParameterValidator
+    output_input_windows: tuple[tuple[str, tuple[_InputDependency, ...]], ...] = ()
 
     @property
     def output_names(self) -> tuple[str, ...]:
@@ -100,6 +105,12 @@ def _decimal_parameter(value: object) -> float:
     if not isfinite(converted):
         raise ValueError("TA-Lib decimal parameter cannot be represented as float64")
     return converted
+
+
+def _simple_moving_average_type(value: object) -> int:
+    if value != _SIMPLE_MOVING_AVERAGE:
+        raise TypeError("TA-Lib stochastic smoothing method is invalid")
+    return 0
 
 
 def _talib_directional_movement(
@@ -185,6 +196,34 @@ def _validate_bollinger_parameters(parameters: PrimitiveMapping) -> None:
             f"{TALIB_INDICATOR_BACKEND} Bollinger Bands multiplier must be a "
             "positive finite float64 value"
         )
+
+
+def _stochastic_k_extrema_input_window(parameters: PrimitiveMapping) -> int:
+    return (
+        _integer_parameter(parameters["k_period"])
+        + _integer_parameter(parameters["k_smoothing_period"])
+        - 1
+    )
+
+
+def _stochastic_d_extrema_input_window(parameters: PrimitiveMapping) -> int:
+    return (
+        _stochastic_k_extrema_input_window(parameters)
+        + _integer_parameter(parameters["d_period"])
+        - 1
+    )
+
+
+def _stochastic_k_close_input_window(parameters: PrimitiveMapping) -> int:
+    return _integer_parameter(parameters["k_smoothing_period"])
+
+
+def _stochastic_d_close_input_window(parameters: PrimitiveMapping) -> int:
+    return (
+        _stochastic_k_close_input_window(parameters)
+        + _integer_parameter(parameters["d_period"])
+        - 1
+    )
 
 
 _MAPPINGS = {
@@ -324,6 +363,49 @@ _MAPPINGS = {
         unstable_function_names=("EMA",),
         validate_parameters=lambda parameters: _validate_macd_parameters(parameters),
     ),
+    _STOCHASTIC_NAME: _TalibMapping(
+        function_name="STOCH",
+        function=cast(_TalibFunction, talib.STOCH),
+        parameter_mappings=(
+            ("k_period", ("fastk_period",), _integer_parameter),
+            ("k_smoothing_period", ("slowk_period",), _integer_parameter),
+            ("d_period", ("slowd_period",), _integer_parameter),
+            (
+                "smoothing_method",
+                ("slowk_matype", "slowd_matype"),
+                _simple_moving_average_type,
+            ),
+        ),
+        input_parameter_names=frozenset(),
+        input_fields=("high", "low", "close"),
+        source_field_parameter=None,
+        backend_output_names=("slow_k", "slow_d"),
+        output_sources=(("k", "slow_k"), ("d", "slow_d")),
+        derived_outputs=(),
+        normalized_derived_outputs=(),
+        unstable_function_names=(),
+        validate_parameters=lambda parameters: _validate_stochastic_parameters(
+            parameters
+        ),
+        output_input_windows=(
+            (
+                "k",
+                (
+                    ("high", _stochastic_k_extrema_input_window),
+                    ("low", _stochastic_k_extrema_input_window),
+                    ("close", _stochastic_k_close_input_window),
+                ),
+            ),
+            (
+                "d",
+                (
+                    ("high", _stochastic_d_extrema_input_window),
+                    ("low", _stochastic_d_extrema_input_window),
+                    ("close", _stochastic_d_close_input_window),
+                ),
+            ),
+        ),
+    ),
 }
 
 
@@ -355,6 +437,13 @@ class TalibIndicatorBackend:
         parameters = definition.parameters.to_primitive()
         inputs = tuple(
             _float_input(request, field.value) for field in definition.input_fields
+        )
+        inputs_by_name = dict(
+            zip(
+                (field.value for field in definition.input_fields),
+                inputs,
+                strict=True,
+            )
         )
         translated_parameters = {
             backend_name: normalize(parameters[normalized_name])
@@ -405,6 +494,14 @@ class TalibIndicatorBackend:
                 for name, derive in mapping.normalized_derived_outputs
             }
         )
+        for name, dependencies in mapping.output_input_windows:
+            normalized_outputs[name] = _mask_unavailable_input_windows(
+                normalized_outputs[name],
+                tuple(
+                    (inputs_by_name[field_name], dependency_window(parameters))
+                    for field_name, dependency_window in dependencies
+                ),
+            )
         fields = tuple(
             IndicatorFieldOutput(
                 name,
@@ -556,6 +653,20 @@ def _validate_macd_parameters(parameters: PrimitiveMapping) -> None:
         )
 
 
+def _validate_stochastic_parameters(parameters: PrimitiveMapping) -> None:
+    for parameter_name in ("k_period", "k_smoothing_period", "d_period"):
+        _validate_period_parameters(
+            parameters,
+            parameter_name=parameter_name,
+            indicator_label="stochastic",
+        )
+    if parameters.get("smoothing_method") != _SIMPLE_MOVING_AVERAGE:
+        raise UnsupportedIndicatorBackendError(
+            f"{TALIB_INDICATOR_BACKEND} stochastic smoothing_method must be "
+            f"{_SIMPLE_MOVING_AVERAGE}"
+        )
+
+
 def _float_input(
     request: IndicatorComputationRequest, field_name: str
 ) -> npt.NDArray[np.float64]:
@@ -609,6 +720,34 @@ def _normalize_array(
         else:
             normalized.append(Decimal(str(value)))
     return tuple(normalized)
+
+
+def _mask_unavailable_input_windows(
+    values: tuple[IndicatorValue, ...],
+    dependencies: tuple[tuple[npt.NDArray[np.float64], int], ...],
+) -> tuple[IndicatorValue, ...]:
+    if not dependencies or any(window < 1 for _, window in dependencies):
+        raise IndicatorCalculationError(
+            f"{TALIB_INDICATOR_BACKEND} input dependency window is invalid"
+        )
+    dependency_prefixes: list[tuple[list[int], int]] = []
+    for input_values, dependency_window in dependencies:
+        unavailable_prefix = [0]
+        for raw_value in input_values:
+            unavailable_prefix.append(
+                unavailable_prefix[-1] + int(not isfinite(float(raw_value)))
+            )
+        dependency_prefixes.append((unavailable_prefix, dependency_window))
+    masked: list[IndicatorValue] = []
+    for index, value in enumerate(values):
+        has_unavailable_input = any(
+            unavailable_prefix[index + 1]
+            - unavailable_prefix[max(0, index - dependency_window + 1)]
+            > 0
+            for unavailable_prefix, dependency_window in dependency_prefixes
+        )
+        masked.append(None if has_unavailable_input else value)
+    return tuple(masked)
 
 
 def _is_aligned_talib_array(values: object, expected_count: int) -> bool:

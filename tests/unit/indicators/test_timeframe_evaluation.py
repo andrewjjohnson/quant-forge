@@ -34,6 +34,8 @@ from quantforge.indicators import (
     MACD_OUTPUT,
     MACD_SIGNAL_OUTPUT,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
+    STOCHASTIC_D_OUTPUT,
+    STOCHASTIC_K_OUTPUT,
     TALIB_INDICATOR_BACKEND,
     BollingerBands,
     BollingerBandsParameters,
@@ -47,6 +49,8 @@ from quantforge.indicators import (
     MovingAverageConvergenceDivergenceParameters,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
+    StochasticOscillator,
+    StochasticOscillatorParameters,
     TimeframeNeutralIndicator,
     UnsupportedDevelopingBarError,
     WilderAverageTrueRange,
@@ -598,6 +602,46 @@ def test_macd_identity_binds_backend_periods_field_timeframe_and_completion() ->
     assert output.dataset_reference == _reference(four_hour)
 
 
+def test_stochastic_is_timeframe_neutral_and_binds_all_source_semantics() -> None:
+    context = _all_completed_context()
+    _, four_hour, daily, weekly = _timeframes()
+    developing_context = _context(
+        {
+            timeframe.configuration_id: context.bars_for(timeframe)
+            for timeframe in _timeframes()
+        },
+        completion_policy=ContextCompletionPolicy.DEVELOPING_BAR_AS_OF,
+    )
+    indicators = (
+        StochasticOscillator(StochasticOscillatorParameters(2, 2, 2)),
+        StochasticOscillator(StochasticOscillatorParameters(3, 2, 2)),
+        StochasticOscillator(StochasticOscillatorParameters(2, 3, 2)),
+        StochasticOscillator(StochasticOscillatorParameters(2, 2, 3)),
+    )
+
+    outputs = tuple(
+        evaluate_indicator(indicators[0], context, timeframe)
+        for timeframe in (four_hour, daily, weekly)
+    )
+    identities = {
+        bind_indicator(indicator, context, four_hour).configuration_id
+        for indicator in indicators
+    }
+    identities.add(bind_indicator(indicators[0], context, daily).configuration_id)
+    identities.add(
+        bind_indicator(indicators[0], developing_context, four_hour).configuration_id
+    )
+
+    assert len(identities) == 6
+    for output, timeframe in zip(outputs, (four_hour, daily, weekly), strict=True):
+        assert output.source_timeframe == timeframe
+        assert output.backend_identity == indicators[0].backend_identity
+        assert output.completion_policy is ContextCompletionPolicy.COMPLETED_BARS_ONLY
+        assert output.dataset_reference == _reference(timeframe)
+        assert output.values_for(STOCHASTIC_K_OUTPUT)[3] is not None
+        assert output.values_for(STOCHASTIC_D_OUTPUT)[3] is not None
+
+
 def test_four_hour_instance_rejects_a_daily_only_context() -> None:
     context = _all_completed_context()
     _, four_hour, daily, _ = _timeframes()
@@ -621,6 +665,7 @@ def test_four_hour_instance_rejects_a_daily_only_context() -> None:
         MovingAverageConvergenceDivergence(
             MovingAverageConvergenceDivergenceParameters(2, 3, 2)
         ),
+        StochasticOscillator(StochasticOscillatorParameters(2, 2, 2)),
         WilderDirectionalMovement(WilderDirectionalMovementParameters(2)),
     ],
 )
