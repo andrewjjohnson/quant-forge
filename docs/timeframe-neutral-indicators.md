@@ -14,6 +14,8 @@ QF-37 applies the same contract to directional movement/ADX and Bollinger
 Bands, including generic named normalization for multiple backend outputs.
 QF-38 adds descriptive parity tooling over that contract; it does not add
 backend-specific indicator classes or alter either backend's mathematics.
+QF-25 adds a backend-neutral MACD definition whose standard implementation is
+the pinned `talib_v1` adapter; it deliberately adds no native MACD formula.
 
 ## Standard-indicator backend boundary
 
@@ -29,7 +31,8 @@ QuantForge fields plus normalized request and backend metadata.
 - `native_v1` maps SMA, EMA, Wilder RSI, Wilder ATR, directional movement/ADX,
   and Bollinger Bands to their historical QuantForge Decimal implementations;
 - `talib_v1` maps those same definitions to TA-Lib `SMA`, `EMA`, `RSI`, `ATR`,
-  `PLUS_DI`, `MINUS_DI`, `ADX`, and `BBANDS`.
+  `PLUS_DI`, `MINUS_DI`, `ADX`, and `BBANDS`, and is the standard implementation
+  for the MACD definition through TA-Lib `MACD`.
 
 Backend selection occurs when one of those backend-neutral indicators is
 configured. The QF-22 `ConfiguredTimeframeIndicator` remains above it and
@@ -122,6 +125,7 @@ Every period, window, and warm-up is measured in input observations/bars:
 | Wilder ATR | `period=N` | bar `N + 1` |
 | +DI / -DI | `period=N` | bar `N + 1` |
 | ADX | `period=N` | bar `2N` |
+| MACD | `slow_period=S`, `signal_period=G` | bar `S + G - 1` |
 
 For example, a 20-period SMA consumes 20 five-minute bars on a 5m source and 20
 trading weeks on a weekly source. No indicator converts the number 20 into a
@@ -223,6 +227,7 @@ standard indicators:
 | `wilder_average_true_range` | `high`, `low`, `close` | `period` | `wilder_average_true_range` | `ATR(high, low, close, timeperiod=period)` |
 | `wilder_directional_movement` | `high`, `low`, `close` | `period` | `positive_directional_indicator`, `negative_directional_indicator`, `average_directional_index` | one request invoking `PLUS_DI`, `MINUS_DI`, and `ADX` once each |
 | `bollinger_bands` | configured market field | `period`, `source_field`, `standard_deviation_multiplier` | `bollinger_middle_band`, `bollinger_upper_band`, `bollinger_lower_band`, `bollinger_bandwidth` | `BBANDS(real, timeperiod=period, nbdevup=multiplier, nbdevdn=multiplier)` plus normalized bandwidth |
+| `moving_average_convergence_divergence` | configured market field | `fast_period`, `slow_period`, `signal_period`, `source_field` | `macd`, `signal`, `histogram` | `MACD(real, fastperiod=fast_period, slowperiod=slow_period, signalperiod=signal_period)` |
 
 The adapter converts canonical `Decimal` inputs to float64, converts TA-Lib
 `NaN` outputs to aligned `None` values, rejects infinite outputs, and converts
@@ -247,10 +252,13 @@ minimum period of `1`; RSI accepts a minimum period of `2`. These
 backend-specific limits are checked during explicit `talib_v1` configuration.
 Directional movement and Bollinger Bands accept a minimum period of `2` in
 TA-Lib 0.7.1; the historical native implementations still accept period `1`.
+MACD accepts fast and slow periods from `2` through `100000` and a signal period
+from `1` through `100000`; QuantForge additionally requires the normalized fast
+period to be less than the slow period.
 The broader historical native contracts are unchanged. The adapter requires
 default TA-Lib compatibility and zero unstable periods for EMA, RSI, ATR,
-`PLUS_DI`, `MINUS_DI`, and `ADX`. SMA and BBANDS have no TA-Lib unstable-period
-setting.
+`PLUS_DI`, `MINUS_DI`, and `ADX`. MACD also requires a zero EMA unstable period.
+SMA and BBANDS have no TA-Lib unstable-period setting.
 
 ### Numerical and unavailable-region differences
 
@@ -281,6 +289,9 @@ The two backends intentionally do not promise bit-for-bit equality:
   34-digit Decimal arithmetic; TA-Lib uses float64, so band and derived
   bandwidth values can differ in their final digits. TA-Lib does not support
   the native period-`1` configuration.
+- MACD has no native comparison. Its first normalized value appears after
+  `slow_period + signal_period - 2` leading unavailable rows, following pinned
+  TA-Lib's lookback. TA-Lib float64 and missing-gap behavior are retained.
 
 Constructing SMA, EMA, Wilder RSI, Wilder ATR, directional movement, or
 Bollinger Bands without `backend_id` remains the compatibility path. It resolves
@@ -290,6 +301,50 @@ mapping without `backend` as that legacy path. A newly created study must select
 `backend_id="talib_v1"` explicitly. Explicit native and TA-Lib configurations
 use contract version `2`, have distinct deterministic IDs, and fail
 deserialization if the installed backend or library identity has drifted.
+
+## Moving average convergence/divergence
+
+`MovingAverageConvergenceDivergenceParameters` contains positive integer
+`fast_period`, `slow_period`, and `signal_period` values plus one canonical
+`source_field`, defaulting to close. The fast period must be strictly less than
+the slow period. Defaults are `12`, `26`, and `9`. The QF-22 binding, rather
+than the formula parameter record, supplies the complete source timeframe,
+completion policy, and dataset-family lineage. The resulting bound identity
+therefore includes all three periods, source field, backend id and exact wrapper
+and C runtime versions, timeframe, completion policy, and aggregation lineage.
+
+The public `MovingAverageConvergenceDivergence` class owns only the normalized
+definition. It defaults to `talib_v1`; selecting `native_v1` fails through the
+standard unsupported-backend domain error because QF-25 adds no QuantForge MACD
+or EMA calculation. A future backend can support the same definition by adding
+one adapter mapping without adding another public MACD class.
+
+`talib_v1` translates the normalized periods to TA-Lib's `fastperiod`,
+`slowperiod`, and `signalperiod` arguments, but those names never appear in the
+definition or downstream result. TA-Lib's three tuple positions receive
+backend-local names before the adapter emits the stable QuantForge fields
+`macd`, `signal`, and `histogram`. To preserve the normalized contract exactly,
+`histogram` is subtracted from the already normalized Decimal `macd` and
+`signal` values under a fully specified 34-digit, round-half-even Decimal
+context with fixed exponent bounds and traps. Thus every available row satisfies
+`histogram == macd - signal`, independent of a final float64 rounding difference
+in TA-Lib's separately returned histogram array.
+
+For slow period `S` and signal period `G`, TA-Lib's lookback is `S + G - 2`
+rows. QuantForge therefore reports `S + G - 1` warm-up observations: every
+output is `None` for the leading lookback rows and all three first become
+available together on bar `S + G - 1`. No partial-window value is emitted.
+Canonical non-finite source observations are passed to TA-Lib as `NaN`, never
+as infinity, and unavailable TA-Lib values normalize to `None`. With pinned
+TA-Lib 0.7.1, a source gap makes that row and subsequent MACD rows unavailable;
+QuantForge does not fill, backfill, carry, or independently restart the EMA
+state.
+
+MACD calculation fails closed unless TA-Lib uses default compatibility and a
+zero global EMA unstable period, because that process-global setting changes
+MACD initialization and lookback. The indicator supports a causal QF-21
+developing bar: the backend sees only the already reconstructed as-of source
+value supplied by the context, never the eventual completed bar.
 
 ## Bollinger Bands
 
@@ -424,7 +479,8 @@ presented as the eventual completed candle. An indicator declaring
 
 ## Deliberate limits
 
-QF-22 through QF-24 and QF-35 through QF-37 do not add MACD, stochastic, volume
-formulas, Bollinger-based prediction or squeeze-classification rules,
+QF-22 through QF-25 and QF-35 through QF-38 do not add stochastic or volume
+formulas, MACD crossover/divergence behavior, Bollinger-based prediction or
+squeeze-classification rules,
 prediction integration, feature export, or strategy/backtest multi-timeframe
 integration. Those remain sibling-ticket concerns under QF-12.

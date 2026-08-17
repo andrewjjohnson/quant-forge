@@ -30,6 +30,9 @@ from quantforge.indicators import (
     BOLLINGER_MIDDLE_BAND_OUTPUT,
     BOLLINGER_UPPER_BAND_OUTPUT,
     EXPONENTIAL_MOVING_AVERAGE_OUTPUT,
+    MACD_HISTOGRAM_OUTPUT,
+    MACD_OUTPUT,
+    MACD_SIGNAL_OUTPUT,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
     TALIB_INDICATOR_BACKEND,
     BollingerBands,
@@ -40,6 +43,8 @@ from quantforge.indicators import (
     ExponentialMovingAverageParameters,
     IndicatorSourceError,
     MarketField,
+    MovingAverageConvergenceDivergence,
+    MovingAverageConvergenceDivergenceParameters,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
     TimeframeNeutralIndicator,
@@ -292,6 +297,9 @@ def _all_completed_context(
     [
         BollingerBands(BollingerBandsParameters(2)),
         ExponentialMovingAverage(ExponentialMovingAverageParameters(2)),
+        MovingAverageConvergenceDivergence(
+            MovingAverageConvergenceDivergenceParameters(2, 3, 2)
+        ),
         SimpleMovingAverage(SimpleMovingAverageParameters(2)),
         WilderRelativeStrengthIndex(WilderRelativeStrengthIndexParameters(2)),
         WilderAverageTrueRange(WilderAverageTrueRangeParameters(2)),
@@ -340,6 +348,24 @@ def test_bollinger_values_are_identical_on_intraday_daily_and_weekly_fixtures() 
     for timeframe in _timeframes():
         output = evaluate_indicator(indicator, context, timeframe)
         assert output.aggregation_provenance == _reference(timeframe).to_primitive()
+        for field_name, values in expected.items():
+            assert output.values_for(field_name) == values
+
+
+def test_macd_values_are_identical_on_intraday_daily_and_weekly_fixtures() -> None:
+    context = _all_completed_context()
+    indicator = MovingAverageConvergenceDivergence(
+        MovingAverageConvergenceDivergenceParameters(2, 3, 2)
+    )
+    expected = {
+        field_name: evaluate_indicator(indicator, context, _timeframes()[0]).values_for(
+            field_name
+        )
+        for field_name in (MACD_OUTPUT, MACD_SIGNAL_OUTPUT, MACD_HISTOGRAM_OUTPUT)
+    }
+
+    for timeframe in _timeframes()[1:]:
+        output = evaluate_indicator(indicator, context, timeframe)
         for field_name, values in expected.items():
             assert output.values_for(field_name) == values
 
@@ -472,6 +498,10 @@ def test_talib_ema_preserves_timeframe_completion_and_lineage_metadata() -> None
             BollingerBandsParameters(3),
             backend_id=TALIB_INDICATOR_BACKEND,
         ),
+        MovingAverageConvergenceDivergence(
+            MovingAverageConvergenceDivergenceParameters(2, 3, 2),
+            backend_id=TALIB_INDICATOR_BACKEND,
+        ),
     ],
 )
 def test_talib_standard_indicators_use_the_generic_timeframe_result_shape(
@@ -519,6 +549,55 @@ def test_bollinger_identity_binds_all_formula_and_source_parameters() -> None:
     assert len(identities) == 6
 
 
+def test_macd_identity_binds_backend_periods_field_timeframe_and_completion() -> None:
+    context = _all_completed_context()
+    _, four_hour, daily, _ = _timeframes()
+    developing_context = _context(
+        {
+            timeframe.configuration_id: context.bars_for(timeframe)
+            for timeframe in _timeframes()
+        },
+        completion_policy=ContextCompletionPolicy.DEVELOPING_BAR_AS_OF,
+    )
+    indicators = (
+        MovingAverageConvergenceDivergence(
+            MovingAverageConvergenceDivergenceParameters(2, 4, 2)
+        ),
+        MovingAverageConvergenceDivergence(
+            MovingAverageConvergenceDivergenceParameters(3, 4, 2)
+        ),
+        MovingAverageConvergenceDivergence(
+            MovingAverageConvergenceDivergenceParameters(2, 5, 2)
+        ),
+        MovingAverageConvergenceDivergence(
+            MovingAverageConvergenceDivergenceParameters(2, 4, 3)
+        ),
+        MovingAverageConvergenceDivergence(
+            MovingAverageConvergenceDivergenceParameters(
+                2,
+                4,
+                2,
+                MarketField.OPEN,
+            )
+        ),
+    )
+    identities = {
+        bind_indicator(indicator, context, four_hour).configuration_id
+        for indicator in indicators
+    }
+    identities.add(bind_indicator(indicators[0], context, daily).configuration_id)
+    identities.add(
+        bind_indicator(indicators[0], developing_context, four_hour).configuration_id
+    )
+
+    assert len(identities) == 7
+    bound = bind_indicator(indicators[0], context, four_hour)
+    output = bound.calculate(context)
+    assert output.backend_identity == indicators[0].backend_identity
+    assert output.completion_policy is ContextCompletionPolicy.COMPLETED_BARS_ONLY
+    assert output.dataset_reference == _reference(four_hour)
+
+
 def test_four_hour_instance_rejects_a_daily_only_context() -> None:
     context = _all_completed_context()
     _, four_hour, daily, _ = _timeframes()
@@ -539,6 +618,9 @@ def test_four_hour_instance_rejects_a_daily_only_context() -> None:
     [
         BollingerBands(BollingerBandsParameters(2)),
         ExponentialMovingAverage(ExponentialMovingAverageParameters(2)),
+        MovingAverageConvergenceDivergence(
+            MovingAverageConvergenceDivergenceParameters(2, 3, 2)
+        ),
         WilderDirectionalMovement(WilderDirectionalMovementParameters(2)),
     ],
 )

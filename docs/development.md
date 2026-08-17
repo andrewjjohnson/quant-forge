@@ -117,6 +117,13 @@ developing-bar tests:
 uv run pytest tests/unit/indicators
 ```
 
+Run the focused backend-neutral TA-Lib MACD contract tests:
+
+```bash
+uv run pytest tests/unit/indicators/test_macd.py \
+  tests/unit/indicators/test_timeframe_evaluation.py
+```
+
 Run the opt-in live Tiingo integration only with both the key and explicit flag:
 
 ```bash
