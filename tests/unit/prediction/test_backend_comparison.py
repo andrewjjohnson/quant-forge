@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import timedelta
 from decimal import Decimal
 from inspect import signature
 from pathlib import Path
@@ -29,6 +30,7 @@ from quantforge.prediction import (
     InvalidPredictionOutputError,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
+    PredictionDirection,
     compare_prediction_backends,
     export_overnight_gap_backend_comparison,
     run_overnight_gap_backend_comparison,
@@ -318,6 +320,70 @@ def test_prediction_comparison_rejects_altered_retained_labeled_signal() -> None
         )
 
 
+@pytest.mark.parametrize(
+    "altered_field",
+    ["signal_session", "direction", "feature_values", "reason"],
+)
+def test_prediction_comparison_rejects_altered_terminal_signal(
+    altered_field: str,
+) -> None:
+    dataset = _overnight_dataset()
+    parameters = OvernightGapPredictionParameters()
+    native_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=NATIVE_INDICATOR_BACKEND),
+    )
+    talib_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=TALIB_INDICATOR_BACKEND),
+    )
+    terminal_signal = native_result.generated_signals[-1]
+    if altered_field == "signal_session":
+        altered_signal = replace(
+            terminal_signal,
+            signal_session=terminal_signal.signal_session + timedelta(days=1),
+        )
+    elif altered_field == "direction":
+        altered_signal = replace(
+            terminal_signal,
+            direction=(
+                PredictionDirection.DOWN
+                if terminal_signal.direction is PredictionDirection.UP
+                else PredictionDirection.UP
+            ),
+        )
+    elif altered_field == "feature_values":
+        altered_signal = replace(
+            terminal_signal,
+            feature_values=(
+                replace(
+                    terminal_signal.feature_values[0],
+                    value=terminal_signal.feature_values[0].value + Decimal(1),
+                ),
+                *terminal_signal.feature_values[1:],
+            ),
+        )
+    else:
+        altered_signal = replace(terminal_signal, reason="altered terminal reason")
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="does not match analyzed run: backend A",
+    ):
+        compare_prediction_backends(
+            replace(
+                native_result,
+                generated_signals=(
+                    *native_result.generated_signals[:-1],
+                    altered_signal,
+                ),
+            ),
+            talib_result,
+            backend_a_id=NATIVE_INDICATOR_BACKEND,
+            backend_b_id=TALIB_INDICATOR_BACKEND,
+        )
+
+
 def test_prediction_comparison_rejects_duplicate_labeled_rows() -> None:
     dataset = _overnight_dataset()
     parameters = OvernightGapPredictionParameters()
@@ -421,6 +487,43 @@ def test_prediction_comparison_rejects_inconsistent_outcome_values(
             first_row,
             gap_size_percentage=first_row.gap_size_percentage + Decimal("0.01"),
         )
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="does not match analyzed run: backend A",
+    ):
+        compare_prediction_backends(
+            replace(native_result, rows=(altered_row, *native_result.rows[1:])),
+            talib_result,
+            backend_a_id=NATIVE_INDICATOR_BACKEND,
+            backend_b_id=TALIB_INDICATOR_BACKEND,
+        )
+
+
+def test_prediction_comparison_rejects_consistently_altered_outcome_anchor() -> None:
+    dataset = _overnight_dataset()
+    parameters = OvernightGapPredictionParameters()
+    native_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=NATIVE_INDICATOR_BACKEND),
+    )
+    talib_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=TALIB_INDICATOR_BACKEND),
+    )
+    first_row = native_result.rows[0]
+    altered_gap = Decimal(1)
+    altered_signed_return = (
+        altered_gap if first_row.direction is PredictionDirection.UP else -altered_gap
+    )
+    altered_row = replace(
+        first_row,
+        next_open=first_row.signal_close * Decimal(2),
+        overnight_gap_percentage=altered_gap,
+        gap_size_percentage=altered_gap,
+        signed_prediction_return=altered_signed_return,
+        correct=altered_signed_return > 0,
+    )
 
     with pytest.raises(
         InvalidPredictionOutputError,

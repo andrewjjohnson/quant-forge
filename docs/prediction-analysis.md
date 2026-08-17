@@ -285,10 +285,12 @@ required-indicator configurations. It compares the complete logical strategy
 and analysis configurations after removing only those backend identity objects.
 The in-memory `PredictionAnalysisResult.generated_signals` retains the complete
 fixed signal set from the same generic study run used to construct its rows and
-metrics. The backend comparison validates its generated count and every labeled
-signal before including end-of-data signals in date and direction counts; it
-never performs a second strategy generation. Each strategy consumes the exact
-normalized indicator fields already captured for the value comparison, and
+metrics. An additional immutable in-memory record snapshot binds every signal,
+including end-of-data signals, and every labeled outcome row to that source
+run. The backend comparison verifies the snapshot before including signals or
+deriving metrics; it never performs a second strategy generation. Each strategy
+consumes the exact normalized indicator fields already captured for the value
+comparison, and
 each computation must match the resolved backend's complete identity rather
 than only its stable backend ID, including when the strategy indicators are
 constructed later. The prediction rule name, implementation version, and

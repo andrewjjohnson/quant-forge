@@ -703,7 +703,8 @@ def _comparison_signals(
 ) -> tuple[PredictionSignal, ...]:
     generated_signals = analysis.generated_signals
     if (
-        len(generated_signals) != analysis.generated_signal_count
+        not analysis.records_match_snapshot()
+        or len(generated_signals) != analysis.generated_signal_count
         or len(analysis.rows) + analysis.unlabeled_end_of_data_count
         != analysis.generated_signal_count
     ):
