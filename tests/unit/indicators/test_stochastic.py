@@ -179,6 +179,31 @@ def test_missing_source_values_remain_explicitly_unavailable_without_fill() -> N
         assert values[5:] == (None,) * 5
 
 
+@pytest.mark.parametrize("missing_field", ["high", "low"])
+def test_missing_extrema_mask_every_causally_affected_output(
+    missing_field: str,
+) -> None:
+    highs = tuple(
+        "NaN" if index == 5 else str(Decimal(close) + 1)
+        for index, close in enumerate(CLOSES)
+    )
+    lows = tuple("NaN" if index == 5 else close for index, close in enumerate(CLOSES))
+    dataset = make_dataset(
+        CLOSES,
+        highs=highs if missing_field == "high" else None,
+        lows=lows if missing_field == "low" else None,
+    )
+
+    output = StochasticOscillator(StochasticOscillatorParameters(3, 2, 2)).calculate(
+        dataset
+    )
+
+    assert output.values_for(STOCHASTIC_K_OUTPUT)[4] is not None
+    assert output.values_for(STOCHASTIC_K_OUTPUT)[5:9] == (None,) * 4
+    assert output.values_for(STOCHASTIC_D_OUTPUT)[4] is not None
+    assert output.values_for(STOCHASTIC_D_OUTPUT)[5:] == (None,) * 5
+
+
 def test_talib_period_limits_fail_through_backend_domain_error() -> None:
     with pytest.raises(
         UnsupportedIndicatorBackendError,

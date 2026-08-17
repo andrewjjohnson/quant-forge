@@ -63,6 +63,7 @@ type _DerivedOutput = Callable[
 type _NormalizedDerivedOutput = Callable[
     [Mapping[str, tuple[IndicatorValue, ...]]], tuple[IndicatorValue, ...]
 ]
+type _InputDependencyWindow = Callable[[PrimitiveMapping], int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +80,7 @@ class _TalibMapping:
     normalized_derived_outputs: tuple[tuple[str, _NormalizedDerivedOutput], ...]
     unstable_function_names: tuple[str, ...]
     validate_parameters: _ParameterValidator
+    output_input_windows: tuple[tuple[str, _InputDependencyWindow], ...] = ()
 
     @property
     def output_names(self) -> tuple[str, ...]:
@@ -193,6 +195,22 @@ def _validate_bollinger_parameters(parameters: PrimitiveMapping) -> None:
             f"{TALIB_INDICATOR_BACKEND} Bollinger Bands multiplier must be a "
             "positive finite float64 value"
         )
+
+
+def _stochastic_k_input_window(parameters: PrimitiveMapping) -> int:
+    return (
+        _integer_parameter(parameters["k_period"])
+        + _integer_parameter(parameters["k_smoothing_period"])
+        - 1
+    )
+
+
+def _stochastic_d_input_window(parameters: PrimitiveMapping) -> int:
+    return (
+        _stochastic_k_input_window(parameters)
+        + _integer_parameter(parameters["d_period"])
+        - 1
+    )
 
 
 _MAPPINGS = {
@@ -356,6 +374,10 @@ _MAPPINGS = {
         validate_parameters=lambda parameters: _validate_stochastic_parameters(
             parameters
         ),
+        output_input_windows=(
+            ("k", _stochastic_k_input_window),
+            ("d", _stochastic_d_input_window),
+        ),
     ),
 }
 
@@ -438,6 +460,12 @@ class TalibIndicatorBackend:
                 for name, derive in mapping.normalized_derived_outputs
             }
         )
+        for name, dependency_window in mapping.output_input_windows:
+            normalized_outputs[name] = _mask_unavailable_input_window(
+                normalized_outputs[name],
+                inputs,
+                dependency_window(parameters),
+            )
         fields = tuple(
             IndicatorFieldOutput(
                 name,
@@ -656,6 +684,31 @@ def _normalize_array(
         else:
             normalized.append(Decimal(str(value)))
     return tuple(normalized)
+
+
+def _mask_unavailable_input_window(
+    values: tuple[IndicatorValue, ...],
+    inputs: tuple[npt.NDArray[np.float64], ...],
+    dependency_window: int,
+) -> tuple[IndicatorValue, ...]:
+    if dependency_window < 1:
+        raise IndicatorCalculationError(
+            f"{TALIB_INDICATOR_BACKEND} input dependency window is invalid"
+        )
+    unavailable_prefix = [0]
+    for index in range(len(values)):
+        input_is_unavailable = any(
+            not isfinite(float(input_values[index])) for input_values in inputs
+        )
+        unavailable_prefix.append(unavailable_prefix[-1] + int(input_is_unavailable))
+    masked: list[IndicatorValue] = []
+    for index, value in enumerate(values):
+        dependency_start = max(0, index - dependency_window + 1)
+        has_unavailable_input = (
+            unavailable_prefix[index + 1] - unavailable_prefix[dependency_start] > 0
+        )
+        masked.append(None if has_unavailable_input else value)
+    return tuple(masked)
 
 
 def _is_aligned_talib_array(values: object, expected_count: int) -> bool:

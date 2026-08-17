@@ -302,8 +302,10 @@ The two backends intentionally do not promise bit-for-bit equality:
   TA-Lib's lookback. TA-Lib float64 and missing-gap behavior are retained.
 - Stochastic has no native comparison. Its `k_period + k_smoothing_period +
   d_period - 3` leading rows are unavailable. A missing high, low, or close is
-  passed to TA-Lib as `NaN`; pinned TA-Lib's subsequent unavailable region is
-  retained without fill or independent restart.
+  passed to TA-Lib as `NaN`. QuantForge additionally masks every `k` or `d`
+  whose causal dependency window includes that row, even when TA-Lib's rolling
+  extrema would otherwise ignore a missing high or low. Any larger unavailable
+  region produced by pinned TA-Lib is retained without fill or restart.
 
 Constructing SMA, EMA, Wilder RSI, Wilder ATR, directional movement, or
 Bollinger Bands without `backend_id` remains the compatibility path. It resolves
@@ -388,8 +390,12 @@ For periods `K`, `S`, and `D`, TA-Lib's lookback is `K + S + D - 3` rows.
 QuantForge reports `K + S + D - 2` warm-up observations: both outputs are
 `None` for the leading lookback rows and first become available together on bar
 `K + S + D - 2`. No partial-window value is emitted. Canonical non-finite high,
-low, or close observations are passed as `NaN`, never infinity, and unavailable
-TA-Lib outputs normalize to `None` without fill or backfill.
+low, or close observations are passed as `NaN`, never infinity. A `k` value is
+masked to `None` when any unavailable input occurs in its trailing `K + S - 1`
+source bars; a `d` value is masked when one occurs in its trailing `K + S + D -
+2` source bars. This closes TA-Lib's missing-extrema behavior without replacing
+its stochastic calculation. TA-Lib's own unavailable outputs also normalize to
+`None`, and neither path fills or backfills values.
 
 When the complete `k_period` high-low range is zero, pinned TA-Lib 0.7.1 emits
 zero for raw %K and consequently zero for the simple-smoothed `k` and `d` once
