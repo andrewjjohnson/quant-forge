@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation, localcontext
 from math import isfinite, isnan
 from typing import cast
 
@@ -32,6 +32,7 @@ _RSI_NAME = "wilder_relative_strength_index"
 _ATR_NAME = "wilder_average_true_range"
 _DIRECTIONAL_MOVEMENT_NAME = "wilder_directional_movement"
 _BOLLINGER_NAME = "bollinger_bands"
+_MACD_NAME = "moving_average_convergence_divergence"
 _MAXIMUM_PERIOD = 100_000
 type _TalibOutput = npt.NDArray[np.float64] | tuple[npt.NDArray[np.float64], ...]
 type _TalibFunction = Callable[..., _TalibOutput]
@@ -39,6 +40,9 @@ type _ParameterValidator = Callable[[PrimitiveMapping], None]
 type _ParameterNormalizer = Callable[[object], int | float]
 type _DerivedOutput = Callable[
     [Mapping[str, npt.NDArray[np.float64]]], npt.NDArray[np.float64]
+]
+type _NormalizedDerivedOutput = Callable[
+    [Mapping[str, tuple[IndicatorValue, ...]]], tuple[IndicatorValue, ...]
 ]
 
 
@@ -53,13 +57,16 @@ class _TalibMapping:
     backend_output_names: tuple[str, ...]
     output_sources: tuple[tuple[str, str], ...]
     derived_outputs: tuple[tuple[str, _DerivedOutput], ...]
+    normalized_derived_outputs: tuple[tuple[str, _NormalizedDerivedOutput], ...]
     unstable_function_names: tuple[str, ...]
     validate_parameters: _ParameterValidator
 
     @property
     def output_names(self) -> tuple[str, ...]:
-        return tuple(name for name, _ in self.output_sources) + tuple(
-            name for name, _ in self.derived_outputs
+        return (
+            tuple(name for name, _ in self.output_sources)
+            + tuple(name for name, _ in self.derived_outputs)
+            + tuple(name for name, _ in self.normalized_derived_outputs)
         )
 
 
@@ -112,6 +119,24 @@ def _bollinger_bandwidth(
     return bandwidth
 
 
+def _normalized_macd_histogram(
+    outputs: Mapping[str, tuple[IndicatorValue, ...]],
+) -> tuple[IndicatorValue, ...]:
+    macd = outputs["macd"]
+    signal = outputs["signal"]
+    histogram: list[IndicatorValue] = []
+    with localcontext() as context:
+        context.prec = 34
+        context.rounding = ROUND_HALF_EVEN
+        for macd_value, signal_value in zip(macd, signal, strict=True):
+            histogram.append(
+                None
+                if macd_value is None or signal_value is None
+                else macd_value - signal_value
+            )
+    return tuple(histogram)
+
+
 def _validate_bollinger_parameters(parameters: PrimitiveMapping) -> None:
     _validate_period_parameters(
         parameters,
@@ -145,6 +170,7 @@ _MAPPINGS = {
         backend_output_names=("real",),
         output_sources=(("simple_moving_average", "real"),),
         derived_outputs=(),
+        normalized_derived_outputs=(),
         unstable_function_names=(),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters, parameter_name="window", indicator_label="SMA"
@@ -160,6 +186,7 @@ _MAPPINGS = {
         backend_output_names=("real",),
         output_sources=(("exponential_moving_average", "real"),),
         derived_outputs=(),
+        normalized_derived_outputs=(),
         unstable_function_names=("EMA",),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters, parameter_name="period", indicator_label="EMA"
@@ -175,6 +202,7 @@ _MAPPINGS = {
         backend_output_names=("real",),
         output_sources=(("wilder_rsi", "real"),),
         derived_outputs=(),
+        normalized_derived_outputs=(),
         unstable_function_names=("RSI",),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters,
@@ -193,6 +221,7 @@ _MAPPINGS = {
         backend_output_names=("real",),
         output_sources=(("wilder_average_true_range", "real"),),
         derived_outputs=(),
+        normalized_derived_outputs=(),
         unstable_function_names=("ATR",),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters, parameter_name="period", indicator_label="ATR"
@@ -212,6 +241,7 @@ _MAPPINGS = {
             ("average_directional_index", "adx"),
         ),
         derived_outputs=(),
+        normalized_derived_outputs=(),
         unstable_function_names=("PLUS_DI", "MINUS_DI", "ADX"),
         validate_parameters=lambda parameters: _validate_period_parameters(
             parameters,
@@ -241,8 +271,30 @@ _MAPPINGS = {
             ("bollinger_lower_band", "lower"),
         ),
         derived_outputs=(("bollinger_bandwidth", _bollinger_bandwidth),),
+        normalized_derived_outputs=(),
         unstable_function_names=(),
         validate_parameters=_validate_bollinger_parameters,
+    ),
+    _MACD_NAME: _TalibMapping(
+        function_name="MACD",
+        function=cast(_TalibFunction, talib.MACD),
+        parameter_mappings=(
+            ("fast_period", ("fastperiod",), _integer_parameter),
+            ("slow_period", ("slowperiod",), _integer_parameter),
+            ("signal_period", ("signalperiod",), _integer_parameter),
+        ),
+        input_parameter_names=frozenset(("source_field",)),
+        input_fields=None,
+        source_field_parameter="source_field",
+        backend_output_names=("macd", "signal", "talib_histogram"),
+        output_sources=(
+            ("macd", "macd"),
+            ("signal", "signal"),
+        ),
+        derived_outputs=(),
+        normalized_derived_outputs=(("histogram", _normalized_macd_histogram),),
+        unstable_function_names=("EMA",),
+        validate_parameters=lambda parameters: _validate_macd_parameters(parameters),
     ),
 }
 
@@ -298,20 +350,37 @@ class TalibIndicatorBackend:
         backend_outputs = dict(
             zip(mapping.backend_output_names, raw_arrays, strict=True)
         )
-        normalized_outputs = {
+        if any(
+            not _is_aligned_talib_array(values, len(request.bars))
+            for values in backend_outputs.values()
+        ):
+            raise IndicatorCalculationError(
+                f"{self.backend_id} output does not align with canonical input"
+            )
+        raw_normalized_outputs = {
             normalized_name: backend_outputs[backend_name]
             for normalized_name, backend_name in mapping.output_sources
         }
-        normalized_outputs.update(
+        raw_normalized_outputs.update(
             {
                 normalized_name: derive(backend_outputs)
                 for normalized_name, derive in mapping.derived_outputs
             }
         )
+        normalized_outputs = {
+            name: _normalize_array(values, len(request.bars))
+            for name, values in raw_normalized_outputs.items()
+        }
+        normalized_outputs.update(
+            {
+                name: derive(normalized_outputs)
+                for name, derive in mapping.normalized_derived_outputs
+            }
+        )
         fields = tuple(
             IndicatorFieldOutput(
                 name,
-                _normalize_array(normalized_outputs[name], len(request.bars)),
+                normalized_outputs[name],
             )
             for name in definition.output_fields
         )
@@ -429,6 +498,36 @@ def _validate_period_parameters(
         )
 
 
+def _validate_macd_parameters(parameters: PrimitiveMapping) -> None:
+    _validate_period_parameters(
+        parameters,
+        parameter_name="fast_period",
+        indicator_label="MACD",
+        minimum_period=2,
+    )
+    _validate_period_parameters(
+        parameters,
+        parameter_name="slow_period",
+        indicator_label="MACD",
+        minimum_period=2,
+    )
+    _validate_period_parameters(
+        parameters,
+        parameter_name="signal_period",
+        indicator_label="MACD",
+    )
+    fast_period = parameters["fast_period"]
+    slow_period = parameters["slow_period"]
+    if not isinstance(fast_period, int) or not isinstance(slow_period, int):
+        raise UnsupportedIndicatorBackendError(
+            f"{TALIB_INDICATOR_BACKEND} MACD periods must be integers"
+        )
+    if fast_period >= slow_period:
+        raise UnsupportedIndicatorBackendError(
+            f"{TALIB_INDICATOR_BACKEND} MACD fast_period must be less than slow_period"
+        )
+
+
 def _float_input(
     request: IndicatorComputationRequest, field_name: str
 ) -> npt.NDArray[np.float64]:
@@ -482,6 +581,13 @@ def _normalize_array(
         else:
             normalized.append(Decimal(str(value)))
     return tuple(normalized)
+
+
+def _is_aligned_talib_array(values: object, expected_count: int) -> bool:
+    if not isinstance(values, np.ndarray):
+        return False
+    array = cast(npt.NDArray[np.float64], values)
+    return array.ndim == 1 and array.shape == (expected_count,)
 
 
 __all__ = ["TalibIndicatorBackend"]

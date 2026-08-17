@@ -63,6 +63,13 @@ from quantforge.indicators.exponential_moving_average import (
     ExponentialMovingAverage,
     ExponentialMovingAverageParameters,
 )
+from quantforge.indicators.macd import (
+    MACD_HISTOGRAM_OUTPUT,
+    MACD_OUTPUT,
+    MACD_SIGNAL_OUTPUT,
+    MovingAverageConvergenceDivergence,
+    MovingAverageConvergenceDivergenceParameters,
+)
 from quantforge.indicators.models import (
     IndicatorFieldOutput,
     IndicatorOutput,
@@ -106,6 +113,9 @@ __all__ = [
     "INDICATOR_COMPARISON_ARTIFACT_FILENAMES",
     "INDICATOR_COMPARISON_ENGINE_VERSION",
     "INDICATOR_COMPARISON_SCHEMA_VERSION",
+    "MACD_HISTOGRAM_OUTPUT",
+    "MACD_OUTPUT",
+    "MACD_SIGNAL_OUTPUT",
     "NATIVE_INDICATOR_BACKEND",
     "NEGATIVE_DIRECTIONAL_INDICATOR_OUTPUT",
     "POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT",
@@ -147,6 +157,8 @@ __all__ = [
     "MarketField",
     "MisalignedIndicatorOutputError",
     "MissingMarketFieldError",
+    "MovingAverageConvergenceDivergence",
+    "MovingAverageConvergenceDivergenceParameters",
     "NativeIndicatorBackend",
     "SimpleMovingAverage",
     "SimpleMovingAverageParameters",

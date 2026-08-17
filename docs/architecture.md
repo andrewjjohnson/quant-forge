@@ -310,6 +310,9 @@ math; `talib_v1` delegates explicitly selected standard math to pinned TA-Lib.
 QF-38 compares two explicit adapters below the same definition and reports
 availability, numerical, and optional prediction-study impact without selecting
 or migrating a backend.
+QF-25 adds MACD through that same backend-neutral definition and normalized
+multi-output path, with `talib_v1` as its standard implementation and no native
+MACD formula.
 Backend adapters, not prediction, feature, data, strategy, or backtesting
 packages, import or translate library APIs. See
 `docs/strategy-contracts.md`,
