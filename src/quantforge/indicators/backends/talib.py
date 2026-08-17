@@ -2,7 +2,16 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation, localcontext
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DecimalException,
+    DivisionByZero,
+    InvalidOperation,
+    Overflow,
+    localcontext,
+)
 from math import isfinite, isnan
 from typing import cast
 
@@ -34,6 +43,14 @@ _DIRECTIONAL_MOVEMENT_NAME = "wilder_directional_movement"
 _BOLLINGER_NAME = "bollinger_bands"
 _MACD_NAME = "moving_average_convergence_divergence"
 _MAXIMUM_PERIOD = 100_000
+_DECIMAL_PRECISION = 34
+_DECIMAL_EMIN = -999_999
+_DECIMAL_EMAX = 999_999
+_DECIMAL_TRAPS: tuple[type[DecimalException], ...] = (
+    DivisionByZero,
+    InvalidOperation,
+    Overflow,
+)
 type _TalibOutput = npt.NDArray[np.float64] | tuple[npt.NDArray[np.float64], ...]
 type _TalibFunction = Callable[..., _TalibOutput]
 type _ParameterValidator = Callable[[PrimitiveMapping], None]
@@ -125,9 +142,7 @@ def _normalized_macd_histogram(
     macd = outputs["macd"]
     signal = outputs["signal"]
     histogram: list[IndicatorValue] = []
-    with localcontext() as context:
-        context.prec = 34
-        context.rounding = ROUND_HALF_EVEN
+    with localcontext(_normalization_context()):
         for macd_value, signal_value in zip(macd, signal, strict=True):
             histogram.append(
                 None
@@ -135,6 +150,19 @@ def _normalized_macd_histogram(
                 else macd_value - signal_value
             )
     return tuple(histogram)
+
+
+def _normalization_context() -> Context:
+    return Context(
+        prec=_DECIMAL_PRECISION,
+        rounding=ROUND_HALF_EVEN,
+        Emin=_DECIMAL_EMIN,
+        Emax=_DECIMAL_EMAX,
+        capitals=1,
+        clamp=0,
+        flags=[],
+        traps=list(_DECIMAL_TRAPS),
+    )
 
 
 def _validate_bollinger_parameters(parameters: PrimitiveMapping) -> None:

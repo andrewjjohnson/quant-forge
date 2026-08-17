@@ -325,7 +325,8 @@ definition or downstream result. TA-Lib's three tuple positions receive
 backend-local names before the adapter emits the stable QuantForge fields
 `macd`, `signal`, and `histogram`. To preserve the normalized contract exactly,
 `histogram` is subtracted from the already normalized Decimal `macd` and
-`signal` values. Thus every available row satisfies
+`signal` values under a fully specified 34-digit, round-half-even Decimal
+context with fixed exponent bounds and traps. Thus every available row satisfies
 `histogram == macd - signal`, independent of a final float64 rounding difference
 in TA-Lib's separately returned histogram array.
 

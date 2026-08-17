@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from copy import deepcopy
-from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
+from decimal import ROUND_DOWN, Decimal, Overflow, localcontext
 from typing import cast
 
 import pytest
@@ -168,22 +168,27 @@ def test_histogram_is_exact_normalized_macd_minus_signal() -> None:
             assert histogram_value == macd_value - signal_value
 
 
-def test_normalized_histogram_is_independent_of_ambient_decimal_context() -> None:
+def test_normalized_histogram_uses_a_fully_specified_decimal_context() -> None:
     indicator = MovingAverageConvergenceDivergence(
         MovingAverageConvergenceDivergenceParameters(3, 5, 2)
     )
-    dataset = make_dataset(CLOSES)
+    scaled_closes = tuple(str(int(close) * 100_000_000) for close in CLOSES)
+    dataset = make_dataset(scaled_closes)
+    expected = indicator.calculate(dataset)
 
-    with localcontext() as low_precision:
-        low_precision.prec = 6
-        low_precision.rounding = ROUND_DOWN
-        low_result = indicator.calculate(dataset)
-    with localcontext() as high_precision:
-        high_precision.prec = 50
-        high_precision.rounding = ROUND_UP
-        high_result = indicator.calculate(dataset)
+    with localcontext() as ambient:
+        ambient.prec = 6
+        ambient.rounding = ROUND_DOWN
+        ambient.Emin = -5
+        ambient.Emax = 5
+        ambient.capitals = 0
+        ambient.clamp = 1
+        for signal in ambient.traps:
+            ambient.traps[signal] = False
+        ambient.traps[Overflow] = True
+        constrained = indicator.calculate(dataset)
 
-    assert low_result == high_result
+    assert constrained == expected
 
 
 def test_warm_up_is_explicit_aligned_and_serialized() -> None:
