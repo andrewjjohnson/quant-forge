@@ -204,6 +204,22 @@ def test_missing_extrema_mask_every_causally_affected_output(
     assert output.values_for(STOCHASTIC_D_OUTPUT)[5:] == (None,) * 5
 
 
+def test_missing_close_does_not_mask_later_raw_k_extrema_windows() -> None:
+    closes = tuple("NaN" if index == 6 else str(10 + index) for index in range(12))
+    highs = tuple(str(11 + index) for index in range(12))
+    lows = tuple(str(9 + index) for index in range(12))
+
+    output = StochasticOscillator(StochasticOscillatorParameters(5, 1, 1)).calculate(
+        make_dataset(closes, highs=highs, lows=lows)
+    )
+
+    for field_name in (STOCHASTIC_K_OUTPUT, STOCHASTIC_D_OUTPUT):
+        values = output.values_for(field_name)
+        assert values[5] is not None
+        assert values[6] is None
+        assert values[7] is not None
+
+
 def test_talib_period_limits_fail_through_backend_domain_error() -> None:
     with pytest.raises(
         UnsupportedIndicatorBackendError,

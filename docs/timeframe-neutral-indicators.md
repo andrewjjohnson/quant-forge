@@ -390,12 +390,14 @@ For periods `K`, `S`, and `D`, TA-Lib's lookback is `K + S + D - 3` rows.
 QuantForge reports `K + S + D - 2` warm-up observations: both outputs are
 `None` for the leading lookback rows and first become available together on bar
 `K + S + D - 2`. No partial-window value is emitted. Canonical non-finite high,
-low, or close observations are passed as `NaN`, never infinity. A `k` value is
-masked to `None` when any unavailable input occurs in its trailing `K + S - 1`
-source bars; a `d` value is masked when one occurs in its trailing `K + S + D -
-2` source bars. This closes TA-Lib's missing-extrema behavior without replacing
-its stochastic calculation. TA-Lib's own unavailable outputs also normalize to
-`None`, and neither path fills or backfills values.
+low, or close observations are passed as `NaN`, never infinity. The dependency
+mask is field-specific: `k` uses trailing windows of `K + S - 1` bars for high
+and low but only `S` bars for close; `d` uses `K + S + D - 2` bars for high and
+low but only `S + D - 1` bars for close. Historical closes do not incorrectly
+participate in later raw %K extrema. This closes TA-Lib's missing-extrema
+behavior without replacing its stochastic calculation. TA-Lib's own
+unavailable outputs also normalize to `None`, and neither path fills or
+backfills values.
 
 When the complete `k_period` high-low range is zero, pinned TA-Lib 0.7.1 emits
 zero for raw %K and consequently zero for the simple-smoothed `k` and `d` once
