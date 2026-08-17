@@ -313,6 +313,9 @@ or migrating a backend.
 QF-25 adds MACD through that same backend-neutral definition and normalized
 multi-output path, with `talib_v1` as its standard implementation and no native
 MACD formula.
+QF-26 adds the slow stochastic oscillator through the same path, normalizing
+TA-Lib `STOCH` to stable `k` and `d` outputs while retaining timeframe and
+lineage ownership above the adapter and adding no native stochastic formula.
 Backend adapters, not prediction, feature, data, strategy, or backtesting
 packages, import or translate library APIs. See
 `docs/strategy-contracts.md`,

@@ -42,6 +42,8 @@ _ATR_NAME = "wilder_average_true_range"
 _DIRECTIONAL_MOVEMENT_NAME = "wilder_directional_movement"
 _BOLLINGER_NAME = "bollinger_bands"
 _MACD_NAME = "moving_average_convergence_divergence"
+_STOCHASTIC_NAME = "stochastic_oscillator"
+_SIMPLE_MOVING_AVERAGE = "simple_moving_average"
 _MAXIMUM_PERIOD = 100_000
 _DECIMAL_PRECISION = 34
 _DECIMAL_EMIN = -999_999
@@ -100,6 +102,12 @@ def _decimal_parameter(value: object) -> float:
     if not isfinite(converted):
         raise ValueError("TA-Lib decimal parameter cannot be represented as float64")
     return converted
+
+
+def _simple_moving_average_type(value: object) -> int:
+    if value != _SIMPLE_MOVING_AVERAGE:
+        raise TypeError("TA-Lib stochastic smoothing method is invalid")
+    return 0
 
 
 def _talib_directional_movement(
@@ -323,6 +331,31 @@ _MAPPINGS = {
         normalized_derived_outputs=(("histogram", _normalized_macd_histogram),),
         unstable_function_names=("EMA",),
         validate_parameters=lambda parameters: _validate_macd_parameters(parameters),
+    ),
+    _STOCHASTIC_NAME: _TalibMapping(
+        function_name="STOCH",
+        function=cast(_TalibFunction, talib.STOCH),
+        parameter_mappings=(
+            ("k_period", ("fastk_period",), _integer_parameter),
+            ("k_smoothing_period", ("slowk_period",), _integer_parameter),
+            ("d_period", ("slowd_period",), _integer_parameter),
+            (
+                "smoothing_method",
+                ("slowk_matype", "slowd_matype"),
+                _simple_moving_average_type,
+            ),
+        ),
+        input_parameter_names=frozenset(),
+        input_fields=("high", "low", "close"),
+        source_field_parameter=None,
+        backend_output_names=("slow_k", "slow_d"),
+        output_sources=(("k", "slow_k"), ("d", "slow_d")),
+        derived_outputs=(),
+        normalized_derived_outputs=(),
+        unstable_function_names=(),
+        validate_parameters=lambda parameters: _validate_stochastic_parameters(
+            parameters
+        ),
     ),
 }
 
@@ -553,6 +586,20 @@ def _validate_macd_parameters(parameters: PrimitiveMapping) -> None:
     if fast_period >= slow_period:
         raise UnsupportedIndicatorBackendError(
             f"{TALIB_INDICATOR_BACKEND} MACD fast_period must be less than slow_period"
+        )
+
+
+def _validate_stochastic_parameters(parameters: PrimitiveMapping) -> None:
+    for parameter_name in ("k_period", "k_smoothing_period", "d_period"):
+        _validate_period_parameters(
+            parameters,
+            parameter_name=parameter_name,
+            indicator_label="stochastic",
+        )
+    if parameters.get("smoothing_method") != _SIMPLE_MOVING_AVERAGE:
+        raise UnsupportedIndicatorBackendError(
+            f"{TALIB_INDICATOR_BACKEND} stochastic smoothing_method must be "
+            f"{_SIMPLE_MOVING_AVERAGE}"
         )
 
 

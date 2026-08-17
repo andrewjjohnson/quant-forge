@@ -16,6 +16,9 @@ QF-38 adds descriptive parity tooling over that contract; it does not add
 backend-specific indicator classes or alter either backend's mathematics.
 QF-25 adds a backend-neutral MACD definition whose standard implementation is
 the pinned `talib_v1` adapter; it deliberately adds no native MACD formula.
+QF-26 adds a backend-neutral slow stochastic oscillator through the same
+adapter, with fixed simple-moving-average smoothing and no native stochastic
+formula.
 
 ## Standard-indicator backend boundary
 
@@ -32,7 +35,7 @@ QuantForge fields plus normalized request and backend metadata.
   and Bollinger Bands to their historical QuantForge Decimal implementations;
 - `talib_v1` maps those same definitions to TA-Lib `SMA`, `EMA`, `RSI`, `ATR`,
   `PLUS_DI`, `MINUS_DI`, `ADX`, and `BBANDS`, and is the standard implementation
-  for the MACD definition through TA-Lib `MACD`.
+  for the MACD and stochastic definitions through TA-Lib `MACD` and `STOCH`.
 
 Backend selection occurs when one of those backend-neutral indicators is
 configured. The QF-22 `ConfiguredTimeframeIndicator` remains above it and
@@ -126,6 +129,7 @@ Every period, window, and warm-up is measured in input observations/bars:
 | +DI / -DI | `period=N` | bar `N + 1` |
 | ADX | `period=N` | bar `2N` |
 | MACD | `slow_period=S`, `signal_period=G` | bar `S + G - 1` |
+| Stochastic | `k_period=K`, `k_smoothing_period=S`, `d_period=D` | bar `K + S + D - 2` |
 
 For example, a 20-period SMA consumes 20 five-minute bars on a 5m source and 20
 trading weeks on a weekly source. No indicator converts the number 20 into a
@@ -228,6 +232,7 @@ standard indicators:
 | `wilder_directional_movement` | `high`, `low`, `close` | `period` | `positive_directional_indicator`, `negative_directional_indicator`, `average_directional_index` | one request invoking `PLUS_DI`, `MINUS_DI`, and `ADX` once each |
 | `bollinger_bands` | configured market field | `period`, `source_field`, `standard_deviation_multiplier` | `bollinger_middle_band`, `bollinger_upper_band`, `bollinger_lower_band`, `bollinger_bandwidth` | `BBANDS(real, timeperiod=period, nbdevup=multiplier, nbdevdn=multiplier)` plus normalized bandwidth |
 | `moving_average_convergence_divergence` | configured market field | `fast_period`, `slow_period`, `signal_period`, `source_field` | `macd`, `signal`, `histogram` | `MACD(real, fastperiod=fast_period, slowperiod=slow_period, signalperiod=signal_period)` |
+| `stochastic_oscillator` | `high`, `low`, `close` | `k_period`, `k_smoothing_period`, `d_period`, `smoothing_method` | `k`, `d` | `STOCH(high, low, close, fastk_period=k_period, slowk_period=k_smoothing_period, slowk_matype=0, slowd_period=d_period, slowd_matype=0)` |
 
 The adapter converts canonical `Decimal` inputs to float64, converts TA-Lib
 `NaN` outputs to aligned `None` values, rejects infinite outputs, and converts
@@ -254,7 +259,10 @@ Directional movement and Bollinger Bands accept a minimum period of `2` in
 TA-Lib 0.7.1; the historical native implementations still accept period `1`.
 MACD accepts fast and slow periods from `2` through `100000` and a signal period
 from `1` through `100000`; QuantForge additionally requires the normalized fast
-period to be less than the slow period.
+period to be less than the slow period. Stochastic accepts each of its three
+periods from `1` through `100000`; the normalized `simple_moving_average`
+smoothing method maps to TA-Lib moving-average type `0` for both smoothing
+stages.
 The broader historical native contracts are unchanged. The adapter requires
 default TA-Lib compatibility and zero unstable periods for EMA, RSI, ATR,
 `PLUS_DI`, `MINUS_DI`, and `ADX`. MACD also requires a zero EMA unstable period.
@@ -292,6 +300,10 @@ The two backends intentionally do not promise bit-for-bit equality:
 - MACD has no native comparison. Its first normalized value appears after
   `slow_period + signal_period - 2` leading unavailable rows, following pinned
   TA-Lib's lookback. TA-Lib float64 and missing-gap behavior are retained.
+- Stochastic has no native comparison. Its `k_period + k_smoothing_period +
+  d_period - 3` leading rows are unavailable. A missing high, low, or close is
+  passed to TA-Lib as `NaN`; pinned TA-Lib's subsequent unavailable region is
+  retained without fill or independent restart.
 
 Constructing SMA, EMA, Wilder RSI, Wilder ATR, directional movement, or
 Bollinger Bands without `backend_id` remains the compatibility path. It resolves
@@ -345,6 +357,47 @@ zero global EMA unstable period, because that process-global setting changes
 MACD initialization and lookback. The indicator supports a causal QF-21
 developing bar: the backend sees only the already reconstructed as-of source
 value supplied by the context, never the eventual completed bar.
+
+## Stochastic oscillator
+
+`StochasticOscillatorParameters` contains positive integer `k_period`,
+`k_smoothing_period`, and `d_period` values. Defaults are `5`, `3`, and `3`.
+The normalized smoothing method is fixed to `simple_moving_average`; it is
+serialized with the periods rather than left as hidden library state. The
+QF-22 binding supplies the complete source timeframe, completion policy, and
+dataset-family lineage. The bound identity therefore includes all three
+periods, the smoothing method, backend id and exact wrapper and C runtime
+versions, timeframe, completion policy, and aggregation lineage.
+
+The public `StochasticOscillator` class owns only that normalized definition.
+It defaults to `talib_v1`; selecting `native_v1` fails through the standard
+unsupported-backend domain error because QF-26 adds no QuantForge stochastic
+calculation. A future backend can support the definition by adding one adapter
+mapping rather than another public stochastic class.
+
+QF-26 deliberately selects TA-Lib's slow stochastic `STOCH` variant. For each
+bar, TA-Lib first calculates raw fast %K over the trailing `k_period` high-low
+range. The normalized `k` output is a simple moving average of raw %K over
+`k_smoothing_period`; normalized `d` is a simple moving average of `k` over
+`d_period`. The adapter fixes both TA-Lib moving-average-type arguments to
+simple moving average (`0`). TA-Lib parameter names, moving-average codes,
+tuple order, and its backend-local `slowk`/`slowd` names are not exposed in the
+definition or result.
+
+For periods `K`, `S`, and `D`, TA-Lib's lookback is `K + S + D - 3` rows.
+QuantForge reports `K + S + D - 2` warm-up observations: both outputs are
+`None` for the leading lookback rows and first become available together on bar
+`K + S + D - 2`. No partial-window value is emitted. Canonical non-finite high,
+low, or close observations are passed as `NaN`, never infinity, and unavailable
+TA-Lib outputs normalize to `None` without fill or backfill.
+
+When the complete `k_period` high-low range is zero, pinned TA-Lib 0.7.1 emits
+zero for raw %K and consequently zero for the simple-smoothed `k` and `d` once
+their windows are available. QuantForge preserves and documents that backend
+result; it does not substitute a division-by-zero formula or another neutral
+value. Finite TA-Lib float64 values are converted with `Decimal(str(value))`.
+The indicator supports a causal QF-21 developing bar and sees only its
+already-reconstructed as-of high, low, and close.
 
 ## Bollinger Bands
 

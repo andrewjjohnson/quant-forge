@@ -287,7 +287,7 @@ def test_explicit_backend_configuration_round_trips_and_rejects_version_drift() 
 
 def test_unsupported_backend_indicator_combination_is_a_clear_domain_error() -> None:
     unsupported = StandardIndicatorDefinition(
-        name="stochastic_oscillator",
+        name="unmapped_indicator",
         parameters=PrimitiveMappingSnapshot.capture({}),
         input_fields=(MarketField.CLOSE,),
         output_fields=("macd",),

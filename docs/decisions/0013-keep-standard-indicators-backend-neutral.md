@@ -4,7 +4,8 @@
 - Date: 2026-08-14
 - Jira: [QF-35](https://frostfiredigital-37308542.atlassian.net/browse/QF-35),
   [QF-37](https://frostfiredigital-37308542.atlassian.net/browse/QF-37),
-  [QF-25](https://frostfiredigital-37308542.atlassian.net/browse/QF-25)
+  [QF-25](https://frostfiredigital-37308542.atlassian.net/browse/QF-25),
+  [QF-26](https://frostfiredigital-37308542.atlassian.net/browse/QF-26)
 
 ## Context
 
@@ -27,6 +28,8 @@ the same adapters and backend-neutral public classes to SMA, Wilder RSI, and
 Wilder ATR. QF-37 extends them to directional movement/ADX and Bollinger Bands.
 QF-25 adds MACD through the same definition and makes `talib_v1` its standard
 implementation without introducing a native MACD formula.
+QF-26 adds slow stochastic through the same definition and makes `talib_v1`
+its standard implementation without introducing a native stochastic formula.
 Multiple library outputs receive backend-local names before they map to stable
 QuantForge names, so tuple positions remain adapter details. Each adapter owns
 input extraction, parameter translation, library invocation, output
@@ -67,6 +70,10 @@ QF-25 maps normalized fast, slow, and signal periods plus a source field to
 TA-Lib `MACD`, then exposes only `macd`, `signal`, and `histogram`. The histogram
 is derived from the normalized lines so the stable result contract preserves
 exact subtraction after float-to-Decimal normalization.
+QF-26 maps normalized %K lookback, %K smoothing, and %D periods plus an explicit
+simple-moving-average smoothing convention to TA-Lib `STOCH`, then exposes only
+`k` and `d`. TA-Lib parameter names, moving-average type codes, and tuple order
+remain adapter details. Zero-range behavior remains the pinned backend's result.
 
 ## Alternatives considered
 
@@ -103,4 +110,9 @@ lookback expectations, timeframe lineage metadata, and append-future causality.
 QF-25 adds MACD period ordering and backend-range validation, TA-Lib tuple and
 parameter translation, exact normalized histogram invariants, explicit lookback
 and unavailable behavior, serialization/version identity, timeframe neutrality,
+input immutability, and append-future causality coverage.
+
+QF-26 adds stochastic period and backend-range validation, named tuple
+normalization, fixed simple-moving-average convention, explicit warm-up and
+zero-range behavior, serialization/version identity, timeframe neutrality,
 input immutability, and append-future causality coverage.
