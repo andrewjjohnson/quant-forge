@@ -33,7 +33,8 @@ from quantforge.indicators.exceptions import (
 from quantforge.indicators.models import IndicatorFieldOutput, MarketField
 from quantforge.timeframes import BarCompletion, Timeframe
 
-TIMEFRAME_INDICATOR_CONTRACT_VERSION = "1"
+TIMEFRAME_INDICATOR_CONTRACT_VERSION = "2"
+_LEGACY_TIMEFRAME_INDICATOR_CONTRACT_VERSION = "1"
 _RESERVED_ROW_FIELDS = frozenset(("bar_id", "bar_end_timestamp", "completion"))
 
 
@@ -41,6 +42,18 @@ def _timeframe_primitive(timeframe: Timeframe) -> PrimitiveMapping:
     return {
         "configuration_id": timeframe.configuration_id,
         "configuration": timeframe.to_primitive(),
+    }
+
+
+def _legacy_dataset_reference_primitive(
+    reference: DatasetFamilyReference,
+) -> PrimitiveMapping:
+    """Return the QF-22 v1 reference shape, before explicit feed scope."""
+    return {
+        "family_id": reference.family_id,
+        "dataset_id": reference.dataset_id,
+        "canonical_source_snapshot_id": reference.canonical_source_snapshot_id,
+        "timeframe_configuration_id": reference.timeframe_configuration_id,
     }
 
 
@@ -263,30 +276,54 @@ class ConfiguredTimeframeIndicator:
     def source_fields(self) -> tuple[MarketField, ...]:
         return self._source_fields
 
-    def configuration(self) -> PrimitiveMapping:
-        """Return formula plus complete temporal and lineage source configuration."""
+    def configuration(
+        self,
+        *,
+        contract_version: str = TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+    ) -> PrimitiveMapping:
+        """Return source configuration in the current or legacy contract shape."""
+        if contract_version not in {
+            _LEGACY_TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+            TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+        }:
+            raise IndicatorSourceError(
+                f"unsupported timeframe indicator contract version: {contract_version}"
+            )
+        legacy = contract_version == _LEGACY_TIMEFRAME_INDICATOR_CONTRACT_VERSION
+        source: PrimitiveMapping = {
+            "timeframe": _timeframe_primitive(self.source_timeframe),
+            "fields": [field.value for field in self.source_fields],
+            "completion_policy": self.completion_policy.value,
+            "developing_bar_support": self._developing_bar_support.value,
+            "observation_unit": "bar",
+            "warm_up_bars": self._warm_up_bars,
+            "aggregation_provenance": (
+                _legacy_dataset_reference_primitive(self.dataset_reference)
+                if legacy
+                else self.dataset_reference.to_primitive()
+            ),
+        }
+        if not legacy:
+            source["feed_scope"] = self.dataset_reference.feed_scope.to_primitive()
         return {
             "component_type": "timeframe_indicator",
-            "contract_version": TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+            "contract_version": contract_version,
             "indicator": {
                 "configuration_id": self._indicator_configuration_id,
                 "configuration": self._indicator_configuration.to_primitive(),
             },
-            "source": {
-                "timeframe": _timeframe_primitive(self.source_timeframe),
-                "fields": [field.value for field in self.source_fields],
-                "completion_policy": self.completion_policy.value,
-                "developing_bar_support": self._developing_bar_support.value,
-                "observation_unit": "bar",
-                "warm_up_bars": self._warm_up_bars,
-                "aggregation_provenance": self.dataset_reference.to_primitive(),
-                "feed_scope": self.dataset_reference.feed_scope.to_primitive(),
-            },
+            "source": source,
         }
 
     @property
     def configuration_id(self) -> str:
-        return configuration_identity(self.configuration())
+        return self.configuration_id_for_contract(TIMEFRAME_INDICATOR_CONTRACT_VERSION)
+
+    def configuration_id_for_contract(self, contract_version: str) -> str:
+        """Return the deterministic identity for one supported contract version."""
+        return configuration_identity(
+            self.configuration(contract_version=contract_version)
+        )
 
     def calculate(self, context: MultiTimeframeContext) -> TimeframeIndicatorOutput:
         """Evaluate the exact configured timeframe or fail closed on source drift."""

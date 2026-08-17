@@ -38,6 +38,7 @@ from quantforge.indicators import (
     STOCHASTIC_D_OUTPUT,
     STOCHASTIC_K_OUTPUT,
     TALIB_INDICATOR_BACKEND,
+    TIMEFRAME_INDICATOR_CONTRACT_VERSION,
     VOLUME_MOVING_AVERAGE_OUTPUT,
     BollingerBands,
     BollingerBandsParameters,
@@ -436,6 +437,40 @@ def test_configuration_identity_binds_timeframe_policy_fields_and_lineage() -> N
     assert source["observation_unit"] == "bar"
     assert source["warm_up_bars"] == 2
     assert source["aggregation_provenance"] == _reference(four_hour).to_primitive()
+
+
+def test_timeframe_configuration_versions_feed_scope_and_preserves_v1_shape() -> None:
+    _, four_hour, _, _ = _timeframes()
+    configured = bind_indicator(
+        SimpleMovingAverage(SimpleMovingAverageParameters(2)),
+        _all_completed_context(),
+        four_hour,
+    )
+
+    current = configured.configuration()
+    legacy = configured.configuration(contract_version="1")
+    current_source = cast(dict[str, object], current["source"])
+    legacy_source = cast(dict[str, object], legacy["source"])
+
+    assert TIMEFRAME_INDICATOR_CONTRACT_VERSION == "2"
+    assert current["contract_version"] == "2"
+    assert current_source["feed_scope"] == FeedScope.consolidated().to_primitive()
+    assert (
+        current_source["aggregation_provenance"] == _reference(four_hour).to_primitive()
+    )
+    assert legacy["contract_version"] == "1"
+    assert "feed_scope" not in legacy_source
+    assert legacy_source["aggregation_provenance"] == {
+        "family_id": FAMILY_ID,
+        "dataset_id": f"derived-{four_hour.configuration_id}",
+        "canonical_source_snapshot_id": SOURCE_ID,
+        "timeframe_configuration_id": four_hour.configuration_id,
+    }
+    assert configured.configuration_id == configured.configuration_id_for_contract("2")
+    assert configured.configuration_id != configured.configuration_id_for_contract("1")
+
+    with pytest.raises(IndicatorSourceError, match="unsupported"):
+        configured.configuration(contract_version="3")
 
 
 def test_ema_identity_binds_period_field_timeframe_and_completion_policy() -> None:

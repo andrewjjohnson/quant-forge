@@ -555,6 +555,15 @@ indicator therefore changes identity when its timeframe, completion policy,
 field, dataset member, source snapshot, feed scope, or aggregation family
 changes.
 
+The timeframe-indicator configuration contract is version `2` as of QF-27.
+Version 2 adds explicit feed scope both to `aggregation_provenance` and to the
+source configuration. Callers that must identify or compare a persisted QF-22
+through QF-26 version-1 artifact can request
+`configuration(contract_version="1")` or
+`configuration_id_for_contract("1")`; that compatibility path reproduces the
+original shape without either feed-scope field. New artifacts always use
+version 2 and must not be mislabeled as version 1.
+
 Binding and calculation both resolve the exact requested timeframe through the
 context. Calculation fails when the timeframe is undeclared, unavailable, or
 has a different dataset-family reference. A daily series therefore cannot be
