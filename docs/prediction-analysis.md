@@ -269,6 +269,71 @@ and provenance to `run_prediction_study`, then adapts the typed gap outcome and
 directional evaluation back into that public result. Existing callers remain
 runnable and numerical results remain directly comparable.
 
+### Native/TA-Lib overnight-gap compatibility example
+
+QF-38 uses the unchanged `OvernightGapPredictionStrategy` as the first
+end-to-end backend-impact example. Omitting `backend_id` still produces the
+exact legacy native configuration. The comparison helper instead constructs
+two explicit strategies with the same logical parameters and dataset, then
+reports RSI and directional/ADX value differences together with prediction
+dates present on only one backend, matched directions, changed directions,
+accuracy, and average prediction-signed return.
+Date and direction counts include generated end-of-data signals; metric sample
+counts remain limited to predictions with an available next-session outcome.
+The helper binds each backend label to the backend identities in its analyzed
+required-indicator configurations. It compares the complete logical strategy
+and analysis configurations after removing only those backend identity objects.
+The in-memory `PredictionAnalysisResult.generated_signals` retains the complete
+fixed signal set from the same generic study run used to construct its rows and
+metrics. An additional immutable in-memory record snapshot binds every signal,
+including end-of-data signals, and every labeled outcome row to that source
+run. The backend comparison verifies the snapshot before including signals or
+deriving metrics; it never performs a second strategy generation. Each strategy
+consumes the exact normalized indicator fields already captured for the value
+comparison, and
+each computation must match the resolved backend's complete identity rather
+than only its stable backend ID, including when the strategy indicators are
+constructed later. The prediction rule name, implementation version, and
+parameters are snapshotted into both the result and its comparison identity.
+Reuse of the precomputed RSI and directional fields is private to the
+backend-comparison call: it passes only the computations captured by that
+call's source-bound indicator comparisons into its two internal strategy runs.
+Standalone precomputed evidence and supplied-output analysis arguments are not
+part of the public prediction API, so normal QF-11 analysis identity and export
+semantics remain unchanged.
+A custom indicator backend registry requires an explicit backend ID so the
+strategy configuration records the resolved backend identity; omitting both
+continues to preserve the legacy native configuration.
+
+```python
+from decimal import Decimal
+from pathlib import Path
+
+from quantforge.data import MarketDataCache
+from quantforge.indicators import IndicatorComparisonTolerances
+from quantforge.prediction import (
+    export_overnight_gap_backend_comparison,
+    run_overnight_gap_backend_comparison,
+)
+
+dataset = MarketDataCache(Path("data/market-data")).load("<dataset-id>")
+result = run_overnight_gap_backend_comparison(
+    dataset,
+    tolerances=IndicatorComparisonTolerances(
+        absolute=Decimal("1e-12"),
+        relative=Decimal("1e-12"),
+    ),
+)
+artifact_path = export_overnight_gap_backend_comparison(
+    result, Path("reports/backend-comparisons")
+)
+```
+
+The example writes deterministic JSON, CSV, and text artifacts. Its signed
+return and accuracy differences remain prediction-study statistics, not fills,
+orders, option returns, or evidence that one backend is superior. It performs
+no migration and does not change existing native study identities or results.
+
 The pre-merge schema-v2 integrity fix adds QF-3 retrieval time and provider
 timezone to prediction manifests. The legacy gap engine/result versions and the
 generic study engine therefore advance to `2`; the generic engine also enforces

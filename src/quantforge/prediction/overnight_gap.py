@@ -16,12 +16,17 @@ from quantforge.indicators import (
     POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT,
     WILDER_RSI_OUTPUT,
     Indicator,
+    IndicatorBackendRegistry,
+    IndicatorOutput,
     WilderDirectionalMovement,
     WilderDirectionalMovementParameters,
     WilderRelativeStrengthIndex,
     WilderRelativeStrengthIndexParameters,
 )
-from quantforge.prediction.errors import InvalidPredictionConfigurationError
+from quantforge.prediction.errors import (
+    InvalidPredictionConfigurationError,
+    InvalidPredictionOutputError,
+)
 from quantforge.prediction.models import (
     PredictionDirection,
     PredictionFeature,
@@ -94,14 +99,28 @@ class OvernightGapPredictionStrategy:
     name = "overnight_gap_direction"
     implementation_version = "1"
 
-    def __init__(self, parameters: OvernightGapPredictionParameters) -> None:
+    def __init__(
+        self,
+        parameters: OvernightGapPredictionParameters,
+        *,
+        backend_id: str | None = None,
+        backend_registry: IndicatorBackendRegistry | None = None,
+    ) -> None:
+        if backend_registry is not None and backend_id is None:
+            raise InvalidPredictionConfigurationError(
+                "a custom indicator backend registry requires an explicit backend_id"
+            )
         self._parameters = parameters
         self._required_indicators: tuple[Indicator, ...] = (
             WilderRelativeStrengthIndex(
-                WilderRelativeStrengthIndexParameters(parameters.rsi_period)
+                WilderRelativeStrengthIndexParameters(parameters.rsi_period),
+                backend_id=backend_id,
+                backend_registry=backend_registry,
             ),
             WilderDirectionalMovement(
-                WilderDirectionalMovementParameters(parameters.adx_period)
+                WilderDirectionalMovementParameters(parameters.adx_period),
+                backend_id=backend_id,
+                backend_registry=backend_registry,
             ),
         )
 
@@ -142,8 +161,35 @@ class OvernightGapPredictionStrategy:
         return configuration_identity(self.configuration())
 
     def generate(self, dataset: MarketDataset) -> PredictionStrategyOutput:
-        rsi_output = self.required_indicators[0].calculate(dataset)
-        dmi_output = self.required_indicators[1].calculate(dataset)
+        return self._generate_from_indicator_outputs(
+            dataset,
+            rsi_output=self.required_indicators[0].calculate(dataset),
+            directional_output=self.required_indicators[1].calculate(dataset),
+        )
+
+    def _generate_from_indicator_outputs(
+        self,
+        dataset: MarketDataset,
+        *,
+        rsi_output: IndicatorOutput,
+        directional_output: IndicatorOutput,
+    ) -> PredictionStrategyOutput:
+        """Generate from outputs captured inside the backend-comparison workflow."""
+        dmi_output = directional_output
+        expected_sessions = tuple(bar.session_date for bar in dataset.bars)
+        expected_outputs = (
+            (self.required_indicators[0], rsi_output),
+            (self.required_indicators[1], dmi_output),
+        )
+        if any(
+            output.indicator_name != indicator.name
+            or output.configuration_id != indicator.configuration_id
+            or output.session_dates != expected_sessions
+            for indicator, output in expected_outputs
+        ):
+            raise InvalidPredictionOutputError(
+                "precomputed indicator output does not match the strategy and dataset"
+            )
         rsi_values = rsi_output.values_for(WILDER_RSI_OUTPUT)
         positive_di_values = dmi_output.values_for(
             POSITIVE_DIRECTIONAL_INDICATOR_OUTPUT

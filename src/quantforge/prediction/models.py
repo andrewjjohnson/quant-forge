@@ -108,6 +108,20 @@ class PredictionSignal:
     def prediction_primitive(self) -> PrimitiveMapping:
         return {"direction": self.direction.value, "reason": self.reason}
 
+    def to_primitive(self) -> PrimitiveMapping:
+        """Return the complete immutable signal payload used as run evidence."""
+        return {
+            "symbol": self.symbol,
+            "signal_session": self.signal_session.isoformat(),
+            "direction": self.direction.value,
+            "strategy_id": self.strategy_id,
+            "strategy_implementation_version": self.strategy_implementation_version,
+            "strategy_configuration_id": self.strategy_configuration_id,
+            "strategy_parameters": self.parameters_primitive(),
+            "reason": self.reason,
+            "feature_values": self.features_primitive(),
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class PredictionStrategyOutput:
@@ -316,6 +330,8 @@ class PredictionAnalysisResult:
     analysis_configuration_snapshot: PrimitiveMappingSnapshot
     generated_signal_count: int
     unlabeled_end_of_data_count: int
+    generated_signals: tuple[PredictionSignal, ...]
+    analysis_records_snapshot: PrimitiveMappingSnapshot
     rows: tuple[PredictionRow, ...]
     metrics: PredictionMetrics
     limitations: tuple[str, ...]
@@ -327,6 +343,28 @@ class PredictionAnalysisResult:
     @property
     def analysis_configuration(self) -> PrimitiveMapping:
         return self.analysis_configuration_snapshot.to_primitive()
+
+    @staticmethod
+    def capture_records(
+        generated_signals: tuple[PredictionSignal, ...],
+        rows: tuple[PredictionRow, ...],
+    ) -> PrimitiveMappingSnapshot:
+        """Capture complete in-memory records without changing export schemas."""
+        return PrimitiveMappingSnapshot.capture(
+            {
+                "generated_signals": cast(
+                    list[Primitive],
+                    [signal.to_primitive() for signal in generated_signals],
+                ),
+                "rows": cast(list[Primitive], [row.to_primitive() for row in rows]),
+            }
+        )
+
+    def records_match_snapshot(self) -> bool:
+        """Return whether current records still equal their source-run snapshot."""
+        return self.analysis_records_snapshot == self.capture_records(
+            self.generated_signals, self.rows
+        )
 
     def manifest_primitive(self) -> PrimitiveMapping:
         return {

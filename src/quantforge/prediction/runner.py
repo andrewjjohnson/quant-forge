@@ -116,7 +116,8 @@ def run_prediction_analysis(
             )
         )
 
-    metrics = _calculate_metrics(tuple(rows))
+    result_rows = tuple(rows)
+    metrics = _calculate_metrics(result_rows)
     return PredictionAnalysisResult(
         analysis_id=analysis_id,
         engine_version=ENGINE_VERSION,
@@ -130,7 +131,11 @@ def run_prediction_analysis(
         analysis_configuration_snapshot=analysis_configuration_snapshot,
         generated_signal_count=study_result.generated_prediction_count,
         unlabeled_end_of_data_count=study_result.unavailable_outcome_count,
-        rows=tuple(rows),
+        generated_signals=study_result.signals,
+        analysis_records_snapshot=PredictionAnalysisResult.capture_records(
+            study_result.signals, result_rows
+        ),
+        rows=result_rows,
         metrics=metrics,
         limitations=LIMITATIONS,
     )
