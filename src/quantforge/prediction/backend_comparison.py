@@ -45,9 +45,9 @@ from quantforge.prediction.models import (
     PredictionDirection,
     PredictionRow,
     PredictionSignal,
+    PredictionStrategyOutput,
 )
 from quantforge.prediction.overnight_gap import (
-    OvernightGapIndicatorEvidence,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
 )
@@ -65,6 +65,39 @@ PREDICTION_BACKEND_COMPARISON_ARTIFACT_FILENAMES = (
     "summary.txt",
 )
 _ARITHMETIC_CONTEXT = Context(prec=34, rounding=ROUND_HALF_EVEN)
+
+
+class _ComparisonOvernightGapPredictionStrategy(OvernightGapPredictionStrategy):
+    """Reuse captured comparison computations without exposing a public hook."""
+
+    def __init__(
+        self,
+        dataset: MarketDataset,
+        parameters: OvernightGapPredictionParameters,
+        rsi_computation: IndicatorComputationResult,
+        directional_computation: IndicatorComputationResult,
+        *,
+        backend_id: str,
+        backend_registry: IndicatorBackendRegistry | None,
+    ) -> None:
+        super().__init__(
+            parameters,
+            backend_id=backend_id,
+            backend_registry=backend_registry,
+        )
+        self._rsi_output = _comparison_indicator_output(
+            dataset, self.required_indicators[0], rsi_computation
+        )
+        self._directional_output = _comparison_indicator_output(
+            dataset, self.required_indicators[1], directional_computation
+        )
+
+    def generate(self, dataset: MarketDataset) -> PredictionStrategyOutput:
+        return self._generate_from_indicator_outputs(
+            dataset,
+            rsi_output=self._rsi_output,
+            directional_output=self._directional_output,
+        )
 
 
 class PredictionSignalComparisonStatus(StrEnum):
@@ -423,53 +456,25 @@ def run_overnight_gap_backend_comparison(
             backend_registry=backend_registry,
         ),
     )
-    strategy_a = OvernightGapPredictionStrategy(
+    strategy_a = _ComparisonOvernightGapPredictionStrategy(
+        dataset,
         selected_parameters,
+        indicator_comparisons[0].backend_a_computation,
+        indicator_comparisons[1].backend_a_computation,
         backend_id=backend_a_id,
         backend_registry=backend_registry,
     )
-    strategy_b = OvernightGapPredictionStrategy(
+    strategy_b = _ComparisonOvernightGapPredictionStrategy(
+        dataset,
         selected_parameters,
+        indicator_comparisons[0].backend_b_computation,
+        indicator_comparisons[1].backend_b_computation,
         backend_id=backend_b_id,
         backend_registry=backend_registry,
     )
-    strategy_output_a = strategy_a.generate_from_indicator_evidence(
-        dataset,
-        OvernightGapIndicatorEvidence(
-            dataset_id=dataset.metadata.dataset_id,
-            dataset_fingerprint=dataset.metadata.data_sha256,
-            rsi_output=_comparison_indicator_output(
-                dataset,
-                strategy_a.required_indicators[0],
-                indicator_comparisons[0].backend_a_computation,
-            ),
-            directional_output=_comparison_indicator_output(
-                dataset,
-                strategy_a.required_indicators[1],
-                indicator_comparisons[1].backend_a_computation,
-            ),
-        ),
-    )
-    strategy_output_b = strategy_b.generate_from_indicator_evidence(
-        dataset,
-        OvernightGapIndicatorEvidence(
-            dataset_id=dataset.metadata.dataset_id,
-            dataset_fingerprint=dataset.metadata.data_sha256,
-            rsi_output=_comparison_indicator_output(
-                dataset,
-                strategy_b.required_indicators[0],
-                indicator_comparisons[0].backend_b_computation,
-            ),
-            directional_output=_comparison_indicator_output(
-                dataset,
-                strategy_b.required_indicators[1],
-                indicator_comparisons[1].backend_b_computation,
-            ),
-        ),
-    )
     prediction_comparison = compare_prediction_backends(
-        run_prediction_analysis(dataset, strategy_a, strategy_output=strategy_output_a),
-        run_prediction_analysis(dataset, strategy_b, strategy_output=strategy_output_b),
+        run_prediction_analysis(dataset, strategy_a),
+        run_prediction_analysis(dataset, strategy_b),
         backend_a_id=backend_a_id,
         backend_b_id=backend_b_id,
     )

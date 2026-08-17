@@ -1,9 +1,11 @@
 from dataclasses import replace
 from decimal import Decimal
+from inspect import signature
 from pathlib import Path
 
 import pytest
 
+import quantforge.prediction as prediction
 from quantforge.configuration import (
     PrimitiveMappingSnapshot,
     configuration_identity,
@@ -25,7 +27,6 @@ from quantforge.prediction import (
     PREDICTION_BACKEND_COMPARISON_ARTIFACT_FILENAMES,
     InvalidPredictionConfigurationError,
     InvalidPredictionOutputError,
-    OvernightGapIndicatorEvidence,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
     compare_prediction_backends,
@@ -158,24 +159,12 @@ def test_custom_backend_registry_requires_an_explicit_backend_id() -> None:
         assert backend_configuration.get("backend_id") == NATIVE_INDICATOR_BACKEND
 
 
-def test_precomputed_indicator_evidence_rejects_another_dataset() -> None:
-    dataset = _overnight_dataset()
-    foreign_dataset = make_dataset(tuple("101" for _ in dataset.bars))
-    strategy = OvernightGapPredictionStrategy(
-        OvernightGapPredictionParameters(), backend_id=NATIVE_INDICATOR_BACKEND
+def test_comparison_reuse_hooks_are_not_public_prediction_apis() -> None:
+    assert not hasattr(prediction, "OvernightGapIndicatorEvidence")
+    assert not hasattr(
+        OvernightGapPredictionStrategy, "generate_from_indicator_evidence"
     )
-    evidence = OvernightGapIndicatorEvidence(
-        dataset_id=foreign_dataset.metadata.dataset_id,
-        dataset_fingerprint=foreign_dataset.metadata.data_sha256,
-        rsi_output=strategy.required_indicators[0].calculate(foreign_dataset),
-        directional_output=strategy.required_indicators[1].calculate(foreign_dataset),
-    )
-
-    with pytest.raises(
-        InvalidPredictionOutputError,
-        match="indicator evidence does not match the market dataset",
-    ):
-        strategy.generate_from_indicator_evidence(dataset, evidence)
+    assert "strategy_output" not in signature(run_prediction_analysis).parameters
 
 
 def test_prediction_comparison_rejects_backend_labels_not_bound_to_results() -> None:

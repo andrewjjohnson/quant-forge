@@ -8,15 +8,13 @@ from quantforge.configuration import (
     configuration_identity,
 )
 from quantforge.data.models import MarketDataset
-from quantforge.indicators import Indicator
 from quantforge.prediction._arithmetic import arithmetic
-from quantforge.prediction.base import PredictionStrategy, PredictionStrategyParameters
+from quantforge.prediction.base import PredictionStrategy
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.models import (
     PredictionAnalysisResult,
     PredictionMetrics,
     PredictionRow,
-    PredictionStrategyOutput,
 )
 from quantforge.prediction.outcomes.overnight_gap import (
     NextSessionOpenGapOutcomeLabeler,
@@ -39,17 +37,10 @@ LIMITATIONS = (
 def run_prediction_analysis(
     dataset: MarketDataset,
     strategy: PredictionStrategy,
-    *,
-    strategy_output: PredictionStrategyOutput | None = None,
 ) -> PredictionAnalysisResult:
     """Run the concrete gap study while preserving the public v1 result schema."""
-    executed_strategy: PredictionStrategy = (
-        strategy
-        if strategy_output is None
-        else _PrecomputedPredictionStrategy(strategy, strategy_output)
-    )
     study_result = run_prediction_study(
-        dataset, create_overnight_gap_prediction_study(executed_strategy)
+        dataset, create_overnight_gap_prediction_study(strategy)
     )
     study_configuration = study_result.configuration
     strategy_configuration_snapshot = (
@@ -195,45 +186,3 @@ def _stable_id(values: PrimitiveMapping) -> str:
 
 def _analysis_configuration() -> PrimitiveMapping:
     return NextSessionOpenGapOutcomeLabeler().legacy_analysis_configuration()
-
-
-class _PrecomputedPredictionStrategy:
-    """Expose one captured output through the unchanged strategy contract."""
-
-    def __init__(
-        self,
-        strategy: PredictionStrategy,
-        output: PredictionStrategyOutput,
-    ) -> None:
-        self._strategy = strategy
-        self._output = output
-
-    @property
-    def name(self) -> str:
-        return self._strategy.name
-
-    @property
-    def implementation_version(self) -> str:
-        return self._strategy.implementation_version
-
-    @property
-    def parameters(self) -> PredictionStrategyParameters:
-        return self._strategy.parameters
-
-    @property
-    def required_indicators(self) -> tuple[Indicator, ...]:
-        return self._strategy.required_indicators
-
-    @property
-    def warm_up_observations(self) -> int:
-        return self._strategy.warm_up_observations
-
-    @property
-    def configuration_id(self) -> str:
-        return self._strategy.configuration_id
-
-    def configuration(self) -> PrimitiveMapping:
-        return self._strategy.configuration()
-
-    def generate(self, dataset: MarketDataset) -> PredictionStrategyOutput:
-        return self._output

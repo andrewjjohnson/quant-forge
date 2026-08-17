@@ -93,22 +93,6 @@ class OvernightGapPredictionParameters:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class OvernightGapIndicatorEvidence:
-    """Dataset-bound RSI and directional outputs for one strategy generation."""
-
-    dataset_id: str
-    dataset_fingerprint: str
-    rsi_output: IndicatorOutput
-    directional_output: IndicatorOutput
-
-    def __post_init__(self) -> None:
-        if not self.dataset_id or not self.dataset_fingerprint:
-            raise InvalidPredictionOutputError(
-                "precomputed indicator evidence requires dataset provenance"
-            )
-
-
 class OvernightGapPredictionStrategy:
     """Predict each eligible next-open gap from completed-session features."""
 
@@ -177,31 +161,21 @@ class OvernightGapPredictionStrategy:
         return configuration_identity(self.configuration())
 
     def generate(self, dataset: MarketDataset) -> PredictionStrategyOutput:
-        return self.generate_from_indicator_evidence(
+        return self._generate_from_indicator_outputs(
             dataset,
-            OvernightGapIndicatorEvidence(
-                dataset_id=dataset.metadata.dataset_id,
-                dataset_fingerprint=dataset.metadata.data_sha256,
-                rsi_output=self.required_indicators[0].calculate(dataset),
-                directional_output=self.required_indicators[1].calculate(dataset),
-            ),
+            rsi_output=self.required_indicators[0].calculate(dataset),
+            directional_output=self.required_indicators[1].calculate(dataset),
         )
 
-    def generate_from_indicator_evidence(
+    def _generate_from_indicator_outputs(
         self,
         dataset: MarketDataset,
-        evidence: OvernightGapIndicatorEvidence,
+        *,
+        rsi_output: IndicatorOutput,
+        directional_output: IndicatorOutput,
     ) -> PredictionStrategyOutput:
-        """Generate signals from already-captured aligned indicator evidence."""
-        if (
-            evidence.dataset_id != dataset.metadata.dataset_id
-            or evidence.dataset_fingerprint != dataset.metadata.data_sha256
-        ):
-            raise InvalidPredictionOutputError(
-                "precomputed indicator evidence does not match the market dataset"
-            )
-        rsi_output = evidence.rsi_output
-        dmi_output = evidence.directional_output
+        """Generate from outputs captured inside the backend-comparison workflow."""
+        dmi_output = directional_output
         expected_sessions = tuple(bar.session_date for bar in dataset.bars)
         expected_outputs = (
             (self.required_indicators[0], rsi_output),

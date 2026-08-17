@@ -293,11 +293,12 @@ each computation must match the resolved backend's complete identity rather
 than only its stable backend ID, including when the strategy indicators are
 constructed later. The prediction rule name, implementation version, and
 parameters are snapshotted into both the result and its comparison identity.
-Precomputed RSI and directional fields are
-carried in immutable evidence bound to the source dataset ID and bar
-fingerprint, preventing same-session values from another dataset from entering
-signal generation. This additive in-memory evidence is not added to the
-backward-compatible QF-11 manifest or prediction CSV schema.
+Reuse of the precomputed RSI and directional fields is private to the
+backend-comparison call: it passes only the computations captured by that
+call's source-bound indicator comparisons into its two internal strategy runs.
+Standalone precomputed evidence and supplied-output analysis arguments are not
+part of the public prediction API, so normal QF-11 analysis identity and export
+semantics remain unchanged.
 A custom indicator backend registry requires an explicit backend ID so the
 strategy configuration records the resolved backend identity; omitting both
 continues to preserve the legacy native configuration.
