@@ -18,7 +18,8 @@ QF-25 adds a backend-neutral MACD definition whose standard implementation is
 the pinned `talib_v1` adapter; it deliberately adds no native MACD formula.
 QF-26 adds a backend-neutral slow stochastic oscillator through the same
 adapter, with fixed simple-moving-average smoothing and no native stochastic
-formula.
+formula. QF-27 adds native typed volume moving-average and relative-volume
+formulas with explicit feed scope and denominator policies.
 
 ## Standard-indicator backend boundary
 
@@ -130,6 +131,9 @@ Every period, window, and warm-up is measured in input observations/bars:
 | ADX | `period=N` | bar `2N` |
 | MACD | `slow_period=S`, `signal_period=G` | bar `S + G - 1` |
 | Stochastic | `k_period=K`, `k_smoothing_period=S`, `d_period=D` | bar `K + S + D - 2` |
+| Volume moving average | `lookback=N` | bar `N` |
+| Relative volume, current-inclusive | `lookback=N` | bar `N` |
+| Relative volume, prior-bars-only | `lookback=N` | bar `N + 1` |
 
 For example, a 20-period SMA consumes 20 five-minute bars on a 5m source and 20
 trading weeks on a weekly source. No indicator converts the number 20 into a
@@ -407,6 +411,51 @@ value. Finite TA-Lib float64 values are converted with `Decimal(str(value))`.
 The indicator supports a causal QF-21 developing bar and sees only its
 already-reconstructed as-of high, low, and close.
 
+## Volume moving average and relative volume
+
+`VolumeMovingAverageParameters` contains a positive integer `lookback` and a
+typed QF-14 `FeedScope`. For a full trailing window of `N` bars:
+
+```text
+volume_moving_average[t] = sum(volume[t-N+1:t+1]) / N
+```
+
+The current bar is always included. The first `N - 1` rows are `None`. Zero is
+a valid source volume and participates in the mean; it is not treated as a
+missing bar. A nonfinite volume makes every full window containing it
+unavailable. Windows are neither partially calculated nor filled.
+
+`RelativeVolumeParameters` contains the same `lookback` and `feed_scope` plus
+one `RelativeVolumeDenominatorPolicy`:
+
+```text
+INCLUDE_CURRENT_BAR:
+    relative_volume[t] = volume[t] / mean(volume[t-N+1:t+1])
+
+EXCLUDE_CURRENT_BAR:
+    relative_volume[t] = volume[t] / mean(volume[t-N:t])
+```
+
+The inclusive policy first produces a value on bar `N`; the prior-bars-only
+policy needs `N` completed denominator bars plus the numerator and first
+produces a value on bar `N + 1`. A nonfinite numerator, nonfinite denominator
+window, or exactly zero denominator produces `None`. No infinity or NaN is
+emitted. Both formulas use a fixed 34-digit `Decimal`, round-half-even policy.
+
+Feed scope is mandatory rather than inferred. Consolidated, single-venue
+(including IEX-only), provider-defined, and explicitly unknown observations
+therefore have distinct readable configurations and identities. A relative-
+volume denominator is calculated internally from the same source-bar tuple as
+its numerator, so it cannot silently draw its numerator and denominator from
+different feeds. The outer QF-22 identity also binds the exact QF-14 family;
+that family identity independently includes feed scope and rejects mixed-feed
+multi-timeframe contexts.
+
+Both indicators declare causal developing-bar support. In
+`DEVELOPING_BAR_AS_OF` mode, the current developing volume is only the sum of
+completed lower-timeframe constituents exposed by QF-21 as of the decision
+timestamp. Appending later source bars cannot revise the prior output prefix.
+
 ## Bollinger Bands
 
 `BollingerBandsParameters` contains a positive integer `period`, a finite
@@ -540,8 +589,8 @@ presented as the eventual completed candle. An indicator declaring
 
 ## Deliberate limits
 
-QF-22 through QF-25 and QF-35 through QF-38 do not add stochastic or volume
-formulas, MACD crossover/divergence behavior, Bollinger-based prediction or
-squeeze-classification rules,
+QF-22 through QF-27 and QF-35 through QF-38 do not add On-Balance Volume,
+volume-profile indicators, prediction filters, MACD crossover/divergence
+behavior, Bollinger-based prediction or squeeze-classification rules,
 prediction integration, feature export, or strategy/backtest multi-timeframe
 integration. Those remain sibling-ticket concerns under QF-12.

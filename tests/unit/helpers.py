@@ -61,6 +61,7 @@ def make_dataset(
     opens: tuple[str, ...] | None = None,
     highs: tuple[str, ...] | None = None,
     lows: tuple[str, ...] | None = None,
+    volumes: tuple[str, ...] | None = None,
 ) -> MarketDataset:
     """Build identity-bound daily bars; ``dataset_id`` is a raw-fixture seed."""
     selected_sessions = SESSIONS[: len(closes)] if sessions is None else sessions
@@ -68,6 +69,7 @@ def make_dataset(
     assert opens is None or len(opens) == len(closes)
     assert highs is None or len(highs) == len(closes)
     assert lows is None or len(lows) == len(closes)
+    assert volumes is None or len(volumes) == len(closes)
     selected_start = (
         selected_sessions[0] if requested_start is None else requested_start
     )
@@ -91,7 +93,7 @@ def make_dataset(
                 session_high,
                 session_low,
                 close,
-                Decimal(1000),
+                Decimal(1000) if volumes is None else Decimal(volumes[index]),
             )
         )
     typed_bars = tuple(bars)

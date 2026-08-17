@@ -33,10 +33,12 @@ from quantforge.indicators import (
     MACD_HISTOGRAM_OUTPUT,
     MACD_OUTPUT,
     MACD_SIGNAL_OUTPUT,
+    RELATIVE_VOLUME_OUTPUT,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
     STOCHASTIC_D_OUTPUT,
     STOCHASTIC_K_OUTPUT,
     TALIB_INDICATOR_BACKEND,
+    VOLUME_MOVING_AVERAGE_OUTPUT,
     BollingerBands,
     BollingerBandsParameters,
     ConfiguredTimeframeIndicator,
@@ -47,12 +49,16 @@ from quantforge.indicators import (
     MarketField,
     MovingAverageConvergenceDivergence,
     MovingAverageConvergenceDivergenceParameters,
+    RelativeVolume,
+    RelativeVolumeParameters,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
     StochasticOscillator,
     StochasticOscillatorParameters,
     TimeframeNeutralIndicator,
     UnsupportedDevelopingBarError,
+    VolumeMovingAverage,
+    VolumeMovingAverageParameters,
     WilderAverageTrueRange,
     WilderAverageTrueRangeParameters,
     WilderDirectionalMovement,
@@ -305,6 +311,8 @@ def _all_completed_context(
             MovingAverageConvergenceDivergenceParameters(2, 3, 2)
         ),
         SimpleMovingAverage(SimpleMovingAverageParameters(2)),
+        VolumeMovingAverage(VolumeMovingAverageParameters(2, FeedScope.consolidated())),
+        RelativeVolume(RelativeVolumeParameters(2, FeedScope.consolidated())),
         WilderRelativeStrengthIndex(WilderRelativeStrengthIndexParameters(2)),
         WilderAverageTrueRange(WilderAverageTrueRangeParameters(2)),
         WilderDirectionalMovement(WilderDirectionalMovementParameters(2)),
@@ -642,6 +650,55 @@ def test_stochastic_is_timeframe_neutral_and_binds_all_source_semantics() -> Non
         assert output.values_for(STOCHASTIC_D_OUTPUT)[3] is not None
 
 
+def test_volume_indicators_preserve_feed_scope_across_intraday_daily_and_weekly() -> (
+    None
+):
+    context = _all_completed_context()
+    _, four_hour, daily, weekly = _timeframes()
+    feed_scope = FeedScope.consolidated()
+    average = VolumeMovingAverage(VolumeMovingAverageParameters(2, feed_scope))
+    relative = RelativeVolume(RelativeVolumeParameters(2, feed_scope))
+
+    for timeframe in (four_hour, daily, weekly):
+        average_output = evaluate_indicator(average, context, timeframe)
+        relative_output = evaluate_indicator(relative, context, timeframe)
+
+        assert average_output.source_timeframe == timeframe
+        assert relative_output.source_timeframe == timeframe
+        assert average_output.source_fields == (MarketField.VOLUME,)
+        assert relative_output.source_fields == (MarketField.VOLUME,)
+        assert relative_output.values_for(RELATIVE_VOLUME_OUTPUT)[1] is not None
+        assert relative_output.dataset_reference == _reference(timeframe)
+
+
+def test_volume_bound_identity_binds_timeframe_completion_feed_and_lineage() -> None:
+    context = _all_completed_context()
+    _, four_hour, daily, _ = _timeframes()
+    developing_context = _context(
+        {
+            timeframe.configuration_id: context.bars_for(timeframe)
+            for timeframe in _timeframes()
+        },
+        completion_policy=ContextCompletionPolicy.DEVELOPING_BAR_AS_OF,
+    )
+    consolidated = RelativeVolume(RelativeVolumeParameters(2, FeedScope.consolidated()))
+    iex = RelativeVolume(RelativeVolumeParameters(2, FeedScope.iex_only()))
+
+    identities = {
+        bind_indicator(consolidated, context, four_hour).configuration_id,
+        bind_indicator(consolidated, context, daily).configuration_id,
+        bind_indicator(consolidated, developing_context, four_hour).configuration_id,
+        bind_indicator(iex, context, four_hour).configuration_id,
+        bind_indicator(
+            consolidated,
+            _all_completed_context(family_id="other-volume-family"),
+            four_hour,
+        ).configuration_id,
+    }
+
+    assert len(identities) == 5
+
+
 def test_four_hour_instance_rejects_a_daily_only_context() -> None:
     context = _all_completed_context()
     _, four_hour, daily, _ = _timeframes()
@@ -760,6 +817,25 @@ def test_ema_developing_bar_uses_only_the_causal_as_of_close() -> None:
 
     assert output.completion_states[-1] is BarCompletion.DEVELOPING
     assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT)[-1] == Decimal(15)
+
+
+def test_volume_developing_bar_uses_only_causal_as_of_volume() -> None:
+    _, four_hour, _, _ = _timeframes()
+    context = _developing_context()
+    average = evaluate_indicator(
+        VolumeMovingAverage(VolumeMovingAverageParameters(1, FeedScope.consolidated())),
+        context,
+        four_hour,
+    )
+    relative = evaluate_indicator(
+        RelativeVolume(RelativeVolumeParameters(1, FeedScope.consolidated())),
+        context,
+        four_hour,
+    )
+
+    assert average.completion_states[-1] is BarCompletion.DEVELOPING
+    assert average.values_for(VOLUME_MOVING_AVERAGE_OUTPUT)[-1] == Decimal(6000)
+    assert relative.values_for(RELATIVE_VOLUME_OUTPUT)[-1] == Decimal(1)
 
 
 def test_bollinger_developing_bar_uses_only_the_causal_as_of_close() -> None:

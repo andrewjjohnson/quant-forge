@@ -316,6 +316,10 @@ MACD formula.
 QF-26 adds the slow stochastic oscillator through the same path, normalizing
 TA-Lib `STOCH` to stable `k` and `d` outputs while retaining timeframe and
 lineage ownership above the adapter and adding no native stochastic formula.
+QF-27 adds native typed volume moving-average and relative-volume formulas.
+Their base configurations retain the provider-neutral feed scope and explicit
+relative-volume denominator convention; the QF-22 binding adds timeframe,
+completion policy, and exact dataset-family lineage.
 Backend adapters, not prediction, feature, data, strategy, or backtesting
 packages, import or translate library APIs. See
 `docs/strategy-contracts.md`,

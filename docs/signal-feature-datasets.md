@@ -138,8 +138,9 @@ The documented unused baseline context is:
 
 - `atr_percentage_of_close`: QF-4 Wilder ATR(14) divided by completed close,
   chosen to describe prevailing range/volatility scale;
-- `volume_ratio`: completed volume divided by its trailing 20-session QF-4 SMA,
-  chosen to describe unusual participation;
+- `volume_ratio`: completed volume divided by its trailing 20-session QF-27
+  volume mean, including the current completed session, chosen to describe
+  unusual participation;
 - `trend_distance_percentage`: completed close divided by its trailing
   20-session QF-4 SMA minus one, chosen to describe trend location.
 
@@ -158,6 +159,16 @@ identity with deterministic causal sentinels, preventing extensions from
 recovering future-dependent provenance outside the sliced bars. Warm-up values
 remain `null`; they are never backfilled. A contextual feature declared
 non-nullable must return a value; schema/value contradictions fail closed.
+
+QF-27 preserves the original QF-7 inclusive numerical convention: the current
+completed-session volume participates in its own trailing denominator. The
+context now delegates to the typed `RelativeVolume` indicator and records the
+denominator policy plus `FeedScope.unknown()` because legacy QF-3 daily
+datasets do not expose the QF-14 intraday feed-scope contract. This changes the
+`VolumeRatioContext` implementation version from `2` to `3` and therefore
+intentionally changes QF-7 feature-dataset identities; existing artifacts stay
+immutable and should be regenerated when adopting QF-27. Values for identical
+bars and periods remain numerically compatible.
 
 To add a context feature, implement `ContextualFeature`, preferably by composing
 a reusable QF-4 `Indicator`, document its type/unit/source/timing in

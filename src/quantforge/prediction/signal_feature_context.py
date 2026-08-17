@@ -5,11 +5,16 @@ from decimal import Decimal, DecimalException
 from typing import Protocol
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.data.lineage import FeedScope
 from quantforge.data.models import MarketDataset
 from quantforge.indicators import (
+    RELATIVE_VOLUME_OUTPUT,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
     WILDER_AVERAGE_TRUE_RANGE_OUTPUT,
     MarketField,
+    RelativeVolume,
+    RelativeVolumeDenominatorPolicy,
+    RelativeVolumeParameters,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
     WilderAverageTrueRange,
@@ -118,15 +123,20 @@ class VolumeRatioContext:
             "decimal",
             "ratio",
             True,
-            f"completed-session volume / QF-4 trailing SMA({self.period}) volume",
+            "completed-session volume / QF-4 trailing inclusive "
+            f"mean({self.period}) volume",
             "available after the signal-session close; trailing history only",
         )
 
     def configuration(self) -> PrimitiveMapping:
-        indicator = SimpleMovingAverage(
-            SimpleMovingAverageParameters(self.period, MarketField.VOLUME)
+        indicator = RelativeVolume(
+            RelativeVolumeParameters(
+                self.period,
+                FeedScope.unknown(),
+                RelativeVolumeDenominatorPolicy.INCLUDE_CURRENT_BAR,
+            )
         )
-        return _configuration(self.name, indicator.configuration())
+        return _configuration(self.name, indicator.configuration(), version="3")
 
     @property
     def configuration_id(self) -> str:
@@ -136,23 +146,14 @@ class VolumeRatioContext:
         return self.values_for_dataset(history)[-1]
 
     def values_for_dataset(self, dataset: MarketDataset) -> tuple[Decimal | None, ...]:
-        indicator = SimpleMovingAverage(
-            SimpleMovingAverageParameters(self.period, MarketField.VOLUME)
+        indicator = RelativeVolume(
+            RelativeVolumeParameters(
+                self.period,
+                FeedScope.unknown(),
+                RelativeVolumeDenominatorPolicy.INCLUDE_CURRENT_BAR,
+            )
         )
-        averages = indicator.calculate(dataset).values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)
-        values: list[Decimal | None] = []
-        for bar, average in zip(dataset.bars, averages, strict=True):
-            if average in (None, Decimal(0)):
-                values.append(None)
-                continue
-            try:
-                with arithmetic():
-                    values.append(bar.volume / average)
-            except DecimalException as error:
-                raise InvalidPredictionConfigurationError(
-                    "volume-ratio feature arithmetic failed"
-                ) from error
-        return tuple(values)
+        return indicator.calculate(dataset).values_for(RELATIVE_VOLUME_OUTPUT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,12 +223,14 @@ def default_overnight_gap_contextual_features() -> tuple[ContextualFeature, ...]
     )
 
 
-def _configuration(name: str, indicator: PrimitiveMapping) -> PrimitiveMapping:
+def _configuration(
+    name: str, indicator: PrimitiveMapping, *, version: str = "2"
+) -> PrimitiveMapping:
     return {
         "component_name": name,
         "component_type": "signal_contextual_feature",
         "contract_version": "1",
-        "implementation_version": "2",
+        "implementation_version": version,
         "indicator": indicator,
         "timing": "completed_signal_session_and_trailing_history_only",
     }
