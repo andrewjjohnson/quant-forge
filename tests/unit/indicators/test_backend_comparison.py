@@ -108,6 +108,13 @@ class DriftingIdentityBackend(FixtureComparisonBackend):
         )
 
 
+class MisidentifiedBackend(FixtureComparisonBackend):
+    def identity_for(
+        self, definition: StandardIndicatorDefinition
+    ) -> IndicatorBackendIdentity:
+        return replace(super().identity_for(definition), backend_id="unexpected")
+
+
 def _definition() -> StandardIndicatorDefinition:
     return StandardIndicatorDefinition(
         name="comparison_fixture",
@@ -202,6 +209,33 @@ def test_comparison_rejects_complete_backend_identity_drift() -> None:
             IndicatorComparisonSource.from_market_dataset(dataset),
             _definition(),
             backend_a_id="drifting",
+            backend_b_id="stable",
+            backend_registry=registry,
+        )
+
+
+def test_comparison_rejects_identity_for_another_registry_backend() -> None:
+    dataset = make_dataset(("1", "2", "3", "4"))
+    registry = IndicatorBackendRegistry(
+        (
+            MisidentifiedBackend(
+                "requested",
+                leading_unavailable=1,
+                offsets={"alpha": Decimal(0), "beta": Decimal(0)},
+            ),
+            FixtureComparisonBackend(
+                "stable",
+                leading_unavailable=1,
+                offsets={"alpha": Decimal(0), "beta": Decimal(0)},
+            ),
+        )
+    )
+
+    with pytest.raises(IndicatorComparisonError, match="requested registry id"):
+        compare_standard_indicator_backends(
+            IndicatorComparisonSource.from_market_dataset(dataset),
+            _definition(),
+            backend_a_id="requested",
             backend_b_id="stable",
             backend_registry=registry,
         )

@@ -705,11 +705,27 @@ def _comparison_signals(
             f"prediction signal output does not match analyzed run: {label}"
         )
     signals_by_session = {signal.signal_session: signal for signal in generated_signals}
-    if len(signals_by_session) != len(generated_signals) or any(
-        not _signal_matches_analysis_row(
-            signals_by_session.get(row.signal_session), row
+    row_sessions = tuple(row.signal_session for row in analysis.rows)
+    expected_labeled_sessions = {
+        signal.signal_session
+        for signal in generated_signals
+        if signal.signal_session < analysis.market_data.actual_last_session
+    }
+    if (
+        len(signals_by_session) != len(generated_signals)
+        or len(set(row_sessions)) != len(row_sessions)
+        or set(row_sessions) != expected_labeled_sessions
+        or any(
+            row.dataset_id != analysis.market_data.dataset_id
+            or row.dataset_fingerprint != analysis.market_data.bars_fingerprint
+            for row in analysis.rows
         )
-        for row in analysis.rows
+        or any(
+            not _signal_matches_analysis_row(
+                signals_by_session.get(row.signal_session), row
+            )
+            for row in analysis.rows
+        )
     ):
         raise InvalidPredictionOutputError(
             f"prediction signal output does not match analyzed run: {label}"

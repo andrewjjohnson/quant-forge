@@ -329,6 +329,67 @@ def test_prediction_comparison_rejects_altered_retained_labeled_signal() -> None
         )
 
 
+def test_prediction_comparison_rejects_duplicate_labeled_rows() -> None:
+    dataset = _overnight_dataset()
+    parameters = OvernightGapPredictionParameters()
+    native_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=NATIVE_INDICATOR_BACKEND),
+    )
+    talib_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=TALIB_INDICATOR_BACKEND),
+    )
+    duplicate_rows = (
+        native_result.rows[0],
+        native_result.rows[0],
+        *native_result.rows[2:],
+    )
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="does not match analyzed run: backend A",
+    ):
+        compare_prediction_backends(
+            replace(native_result, rows=duplicate_rows),
+            talib_result,
+            backend_a_id=NATIVE_INDICATOR_BACKEND,
+            backend_b_id=TALIB_INDICATOR_BACKEND,
+        )
+
+
+@pytest.mark.parametrize("provenance_field", ["dataset_id", "dataset_fingerprint"])
+def test_prediction_comparison_rejects_foreign_row_provenance(
+    provenance_field: str,
+) -> None:
+    dataset = _overnight_dataset()
+    parameters = OvernightGapPredictionParameters()
+    native_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=NATIVE_INDICATOR_BACKEND),
+    )
+    talib_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=TALIB_INDICATOR_BACKEND),
+    )
+    first_row = native_result.rows[0]
+    if provenance_field == "dataset_id":
+        altered_row = replace(first_row, dataset_id="foreign-dataset")
+    else:
+        altered_row = replace(first_row, dataset_fingerprint="foreign-fingerprint")
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="does not match analyzed run: backend A",
+    ):
+        compare_prediction_backends(
+            replace(native_result, rows=(altered_row, *native_result.rows[1:])),
+            talib_result,
+            backend_a_id=NATIVE_INDICATOR_BACKEND,
+            backend_b_id=TALIB_INDICATOR_BACKEND,
+        )
+
+
 def test_prediction_comparison_derives_accuracy_from_analyzed_rows() -> None:
     dataset = _overnight_dataset()
     parameters = OvernightGapPredictionParameters()

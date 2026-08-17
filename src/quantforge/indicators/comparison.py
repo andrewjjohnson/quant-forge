@@ -441,6 +441,13 @@ def compare_standard_indicator_backends(
     backend_b = registry.resolve(backend_b_id)
     backend_a_identity = backend_a.identity_for(definition)
     backend_b_identity = backend_b.identity_for(definition)
+    if (
+        backend_a_identity.backend_id != backend_a_id
+        or backend_b_identity.backend_id != backend_b_id
+    ):
+        raise IndicatorComparisonError(
+            "resolved backend identity does not match the requested registry id"
+        )
     request = IndicatorComputationRequest(definition, source.bars)
     result_a = backend_a.compute(request)
     result_b = backend_b.compute(request)
