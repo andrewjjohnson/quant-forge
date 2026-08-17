@@ -130,7 +130,11 @@ def test_valid_family_manifest_records_source_and_complete_lineage() -> None:
         "provider_scope": None,
     }
     assert reference.feed_scope == FeedScope.consolidated()
-    assert reference.to_primitive()["feed_scope"] == source["feed_scope"]
+    assert "feed_scope" not in reference.to_primitive()
+    assert (
+        reference.to_primitive(include_feed_scope=True)["feed_scope"]
+        == source["feed_scope"]
+    )
     assert source["source_interval"] == {
         "kind": "intraday",
         "nominal_duration_microseconds": 300_000_000,

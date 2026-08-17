@@ -371,7 +371,9 @@ def test_bollinger_values_are_identical_on_intraday_daily_and_weekly_fixtures() 
 
     for timeframe in _timeframes():
         output = evaluate_indicator(indicator, context, timeframe)
-        assert output.aggregation_provenance == _reference(timeframe).to_primitive()
+        assert output.aggregation_provenance == _reference(timeframe).to_primitive(
+            include_feed_scope=True
+        )
         for field_name, values in expected.items():
             assert output.values_for(field_name) == values
 
@@ -436,7 +438,9 @@ def test_configuration_identity_binds_timeframe_policy_fields_and_lineage() -> N
     assert source["fields"] == ["close"]
     assert source["observation_unit"] == "bar"
     assert source["warm_up_bars"] == 2
-    assert source["aggregation_provenance"] == _reference(four_hour).to_primitive()
+    assert source["aggregation_provenance"] == _reference(four_hour).to_primitive(
+        include_feed_scope=True
+    )
 
 
 def test_timeframe_configuration_versions_feed_scope_and_preserves_v1_shape() -> None:
@@ -455,9 +459,9 @@ def test_timeframe_configuration_versions_feed_scope_and_preserves_v1_shape() ->
     assert TIMEFRAME_INDICATOR_CONTRACT_VERSION == "2"
     assert current["contract_version"] == "2"
     assert current_source["feed_scope"] == FeedScope.consolidated().to_primitive()
-    assert (
-        current_source["aggregation_provenance"] == _reference(four_hour).to_primitive()
-    )
+    assert current_source["aggregation_provenance"] == _reference(
+        four_hour
+    ).to_primitive(include_feed_scope=True)
     assert legacy["contract_version"] == "1"
     assert "feed_scope" not in legacy_source
     assert legacy_source["aggregation_provenance"] == {
@@ -516,7 +520,9 @@ def test_talib_ema_preserves_timeframe_completion_and_lineage_metadata() -> None
     assert output.source_fields == (MarketField.CLOSE,)
     assert output.completion_policy is ContextCompletionPolicy.COMPLETED_BARS_ONLY
     assert output.dataset_reference == _reference(four_hour)
-    assert output.aggregation_provenance == _reference(four_hour).to_primitive()
+    assert output.aggregation_provenance == _reference(four_hour).to_primitive(
+        include_feed_scope=True
+    )
     assert output.configuration_id == configured.configuration_id
     assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT) == (
         None,

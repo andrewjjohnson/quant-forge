@@ -557,8 +557,10 @@ changes.
 
 The timeframe-indicator configuration contract is version `2` as of QF-27.
 Version 2 adds explicit feed scope both to `aggregation_provenance` and to the
-source configuration. Callers that must identify or compare a persisted QF-22
-through QF-26 version-1 artifact can request
+source configuration by opting into the expanded dataset-reference primitive.
+The default reference primitive remains unchanged for the version-1
+multi-timeframe-context and developing-bar schemas. Callers that must identify
+or compare a persisted QF-22 through QF-26 version-1 artifact can request
 `configuration(contract_version="1")` or
 `configuration_id_for_contract("1")`; that compatibility path reproduces the
 original shape without either feed-scope field. New artifacts always use

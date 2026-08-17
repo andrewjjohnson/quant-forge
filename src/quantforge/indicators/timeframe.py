@@ -45,18 +45,6 @@ def _timeframe_primitive(timeframe: Timeframe) -> PrimitiveMapping:
     }
 
 
-def _legacy_dataset_reference_primitive(
-    reference: DatasetFamilyReference,
-) -> PrimitiveMapping:
-    """Return the QF-22 v1 reference shape, before explicit feed scope."""
-    return {
-        "family_id": reference.family_id,
-        "dataset_id": reference.dataset_id,
-        "canonical_source_snapshot_id": reference.canonical_source_snapshot_id,
-        "timeframe_configuration_id": reference.timeframe_configuration_id,
-    }
-
-
 @dataclass(frozen=True, slots=True)
 class TimeframeIndicatorOutput:
     """Immutable indicator values aligned to exact causal source bars."""
@@ -130,7 +118,7 @@ class TimeframeIndicatorOutput:
     @property
     def aggregation_provenance(self) -> PrimitiveMapping:
         """Return the compact dataset-family lineage binding for this evaluation."""
-        return self.dataset_reference.to_primitive()
+        return self.dataset_reference.to_primitive(include_feed_scope=True)
 
     def values_for(self, field_name: str) -> tuple[Decimal | None, ...]:
         """Return one named value series."""
@@ -297,10 +285,8 @@ class ConfiguredTimeframeIndicator:
             "developing_bar_support": self._developing_bar_support.value,
             "observation_unit": "bar",
             "warm_up_bars": self._warm_up_bars,
-            "aggregation_provenance": (
-                _legacy_dataset_reference_primitive(self.dataset_reference)
-                if legacy
-                else self.dataset_reference.to_primitive()
+            "aggregation_provenance": self.dataset_reference.to_primitive(
+                include_feed_scope=not legacy
             ),
         }
         if not legacy:

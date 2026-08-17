@@ -288,14 +288,17 @@ class DatasetFamilyReference:
                 "dataset family reference feed scope is invalid"
             )
 
-    def to_primitive(self) -> PrimitiveMapping:
-        return {
+    def to_primitive(self, *, include_feed_scope: bool = False) -> PrimitiveMapping:
+        """Return the stable reference shape, optionally expanded by a parent schema."""
+        primitive: PrimitiveMapping = {
             "family_id": self.family_id,
             "dataset_id": self.dataset_id,
             "canonical_source_snapshot_id": self.canonical_source_snapshot_id,
             "timeframe_configuration_id": self.timeframe_configuration_id,
-            "feed_scope": self.feed_scope.to_primitive(),
         }
+        if include_feed_scope:
+            primitive["feed_scope"] = self.feed_scope.to_primitive()
+        return primitive
 
 
 @dataclass(frozen=True, slots=True)
