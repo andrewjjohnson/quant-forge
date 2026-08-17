@@ -202,7 +202,10 @@ def _session_bars(
 
 
 def _reference(
-    timeframe: Timeframe, *, family_id: str = FAMILY_ID
+    timeframe: Timeframe,
+    *,
+    family_id: str = FAMILY_ID,
+    feed_scope: FeedScope = FeedScope.consolidated(),
 ) -> DatasetFamilyReference:
     dataset_id = (
         SOURCE_ID
@@ -214,6 +217,7 @@ def _reference(
         dataset_id,
         SOURCE_ID,
         timeframe.configuration_id,
+        feed_scope,
     )
 
 
@@ -226,6 +230,7 @@ def _context(
     ),
     as_of: datetime | None = None,
     family_id: str = FAMILY_ID,
+    feed_scope: FeedScope = FeedScope.consolidated(),
 ) -> MultiTimeframeContext:
     five_minute, _, _, _ = _timeframes()
     primary = primary_timeframe or five_minute
@@ -261,7 +266,9 @@ def _context(
             TimeframeContext._from_aligned_series(  # pyright: ignore[reportPrivateUsage]
                 requirement=requirement,
                 dataset_reference=_reference(
-                    requirement.timeframe, family_id=family_id
+                    requirement.timeframe,
+                    family_id=family_id,
+                    feed_scope=feed_scope,
                 ),
                 availability=ContextAvailability.AVAILABLE,
                 bars=timeframe_bars,
@@ -284,7 +291,10 @@ def _context(
 
 
 def _all_completed_context(
-    *, closes: tuple[str, ...] = CLOSES, family_id: str = FAMILY_ID
+    *,
+    closes: tuple[str, ...] = CLOSES,
+    family_id: str = FAMILY_ID,
+    feed_scope: FeedScope = FeedScope.consolidated(),
 ) -> MultiTimeframeContext:
     five_minute, four_hour, daily, weekly = _timeframes()
     return _context(
@@ -299,6 +309,7 @@ def _all_completed_context(
             weekly.configuration_id: _session_bars(weekly, closes=closes),
         },
         family_id=family_id,
+        feed_scope=feed_scope,
     )
 
 
@@ -667,6 +678,8 @@ def test_volume_indicators_preserve_feed_scope_across_intraday_daily_and_weekly(
         assert relative_output.source_timeframe == timeframe
         assert average_output.source_fields == (MarketField.VOLUME,)
         assert relative_output.source_fields == (MarketField.VOLUME,)
+        assert average_output.feed_scope == feed_scope
+        assert relative_output.feed_scope == feed_scope
         assert relative_output.values_for(RELATIVE_VOLUME_OUTPUT)[1] is not None
         assert relative_output.dataset_reference == _reference(timeframe)
 
@@ -683,12 +696,16 @@ def test_volume_bound_identity_binds_timeframe_completion_feed_and_lineage() -> 
     )
     consolidated = RelativeVolume(RelativeVolumeParameters(2, FeedScope.consolidated()))
     iex = RelativeVolume(RelativeVolumeParameters(2, FeedScope.iex_only()))
+    iex_context = _all_completed_context(
+        family_id="iex-volume-family",
+        feed_scope=FeedScope.iex_only(),
+    )
 
     identities = {
         bind_indicator(consolidated, context, four_hour).configuration_id,
         bind_indicator(consolidated, context, daily).configuration_id,
         bind_indicator(consolidated, developing_context, four_hour).configuration_id,
-        bind_indicator(iex, context, four_hour).configuration_id,
+        bind_indicator(iex, iex_context, four_hour).configuration_id,
         bind_indicator(
             consolidated,
             _all_completed_context(family_id="other-volume-family"),
@@ -697,6 +714,22 @@ def test_volume_bound_identity_binds_timeframe_completion_feed_and_lineage() -> 
     }
 
     assert len(identities) == 5
+
+
+@pytest.mark.parametrize(
+    "indicator",
+    [
+        VolumeMovingAverage(VolumeMovingAverageParameters(2, FeedScope.iex_only())),
+        RelativeVolume(RelativeVolumeParameters(2, FeedScope.iex_only())),
+    ],
+)
+def test_volume_indicators_reject_mismatched_family_feed_scope(
+    indicator: TimeframeNeutralIndicator,
+) -> None:
+    _, four_hour, _, _ = _timeframes()
+
+    with pytest.raises(IndicatorSourceError, match="feed scope"):
+        bind_indicator(indicator, _all_completed_context(), four_hour)
 
 
 def test_four_hour_instance_rejects_a_daily_only_context() -> None:

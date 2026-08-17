@@ -274,6 +274,7 @@ class DatasetFamilyReference:
     dataset_id: str
     canonical_source_snapshot_id: str
     timeframe_configuration_id: str
+    feed_scope: FeedScope
 
     def __post_init__(self) -> None:
         _validated_text(self.family_id, "dataset family ID")
@@ -282,6 +283,10 @@ class DatasetFamilyReference:
             self.canonical_source_snapshot_id, "canonical source snapshot ID"
         )
         _validated_text(self.timeframe_configuration_id, "timeframe configuration ID")
+        if not isinstance(cast(object, self.feed_scope), FeedScope):
+            raise DatasetFamilyValidationError(
+                "dataset family reference feed scope is invalid"
+            )
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -289,6 +294,7 @@ class DatasetFamilyReference:
             "dataset_id": self.dataset_id,
             "canonical_source_snapshot_id": self.canonical_source_snapshot_id,
             "timeframe_configuration_id": self.timeframe_configuration_id,
+            "feed_scope": self.feed_scope.to_primitive(),
         }
 
 
@@ -472,6 +478,7 @@ class DatasetFamily:
             dataset_id=lineage.dataset_id,
             canonical_source_snapshot_id=self.canonical_source_snapshot_id,
             timeframe_configuration_id=lineage.timeframe.configuration_id,
+            feed_scope=self.feed_scope,
         )
 
 

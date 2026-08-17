@@ -13,7 +13,7 @@ from quantforge.configuration import (
     decimal_to_primitive,
 )
 from quantforge.data.developing_bars import DevelopingBar
-from quantforge.data.lineage import DatasetFamilyReference
+from quantforge.data.lineage import DatasetFamilyReference, FeedScope
 from quantforge.data.multi_timeframe import (
     ContextCompletionPolicy,
     MultiTimeframeContext,
@@ -55,6 +55,7 @@ class TimeframeIndicatorOutput:
     completion_policy: ContextCompletionPolicy
     developing_bar_support: DevelopingBarSupport
     dataset_reference: DatasetFamilyReference
+    feed_scope: FeedScope
     warm_up_bars: int
     bar_ids: tuple[str, ...]
     bar_end_timestamps: tuple[datetime, ...]
@@ -105,6 +106,13 @@ class TimeframeIndicatorOutput:
             raise MisalignedIndicatorOutputError(
                 "timeframe indicator warm-up must be a positive bar count"
             )
+        if (
+            not isinstance(cast(object, self.feed_scope), FeedScope)
+            or self.feed_scope != self.dataset_reference.feed_scope
+        ):
+            raise MisalignedIndicatorOutputError(
+                "timeframe indicator feed scope must match dataset provenance"
+            )
 
     @property
     def aggregation_provenance(self) -> PrimitiveMapping:
@@ -154,6 +162,7 @@ class ConfiguredTimeframeIndicator:
     _developing_bar_support: DevelopingBarSupport = field(repr=False)
     _warm_up_bars: int = field(repr=False)
     _backend_identity: IndicatorBackendIdentity | None = field(repr=False)
+    _source_feed_scope: FeedScope | None = field(repr=False)
 
     @classmethod
     def from_context(
@@ -185,6 +194,7 @@ class ConfiguredTimeframeIndicator:
             output_fields = indicator.output_fields
             warm_up = indicator.warm_up_observations
             backend_identity = getattr(indicator, "backend_identity", None)
+            source_feed_scope = getattr(indicator, "source_feed_scope", None)
         except (AttributeError, TypeError, ValueError) as error:
             raise IndicatorSourceError(
                 "indicator does not implement the timeframe-neutral contract"
@@ -213,10 +223,21 @@ class ConfiguredTimeframeIndicator:
                 backend_identity is not None
                 and not isinstance(backend_identity, IndicatorBackendIdentity)
             )
+            or (
+                source_feed_scope is not None
+                and not isinstance(source_feed_scope, FeedScope)
+            )
             or configuration_identity(snapshot.to_primitive()) != indicator_id
         ):
             raise IndicatorSourceError(
                 "indicator timeframe metadata or configuration identity is invalid"
+            )
+        if (
+            source_feed_scope is not None
+            and source_feed_scope != metadata.dataset_reference.feed_scope
+        ):
+            raise IndicatorSourceError(
+                "indicator feed scope does not match its dataset family source"
             )
         instance = object.__new__(cls)
         object.__setattr__(instance, "indicator", indicator)
@@ -235,6 +256,7 @@ class ConfiguredTimeframeIndicator:
         object.__setattr__(instance, "_developing_bar_support", support)
         object.__setattr__(instance, "_warm_up_bars", warm_up)
         object.__setattr__(instance, "_backend_identity", backend_identity)
+        object.__setattr__(instance, "_source_feed_scope", source_feed_scope)
         return instance
 
     @property
@@ -258,6 +280,7 @@ class ConfiguredTimeframeIndicator:
                 "observation_unit": "bar",
                 "warm_up_bars": self._warm_up_bars,
                 "aggregation_provenance": self.dataset_reference.to_primitive(),
+                "feed_scope": self.dataset_reference.feed_scope.to_primitive(),
             },
         }
 
@@ -314,6 +337,8 @@ class ConfiguredTimeframeIndicator:
             or self.indicator.warm_up_observations != self._warm_up_bars
             or getattr(self.indicator, "backend_identity", None)
             != self._backend_identity
+            or getattr(self.indicator, "source_feed_scope", None)
+            != self._source_feed_scope
         ):
             raise IndicatorSourceError(
                 "indicator configuration changed after source binding"
@@ -340,6 +365,7 @@ class ConfiguredTimeframeIndicator:
             completion_policy=self.completion_policy,
             developing_bar_support=self._developing_bar_support,
             dataset_reference=self.dataset_reference,
+            feed_scope=self.dataset_reference.feed_scope,
             warm_up_bars=self._warm_up_bars,
             bar_ids=tuple(bar.bar_id for bar in bars),
             bar_end_timestamps=tuple(bar.end_timestamp for bar in bars),

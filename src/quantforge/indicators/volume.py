@@ -134,6 +134,11 @@ class VolumeMovingAverage:
         return frozenset((MarketField.VOLUME,))
 
     @property
+    def source_feed_scope(self) -> FeedScope:
+        """Return the feed scope that source binding must verify."""
+        return self._parameters.feed_scope
+
+    @property
     def warm_up_observations(self) -> int:
         return self._parameters.lookback
 
@@ -216,6 +221,11 @@ class RelativeVolume:
     @property
     def required_fields(self) -> frozenset[MarketField]:
         return frozenset((MarketField.VOLUME,))
+
+    @property
+    def source_feed_scope(self) -> FeedScope:
+        """Return the feed scope that source binding must verify."""
+        return self._parameters.feed_scope
 
     @property
     def warm_up_observations(self) -> int:

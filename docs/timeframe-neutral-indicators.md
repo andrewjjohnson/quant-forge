@@ -447,8 +447,11 @@ Feed scope is mandatory rather than inferred. Consolidated, single-venue
 therefore have distinct readable configurations and identities. A relative-
 volume denominator is calculated internally from the same source-bar tuple as
 its numerator, so it cannot silently draw its numerator and denominator from
-different feeds. The outer QF-22 identity also binds the exact QF-14 family;
-that family identity independently includes feed scope and rejects mixed-feed
+different feeds. At QF-22 binding, the declared scope must equal the explicit
+scope carried by the selected QF-14 dataset-family reference; missing or
+mismatched provenance fails before evaluation. `TimeframeIndicatorOutput`
+retains that verified scope. The outer identity also binds the exact QF-14
+family, whose identity independently includes feed scope and rejects mixed-feed
 multi-timeframe contexts.
 
 Both indicators declare causal developing-bar support. In
@@ -545,11 +548,12 @@ A configured timeframe indicator binds:
   present.
 
 The dataset-family reference retains dataset ID, canonical source snapshot,
-timeframe identity, and family identity. The family identity already binds the
-aggregation policy, feed scope, adjustment basis, source interval, session
-policy, and provider provenance. The configured indicator therefore changes
-identity when its timeframe, completion policy, field, dataset member, source
-snapshot, or aggregation family changes.
+timeframe identity, family identity, and explicit feed scope. The family
+identity also binds the aggregation policy, feed scope, adjustment basis,
+source interval, session policy, and provider provenance. The configured
+indicator therefore changes identity when its timeframe, completion policy,
+field, dataset member, source snapshot, feed scope, or aggregation family
+changes.
 
 Binding and calculation both resolve the exact requested timeframe through the
 context. Calculation fails when the timeframe is undeclared, unavailable, or
@@ -564,6 +568,7 @@ includes:
 - source timeframe and source fields;
 - completion policy and developing-bar support;
 - warm-up count in bars;
+- verified provider-neutral feed scope;
 - dataset-family aggregation provenance;
 - exact bar IDs, bar-end timestamps, and completion states;
 - immutable named indicator value fields.
