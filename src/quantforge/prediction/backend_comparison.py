@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
+from decimal import ROUND_HALF_EVEN, Context, Decimal, DecimalException, localcontext
 from enum import StrEnum
 from pathlib import Path
 from typing import cast
@@ -36,6 +36,7 @@ from quantforge.indicators import (
     WilderRelativeStrengthIndexParameters,
     compare_indicator_backends,
 )
+from quantforge.prediction._arithmetic import arithmetic
 from quantforge.prediction.errors import (
     InvalidPredictionOutputError,
     PredictionExportError,
@@ -725,6 +726,7 @@ def _comparison_signals(
             or row.dataset_fingerprint != analysis.market_data.bars_fingerprint
             for row in analysis.rows
         )
+        or any(not _row_outcome_is_consistent(row) for row in analysis.rows)
         or any(
             not _signal_matches_analysis_row(
                 signals_by_session.get(row.signal_session), row
@@ -736,6 +738,27 @@ def _comparison_signals(
             f"prediction signal output does not match analyzed run: {label}"
         )
     return generated_signals
+
+
+def _row_outcome_is_consistent(row: PredictionRow) -> bool:
+    try:
+        with arithmetic():
+            expected_gap = row.next_open / row.signal_close - Decimal(1)
+            expected_gap_size = abs(expected_gap)
+            expected_signed_return = (
+                expected_gap
+                if row.direction is PredictionDirection.UP
+                else -expected_gap
+            )
+            expected_correct = expected_signed_return > 0
+    except DecimalException:
+        return False
+    return (
+        row.overnight_gap_percentage == expected_gap
+        and row.gap_size_percentage == expected_gap_size
+        and row.signed_prediction_return == expected_signed_return
+        and row.correct is expected_correct
+    )
 
 
 def _signal_matches_analysis_row(

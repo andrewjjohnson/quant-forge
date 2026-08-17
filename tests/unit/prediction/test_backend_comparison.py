@@ -379,6 +379,61 @@ def test_prediction_comparison_rejects_foreign_row_provenance(
         )
 
 
+@pytest.mark.parametrize(
+    "altered_field",
+    [
+        "correct",
+        "signed_prediction_return",
+        "overnight_gap_percentage",
+        "gap_size_percentage",
+    ],
+)
+def test_prediction_comparison_rejects_inconsistent_outcome_values(
+    altered_field: str,
+) -> None:
+    dataset = _overnight_dataset()
+    parameters = OvernightGapPredictionParameters()
+    native_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=NATIVE_INDICATOR_BACKEND),
+    )
+    talib_result = run_prediction_analysis(
+        dataset,
+        OvernightGapPredictionStrategy(parameters, backend_id=TALIB_INDICATOR_BACKEND),
+    )
+    first_row = native_result.rows[0]
+    if altered_field == "correct":
+        altered_row = replace(first_row, correct=not first_row.correct)
+    elif altered_field == "signed_prediction_return":
+        altered_row = replace(
+            first_row,
+            signed_prediction_return=first_row.signed_prediction_return
+            + Decimal("0.01"),
+        )
+    elif altered_field == "overnight_gap_percentage":
+        altered_row = replace(
+            first_row,
+            overnight_gap_percentage=first_row.overnight_gap_percentage
+            + Decimal("0.01"),
+        )
+    else:
+        altered_row = replace(
+            first_row,
+            gap_size_percentage=first_row.gap_size_percentage + Decimal("0.01"),
+        )
+
+    with pytest.raises(
+        InvalidPredictionOutputError,
+        match="does not match analyzed run: backend A",
+    ):
+        compare_prediction_backends(
+            replace(native_result, rows=(altered_row, *native_result.rows[1:])),
+            talib_result,
+            backend_a_id=NATIVE_INDICATOR_BACKEND,
+            backend_b_id=TALIB_INDICATOR_BACKEND,
+        )
+
+
 def test_prediction_comparison_derives_accuracy_from_analyzed_rows() -> None:
     dataset = _overnight_dataset()
     parameters = OvernightGapPredictionParameters()
