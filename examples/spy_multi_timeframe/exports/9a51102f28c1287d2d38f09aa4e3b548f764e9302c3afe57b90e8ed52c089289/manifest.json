@@ -30,24 +30,24 @@
       "size_bytes": 585357
     },
     "dataset_family_manifest.json": {
-      "sha256": "f09d8577cca60c757f16ffa4bc44e2dd3f3a5e450f07bc6a029387819670dd57",
-      "size_bytes": 5392
+      "sha256": "dbb9a0af580ed5c6ec935b4e54cdacb6e0cc70bc37364920b2e80766d815272d",
+      "size_bytes": 5393
     },
     "derived_4h_manifest.json": {
-      "sha256": "05c814e8d67cb09f8ffd8228c0288a49620b0897cfad0a8ef119c09d832a9d15",
-      "size_bytes": 95422
+      "sha256": "0fd4f5106fdec5e89fff2b1312f2a27c1d097fc7e9121dfe20f702cd0f1538e8",
+      "size_bytes": 95423
     },
     "derived_daily_manifest.json": {
-      "sha256": "15c68cd89c291a9988e3144cd23c03cf43bcf5222f0739bffddd9e225ef43ede",
-      "size_bytes": 89557
+      "sha256": "8ce44b60602acfe4cd8daa7ab21030da29a194a9100904477fb34c16e5a33f51",
+      "size_bytes": 89558
     },
     "derived_weekly_manifest.json": {
-      "sha256": "8cb90aa5e04f2510264967aad36895ed72228a1d573f21662437e1e88c2649b7",
-      "size_bytes": 85672
+      "sha256": "eb9b176ef583c8c174910bf7cdf040d1f19ab3d3615fb25a5af1085089c1bdc0",
+      "size_bytes": 85673
     },
     "source_manifest.json": {
-      "sha256": "075b81a8fd1586c1b6a6cc5e96386f684594a8d70edad77a766102eeff39a4fd",
-      "size_bytes": 8906
+      "sha256": "eb1a2b6545a50ebbcbda74243cc6da8e5d73421c35fc9a725878892c826f73a5",
+      "size_bytes": 8907
     }
   },
   "completed_context_ids": [

@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 import scripts.export_spy_multi_timeframe_context as spy_context_script
 
-from quantforge.data import AggregatedSessionBar, DevelopingBar
+from quantforge.data import (
+    AggregatedSessionBar,
+    DevelopingBar,
+    IntradayFetchResult,
+    IntradayMarketDataCache,
+)
 from quantforge.timeframes import (
     BarCompletion,
     IntradayInterval,
@@ -203,6 +208,27 @@ def test_cache_replay_and_export_are_deterministic_and_immutable(
         match="immutable export content differs",
     ):
         spy_context_script.export_example(example_result, output_root)
+
+
+def test_cache_replay_rejects_changed_capabilities_identity(tmp_path: Path) -> None:
+    fixture = spy_context_script.load_fixture(FIXTURE_PATH)
+    expected = spy_context_script._source_fetch_result(  # pyright: ignore[reportPrivateUsage]
+        fixture
+    )
+    cache_root = tmp_path / "cache"
+    IntradayMarketDataCache(cache_root).persist(
+        IntradayFetchResult(
+            batch=expected.batch,
+            raw_snapshots=expected.raw_snapshots,
+            capabilities_configuration_id="different-fixture-capabilities",
+        )
+    )
+
+    with pytest.raises(
+        spy_context_script.SpyContextExampleError,
+        match="capabilities_configuration_id",
+    ):
+        spy_context_script.build_example(FIXTURE_PATH, cache_root)
 
 
 def test_checked_in_export_matches_a_fresh_offline_run(

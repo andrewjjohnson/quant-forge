@@ -42,11 +42,13 @@ from quantforge.data import (
     IntradayFetchResult,
     IntradayMarketDataCache,
     IntradayRawSnapshot,
+    IntradayValidationMode,
     MultiTimeframeContext,
     TimeframeBarSeries,
     aggregate_intraday_dataset,
     aggregate_session_dataset,
     build_multi_timeframe_context,
+    validate_intraday_coverage,
 )
 from quantforge.data.identity import sha256_hex
 from quantforge.data.models import ProviderRecord
@@ -488,13 +490,55 @@ def _load_or_seed_source(
     expected = _source_fetch_result(fixture)
     cached = cache.find(fixture.provider_name, expected.batch.request)
     if cached is not None:
-        if cached.bars != expected.batch.bars:
+        mismatches = _cached_fixture_mismatches(cached, expected)
+        if mismatches:
             raise SpyContextExampleError(
-                "the cache request pointer names bars that differ from the committed "
-                "fixture; use a fresh --cache-root"
+                "the cache request pointer does not match the complete committed "
+                f"fixture identity ({', '.join(mismatches)}); use a fresh "
+                "--cache-root"
             )
         return cached, "replayed_local_cache"
     return cache.persist(expected), "seeded_local_cache_from_committed_fixture"
+
+
+def _cached_fixture_mismatches(
+    cached: IntradayDataset, expected: IntradayFetchResult
+) -> tuple[str, ...]:
+    """Return every public cache identity field that differs from the fixture."""
+    batch = expected.batch
+    snapshots = expected.raw_snapshots
+    expected_raw_ids = tuple(snapshot.snapshot_id for snapshot in snapshots)
+    expected_raw_locations = tuple(
+        f"intraday/raw/{snapshot_id}.json" for snapshot_id in expected_raw_ids
+    )
+    expected_quality_report = validate_intraday_coverage(
+        batch, mode=IntradayValidationMode.DIAGNOSTIC
+    )
+    metadata = cached.metadata
+    checks = (
+        ("request", cached.request == batch.request),
+        ("bars", cached.bars == batch.bars),
+        ("request_id", metadata.request_id == batch.request.request_id),
+        ("provider_name", metadata.provider_name == snapshots[0].provider_name),
+        (
+            "provider_symbol",
+            metadata.provider_symbol == snapshots[0].provider_symbol,
+        ),
+        ("adapter_version", metadata.adapter_version == snapshots[0].adapter_version),
+        ("retrieved_at", metadata.retrieved_at == snapshots[0].retrieved_at),
+        (
+            "capabilities_configuration_id",
+            metadata.capabilities_configuration_id
+            == expected.capabilities_configuration_id,
+        ),
+        ("batch_id", metadata.batch_id == batch.batch_id),
+        ("bar_count", metadata.bar_count == len(batch.bars)),
+        ("raw_snapshot_ids", metadata.raw_snapshot_ids == expected_raw_ids),
+        ("raw_locations", metadata.raw_locations == expected_raw_locations),
+        ("data_sha256", metadata.data_sha256 == sha256_hex(batch.serialize())),
+        ("quality_report", metadata.quality_report == expected_quality_report),
+    )
+    return tuple(name for name, matches in checks if not matches)
 
 
 def _context_family(
@@ -767,6 +811,11 @@ def _pretty_json_bytes(value: Mapping[str, object]) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
+def _newline_terminated(content: bytes) -> bytes:
+    """Return canonical JSON as repository-friendly newline-terminated text."""
+    return content if content.endswith(b"\n") else content + b"\n"
+
+
 def _context_rows(result: ExampleResult) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     policies = (
@@ -886,17 +935,27 @@ def _artifact_bytes(result: ExampleResult) -> dict[str, bytes]:
             _context_payload(result.developing_contexts)
         ),
         "context_table.md": _context_table(result),
-        "source_manifest.json": (
-            datasets.cache.root
-            / "intraday"
-            / "datasets"
-            / datasets.source.metadata.dataset_id
-            / "manifest.json"
-        ).read_bytes(),
-        "derived_4h_manifest.json": datasets.four_hour.serialize_manifest(),
-        "derived_daily_manifest.json": datasets.daily.serialize_manifest(),
-        "derived_weekly_manifest.json": datasets.weekly.serialize_manifest(),
-        "dataset_family_manifest.json": datasets.family.serialize_manifest(),
+        "source_manifest.json": _newline_terminated(
+            (
+                datasets.cache.root
+                / "intraday"
+                / "datasets"
+                / datasets.source.metadata.dataset_id
+                / "manifest.json"
+            ).read_bytes()
+        ),
+        "derived_4h_manifest.json": _newline_terminated(
+            datasets.four_hour.serialize_manifest()
+        ),
+        "derived_daily_manifest.json": _newline_terminated(
+            datasets.daily.serialize_manifest()
+        ),
+        "derived_weekly_manifest.json": _newline_terminated(
+            datasets.weekly.serialize_manifest()
+        ),
+        "dataset_family_manifest.json": _newline_terminated(
+            datasets.family.serialize_manifest()
+        ),
     }
     artifact_hashes = {
         name: {"sha256": sha256_hex(content), "size_bytes": len(content)}
