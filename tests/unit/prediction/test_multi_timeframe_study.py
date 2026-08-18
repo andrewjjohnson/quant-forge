@@ -436,6 +436,7 @@ def test_fixture_rule_runs_through_generic_study_with_declared_normalized_inputs
         configuration["prediction_context_requirements"] == requirements.to_primitive()
     )
     configured_backend = requirements.primary.indicators[0].backend_identity
+    assert configured_backend is not None
     assert configured_backend.backend_id == NATIVE_INDICATOR_BACKEND
     timeframe_manifests = cast(list[Primitive], prediction_context["timeframes"])
     primary_manifest = cast(PrimitiveMapping, timeframe_manifests[0])

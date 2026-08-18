@@ -63,7 +63,8 @@ single-timeframe rule contract. A multi-timeframe rule owns one immutable
 - named backend-neutral indicators and their normalized configurations for each
   timeframe;
 - the resolved backend ID, contract version, wrapper/runtime versions, and
-  mapped function for every indicator requirement;
+  mapped function for each pluggable standard-indicator requirement, while
+  normalized native-only indicators explicitly record no backend;
 - completed-only or developing-as-of policy per timeframe;
 - configuration-time validation that every developing-as-of indicator explicitly
   supports causal developing bars;
@@ -113,6 +114,13 @@ creates a different study ID. A skipped context produces zero predictions and
 records the deterministic reason without invoking the rule. The default
 single-timeframe path still calls `generate(MarketDataset)` and retains its
 existing manifest shape and identities when no context declaration is present.
+
+QF-31 provides `TechnicalConfluencePredictionRule` on this opt-in path. It
+combines typed all-of UP and DOWN condition sets over explicit weekly, daily,
+and 4-hour normalized values. Every candidate retains condition status, values,
+and causal source timestamps; an abstention is an auditable `NO_PREDICTION`
+rather than a missing row. The exact fixed reference rule and its boundaries are
+documented in `docs/technical-confluence-prediction.md`.
 
 The study identity includes the dataset provenance, prediction-rule identity
 and configuration, labeler identity and configuration, future-session horizon,

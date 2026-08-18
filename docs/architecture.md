@@ -542,6 +542,14 @@ with that QF-3 dataset, and one context snapshot may emit a signal only for its
 latest primary-bar decision session. Contextual bars after the primary bar's
 causal boundary are rejected rather than combined with that older decision.
 
+QF-31 composes that contract into one reusable technical-confluence rule. Typed
+conditions compare canonical bar fields or normalized indicator outputs on an
+explicit timeframe, retain exact pass/fail/value/timestamp evidence, and resolve
+to UP, DOWN, or an auditable no-prediction candidate. Its fixed SPY reference
+uses explicit `talib_v1` standard indicators plus normalized QF-27 relative
+volume; the rule never imports or calls TA-Lib. See
+`docs/technical-confluence-prediction.md`.
+
 Responsibilities:
 
 - preserve a strict boundary between contemporaneous features and future labels;
