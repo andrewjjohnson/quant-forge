@@ -116,6 +116,7 @@ def _family(
 def test_valid_family_manifest_records_source_and_complete_lineage() -> None:
     family = _family()
     manifest = family.to_manifest()
+    reference = family.reference(HOURLY_ID)
     source = cast(PrimitiveMapping, manifest["canonical_source"])
     lineage = cast(list[PrimitiveMapping], manifest["lineage"])
 
@@ -128,6 +129,12 @@ def test_valid_family_manifest_records_source_and_complete_lineage() -> None:
         "market_center": None,
         "provider_scope": None,
     }
+    assert reference.feed_scope == FeedScope.consolidated()
+    assert "feed_scope" not in reference.to_primitive()
+    assert (
+        reference.to_primitive(include_feed_scope=True)["feed_scope"]
+        == source["feed_scope"]
+    )
     assert source["source_interval"] == {
         "kind": "intraday",
         "nominal_duration_microseconds": 300_000_000,

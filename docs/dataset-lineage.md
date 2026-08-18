@@ -46,6 +46,16 @@ carry both the same family ID and the same canonical source snapshot ID. A mixed
 set raises `MixedDatasetFamilyError`; callers must not catch that error and
 silently continue.
 
+QF-27 also carries the family's typed feed scope on each compact reference.
+Timeframe-bound volume indicators compare their declared feed scope with that
+reference and fail binding on a mismatch, so a consolidated series cannot be
+labeled as IEX-only (or the reverse) merely by constructing different indicator
+parameters. The default `DatasetFamilyReference.to_primitive()` shape remains
+unchanged so version-1 multi-timeframe contexts and developing bars retain
+their existing identities. A versioned parent schema that needs the explicit
+field requests `to_primitive(include_feed_scope=True)`; QF-27's
+timeframe-indicator contract version 2 does so.
+
 ## Canonical source contract
 
 One `DatasetFamily` records:

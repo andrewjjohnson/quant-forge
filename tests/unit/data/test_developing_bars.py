@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -264,9 +265,11 @@ def test_developing_mode_is_explicit_and_reconstructs_daily_weekly_and_intraday(
         2024, 7, 9, 20, tzinfo=UTC
     )
     primitive = daily_bar.to_primitive()
+    source_reference = cast(dict[str, object], primitive["source_dataset_reference"])
     assert primitive["bar_type"] == "developing_bar_as_of"
     assert primitive["complete"] is False
     assert primitive["source_bar_count"] == 77
+    assert "feed_scope" not in source_reference
     assert daily_bar.serialize() == daily_bar.serialize()
     assert developing.to_primitive()["completion_policy"] == "developing_bar_as_of"
     assert (

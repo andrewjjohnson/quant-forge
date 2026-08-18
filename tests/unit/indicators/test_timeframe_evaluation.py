@@ -33,10 +33,13 @@ from quantforge.indicators import (
     MACD_HISTOGRAM_OUTPUT,
     MACD_OUTPUT,
     MACD_SIGNAL_OUTPUT,
+    RELATIVE_VOLUME_OUTPUT,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
     STOCHASTIC_D_OUTPUT,
     STOCHASTIC_K_OUTPUT,
     TALIB_INDICATOR_BACKEND,
+    TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+    VOLUME_MOVING_AVERAGE_OUTPUT,
     BollingerBands,
     BollingerBandsParameters,
     ConfiguredTimeframeIndicator,
@@ -47,12 +50,16 @@ from quantforge.indicators import (
     MarketField,
     MovingAverageConvergenceDivergence,
     MovingAverageConvergenceDivergenceParameters,
+    RelativeVolume,
+    RelativeVolumeParameters,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
     StochasticOscillator,
     StochasticOscillatorParameters,
     TimeframeNeutralIndicator,
     UnsupportedDevelopingBarError,
+    VolumeMovingAverage,
+    VolumeMovingAverageParameters,
     WilderAverageTrueRange,
     WilderAverageTrueRangeParameters,
     WilderDirectionalMovement,
@@ -196,7 +203,10 @@ def _session_bars(
 
 
 def _reference(
-    timeframe: Timeframe, *, family_id: str = FAMILY_ID
+    timeframe: Timeframe,
+    *,
+    family_id: str = FAMILY_ID,
+    feed_scope: FeedScope = FeedScope.consolidated(),
 ) -> DatasetFamilyReference:
     dataset_id = (
         SOURCE_ID
@@ -208,6 +218,7 @@ def _reference(
         dataset_id,
         SOURCE_ID,
         timeframe.configuration_id,
+        feed_scope,
     )
 
 
@@ -220,6 +231,7 @@ def _context(
     ),
     as_of: datetime | None = None,
     family_id: str = FAMILY_ID,
+    feed_scope: FeedScope = FeedScope.consolidated(),
 ) -> MultiTimeframeContext:
     five_minute, _, _, _ = _timeframes()
     primary = primary_timeframe or five_minute
@@ -255,7 +267,9 @@ def _context(
             TimeframeContext._from_aligned_series(  # pyright: ignore[reportPrivateUsage]
                 requirement=requirement,
                 dataset_reference=_reference(
-                    requirement.timeframe, family_id=family_id
+                    requirement.timeframe,
+                    family_id=family_id,
+                    feed_scope=feed_scope,
                 ),
                 availability=ContextAvailability.AVAILABLE,
                 bars=timeframe_bars,
@@ -278,7 +292,10 @@ def _context(
 
 
 def _all_completed_context(
-    *, closes: tuple[str, ...] = CLOSES, family_id: str = FAMILY_ID
+    *,
+    closes: tuple[str, ...] = CLOSES,
+    family_id: str = FAMILY_ID,
+    feed_scope: FeedScope = FeedScope.consolidated(),
 ) -> MultiTimeframeContext:
     five_minute, four_hour, daily, weekly = _timeframes()
     return _context(
@@ -293,6 +310,7 @@ def _all_completed_context(
             weekly.configuration_id: _session_bars(weekly, closes=closes),
         },
         family_id=family_id,
+        feed_scope=feed_scope,
     )
 
 
@@ -305,6 +323,8 @@ def _all_completed_context(
             MovingAverageConvergenceDivergenceParameters(2, 3, 2)
         ),
         SimpleMovingAverage(SimpleMovingAverageParameters(2)),
+        VolumeMovingAverage(VolumeMovingAverageParameters(2, FeedScope.consolidated())),
+        RelativeVolume(RelativeVolumeParameters(2, FeedScope.consolidated())),
         WilderRelativeStrengthIndex(WilderRelativeStrengthIndexParameters(2)),
         WilderAverageTrueRange(WilderAverageTrueRangeParameters(2)),
         WilderDirectionalMovement(WilderDirectionalMovementParameters(2)),
@@ -351,7 +371,9 @@ def test_bollinger_values_are_identical_on_intraday_daily_and_weekly_fixtures() 
 
     for timeframe in _timeframes():
         output = evaluate_indicator(indicator, context, timeframe)
-        assert output.aggregation_provenance == _reference(timeframe).to_primitive()
+        assert output.aggregation_provenance == _reference(timeframe).to_primitive(
+            include_feed_scope=True
+        )
         for field_name, values in expected.items():
             assert output.values_for(field_name) == values
 
@@ -416,7 +438,43 @@ def test_configuration_identity_binds_timeframe_policy_fields_and_lineage() -> N
     assert source["fields"] == ["close"]
     assert source["observation_unit"] == "bar"
     assert source["warm_up_bars"] == 2
-    assert source["aggregation_provenance"] == _reference(four_hour).to_primitive()
+    assert source["aggregation_provenance"] == _reference(four_hour).to_primitive(
+        include_feed_scope=True
+    )
+
+
+def test_timeframe_configuration_versions_feed_scope_and_preserves_v1_shape() -> None:
+    _, four_hour, _, _ = _timeframes()
+    configured = bind_indicator(
+        SimpleMovingAverage(SimpleMovingAverageParameters(2)),
+        _all_completed_context(),
+        four_hour,
+    )
+
+    current = configured.configuration()
+    legacy = configured.configuration(contract_version="1")
+    current_source = cast(dict[str, object], current["source"])
+    legacy_source = cast(dict[str, object], legacy["source"])
+
+    assert TIMEFRAME_INDICATOR_CONTRACT_VERSION == "2"
+    assert current["contract_version"] == "2"
+    assert current_source["feed_scope"] == FeedScope.consolidated().to_primitive()
+    assert current_source["aggregation_provenance"] == _reference(
+        four_hour
+    ).to_primitive(include_feed_scope=True)
+    assert legacy["contract_version"] == "1"
+    assert "feed_scope" not in legacy_source
+    assert legacy_source["aggregation_provenance"] == {
+        "family_id": FAMILY_ID,
+        "dataset_id": f"derived-{four_hour.configuration_id}",
+        "canonical_source_snapshot_id": SOURCE_ID,
+        "timeframe_configuration_id": four_hour.configuration_id,
+    }
+    assert configured.configuration_id == configured.configuration_id_for_contract("2")
+    assert configured.configuration_id != configured.configuration_id_for_contract("1")
+
+    with pytest.raises(IndicatorSourceError, match="unsupported"):
+        configured.configuration(contract_version="3")
 
 
 def test_ema_identity_binds_period_field_timeframe_and_completion_policy() -> None:
@@ -462,7 +520,9 @@ def test_talib_ema_preserves_timeframe_completion_and_lineage_metadata() -> None
     assert output.source_fields == (MarketField.CLOSE,)
     assert output.completion_policy is ContextCompletionPolicy.COMPLETED_BARS_ONLY
     assert output.dataset_reference == _reference(four_hour)
-    assert output.aggregation_provenance == _reference(four_hour).to_primitive()
+    assert output.aggregation_provenance == _reference(four_hour).to_primitive(
+        include_feed_scope=True
+    )
     assert output.configuration_id == configured.configuration_id
     assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT) == (
         None,
@@ -642,6 +702,77 @@ def test_stochastic_is_timeframe_neutral_and_binds_all_source_semantics() -> Non
         assert output.values_for(STOCHASTIC_D_OUTPUT)[3] is not None
 
 
+def test_volume_indicators_preserve_feed_scope_across_intraday_daily_and_weekly() -> (
+    None
+):
+    context = _all_completed_context()
+    _, four_hour, daily, weekly = _timeframes()
+    feed_scope = FeedScope.consolidated()
+    average = VolumeMovingAverage(VolumeMovingAverageParameters(2, feed_scope))
+    relative = RelativeVolume(RelativeVolumeParameters(2, feed_scope))
+
+    for timeframe in (four_hour, daily, weekly):
+        average_output = evaluate_indicator(average, context, timeframe)
+        relative_output = evaluate_indicator(relative, context, timeframe)
+
+        assert average_output.source_timeframe == timeframe
+        assert relative_output.source_timeframe == timeframe
+        assert average_output.source_fields == (MarketField.VOLUME,)
+        assert relative_output.source_fields == (MarketField.VOLUME,)
+        assert average_output.feed_scope == feed_scope
+        assert relative_output.feed_scope == feed_scope
+        assert relative_output.values_for(RELATIVE_VOLUME_OUTPUT)[1] is not None
+        assert relative_output.dataset_reference == _reference(timeframe)
+
+
+def test_volume_bound_identity_binds_timeframe_completion_feed_and_lineage() -> None:
+    context = _all_completed_context()
+    _, four_hour, daily, _ = _timeframes()
+    developing_context = _context(
+        {
+            timeframe.configuration_id: context.bars_for(timeframe)
+            for timeframe in _timeframes()
+        },
+        completion_policy=ContextCompletionPolicy.DEVELOPING_BAR_AS_OF,
+    )
+    consolidated = RelativeVolume(RelativeVolumeParameters(2, FeedScope.consolidated()))
+    iex = RelativeVolume(RelativeVolumeParameters(2, FeedScope.iex_only()))
+    iex_context = _all_completed_context(
+        family_id="iex-volume-family",
+        feed_scope=FeedScope.iex_only(),
+    )
+
+    identities = {
+        bind_indicator(consolidated, context, four_hour).configuration_id,
+        bind_indicator(consolidated, context, daily).configuration_id,
+        bind_indicator(consolidated, developing_context, four_hour).configuration_id,
+        bind_indicator(iex, iex_context, four_hour).configuration_id,
+        bind_indicator(
+            consolidated,
+            _all_completed_context(family_id="other-volume-family"),
+            four_hour,
+        ).configuration_id,
+    }
+
+    assert len(identities) == 5
+
+
+@pytest.mark.parametrize(
+    "indicator",
+    [
+        VolumeMovingAverage(VolumeMovingAverageParameters(2, FeedScope.iex_only())),
+        RelativeVolume(RelativeVolumeParameters(2, FeedScope.iex_only())),
+    ],
+)
+def test_volume_indicators_reject_mismatched_family_feed_scope(
+    indicator: TimeframeNeutralIndicator,
+) -> None:
+    _, four_hour, _, _ = _timeframes()
+
+    with pytest.raises(IndicatorSourceError, match="feed scope"):
+        bind_indicator(indicator, _all_completed_context(), four_hour)
+
+
 def test_four_hour_instance_rejects_a_daily_only_context() -> None:
     context = _all_completed_context()
     _, four_hour, daily, _ = _timeframes()
@@ -760,6 +891,25 @@ def test_ema_developing_bar_uses_only_the_causal_as_of_close() -> None:
 
     assert output.completion_states[-1] is BarCompletion.DEVELOPING
     assert output.values_for(EXPONENTIAL_MOVING_AVERAGE_OUTPUT)[-1] == Decimal(15)
+
+
+def test_volume_developing_bar_uses_only_causal_as_of_volume() -> None:
+    _, four_hour, _, _ = _timeframes()
+    context = _developing_context()
+    average = evaluate_indicator(
+        VolumeMovingAverage(VolumeMovingAverageParameters(1, FeedScope.consolidated())),
+        context,
+        four_hour,
+    )
+    relative = evaluate_indicator(
+        RelativeVolume(RelativeVolumeParameters(1, FeedScope.consolidated())),
+        context,
+        four_hour,
+    )
+
+    assert average.completion_states[-1] is BarCompletion.DEVELOPING
+    assert average.values_for(VOLUME_MOVING_AVERAGE_OUTPUT)[-1] == Decimal(6000)
+    assert relative.values_for(RELATIVE_VOLUME_OUTPUT)[-1] == Decimal(1)
 
 
 def test_bollinger_developing_bar_uses_only_the_causal_as_of_close() -> None:

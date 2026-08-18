@@ -734,6 +734,7 @@ def test_context_rejects_incompatible_session_policies() -> None:
 def test_context_identity_records_causal_configuration_and_family() -> None:
     context = _context()
     primitive = context.to_primitive()
+    aligned_timeframes = cast(list[dict[str, object]], primitive["timeframes"])
 
     assert primitive["as_of"] == AS_OF.astimezone(UTC).isoformat()
     assert primitive["completion_policy"] == "completed_bars_only"
@@ -743,4 +744,8 @@ def test_context_identity_records_causal_configuration_and_family() -> None:
         "external_validation_policy_id": None,
     }
     assert len(cast(list[object], primitive["required_timeframes"])) == 3
+    assert all(
+        "feed_scope" not in cast(dict[str, object], aligned["dataset_reference"])
+        for aligned in aligned_timeframes
+    )
     assert context.serialize() == _context().serialize()
