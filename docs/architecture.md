@@ -271,6 +271,11 @@ references, and canonical QF-15/QF-18/QF-19 bars. It lives below indicators,
 prediction, strategies, and backtesting. See `docs/multi-timeframe-context.md`
 and ADRs 0011-0012.
 
+QF-30 exercises this boundary through an indicator-free, offline SPY fixture
+and immutable example export. It adds orchestration and inspection artifacts,
+not a second aggregation or context implementation. See
+`docs/spy-multi-timeframe-example.md`.
+
 Responsibilities:
 
 - align primary, weekly, daily, and intraday series at one explicit decision

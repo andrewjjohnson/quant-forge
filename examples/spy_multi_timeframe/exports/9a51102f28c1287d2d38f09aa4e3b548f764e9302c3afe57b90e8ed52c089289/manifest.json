@@ -1,0 +1,159 @@
+{
+  "artifact_type": "spy_multi_timeframe_context_example",
+  "artifacts": {
+    "bars_4h.csv": {
+      "sha256": "9f4cfea63fdf7f4dc97bcf693e1a030ea5d26af0d0e827593adb286a655186a7",
+      "size_bytes": 7166
+    },
+    "bars_5m.csv": {
+      "sha256": "bfdca834c8d430379d255570e53c295e7522f1f09893a23cbda431499c81c69b",
+      "size_bytes": 256251
+    },
+    "bars_daily.csv": {
+      "sha256": "4fa3b21aed582206c1b6fb72653a8ade8ec40da5a8b57aa8b3f3a3cd818072bf",
+      "size_bytes": 3853
+    },
+    "bars_weekly.csv": {
+      "sha256": "f8a91da9bb57ea9627948f17811cfaf98a4d8c9c8ec75184ed2960185cf2c112",
+      "size_bytes": 1055
+    },
+    "context_table.md": {
+      "sha256": "b06dcfe223489aeb4b764f0b93214f3037354cc2b56f84607c2901bf579985fc",
+      "size_bytes": 6659
+    },
+    "contexts_completed.json": {
+      "sha256": "cb89600bd878af717cd05b8170d38f1f7ba87d37441db94f305aa9cec96e89b5",
+      "size_bytes": 468244
+    },
+    "contexts_developing.json": {
+      "sha256": "c2d6ba7b6493a706f89643b1032000aec859a02dcc06df5c56e5d17dff83abac",
+      "size_bytes": 585357
+    },
+    "dataset_family_manifest.json": {
+      "sha256": "dbb9a0af580ed5c6ec935b4e54cdacb6e0cc70bc37364920b2e80766d815272d",
+      "size_bytes": 5393
+    },
+    "derived_4h_manifest.json": {
+      "sha256": "0fd4f5106fdec5e89fff2b1312f2a27c1d097fc7e9121dfe20f702cd0f1538e8",
+      "size_bytes": 95423
+    },
+    "derived_daily_manifest.json": {
+      "sha256": "8ce44b60602acfe4cd8daa7ab21030da29a194a9100904477fb34c16e5a33f51",
+      "size_bytes": 89558
+    },
+    "derived_weekly_manifest.json": {
+      "sha256": "eb9b176ef583c8c174910bf7cdf040d1f19ab3d3615fb25a5af1085089c1bdc0",
+      "size_bytes": 85673
+    },
+    "source_manifest.json": {
+      "sha256": "eb1a2b6545a50ebbcbda74243cc6da8e5d73421c35fc9a725878892c826f73a5",
+      "size_bytes": 8907
+    }
+  },
+  "completed_context_ids": [
+    "fc3e5ea331c1c26ed15da1ad2d880c9a44e56127c949905fcddcc7e8782407f3",
+    "79b28537663867cfbcbd61119a8a4040d907371f33408426df8aca516e2aa539",
+    "9ea6b414c20b12d47d6da39f36d7171cc2be8948cc6e80d9dbe2533c2b4214c9",
+    "44f19a6f70cf4f61d81773048fb5bf4de4fbe3d6f2f139541c246b2072041455"
+  ],
+  "dataset_family_id": "e7d20d83bde5dfddc73b73932e12bf6ea5910490b1039aec5c8018262cc55ab0",
+  "dataset_family_manifest_id": "9499fc0fad05b6ec8e57db0032f1ad78c24f1bba8b2cc36a057b528210ee6cea",
+  "decision_scenarios": [
+    {
+      "as_of": "2024-07-01T15:00:00+00:00",
+      "name": "normal_session",
+      "purpose": "Normal full XNYS session after a completed prior week."
+    },
+    {
+      "as_of": "2024-07-03T16:55:00+00:00",
+      "name": "early_close_near_close",
+      "purpose": "Five minutes before the scheduled 13:00 America/New_York close."
+    },
+    {
+      "as_of": "2024-07-10T16:00:00+00:00",
+      "name": "midweek",
+      "purpose": "Midweek decision with the current daily and weekly bars still forming."
+    },
+    {
+      "as_of": "2024-07-12T19:55:00+00:00",
+      "name": "normal_session_near_close",
+      "purpose": "Five minutes before a normal 16:00 America/New_York close."
+    }
+  ],
+  "derived_dataset_ids": {
+    "4h": "62fbe0edcd5c08a14078ed10fb801160906d2850e9b3ce55c72ca7bca44a01bf",
+    "daily": "c54c946f97d4cef27879d6aefbcf0f0b79ea793a81a80ad69ba41e5ff822d52d",
+    "weekly": "1912452fddf719ef1332c9aa346abedef52c330a2d93a2251b352ee9f3537883"
+  },
+  "developing_context_ids": [
+    "d197f9d6bdb62ad8733a0626cb66a1c092629784bffb72f9e0a22876fe96ddb7",
+    "e0a6e2e14167068923c106ab8d49cd225b8a06118ecc2d511fa4b8487f9e7537",
+    "11f35eebb53897c378d807a9d19192617f34d4b5793fe7afa930c137e794a0b6",
+    "7e504cbc53daf1635c7f3f8ea08bb6f30865646f333b0a78b57268d3153d1a59"
+  ],
+  "example_id": "9a51102f28c1287d2d38f09aa4e3b548f764e9302c3afe57b90e8ed52c089289",
+  "fixture_id": "46e0873e3bb5efd195562b6f70a43299a719ae33131ad205aacae0878173c130",
+  "indicator_backend": null,
+  "limitations": [
+    "OHLCV values are deterministic synthetic fixture values, not observed market prices.",
+    "The example contains no indicators, predictions, signals, orders, fills, or P&L.",
+    "The example validates aggregation, lineage, cache replay, and temporal alignment only."
+  ],
+  "prediction_or_trading_result": null,
+  "schema_version": "1",
+  "source": {
+    "bar_count": 1056,
+    "canonical_symbol": "SPY",
+    "feed_scope": {
+      "coverage": "provider_defined",
+      "market_center": null,
+      "provider_scope": "synthetic_regular_hours_fixture"
+    },
+    "kind": "synthetic_redistributable_fixture",
+    "provider_name": "quantforge_example_fixture",
+    "request": {
+      "adjustment_basis": {
+        "adjusted_fields_used": false,
+        "adjustment_mode": "unadjusted",
+        "corporate_action_policy": "not_provided_for_synthetic_intraday_fixture",
+        "ohlc_basis": "raw_provider",
+        "volume_basis": "raw_provider"
+      },
+      "contract_type": "intraday_bar_request",
+      "end_timestamp": "2024-07-12T20:00:00+00:00",
+      "feed_scope": {
+        "coverage": "provider_defined",
+        "market_center": null,
+        "provider_scope": "synthetic_regular_hours_fixture"
+      },
+      "schema_version": "1",
+      "start_timestamp": "2024-06-24T13:30:00+00:00",
+      "symbol": "SPY",
+      "timeframe": {
+        "configuration": {
+          "bar_label": "bar_start",
+          "developing_bar_exposure": "completed_only",
+          "interval": {
+            "anchor": "exchange_session_open",
+            "clock_anchor": null,
+            "clock_anchor_epoch_date": null,
+            "cross_session_policy": "prohibited",
+            "kind": "intraday",
+            "nominal_duration_microseconds": 300000000
+          },
+          "schema_version": "1",
+          "session_policy": {
+            "calendar": "XNYS",
+            "extended_hours_end": null,
+            "extended_hours_start": null,
+            "scope": "regular_hours",
+            "timezone": "America/New_York"
+          }
+        },
+        "configuration_id": "1a605deaa1f45556d18ac1574d17b49a98fc754dec807c4420e4dc898d2133fd"
+      }
+    }
+  },
+  "source_dataset_id": "bbd21df977755393ba8f7c800d26a0bbe67ca6f60788c9226bde3d6828bc5795",
+  "source_quality_report_id": "7a8ad9324f0e3530d228a7826bc9a697a8b0098eff9fc018a59691a899cbcff1"
+}

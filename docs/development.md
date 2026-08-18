@@ -110,6 +110,18 @@ early-close tests:
 uv run pytest tests/unit/data/test_multi_timeframe.py
 ```
 
+Build or verify the deterministic, indicator-free QF-30 SPY multi-timeframe
+example entirely from the committed local fixture and immutable cache:
+
+```bash
+uv run python scripts/export_spy_multi_timeframe_context.py
+```
+
+The script exports canonical 5-minute, derived 4-hour/daily/weekly, completed-
+only, and separately developing-as-of artifacts. It makes no provider request
+and requires no credential. See
+[`spy-multi-timeframe-example.md`](spy-multi-timeframe-example.md).
+
 Run the timeframe-neutral indicator compatibility, identity, causality, and
 developing-bar tests:
 
