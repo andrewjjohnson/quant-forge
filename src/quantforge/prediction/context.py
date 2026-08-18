@@ -69,7 +69,7 @@ class PredictionIndicatorRequirement:
     _configuration_snapshot: PrimitiveMappingSnapshot = field(init=False, repr=False)
     _configuration_id: str = field(init=False, repr=False)
     _indicator_name: str = field(init=False, repr=False)
-    _backend_identity: IndicatorBackendIdentity = field(init=False, repr=False)
+    _backend_identity: IndicatorBackendIdentity | None = field(init=False, repr=False)
     _developing_bar_support: DevelopingBarSupport = field(init=False, repr=False)
     _output_fields: tuple[str, ...] = field(init=False, repr=False)
 
@@ -85,6 +85,7 @@ class PredictionIndicatorRequirement:
             backend_identity = cast(
                 object, getattr(self.indicator, "backend_identity", None)
             )
+            standard_definition = getattr(self.indicator, "standard_definition", None)
             output_fields = self.indicator.output_fields
             developing_support = self.indicator.developing_bar_support
             required_fields = self.indicator.required_fields
@@ -101,7 +102,11 @@ class PredictionIndicatorRequirement:
             != configuration_id
             or not isinstance(cast(object, indicator_name), str)
             or not indicator_name
-            or not isinstance(backend_identity, IndicatorBackendIdentity)
+            or (
+                backend_identity is not None
+                and not isinstance(backend_identity, IndicatorBackendIdentity)
+            )
+            or (standard_definition is not None and backend_identity is None)
             or not isinstance(cast(object, output_fields), tuple)
             or not output_fields
             or any(
@@ -129,7 +134,7 @@ class PredictionIndicatorRequirement:
         return self._configuration_id
 
     @property
-    def backend_identity(self) -> IndicatorBackendIdentity:
+    def backend_identity(self) -> IndicatorBackendIdentity | None:
         return self._backend_identity
 
     @property
@@ -143,7 +148,11 @@ class PredictionIndicatorRequirement:
                 "name": self._indicator_name,
                 "configuration_id": self._configuration_id,
                 "configuration": self._configuration_snapshot.to_primitive(),
-                "backend": self._backend_identity.to_primitive(),
+                "backend": (
+                    None
+                    if self._backend_identity is None
+                    else self._backend_identity.to_primitive()
+                ),
                 "developing_bar_support": self._developing_bar_support.value,
                 "output_fields": list(self._output_fields),
             },

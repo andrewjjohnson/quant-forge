@@ -230,6 +230,14 @@ indicator configuration, backend identity, dataset-family reference, or source
 context changes the QF-29 dataset identity. Native and `talib_v1` results for
 the same logical indicator therefore cannot alias.
 
+QF-31 candidate rules expose every condition value/status/timestamp through
+their typed strategy feature definitions and derive the corresponding QF-29
+requests through `multi_timeframe_feature_requests`. Supplying that tuple to
+the builder captures condition evidence and all consumed normalized contextual
+indicator values together. Standard indicators retain complete backend
+provenance; QF-27 volume indicators explicitly record no pluggable backend
+rather than inventing one. See `docs/technical-confluence-prediction.md`.
+
 ## Forward returns
 
 `ForwardReturnOutcomeLabeler(H)` declares an exact QF-11 horizon of `H` exchange

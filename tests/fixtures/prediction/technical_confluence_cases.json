@@ -1,0 +1,26 @@
+[
+  {
+    "name": "accepted_up",
+    "weekly_closes": ["11", "12"],
+    "daily_closes": ["11", "12"],
+    "four_hour_closes": ["11", "12"],
+    "expected_outcome": "up",
+    "expected_disposition": "accepted"
+  },
+  {
+    "name": "accepted_down",
+    "weekly_closes": ["8", "9"],
+    "daily_closes": ["8", "9"],
+    "four_hour_closes": ["8", "9"],
+    "expected_outcome": "down",
+    "expected_disposition": "accepted"
+  },
+  {
+    "name": "rejected_no_prediction",
+    "weekly_closes": ["11", "12"],
+    "daily_closes": ["8", "9"],
+    "four_hour_closes": ["11", "12"],
+    "expected_outcome": "no_prediction",
+    "expected_disposition": "rejected"
+  }
+]

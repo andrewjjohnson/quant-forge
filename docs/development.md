@@ -216,6 +216,16 @@ resume tests with:
 uv run pytest tests/unit/prediction/test_multi_timeframe_feature_dataset.py
 ```
 
+Run the QF-31 typed condition, accepted/rejected outcome, causality, identity,
+reference-rule, and QF-7/QF-29 integration tests with:
+
+```bash
+uv run pytest tests/unit/prediction/test_technical_confluence.py
+```
+
+The fixed rule specification and exact comparison boundaries are documented in
+[`technical-confluence-prediction.md`](technical-confluence-prediction.md).
+
 Downloaded provider responses remain under ignored `data/`; structured results
 remain under ignored `reports/`. Use `--refresh` only when intentionally
 retrieving a new immutable provider revision. Never stage either directory.
