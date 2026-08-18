@@ -1,0 +1,57 @@
+{
+  "schema_version": "1",
+  "symbol": "SPY",
+  "provider_name": "quantforge_example_fixture",
+  "provider_symbol": "SPY",
+  "adapter_version": "qf30_fixture_v1",
+  "retrieved_at": "2024-08-01T00:00:00+00:00",
+  "session_dates": [
+    "2024-06-24",
+    "2024-06-25",
+    "2024-06-26",
+    "2024-06-27",
+    "2024-06-28",
+    "2024-07-01",
+    "2024-07-02",
+    "2024-07-03",
+    "2024-07-05",
+    "2024-07-08",
+    "2024-07-09",
+    "2024-07-10",
+    "2024-07-11",
+    "2024-07-12"
+  ],
+  "price_formula": {
+    "base_open": "500.00",
+    "open_step_per_bar": "0.01",
+    "high_offset": "0.05",
+    "low_offset": "0.03",
+    "close_offset": "0.02"
+  },
+  "volume_formula": {
+    "base_volume": "1000",
+    "step_per_bar": "1"
+  },
+  "decision_scenarios": [
+    {
+      "name": "normal_session",
+      "as_of": "2024-07-01T11:00:00-04:00",
+      "purpose": "Normal full XNYS session after a completed prior week."
+    },
+    {
+      "name": "early_close_near_close",
+      "as_of": "2024-07-03T12:55:00-04:00",
+      "purpose": "Five minutes before the scheduled 13:00 America/New_York close."
+    },
+    {
+      "name": "midweek",
+      "as_of": "2024-07-10T12:00:00-04:00",
+      "purpose": "Midweek decision with the current daily and weekly bars still forming."
+    },
+    {
+      "name": "normal_session_near_close",
+      "as_of": "2024-07-12T15:55:00-04:00",
+      "purpose": "Five minutes before a normal 16:00 America/New_York close."
+    }
+  ]
+}

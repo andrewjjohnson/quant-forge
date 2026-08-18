@@ -7,6 +7,12 @@ indicators, call a provider, integrate prediction rules, or simulate trades.
 QF-21 extends that same boundary with an explicit developing-bar policy while
 keeping completed bars as the default.
 
+QF-30 composes these existing data-layer boundaries in a maintained,
+indicator-free SPY example. It cache-validates one canonical 5-minute fixture,
+derives 4-hour, daily, and weekly artifacts through QF-18/QF-19, and exports
+completed and developing contexts separately. See
+[`spy-multi-timeframe-example.md`](spy-multi-timeframe-example.md).
+
 ## Public contract
 
 `build_multi_timeframe_context()` accepts:
