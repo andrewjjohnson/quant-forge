@@ -6,6 +6,12 @@ orders, simulate fills, or change QF-5's execution safeguards. The original
 overnight-gap implementation remains the concrete QF-11 baseline on top of the
 generic study contracts.
 
+QF-32 adds deterministic parameter-grid orchestration for multi-timeframe
+prediction studies without changing this boundary or introducing QF-5
+execution simulation. See `docs/prediction-parameter-grids.md` for fixed-backend
+identity, safe context/indicator reuse, persistence/resume, ranking constraints,
+and parameter-neighborhood stability.
+
 ```text
 PredictionStudy
     |

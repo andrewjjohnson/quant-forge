@@ -76,6 +76,13 @@ configured evaluator. The original QF-11 study supplies the concrete
 next-session-open gap label and directional evaluator. Prediction studies never
 create orders, fills, or portfolio results. See `docs/prediction-analysis.md`.
 
+QF-32 adds deterministic finite parameter comparison above that prediction
+branch. It reuses QF-6 search-space, constraint, persistence/resume, ranking,
+and neighborhood-stability concepts, but executes QF-11/QF-28 studies directly
+and never enters QF-5. Ordinary grids fix one QF-35 backend environment and bind
+its complete identity into study, trial, and cache keys. See
+`docs/prediction-parameter-grids.md`.
+
 QF-7 extends that branch after causal candidate classification. It enriches
 already-fixed QF-11 prediction records with configurable QF-4 context, reuses
 QF-11 labeler/evaluator compositions for multi-session outcomes, and exports a

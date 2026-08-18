@@ -361,6 +361,18 @@ class PredictionContextProvider(Protocol):
     ) -> MultiTimeframeContext: ...
 
 
+class PredictionIndicatorOutputCache(Protocol):
+    """Resolve normalized indicator output under an identity-aware cache policy."""
+
+    def resolve(
+        self,
+        requirement: PredictionIndicatorRequirement,
+        context: MultiTimeframeContext,
+        timeframe: Timeframe,
+        completion_policy: ContextCompletionPolicy,
+    ) -> TimeframeIndicatorOutput: ...
+
+
 @dataclass(frozen=True, slots=True)
 class NamedPredictionIndicatorOutput:
     """A rule-facing alias paired only with a normalized QuantForge output."""
@@ -516,6 +528,7 @@ def build_prediction_rule_context(
     prediction_dataset_id: str,
     symbol: str,
     prediction_adjustment_basis: AdjustmentBasis,
+    indicator_output_cache: PredictionIndicatorOutputCache | None = None,
 ) -> PredictionRuleContext:
     """Validate, restrict, and evaluate one declared prediction context."""
     if not isinstance(cast(object, requirements), PredictionContextRequirements):
@@ -630,10 +643,19 @@ def build_prediction_rule_context(
         outputs = tuple(
             NamedPredictionIndicatorOutput(
                 item.alias,
-                item.evaluate(
-                    context,
-                    requirement.timeframe,
-                    requirement.completion_policy,
+                (
+                    item.evaluate(
+                        context,
+                        requirement.timeframe,
+                        requirement.completion_policy,
+                    )
+                    if indicator_output_cache is None
+                    else indicator_output_cache.resolve(
+                        item,
+                        context,
+                        requirement.timeframe,
+                        requirement.completion_policy,
+                    )
                 ),
             )
             for item in requirement.indicators
