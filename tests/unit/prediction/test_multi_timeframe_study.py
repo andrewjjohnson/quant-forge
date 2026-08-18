@@ -34,6 +34,7 @@ from quantforge.prediction import (
     OvernightGapDirectionEvaluationValues,
     OvernightGapDirectionEvaluator,
     PredictionContextAccessError,
+    PredictionContextError,
     PredictionContextFailurePolicy,
     PredictionContextRequirements,
     PredictionDirection,
@@ -216,6 +217,20 @@ def _requirements(
         (declared(weekly), declared(daily), declared(four_hour)),
         failure_policy,
     )
+
+
+def test_prediction_context_requires_an_intraday_primary_timeframe() -> None:
+    baseline = _requirements()
+    _, _, daily, weekly = timeframe_fixtures._timeframes()  # pyright: ignore[reportPrivateUsage]
+    by_timeframe = {
+        item.timeframe.configuration_id: item for item in baseline.all_timeframes
+    }
+
+    with pytest.raises(PredictionContextError, match=r"primary.*intraday"):
+        PredictionContextRequirements(
+            by_timeframe[daily.configuration_id],
+            (by_timeframe[weekly.configuration_id],),
+        )
 
 
 def _study(

@@ -26,7 +26,7 @@ from quantforge.indicators import (
     TimeframeNeutralIndicator,
     evaluate_indicator,
 )
-from quantforge.timeframes import BarCompletion, Timeframe
+from quantforge.timeframes import BarCompletion, IntradayInterval, Timeframe
 
 PREDICTION_CONTEXT_CONTRACT_VERSION = "1"
 
@@ -240,6 +240,10 @@ class PredictionContextRequirements:
             )
         if not isinstance(cast(object, self.primary), PredictionTimeframeRequirement):
             raise PredictionContextError("primary prediction timeframe is invalid")
+        if not isinstance(self.primary.timeframe.interval, IntradayInterval):
+            raise PredictionContextError(
+                "primary prediction timeframe must be intraday"
+            )
         if not isinstance(cast(object, self.contextual), tuple) or not self.contextual:
             raise PredictionContextError(
                 "multi-timeframe prediction requires contextual timeframes"

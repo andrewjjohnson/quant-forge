@@ -523,10 +523,11 @@ and a directional evaluator. Its signal close is retained only as the outcome
 reference price and is never represented as a fill.
 
 QF-28 adds an opt-in multi-timeframe prediction contract. The rule declares its
-primary and contextual timeframes, indicator/backend configurations,
-completion and freshness policies, and session/feed requirements. An injected
-context provider obtains the exact QF-20/QF-21 context; generic prediction
-orchestration validates it, computes QF-22 indicators through the QF-35
+lower-intraday primary timeframe and contextual timeframes, indicator/backend
+configurations, completion and freshness policies, and session/feed
+requirements. An injected context provider obtains the exact QF-20/QF-21
+context; generic prediction orchestration validates it, computes QF-22
+indicators through the QF-35
 backend-neutral boundary, and supplies a restricted view containing only
 declared bars and normalized outputs. The source context, requirements, and
 indicator provenance participate in the study identity and manifest. Existing

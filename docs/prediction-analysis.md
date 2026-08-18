@@ -59,7 +59,7 @@ QF-28 adds `MultiTimeframePredictionRule` as an opt-in sibling to the original
 single-timeframe rule contract. A multi-timeframe rule owns one immutable
 `PredictionContextRequirements` declaration containing:
 
-- the primary decision timeframe and every contextual timeframe;
+- the lower-intraday primary decision timeframe and every contextual timeframe;
 - named backend-neutral indicators and their normalized configurations for each
   timeframe;
 - the resolved backend ID, contract version, wrapper/runtime versions, and
@@ -80,7 +80,10 @@ the runner. Before rule execution, every visible context bar must match the
 prediction dataset's canonical symbol and the context's intraday provenance
 must carry the same adjustment, OHLC, volume, adjusted-field, and corporate-
 action basis as that dataset. QuantForge does not silently convert between
-incompatible bases.
+incompatible bases. QF-28 therefore rejects an aggregate-only primary
+timeframe: the intraday primary bars provide the explicit adjustment provenance
+needed to compare the QF-20 family with the QF-3 prediction dataset, while
+daily and weekly aggregates remain valid contextual inputs.
 
 Rule code receives only a `PredictionRuleContext`. It exposes bars and
 `TimeframeIndicatorOutput` values for declared timeframes and named indicators;
