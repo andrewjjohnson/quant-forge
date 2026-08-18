@@ -242,11 +242,13 @@ The schema version is `1`.
 
 ## Deliberate limitations
 
-The context does not calculate indicators, add prediction-rule declarations,
-export features, or execute trades. Those remain sibling stories under QF-12.
-QF-22's `quantforge.indicators.evaluate_indicator()` consumes this context from
-the indicator layer without moving calculation responsibility into the data
-module.
+The data-layer context does not calculate indicators, add prediction-rule
+declarations, export features, or execute trades. QF-22's
+`quantforge.indicators.evaluate_indicator()` consumes it from the indicator
+layer without moving calculation responsibility into the data module. QF-28's
+prediction orchestrator composes those two existing boundaries and gives a
+rule only a restricted declared view; the context type itself remains generic
+and unchanged.
 It also does not silently combine provider-native higher-timeframe products
 with QuantForge-derived datasets. Multi-session daily and multi-week developing
 targets remain unsupported, matching QF-19's current completed aggregation

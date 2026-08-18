@@ -13,9 +13,22 @@ from quantforge.configuration import (
 )
 from quantforge.data import dataset_identity_matches, validate_market_dataset
 from quantforge.data.exceptions import ValidationError as MarketDataValidationError
+from quantforge.data.lineage import AdjustmentBasis
 from quantforge.data.models import SCHEMA_VERSION, MarketDataset
+from quantforge.data.multi_timeframe import MultiTimeframeContextError
+from quantforge.prediction.context import (
+    PredictionContextError,
+    PredictionContextFailurePolicy,
+    PredictionContextProvider,
+    PredictionContextRequirements,
+    PredictionRuleContext,
+    available_prediction_context_manifest,
+    build_prediction_rule_context,
+    skipped_prediction_context_manifest,
+)
 from quantforge.prediction.contracts import (
     EvaluationValuesT,
+    MultiTimeframePredictionRule,
     OutcomeValuesT,
     PredictionEvaluation,
     PredictionOutcome,
@@ -51,6 +64,17 @@ class PredictionStudyDatasetSession:
 
 
 @dataclass(frozen=True, slots=True)
+class _SkippedPredictionRuleOutput[PredictionRecordT: PredictionRecord]:
+    """Empty internal output when declared context policy skips execution."""
+
+    strategy_id: str
+    strategy_configuration_id: str
+    dataset_id: str
+    signals: tuple[PredictionRecordT, ...] = ()
+    contract_version: str = "1"
+
+
+@dataclass(frozen=True, slots=True)
 class PredictionStudyConfiguration:
     """Immutable identity inputs for a generic prediction study."""
 
@@ -73,9 +97,10 @@ class PredictionStudyConfiguration:
     evaluation_result_schema_version: str
     feature_configuration_snapshot: PrimitiveMappingSnapshot
     result_schema_version: str
+    context_requirements_snapshot: PrimitiveMappingSnapshot | None = None
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "contract_version": STUDY_CONTRACT_VERSION,
             "evaluator": {
                 "configuration": (self.evaluator_configuration_snapshot.to_primitive()),
@@ -105,6 +130,11 @@ class PredictionStudyConfiguration:
             },
             "result_schema_version": self.result_schema_version,
         }
+        if self.context_requirements_snapshot is not None:
+            primitive["prediction_context_requirements"] = (
+                self.context_requirements_snapshot.to_primitive()
+            )
+        return primitive
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,9 +216,10 @@ class PredictionStudyResult[
     rows: tuple[
         PredictionStudyRow[PredictionRecordT, OutcomeValuesT, EvaluationValuesT], ...
     ]
+    prediction_context_snapshot: PrimitiveMappingSnapshot | None = None
 
     def manifest_primitive(self) -> PrimitiveMapping:
-        return {
+        manifest: PrimitiveMapping = {
             "component": "quantforge_prediction_study",
             "configuration": self.configuration.to_primitive(),
             "engine_version": self.engine_version,
@@ -204,6 +235,11 @@ class PredictionStudyResult[
             },
             "study_id": self.study_id,
         }
+        if self.prediction_context_snapshot is not None:
+            manifest["prediction_context"] = (
+                self.prediction_context_snapshot.to_primitive()
+            )
+        return manifest
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -215,10 +251,14 @@ class PredictionStudyResult[
 def run_prediction_study(
     dataset: MarketDataset,
     study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
+    *,
+    context_provider: PredictionContextProvider | None = None,
 ) -> PredictionStudyResult[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]:
     """Run prediction, labeling, then evaluation as three ordered stages."""
     return run_prediction_study_in_session(
-        prepare_prediction_study_dataset(dataset), study
+        prepare_prediction_study_dataset(dataset),
+        study,
+        context_provider=context_provider,
     )
 
 
@@ -245,6 +285,8 @@ def prepare_prediction_study_dataset(
 def run_prediction_study_in_session(
     prepared: PredictionStudyDatasetSession,
     study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
+    *,
+    context_provider: PredictionContextProvider | None = None,
 ) -> PredictionStudyResult[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]:
     """Run one study while preserving the session's validation boundaries."""
     dataset_snapshot = prepared.dataset_snapshot
@@ -253,16 +295,43 @@ def run_prediction_study_in_session(
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     configuration = _capture_study_configuration(study)
     market_data = prepared.market_data
-    study_id = _stable_id(
-        {
-            "component": "quantforge_prediction_study",
-            "engine_version": STUDY_ENGINE_VERSION,
-            "market_data": market_data.to_primitive(),
-            "study_configuration": configuration.to_primitive(),
-        }
+    rule_context, prediction_context_snapshot = _prepare_prediction_context(
+        study.strategy, context_provider, component_dataset
     )
+    study_identity: PrimitiveMapping = {
+        "component": "quantforge_prediction_study",
+        "engine_version": STUDY_ENGINE_VERSION,
+        "market_data": market_data.to_primitive(),
+        "study_configuration": configuration.to_primitive(),
+    }
+    if prediction_context_snapshot is not None:
+        study_identity["prediction_context"] = (
+            prediction_context_snapshot.to_primitive()
+        )
+    study_id = _stable_id(study_identity)
 
-    output = study.strategy.generate(component_dataset)
+    if configuration.context_requirements_snapshot is None:
+        output = cast(PredictionRule[PredictionRecordT], study.strategy).generate(
+            component_dataset
+        )
+    elif rule_context is None:
+        output = _SkippedPredictionRuleOutput[PredictionRecordT](
+            study.strategy.name,
+            configuration.strategy_configuration_id,
+            component_dataset.metadata.dataset_id,
+        )
+    else:
+        rule_context_snapshot = _capture_values_snapshot(
+            "prediction rule context", rule_context.values_primitive()
+        )
+        output = cast(
+            MultiTimeframePredictionRule[PredictionRecordT], study.strategy
+        ).generate_with_context(rule_context)
+        _validate_unchanged_values(
+            "prediction rule context",
+            rule_context.values_primitive(),
+            rule_context_snapshot,
+        )
     generated_signals = tuple(output.signals)
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     _validate_unchanged_component(
@@ -270,6 +339,7 @@ def run_prediction_study_in_session(
         study.strategy.configuration(),
         configuration.strategy_configuration_id,
     )
+    _validate_unchanged_context_requirements(study.strategy, configuration)
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     signal_snapshots = tuple(
         _capture_values_snapshot(
@@ -285,6 +355,9 @@ def run_prediction_study_in_session(
         signal_snapshots,
         configuration.strategy_configuration_id,
         configuration.strategy_warm_up_observations,
+        context_decision_session=(
+            None if rule_context is None else rule_context.decision_session
+        ),
     )
     _validate_signal_snapshots(generated_signals, signal_snapshots)
 
@@ -539,6 +612,7 @@ def run_prediction_study_in_session(
         unavailable_outcome_count,
         detached_signals,
         tuple(rows),
+        prediction_context_snapshot,
     )
 
 
@@ -610,6 +684,12 @@ def _capture_study_configuration(
         raise InvalidPredictionConfigurationError(
             "outcome and evaluation result schema versions are required"
         )
+    context_requirements = _strategy_context_requirements(study.strategy)
+    context_requirements_snapshot = (
+        None
+        if context_requirements is None
+        else PrimitiveMappingSnapshot.capture(context_requirements.to_primitive())
+    )
     return PredictionStudyConfiguration(
         strategy_id=study.strategy.name,
         strategy_implementation_version=study.strategy.implementation_version,
@@ -632,7 +712,100 @@ def _capture_study_configuration(
             study.feature_configuration
         ),
         result_schema_version=study.result_schema_version,
+        context_requirements_snapshot=context_requirements_snapshot,
     )
+
+
+def _strategy_context_requirements(
+    strategy: PredictionRule[PredictionRecordT]
+    | MultiTimeframePredictionRule[PredictionRecordT],
+) -> PredictionContextRequirements | None:
+    raw_requirements = getattr(strategy, "context_requirements", None)
+    if raw_requirements is None:
+        if not callable(getattr(strategy, "generate", None)):
+            raise InvalidPredictionConfigurationError(
+                "single-timeframe prediction rule requires generate()"
+            )
+        return None
+    if not isinstance(raw_requirements, PredictionContextRequirements) or not callable(
+        getattr(strategy, "generate_with_context", None)
+    ):
+        raise InvalidPredictionConfigurationError(
+            "multi-timeframe prediction rule requirements are invalid"
+        )
+    try:
+        PrimitiveMappingSnapshot.capture(raw_requirements.to_primitive())
+    except (TypeError, ValueError) as error:
+        raise InvalidPredictionConfigurationError(
+            "multi-timeframe prediction requirements require stable serialization"
+        ) from error
+    return raw_requirements
+
+
+def _prepare_prediction_context(
+    strategy: PredictionRule[PredictionRecordT]
+    | MultiTimeframePredictionRule[PredictionRecordT],
+    provider: PredictionContextProvider | None,
+    dataset: MarketDataset,
+) -> tuple[PredictionRuleContext | None, PrimitiveMappingSnapshot | None]:
+    requirements = _strategy_context_requirements(strategy)
+    if requirements is None:
+        return None, None
+    if provider is None or not callable(getattr(provider, "get_context", None)):
+        raise InvalidPredictionConfigurationError(
+            "multi-timeframe prediction study requires a context provider"
+        )
+    source_context = None
+    try:
+        source_context = provider.get_context(requirements)
+        rule_context = build_prediction_rule_context(
+            requirements,
+            source_context,
+            prediction_dataset_id=dataset.metadata.dataset_id,
+            symbol=dataset.metadata.canonical_symbol,
+            prediction_adjustment_basis=AdjustmentBasis(
+                adjustment_mode=dataset.metadata.adjustment_mode,
+                ohlc_basis=dataset.metadata.ohlc_basis,
+                volume_basis=dataset.metadata.volume_basis,
+                corporate_action_policy=dataset.metadata.corporate_action_policy,
+                adjusted_fields_used=dataset.metadata.adjusted_fields_used,
+            ),
+        )
+    except (PredictionContextError, MultiTimeframeContextError) as error:
+        if requirements.failure_policy is PredictionContextFailurePolicy.FAIL:
+            raise InvalidPredictionDataError(
+                f"multi-timeframe prediction context failed: {error}"
+            ) from error
+        skipped = skipped_prediction_context_manifest(
+            requirements,
+            str(error),
+            source_context=source_context,
+        )
+        return None, PrimitiveMappingSnapshot.capture(skipped)
+    available = available_prediction_context_manifest(rule_context)
+    return rule_context, PrimitiveMappingSnapshot.capture(available)
+
+
+def _validate_unchanged_context_requirements(
+    strategy: PredictionRule[PredictionRecordT]
+    | MultiTimeframePredictionRule[PredictionRecordT],
+    configuration: PredictionStudyConfiguration,
+) -> None:
+    expected = configuration.context_requirements_snapshot
+    current = _strategy_context_requirements(strategy)
+    if expected is None:
+        if current is not None:
+            raise InvalidPredictionOutputError(
+                "prediction rule context requirements changed during run"
+            )
+        return
+    if (
+        current is None
+        or PrimitiveMappingSnapshot.capture(current.to_primitive()) != expected
+    ):
+        raise InvalidPredictionOutputError(
+            "prediction rule context requirements changed during run"
+        )
 
 
 def _component_snapshot(
@@ -901,12 +1074,14 @@ def _validate_unchanged_dataset(
 
 def _validate_strategy_output(
     dataset: MarketDataset,
-    strategy: PredictionRule[PredictionRecordT],
+    strategy: PredictionRule[PredictionRecordT]
+    | MultiTimeframePredictionRule[PredictionRecordT],
     output: PredictionRuleOutput[PredictionRecordT],
     signals: tuple[PredictionRecordT, ...],
     signal_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     expected_configuration_id: str,
     expected_warm_up_observations: int,
+    context_decision_session: date | None,
 ) -> None:
     if (
         output.contract_version != "1"
@@ -946,6 +1121,14 @@ def _validate_strategy_output(
         ):
             raise InvalidPredictionOutputError(
                 "prediction signal identity or parameter snapshot is invalid"
+            )
+        if (
+            context_decision_session is not None
+            and signal.signal_session != context_decision_session
+        ):
+            raise InvalidPredictionOutputError(
+                "multi-timeframe prediction signal must use the context decision "
+                "session"
             )
         if signal_index + 1 < expected_warm_up_observations:
             raise InvalidPredictionOutputError(

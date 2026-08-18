@@ -171,6 +171,8 @@ class ConfiguredTimeframeIndicator:
         indicator: TimeframeNeutralIndicator,
         context: MultiTimeframeContext,
         source_timeframe: Timeframe,
+        *,
+        completion_policy: ContextCompletionPolicy | None = None,
     ) -> "ConfiguredTimeframeIndicator":
         """Bind an indicator only after resolving an exact declared context source."""
         context_value = cast(object, context)
@@ -179,6 +181,23 @@ class ConfiguredTimeframeIndicator:
             raise IndicatorSourceError("indicator context is invalid")
         if not isinstance(source_timeframe_value, Timeframe):
             raise IndicatorSourceError("indicator source timeframe is invalid")
+        selected_completion_policy = (
+            context.completion_policy
+            if completion_policy is None
+            else completion_policy
+        )
+        if not isinstance(
+            cast(object, selected_completion_policy), ContextCompletionPolicy
+        ):
+            raise IndicatorSourceError("indicator completion policy is invalid")
+        if (
+            selected_completion_policy is ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
+            and context.completion_policy
+            is not ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
+        ):
+            raise IndicatorSourceError(
+                "developing-bar indicator evaluation requires a developing-bar context"
+            )
         try:
             metadata = context.metadata_for(source_timeframe)
         except MultiTimeframeContextError as error:
@@ -243,7 +262,7 @@ class ConfiguredTimeframeIndicator:
         instance = object.__new__(cls)
         object.__setattr__(instance, "indicator", indicator)
         object.__setattr__(instance, "source_timeframe", source_timeframe)
-        object.__setattr__(instance, "completion_policy", context.completion_policy)
+        object.__setattr__(instance, "completion_policy", selected_completion_policy)
         object.__setattr__(instance, "dataset_reference", metadata.dataset_reference)
         object.__setattr__(instance, "_indicator_configuration", snapshot)
         object.__setattr__(instance, "_indicator_configuration_id", indicator_id)
@@ -316,19 +335,28 @@ class ConfiguredTimeframeIndicator:
         context_value = cast(object, context)
         if not isinstance(context_value, MultiTimeframeContext):
             raise IndicatorSourceError("indicator context is invalid")
-        if context.completion_policy is not self.completion_policy:
+        if (
+            self.completion_policy is ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
+            and context.completion_policy
+            is not ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
+        ):
             raise IndicatorSourceError(
                 "indicator completion policy does not match its configured source"
             )
         try:
             metadata = context.metadata_for(self.source_timeframe)
-            bars = context.bars_for(self.source_timeframe)
+            context_bars = context.bars_for(self.source_timeframe)
         except MultiTimeframeContextError as error:
             raise IndicatorSourceError(str(error)) from error
         if metadata.dataset_reference != self.dataset_reference:
             raise IndicatorSourceError(
                 "indicator dataset lineage does not match its configured source"
             )
+        bars = (
+            tuple(bar for bar in context_bars if not isinstance(bar, DevelopingBar))
+            if self.completion_policy is ContextCompletionPolicy.COMPLETED_BARS_ONLY
+            else context_bars
+        )
         if any(bar.timeframe != self.source_timeframe for bar in bars):
             raise IndicatorSourceError(
                 "indicator source contains a bar from another timeframe"
@@ -402,10 +430,15 @@ def bind_indicator(
     indicator: TimeframeNeutralIndicator,
     context: MultiTimeframeContext,
     source_timeframe: Timeframe,
+    *,
+    completion_policy: ContextCompletionPolicy | None = None,
 ) -> ConfiguredTimeframeIndicator:
     """Bind one indicator to an exact requested timeframe series."""
     return ConfiguredTimeframeIndicator.from_context(
-        indicator, context, source_timeframe
+        indicator,
+        context,
+        source_timeframe,
+        completion_policy=completion_policy,
     )
 
 
@@ -413,9 +446,16 @@ def evaluate_indicator(
     indicator: TimeframeNeutralIndicator,
     context: MultiTimeframeContext,
     source_timeframe: Timeframe,
+    *,
+    completion_policy: ContextCompletionPolicy | None = None,
 ) -> TimeframeIndicatorOutput:
     """Bind and evaluate one indicator against a requested context timeframe."""
-    return bind_indicator(indicator, context, source_timeframe).calculate(context)
+    return bind_indicator(
+        indicator,
+        context,
+        source_timeframe,
+        completion_policy=completion_policy,
+    ).calculate(context)
 
 
 __all__ = [

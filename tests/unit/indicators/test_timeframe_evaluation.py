@@ -112,7 +112,9 @@ def _adjustment_basis() -> AdjustmentBasis:
         adjustment_mode=AdjustmentMode.UNADJUSTED,
         ohlc_basis="raw_provider",
         volume_basis="raw_provider",
-        corporate_action_policy="separate_provider_actions",
+        corporate_action_policy=(
+            "separate_provider_reported_cash_dividends_and_splits"
+        ),
         adjusted_fields_used=False,
     )
 
@@ -879,6 +881,22 @@ def test_developing_bar_evaluation_is_explicit_and_causal() -> None:
     assert output.completion_policy is ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
     assert output.completion_states[-1] is BarCompletion.DEVELOPING
     assert output.values_for(SIMPLE_MOVING_AVERAGE_OUTPUT)[-1] == Decimal("13.5")
+
+
+def test_completed_only_override_excludes_developing_bar_from_evaluation() -> None:
+    _, four_hour, _, _ = _timeframes()
+    context = _developing_context()
+
+    output = evaluate_indicator(
+        SimpleMovingAverage(SimpleMovingAverageParameters(2)),
+        context,
+        four_hour,
+        completion_policy=ContextCompletionPolicy.COMPLETED_BARS_ONLY,
+    )
+
+    assert output.completion_policy is ContextCompletionPolicy.COMPLETED_BARS_ONLY
+    assert BarCompletion.DEVELOPING not in output.completion_states
+    assert len(output.bar_ids) == len(context.bars_for(four_hour)) - 1
 
 
 def test_ema_developing_bar_uses_only_the_causal_as_of_close() -> None:

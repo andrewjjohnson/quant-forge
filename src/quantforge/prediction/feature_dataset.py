@@ -1146,7 +1146,7 @@ def _generate_candidate_population[
     expected_strategy_configuration_id: str,
 ) -> tuple[SignalFeatureCandidate, ...]:
     _validate_strategy_configuration(
-        prediction_study.strategy,
+        cast(PredictionRule[SignalFeatureCandidate], prediction_study.strategy),
         expected_strategy_configuration_id,
     )
     boundary_study = PredictionStudy[
@@ -1162,7 +1162,7 @@ def _generate_candidate_population[
     )
     signals = tuple(run_prediction_study(dataset, boundary_study).signals)
     _validate_strategy_configuration(
-        prediction_study.strategy,
+        cast(PredictionRule[SignalFeatureCandidate], prediction_study.strategy),
         expected_strategy_configuration_id,
     )
     return signals
