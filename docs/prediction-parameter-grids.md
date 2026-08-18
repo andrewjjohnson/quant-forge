@@ -78,13 +78,17 @@ excluded trials; failed trials are skipped unless `retry_failed=True` was fixed
 in the original manifest. Before retrying, the completed failed attempt is
 archived with its sanitized diagnostic and timestamps, so a later success or
 interruption cannot erase the prior failure history. Raw exception messages are
-not persisted because they may contain provider credentials or account data.
+not persisted because they may contain provider credentials or account data;
+the same safe diagnostic policy applies to factory and trial-definition
+exclusions.
 
 Every successful artifact retains the generic QF-11 result together with the
 analyzer output. Resume and result loading parse each artifact and verify its
 schema, grid study/trial identity, underlying prediction-study identity, and
 analyzer output against the immutable trial record. A truncated or modified
-artifact is rejected rather than ranked from duplicated trial metadata.
+artifact is rejected rather than ranked from duplicated trial metadata. The
+trial record separately retains a canonical SHA-256 fingerprint of the complete
+artifact content, binding prediction rows and analysis evidence to that trial.
 `PredictionTrialAnalysis` requires rankable numeric metrics and
 retains period, weekday, matched-baseline, and analyzer-specific artifact
 records. Ranking first enforces `minimum_prediction_count`, then all configured
@@ -118,6 +122,12 @@ minimum sample sizes, and outcome-quality constraints are research safeguards;
 they do not control the false-discovery rate. Treat ranked combinations as
 hypotheses until they pass separately configured walk-forward and untouched
 holdout validation.
+
+Stability summaries also compare each ranked center with its eligible-neighbor
+median in the configured ranking direction. The configured isolated-peak
+absolute drop, relative drop, top-rank fraction, neighbor pass fraction, and
+boundary rules are all applied. A center that meets the isolated-peak criteria
+is explicitly identified and cannot retain a `stable` classification.
 
 ## Cached SPY example
 

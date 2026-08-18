@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation, localcontext
+from decimal import ROUND_CEILING, Decimal, InvalidOperation, localcontext
 from itertools import product
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -549,6 +549,7 @@ class PredictionGridTrialRecord:
     indicator_configuration_ids: tuple[str, ...]
     analysis: PredictionTrialAnalysis | None = None
     artifact_location: str | None = None
+    artifact_fingerprint: str | None = None
     failure_type: str | None = None
     failure_message: str | None = None
     failed_attempts: tuple[PredictionGridFailedAttempt, ...] = ()
@@ -580,6 +581,7 @@ class PredictionGridTrialRecord:
             "indicator_configuration_ids": list(self.indicator_configuration_ids),
             "analysis": None if self.analysis is None else self.analysis.to_primitive(),
             "artifact_location": self.artifact_location,
+            "artifact_fingerprint": self.artifact_fingerprint,
             "failure_type": self.failure_type,
             "failure_message": self.failure_message,
             "failed_attempts": [
@@ -627,6 +629,9 @@ class PredictionGridTrialRecord:
                     else PredictionTrialAnalysis.from_primitive(analysis_value)
                 ),
                 artifact_location=cast(str | None, value["artifact_location"]),
+                artifact_fingerprint=cast(
+                    str | None, value.get("artifact_fingerprint")
+                ),
                 failure_type=cast(str | None, value["failure_type"]),
                 failure_message=cast(str | None, value["failure_message"]),
                 failed_attempts=tuple(
@@ -689,7 +694,12 @@ class PredictionStabilitySummary:
     median_neighbor_objective: Decimal | None
     relative_dispersion: Decimal | None
     constraint_pass_fraction: Decimal
+    center_to_neighbor_difference: Decimal | None
+    relative_center_to_neighbor_difference: Decimal | None
+    is_boundary: bool
     classification: StabilityClassification
+    is_isolated_peak: bool
+    isolation_reason: str | None
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -716,7 +726,20 @@ class PredictionStabilitySummary:
             "constraint_pass_fraction": decimal_to_primitive(
                 self.constraint_pass_fraction
             ),
+            "center_to_neighbor_difference": (
+                None
+                if self.center_to_neighbor_difference is None
+                else decimal_to_primitive(self.center_to_neighbor_difference)
+            ),
+            "relative_center_to_neighbor_difference": (
+                None
+                if self.relative_center_to_neighbor_difference is None
+                else decimal_to_primitive(self.relative_center_to_neighbor_difference)
+            ),
+            "is_boundary": self.is_boundary,
             "classification": self.classification.value,
+            "is_isolated_peak": self.is_isolated_peak,
+            "isolation_reason": self.isolation_reason,
         }
 
 
@@ -1083,7 +1106,7 @@ def _iter_candidates(
             InvalidPredictionConfigurationError,
             PredictionContextError,
         ) as error:
-            message = " ".join(str(error).split())[:500]
+            _, message = _sanitize_failure(error)
             candidates.append(
                 PredictionGridExclusion(
                     index,
@@ -1091,7 +1114,7 @@ def _iter_candidates(
                     snapshot,
                     tuple(coordinates),
                     "invalid_prediction_parameters",
-                    f"{error.__class__.__name__}: {message}",
+                    message,
                 )
             )
             continue
@@ -1221,21 +1244,26 @@ class _PredictionGridStore:
         trial_id: str,
         result: PredictionStudyResult[Any, Any, Any],
         analysis: PredictionTrialAnalysis,
-    ) -> str:
+    ) -> tuple[str, str]:
         relative = Path("artifacts") / trial_id / "prediction-study.json"
         prediction_study = result.to_primitive()
+        content: PrimitiveMapping = {
+            "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
+            "grid_study_id": self.study_id,
+            "trial_id": trial_id,
+            "prediction_study_id": result.study_id,
+            "prediction_study": prediction_study,
+            "analysis": analysis.to_primitive(),
+        }
+        artifact_fingerprint = configuration_identity(content)
         _atomic_json(
             self.study_path / relative,
             {
-                "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
-                "grid_study_id": self.study_id,
-                "trial_id": trial_id,
-                "prediction_study_id": result.study_id,
-                "prediction_study": prediction_study,
-                "analysis": analysis.to_primitive(),
+                **content,
+                "artifact_fingerprint": artifact_fingerprint,
             },
         )
-        return relative.as_posix()
+        return relative.as_posix(), artifact_fingerprint
 
     def validate_artifact(self, record: PredictionGridTrialRecord) -> None:
         if record.artifact_location is None or record.analysis is None:
@@ -1243,6 +1271,12 @@ class _PredictionGridStore:
                 "completed prediction trial has incomplete artifact metadata"
             )
         artifact = _load_mapping(self.study_path / record.artifact_location)
+        persisted_fingerprint = artifact.get("artifact_fingerprint")
+        content: PrimitiveMapping = {
+            key: value
+            for key, value in artifact.items()
+            if key != "artifact_fingerprint"
+        }
         prediction_study = artifact.get("prediction_study")
         prediction_study_id = artifact.get("prediction_study_id")
         if not isinstance(prediction_study, dict):
@@ -1252,6 +1286,10 @@ class _PredictionGridStore:
         manifest = prediction_study.get("manifest")
         if (
             artifact.get("schema_version") != PREDICTION_GRID_SCHEMA_VERSION
+            or not isinstance(persisted_fingerprint, str)
+            or not persisted_fingerprint
+            or persisted_fingerprint != record.artifact_fingerprint
+            or configuration_identity(content) != persisted_fingerprint
             or artifact.get("grid_study_id") != record.study_id
             or artifact.get("trial_id") != record.trial_id
             or not isinstance(prediction_study_id, str)
@@ -1372,6 +1410,74 @@ def _relative_dispersion(values: tuple[Decimal, ...]) -> Decimal | None:
         return None if mean == 0 else deviation / abs(mean)
 
 
+def _ceiling_fraction(count: int, fraction: Decimal) -> int:
+    if count == 0 or fraction == 0:
+        return 0
+    with localcontext() as context:
+        context.prec = 34
+        value = (Decimal(count) * fraction).to_integral_value(rounding=ROUND_CEILING)
+    return max(1, int(value))
+
+
+def _directional_difference(
+    center: Decimal, neighbor: Decimal, direction: RankingDirection
+) -> Decimal:
+    with localcontext() as context:
+        context.prec = 34
+        return (
+            center - neighbor
+            if direction is RankingDirection.MAXIMIZE
+            else neighbor - center
+        )
+
+
+def _is_boundary(
+    coordinates: tuple[int, ...],
+    axis_kinds: tuple[str, ...],
+    axis_lengths: tuple[int, ...],
+) -> bool:
+    numeric_axes = tuple(
+        axis for axis, kind in enumerate(axis_kinds) if kind in ("integer", "float")
+    )
+    return any(
+        coordinates[axis] in (0, axis_lengths[axis] - 1) for axis in numeric_axes
+    )
+
+
+def _is_isolated_peak(
+    *,
+    objective_rank: int,
+    eligible_count: int,
+    eligible_neighbor_count: int,
+    pass_fraction: Decimal,
+    difference: Decimal | None,
+    relative_difference: Decimal | None,
+    is_boundary: bool,
+    config: StabilityConfig,
+) -> tuple[bool, str | None]:
+    top_count = _ceiling_fraction(eligible_count, config.isolated_peak_top_fraction)
+    if objective_rank > top_count:
+        return False, None
+    if eligible_neighbor_count < config.minimum_eligible_neighbors:
+        return False, "insufficient eligible neighbors for isolated-peak classification"
+    if difference is None or difference < config.isolated_peak_absolute_drop:
+        return False, None
+    if (
+        relative_difference is None
+        or relative_difference < config.isolated_peak_relative_drop
+    ):
+        return False, None
+    if pass_fraction > config.isolated_peak_maximum_constraint_pass_fraction:
+        return False, None
+    boundary_note = " on a search-space boundary" if is_boundary else ""
+    return (
+        True,
+        "high-ranked center exceeds its eligible-neighbor median by the configured "
+        "absolute and relative drops while neighbor constraint pass rate is low"
+        f"{boundary_note}",
+    )
+
+
 def _neighbor_coordinates(
     coordinates: tuple[int, ...],
     axis_kinds: tuple[str, ...],
@@ -1400,6 +1506,7 @@ def _stability(
     rankings: tuple[PredictionRankedTrial, ...],
     search_space: ParameterSearchSpace,
     factory: PredictionStudyFactory,
+    ranking_config: PredictionRankingConfig,
     config: StabilityConfig,
 ) -> tuple[PredictionStabilitySummary, ...]:
     by_coordinates = {candidate.coordinates: candidate for candidate in candidates}
@@ -1434,6 +1541,19 @@ def _stability(
                 Decimal(0) if not valid else Decimal(len(values)) / Decimal(len(valid))
             )
         dispersion = _relative_dispersion(values)
+        median = _median(values)
+        difference = (
+            None
+            if median is None
+            else _directional_difference(
+                ranked.objective_value, median, ranking_config.direction
+            )
+        )
+        relative_difference = (
+            None
+            if difference is None or ranked.objective_value == 0
+            else difference / abs(ranked.objective_value)
+        )
         classification = (
             StabilityClassification.INSUFFICIENT_NEIGHBORS
             if len(values) < config.minimum_eligible_neighbors
@@ -1447,20 +1567,40 @@ def _stability(
             if pass_fraction >= Decimal("0.5")
             else StabilityClassification.FRAGILE
         )
+        boundary = _is_boundary(center.coordinates, kinds, lengths)
+        isolated, isolation_reason = _is_isolated_peak(
+            objective_rank=ranked.rank,
+            eligible_count=len(rankings),
+            eligible_neighbor_count=len(values),
+            pass_fraction=pass_fraction,
+            difference=difference,
+            relative_difference=relative_difference,
+            is_boundary=boundary,
+            config=config,
+        )
+        if isolated and classification is StabilityClassification.STABLE:
+            classification = StabilityClassification.FRAGILE
         summaries.append(
             PredictionStabilitySummary(
-                ranked.trial_id,
-                ranked.combination_id,
-                ranked.rank,
-                ranked.objective_value,
-                len(valid),
-                sum(isinstance(item, PredictionGridExclusion) for item in neighbors),
-                len(values),
-                values,
-                _median(values),
-                dispersion,
-                pass_fraction,
-                classification,
+                trial_id=ranked.trial_id,
+                combination_id=ranked.combination_id,
+                objective_rank=ranked.rank,
+                objective_value=ranked.objective_value,
+                valid_neighbor_count=len(valid),
+                excluded_neighbor_count=sum(
+                    isinstance(item, PredictionGridExclusion) for item in neighbors
+                ),
+                eligible_neighbor_count=len(values),
+                neighbor_objective_values=values,
+                median_neighbor_objective=median,
+                relative_dispersion=dispersion,
+                constraint_pass_fraction=pass_fraction,
+                center_to_neighbor_difference=difference,
+                relative_center_to_neighbor_difference=relative_difference,
+                is_boundary=boundary,
+                classification=classification,
+                is_isolated_peak=isolated,
+                isolation_reason=isolation_reason,
             )
         )
     return tuple(summaries)
@@ -1694,6 +1834,7 @@ class PredictionGridStudy:
                 status=TrialStatus.RUNNING,
                 analysis=None,
                 artifact_location=None,
+                artifact_fingerprint=None,
                 failure_type=None,
                 failure_message=None,
                 failed_attempts=failed_attempts,
@@ -1717,7 +1858,7 @@ class PredictionGridStudy:
                     raise InvalidPredictionGridConfigurationError(
                         "prediction analyzer changed during trial execution"
                     )
-                artifact = self._store.write_artifact(
+                artifact, artifact_fingerprint = self._store.write_artifact(
                     started.trial_id, result, analysis
                 )
                 completed = replace(
@@ -1725,6 +1866,7 @@ class PredictionGridStudy:
                     status=TrialStatus.SUCCEEDED,
                     analysis=analysis,
                     artifact_location=artifact,
+                    artifact_fingerprint=artifact_fingerprint,
                     finished_at=_utc_now(),
                 )
             except Exception as error:
@@ -1766,6 +1908,7 @@ class PredictionGridStudy:
             rankings,
             self._config.search_space,
             self._factory,
+            self._config.ranking,
             self._config.stability,
         )
         warnings = [
@@ -1837,6 +1980,7 @@ class PredictionGridStudy:
             if (
                 record.analysis is None
                 or record.artifact_location != expected_artifact
+                or not record.artifact_fingerprint
                 or not (self._store.study_path / expected_artifact).is_file()
             ):
                 raise PredictionGridPersistenceError(

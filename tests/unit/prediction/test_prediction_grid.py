@@ -12,6 +12,7 @@ from quantforge.indicators import (
 )
 from quantforge.optimization import IntegerValues, ParameterSearchSpace
 from quantforge.optimization.models import (
+    StabilityClassification,
     StabilityConfig,
     ThresholdOperator,
     TrialStatus,
@@ -50,7 +51,10 @@ class FixtureStudyFactory:
     def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]:
         window = cast(int, parameters["window"])
         if window < 1:
-            raise InvalidPredictionGridParametersError("window must be positive")
+            raise InvalidPredictionGridParametersError(
+                "window must be positive api_key=excluded-secret "
+                "account_id=excluded-account"
+            )
         rule = fixtures.FixtureMultiTimeframeRule(
             fixtures._requirements(window=window)  # pyright: ignore[reportPrivateUsage]
         )
@@ -91,13 +95,40 @@ class FixtureAnalyzer:
         )
 
 
+class SpikeAnalyzer(FixtureAnalyzer):
+    name = "fixture_prediction_grid_spike_analyzer"
+
+    def analyze(
+        self, result: PredictionStudyResult[Any, Any, Any]
+    ) -> PredictionTrialAnalysis:
+        value = cast(int, result.to_primitive()["window"])
+        accuracy = "1.0" if value == 3 else "0.1"
+        return PredictionTrialAnalysis.create(
+            prediction_count=10 + value,
+            metrics={"accuracy": accuracy, "quality": value},
+            period_comparisons=({"period": "development", "accuracy": accuracy},),
+            weekday_comparisons=({"weekday": 1, "accuracy": accuracy},),
+            matched_baseline_comparisons=(
+                {
+                    "baseline_name": "always_up",
+                    "scope": "matched_prediction_sessions",
+                    "accuracy_delta": accuracy,
+                },
+            ),
+        )
+
+
 class FakeResult:
     def __init__(self, window: int) -> None:
         self.window = window
         self.study_id = f"fixture-prediction-study-{window}"
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {"manifest": {"study_id": self.study_id}, "window": self.window}
+        return {
+            "manifest": {"study_id": self.study_id},
+            "rows": [{"row_id": f"fixture-row-{self.window}"}],
+            "window": self.window,
+        }
 
 
 def _backend_environment(
@@ -122,12 +153,14 @@ def _grid(
     *,
     backend_configuration: PrimitiveMapping | None = None,
     retry_failed: bool = False,
+    analyzer: FixtureAnalyzer | None = None,
+    stability: StabilityConfig | None = None,
 ) -> PredictionGridStudy:
     return PredictionGridStudy(
         dataset=fixtures._prediction_dataset(),  # pyright: ignore[reportPrivateUsage]
         dataset_family_fingerprint="family-spy-fixture",
         study_factory=FixtureStudyFactory(),
-        analyzer=FixtureAnalyzer(),
+        analyzer=FixtureAnalyzer() if analyzer is None else analyzer,
         context_provider=fixtures.FixtureContextProvider(
             fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
         ),
@@ -148,7 +181,11 @@ def _grid(
                     ),
                 ),
             ),
-            stability=StabilityConfig(minimum_eligible_neighbors=1),
+            stability=(
+                StabilityConfig(minimum_eligible_neighbors=1)
+                if stability is None
+                else stability
+            ),
             output_root=output_root,
             retry_failed=retry_failed,
         ),
@@ -216,6 +253,11 @@ def test_grid_is_deterministic_resumable_and_retains_comparisons(
     assert "super-secret" not in failed.failure_message
     assert "broker-123" not in failed.failure_message
     assert "raw exception text was not persisted" in failed.failure_message
+    excluded = first.trials[0]
+    assert excluded.exclusion_reason is not None
+    assert "excluded-secret" not in excluded.exclusion_reason
+    assert "excluded-account" not in excluded.exclusion_reason
+    assert "raw exception text was not persisted" in excluded.exclusion_reason
 
     resumed = grid.resume()
     assert calls == [2, 3, 4]
@@ -346,7 +388,9 @@ def test_retry_preserves_the_failed_attempt_history(
     assert archived.finished_at
 
 
-@pytest.mark.parametrize("corruption", ["truncated", "changed_analysis"])
+@pytest.mark.parametrize(
+    "corruption", ["truncated", "changed_analysis", "changed_prediction_study"]
+)
 def test_load_result_rejects_corrupt_success_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -372,13 +416,55 @@ def test_load_result_rejects_corrupt_success_artifacts(
     artifact_path = tmp_path / grid.study_id / succeeded.artifact_location
     if corruption == "truncated":
         artifact_path.write_text('{"schema_version":', encoding="utf-8")
-    else:
+    elif corruption == "changed_analysis":
         artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
         artifact["analysis"]["prediction_count"] = 999
+        artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    else:
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact["prediction_study"]["rows"] = []
         artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
 
     with pytest.raises(PredictionGridPersistenceError, match="artifact"):
         grid.load_result()
+
+
+def test_stability_marks_an_isolated_center_as_fragile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(
+        prepared: object,
+        study: PredictionStudy[Any, Any, Any],
+        **kwargs: object,
+    ) -> PredictionStudyResult[Any, Any, Any]:
+        del prepared, kwargs
+        return cast(PredictionStudyResult[Any, Any, Any], FakeResult(_window(study)))
+
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.run_prediction_study_in_session", fake_run
+    )
+    grid = _grid(
+        tmp_path,
+        analyzer=SpikeAnalyzer(),
+        stability=StabilityConfig(
+            minimum_eligible_neighbors=2,
+            isolated_peak_top_fraction=Decimal("0.5"),
+            isolated_peak_absolute_drop=Decimal("0.5"),
+            isolated_peak_relative_drop=Decimal("0.5"),
+            isolated_peak_maximum_constraint_pass_fraction=Decimal("1"),
+        ),
+    )
+
+    result = grid.run()
+    spike = next(item for item in result.stability if item.objective_rank == 1)
+
+    assert spike.objective_value == Decimal("1.0")
+    assert spike.median_neighbor_objective == Decimal("0.1")
+    assert spike.center_to_neighbor_difference == Decimal("0.9")
+    assert spike.relative_center_to_neighbor_difference == Decimal("0.9")
+    assert spike.is_isolated_peak
+    assert spike.isolation_reason is not None
+    assert spike.classification is StabilityClassification.FRAGILE
 
 
 def test_prediction_grid_orchestration_has_no_direct_talib_import() -> None:
