@@ -165,6 +165,16 @@ class PredictionIndicatorRequirement:
         completion_policy: ContextCompletionPolicy,
     ) -> TimeframeIndicatorOutput:
         """Evaluate after proving the declaration did not change."""
+        self.validate_unchanged()
+        return evaluate_indicator(
+            self.indicator,
+            context,
+            timeframe,
+            completion_policy=completion_policy,
+        )
+
+    def validate_unchanged(self) -> None:
+        """Prove the live indicator still matches its captured declaration."""
         if (
             PrimitiveMappingSnapshot.capture(self.indicator.configuration())
             != self._configuration_snapshot
@@ -178,12 +188,6 @@ class PredictionIndicatorRequirement:
             raise PredictionContextError(
                 f"declared indicator changed before evaluation: {self.alias}"
             )
-        return evaluate_indicator(
-            self.indicator,
-            context,
-            timeframe,
-            completion_policy=completion_policy,
-        )
 
 
 @dataclass(frozen=True, slots=True)

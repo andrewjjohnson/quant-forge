@@ -75,10 +75,17 @@ The manifest is written before trial execution. Each candidate is persisted as
 `fsync`, and atomic replacement. A failed trial records a sanitized exception
 type/message and does not stop later trials. `resume()` skips completed and
 excluded trials; failed trials are skipped unless `retry_failed=True` was fixed
-in the original manifest.
+in the original manifest. Before retrying, the completed failed attempt is
+archived with its sanitized diagnostic and timestamps, so a later success or
+interruption cannot erase the prior failure history. Raw exception messages are
+not persisted because they may contain provider credentials or account data.
 
 Every successful artifact retains the generic QF-11 result together with the
-analyzer output. `PredictionTrialAnalysis` requires rankable numeric metrics and
+analyzer output. Resume and result loading parse each artifact and verify its
+schema, grid study/trial identity, underlying prediction-study identity, and
+analyzer output against the immutable trial record. A truncated or modified
+artifact is rejected rather than ranked from duplicated trial metadata.
+`PredictionTrialAnalysis` requires rankable numeric metrics and
 retains period, weekday, matched-baseline, and analyzer-specific artifact
 records. Ranking first enforces `minimum_prediction_count`, then all configured
 `PredictionMetricConstraint` values. Undefined objectives or quality metrics are
@@ -99,7 +106,18 @@ Each execution owns a `PredictionGridExecutionCache`.
   function identity, and fixed backend configuration.
 
 The cache calls the existing QF-35-normalized indicator contract. Grid
-orchestration does not import or call TA-Lib directly.
+orchestration does not import or call TA-Lib directly. Cache hits first
+revalidate the live indicator metadata against its captured declaration, so a
+mutated indicator cannot receive output computed for its earlier configuration.
+
+## Multiple comparisons
+
+Every result warns that the grid searched a stated number of parameter
+combinations without a multiple-comparison correction. Stability summaries,
+minimum sample sizes, and outcome-quality constraints are research safeguards;
+they do not control the false-discovery rate. Treat ranked combinations as
+hypotheses until they pass separately configured walk-forward and untouched
+holdout validation.
 
 ## Cached SPY example
 

@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -18,7 +19,9 @@ from quantforge.optimization.models import (
 from quantforge.prediction import (
     InvalidPredictionGridParametersError,
     PredictionContextEnvironment,
+    PredictionContextError,
     PredictionGridConfig,
+    PredictionGridPersistenceError,
     PredictionGridStudy,
     PredictionIndicatorBackendEnvironment,
     PredictionMetricConstraint,
@@ -91,9 +94,10 @@ class FixtureAnalyzer:
 class FakeResult:
     def __init__(self, window: int) -> None:
         self.window = window
+        self.study_id = f"fixture-prediction-study-{window}"
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {"window": self.window}
+        return {"manifest": {"study_id": self.study_id}, "window": self.window}
 
 
 def _backend_environment(
@@ -117,6 +121,7 @@ def _grid(
     output_root: Path,
     *,
     backend_configuration: PrimitiveMapping | None = None,
+    retry_failed: bool = False,
 ) -> PredictionGridStudy:
     return PredictionGridStudy(
         dataset=fixtures._prediction_dataset(),  # pyright: ignore[reportPrivateUsage]
@@ -145,6 +150,7 @@ def _grid(
             ),
             stability=StabilityConfig(minimum_eligible_neighbors=1),
             output_root=output_root,
+            retry_failed=retry_failed,
         ),
     )
 
@@ -170,7 +176,9 @@ def test_grid_is_deterministic_resumable_and_retains_comparisons(
         window = _window(study)
         calls.append(window)
         if window == 3:
-            raise RuntimeError("fixture trial failure")
+            raise RuntimeError(
+                "fixture trial failure api_key=super-secret account_id=broker-123"
+            )
         return cast(PredictionStudyResult[Any, Any, Any], FakeResult(window))
 
     monkeypatch.setattr(
@@ -202,6 +210,12 @@ def test_grid_is_deterministic_resumable_and_retains_comparisons(
     )
     assert first.stability
     assert "not validated profitability" in first.limitations[0]
+    assert "multiple-comparison correction" in first.warnings[0]
+    failed = first.trials[2]
+    assert failed.failure_message is not None
+    assert "super-secret" not in failed.failure_message
+    assert "broker-123" not in failed.failure_message
+    assert "raw exception text was not persisted" in failed.failure_message
 
     resumed = grid.resume()
     assert calls == [2, 3, 4]
@@ -279,6 +293,92 @@ def test_context_and_normalized_indicator_cache_reuses_only_compatible_identity(
     assert incompatible.context(requirements, provider) is context
     assert incompatible.statistics.context_hits == 0
     assert incompatible.statistics.context_misses == 1
+
+    object.__setattr__(
+        indicator.indicator,
+        "_parameters",
+        SimpleMovingAverageParameters(3),
+    )
+    with pytest.raises(PredictionContextError, match="declared indicator changed"):
+        cache.resolve(
+            indicator,
+            context,
+            requirements.primary.timeframe,
+            requirements.primary.completion_policy,
+        )
+
+
+def test_retry_preserves_the_failed_attempt_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts: dict[int, int] = {}
+
+    def fake_run(
+        prepared: object,
+        study: PredictionStudy[Any, Any, Any],
+        **kwargs: object,
+    ) -> PredictionStudyResult[Any, Any, Any]:
+        del prepared, kwargs
+        window = _window(study)
+        attempts[window] = attempts.get(window, 0) + 1
+        if window == 3 and attempts[window] == 1:
+            raise RuntimeError("temporary credential token=do-not-persist")
+        return cast(PredictionStudyResult[Any, Any, Any], FakeResult(window))
+
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.run_prediction_study_in_session", fake_run
+    )
+    grid = _grid(tmp_path, retry_failed=True)
+
+    first = grid.run()
+    assert first.trials[2].status is TrialStatus.FAILED
+    retried = grid.resume()
+
+    succeeded = retried.trials[2]
+    assert succeeded.status is TrialStatus.SUCCEEDED
+    assert succeeded.failure_type is None
+    assert succeeded.failure_message is None
+    assert len(succeeded.failed_attempts) == 1
+    archived = succeeded.failed_attempts[0]
+    assert archived.failure_type == "RuntimeError"
+    assert "do-not-persist" not in archived.failure_message
+    assert archived.started_at
+    assert archived.finished_at
+
+
+@pytest.mark.parametrize("corruption", ["truncated", "changed_analysis"])
+def test_load_result_rejects_corrupt_success_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    corruption: str,
+) -> None:
+    def fake_run(
+        prepared: object,
+        study: PredictionStudy[Any, Any, Any],
+        **kwargs: object,
+    ) -> PredictionStudyResult[Any, Any, Any]:
+        del prepared, kwargs
+        return cast(PredictionStudyResult[Any, Any, Any], FakeResult(_window(study)))
+
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.run_prediction_study_in_session", fake_run
+    )
+    grid = _grid(tmp_path)
+    result = grid.run()
+    succeeded = next(
+        item for item in result.trials if item.status is TrialStatus.SUCCEEDED
+    )
+    assert succeeded.artifact_location is not None
+    artifact_path = tmp_path / grid.study_id / succeeded.artifact_location
+    if corruption == "truncated":
+        artifact_path.write_text('{"schema_version":', encoding="utf-8")
+    else:
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact["analysis"]["prediction_count"] = 999
+        artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(PredictionGridPersistenceError, match="artifact"):
+        grid.load_result()
 
 
 def test_prediction_grid_orchestration_has_no_direct_talib_import() -> None:

@@ -492,6 +492,50 @@ type PredictionGridCandidate = PredictionGridCombination | PredictionGridExclusi
 
 
 @dataclass(frozen=True, slots=True)
+class PredictionGridFailedAttempt:
+    """Sanitized diagnostic history for one completed failed attempt."""
+
+    failure_type: str
+    failure_message: str
+    started_at: str
+    finished_at: str
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "failure_type": self.failure_type,
+            "failure_message": self.failure_message,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+        }
+
+    @classmethod
+    def from_primitive(cls, value: PrimitiveMapping) -> PredictionGridFailedAttempt:
+        try:
+            attempt = cls(
+                failure_type=cast(str, value["failure_type"]),
+                failure_message=cast(str, value["failure_message"]),
+                started_at=cast(str, value["started_at"]),
+                finished_at=cast(str, value["finished_at"]),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise PredictionGridPersistenceError(
+                "invalid persisted prediction-grid failed attempt"
+            ) from error
+        if not all(
+            (
+                attempt.failure_type,
+                attempt.failure_message,
+                attempt.started_at,
+                attempt.finished_at,
+            )
+        ):
+            raise PredictionGridPersistenceError(
+                "persisted prediction-grid failed attempt is incomplete"
+            )
+        return attempt
+
+
+@dataclass(frozen=True, slots=True)
 class PredictionGridTrialRecord:
     study_id: str
     trial_id: str
@@ -507,6 +551,7 @@ class PredictionGridTrialRecord:
     artifact_location: str | None = None
     failure_type: str | None = None
     failure_message: str | None = None
+    failed_attempts: tuple[PredictionGridFailedAttempt, ...] = ()
     exclusion_code: str | None = None
     exclusion_reason: str | None = None
     started_at: str | None = None
@@ -537,6 +582,9 @@ class PredictionGridTrialRecord:
             "artifact_location": self.artifact_location,
             "failure_type": self.failure_type,
             "failure_message": self.failure_message,
+            "failed_attempts": [
+                attempt.to_primitive() for attempt in self.failed_attempts
+            ],
             "exclusion_code": self.exclusion_code,
             "exclusion_reason": self.exclusion_reason,
             "started_at": self.started_at,
@@ -553,6 +601,9 @@ class PredictionGridTrialRecord:
             backend = cast(PrimitiveMapping, value["indicator_backend"])
             analysis_value = cast(PrimitiveMapping | None, value["analysis"])
             indicator_ids = cast(list[str], value["indicator_configuration_ids"])
+            failed_attempts = cast(
+                list[PrimitiveMapping], value.get("failed_attempts", [])
+            )
             return cls(
                 study_id=cast(str, value["study_id"]),
                 trial_id=cast(str, value["trial_id"]),
@@ -578,6 +629,10 @@ class PredictionGridTrialRecord:
                 artifact_location=cast(str | None, value["artifact_location"]),
                 failure_type=cast(str | None, value["failure_type"]),
                 failure_message=cast(str | None, value["failure_message"]),
+                failed_attempts=tuple(
+                    PredictionGridFailedAttempt.from_primitive(item)
+                    for item in failed_attempts
+                ),
                 exclusion_code=cast(str | None, value["exclusion_code"]),
                 exclusion_reason=cast(str | None, value["exclusion_reason"]),
                 started_at=cast(str | None, value["started_at"]),
@@ -769,6 +824,7 @@ class PredictionGridExecutionCache(PredictionIndicatorOutputCache):
         timeframe: Timeframe,
         completion_policy: ContextCompletionPolicy,
     ) -> TimeframeIndicatorOutput:
+        requirement.validate_unchanged()
         backend_identity = requirement.backend_identity
         if backend_identity is not None and not self._backend.matches(backend_identity):
             raise PredictionContextError(
@@ -1098,6 +1154,7 @@ def _load_mapping(path: Path) -> PrimitiveMapping:
 
 class _PredictionGridStore:
     def __init__(self, root: Path, study_id: str) -> None:
+        self.study_id = study_id
         self.study_path = root / study_id
         self.trials_path = self.study_path / "trials"
         self.artifacts_path = self.study_path / "artifacts"
@@ -1166,15 +1223,46 @@ class _PredictionGridStore:
         analysis: PredictionTrialAnalysis,
     ) -> str:
         relative = Path("artifacts") / trial_id / "prediction-study.json"
+        prediction_study = result.to_primitive()
         _atomic_json(
             self.study_path / relative,
             {
                 "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
-                "prediction_study": result.to_primitive(),
+                "grid_study_id": self.study_id,
+                "trial_id": trial_id,
+                "prediction_study_id": result.study_id,
+                "prediction_study": prediction_study,
                 "analysis": analysis.to_primitive(),
             },
         )
         return relative.as_posix()
+
+    def validate_artifact(self, record: PredictionGridTrialRecord) -> None:
+        if record.artifact_location is None or record.analysis is None:
+            raise PredictionGridPersistenceError(
+                "completed prediction trial has incomplete artifact metadata"
+            )
+        artifact = _load_mapping(self.study_path / record.artifact_location)
+        prediction_study = artifact.get("prediction_study")
+        prediction_study_id = artifact.get("prediction_study_id")
+        if not isinstance(prediction_study, dict):
+            raise PredictionGridPersistenceError(
+                "completed prediction trial artifact has no prediction study"
+            )
+        manifest = prediction_study.get("manifest")
+        if (
+            artifact.get("schema_version") != PREDICTION_GRID_SCHEMA_VERSION
+            or artifact.get("grid_study_id") != record.study_id
+            or artifact.get("trial_id") != record.trial_id
+            or not isinstance(prediction_study_id, str)
+            or not prediction_study_id
+            or not isinstance(manifest, dict)
+            or manifest.get("study_id") != prediction_study_id
+            or artifact.get("analysis") != record.analysis.to_primitive()
+        ):
+            raise PredictionGridPersistenceError(
+                "completed prediction trial artifact is incompatible with its record"
+            )
 
 
 def _metric_value(record: PredictionGridTrialRecord, metric: str) -> Decimal | None:
@@ -1379,8 +1467,12 @@ def _stability(
 
 
 def _sanitize_failure(error: Exception) -> tuple[str, str]:
-    message = " ".join(str(error).split())[:500] or error.__class__.__name__
-    return error.__class__.__name__, message
+    failure_type = error.__class__.__name__
+    return (
+        failure_type,
+        f"{failure_type}: prediction trial failed; raw exception text was not "
+        "persisted",
+    )
 
 
 def _validate_analysis_for_grid(
@@ -1577,6 +1669,26 @@ class PredictionGridStudy:
                 continue
             if existing.status is TrialStatus.FAILED and not self._config.retry_failed:
                 continue
+            failed_attempts = existing.failed_attempts
+            if existing.status is TrialStatus.FAILED:
+                if (
+                    existing.failure_type is None
+                    or existing.failure_message is None
+                    or existing.started_at is None
+                    or existing.finished_at is None
+                ):
+                    raise PredictionGridPersistenceError(
+                        "failed prediction trial cannot be archived for retry"
+                    )
+                failed_attempts = (
+                    *failed_attempts,
+                    PredictionGridFailedAttempt(
+                        existing.failure_type,
+                        existing.failure_message,
+                        existing.started_at,
+                        existing.finished_at,
+                    ),
+                )
             started = replace(
                 existing,
                 status=TrialStatus.RUNNING,
@@ -1584,6 +1696,7 @@ class PredictionGridStudy:
                 artifact_location=None,
                 failure_type=None,
                 failure_message=None,
+                failed_attempts=failed_attempts,
                 started_at=_utc_now(),
                 finished_at=None,
             )
@@ -1655,11 +1768,15 @@ class PredictionGridStudy:
             self._factory,
             self._config.stability,
         )
-        warnings = (
-            ()
-            if rankings
-            else ("no successful prediction trial satisfied ranking eligibility",)
-        )
+        warnings = [
+            f"searched {len(self._candidates)} parameter combinations without a "
+            "multiple-comparison correction; in-sample rankings may contain "
+            "false discoveries"
+        ]
+        if not rankings:
+            warnings.append(
+                "no successful prediction trial satisfied ranking eligibility"
+            )
         limitations = (
             "Rankings are in-sample research comparisons, not validated profitability.",
             "No QF-5 order, fill, fee, slippage, or portfolio simulation was "
@@ -1674,7 +1791,7 @@ class PredictionGridStudy:
             ineligible,
             stability,
             cache_statistics,
-            warnings,
+            tuple(warnings),
             limitations,
         )
 
@@ -1725,6 +1842,7 @@ class PredictionGridStudy:
                 raise PredictionGridPersistenceError(
                     "completed prediction trial artifact is missing or incompatible"
                 )
+            self._store.validate_artifact(record)
         if record.status is TrialStatus.FAILED and (
             not record.failure_type or not record.failure_message
         ):
@@ -1743,6 +1861,7 @@ __all__ = [
     "PredictionGridConfig",
     "PredictionGridError",
     "PredictionGridExecutionCache",
+    "PredictionGridFailedAttempt",
     "PredictionGridPersistenceError",
     "PredictionGridResult",
     "PredictionGridStudy",
