@@ -7,6 +7,10 @@ from typing import Protocol, TypeVar
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data.models import MarketDataset
 from quantforge.indicators import Indicator
+from quantforge.prediction.context import (
+    PredictionContextRequirements,
+    PredictionRuleContext,
+)
 
 
 class PredictionRuleParameters(Protocol):
@@ -107,6 +111,37 @@ class PredictionRule(Protocol[PredictionRecordT]):
 
     def generate(
         self, dataset: MarketDataset
+    ) -> PredictionRuleOutput[PredictionRecordT]: ...
+
+
+class MultiTimeframePredictionRule(Protocol[PredictionRecordT]):
+    """Generate predictions from only declared multi-timeframe inputs."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def implementation_version(self) -> str: ...
+
+    @property
+    def parameters(self) -> PredictionRuleParameters: ...
+
+    @property
+    def required_indicators(self) -> tuple[Indicator, ...]: ...
+
+    @property
+    def warm_up_observations(self) -> int: ...
+
+    @property
+    def context_requirements(self) -> PredictionContextRequirements: ...
+
+    @property
+    def configuration_id(self) -> str: ...
+
+    def configuration(self) -> PrimitiveMapping: ...
+
+    def generate_with_context(
+        self, context: PredictionRuleContext
     ) -> PredictionRuleOutput[PredictionRecordT]: ...
 
 
@@ -241,7 +276,10 @@ class PredictionStudy[
 ]:
     """Runtime composition of one rule, outcome labeler, and evaluator."""
 
-    strategy: PredictionRule[PredictionRecordT]
+    strategy: (
+        PredictionRule[PredictionRecordT]
+        | MultiTimeframePredictionRule[PredictionRecordT]
+    )
     outcome_labeler: OutcomeLabeler[OutcomeValuesT]
     evaluator: PredictionEvaluator[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     feature_configuration_snapshot: PrimitiveMappingSnapshot
@@ -250,7 +288,8 @@ class PredictionStudy[
     @classmethod
     def create(
         cls,
-        strategy: PredictionRule[PredictionRecordT],
+        strategy: PredictionRule[PredictionRecordT]
+        | MultiTimeframePredictionRule[PredictionRecordT],
         outcome_labeler: OutcomeLabeler[OutcomeValuesT],
         evaluator: PredictionEvaluator[
             PredictionRecordT, OutcomeValuesT, EvaluationValuesT

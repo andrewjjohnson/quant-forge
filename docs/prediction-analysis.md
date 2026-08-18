@@ -55,6 +55,48 @@ The reusable contracts are:
   compose the components and retain provenance without imposing study-specific
   metrics.
 
+QF-28 adds `MultiTimeframePredictionRule` as an opt-in sibling to the original
+single-timeframe rule contract. A multi-timeframe rule owns one immutable
+`PredictionContextRequirements` declaration containing:
+
+- the primary decision timeframe and every contextual timeframe;
+- named backend-neutral indicators and their normalized configurations for each
+  timeframe;
+- the resolved backend ID, contract version, wrapper/runtime versions, and
+  mapped function for every indicator requirement;
+- completed-only or developing-as-of policy per timeframe;
+- a positive maximum context age when freshness is bounded;
+- the required exchange-session policy and provider-neutral feed scope; and
+- an explicit `FAIL` or `SKIP` policy for missing, stale, or incompatible
+  context.
+
+The caller supplies a `PredictionContextProvider` to
+`run_prediction_study(..., context_provider=...)`. The generic runner gives the
+declaration to that provider, requires the returned QF-20/QF-21
+`MultiTimeframeContext` to match it exactly, evaluates every declared indicator
+through the QF-22/QF-35 backend-neutral contract, and then calls
+`generate_with_context()`. There are no rule-name or indicator-name branches in
+the runner.
+
+Rule code receives only a `PredictionRuleContext`. It exposes bars and
+`TimeframeIndicatorOutput` values for declared timeframes and named indicators;
+it does not expose the source `MultiTimeframeContext`, indicator adapters,
+TA-Lib arrays, tuples, or parameter names. Access to another timeframe or
+indicator raises `PredictionContextAccessError`. When a QF-21 context includes
+developing bars, a completed-only timeframe requirement filters that developing
+row before both indicator calculation and rule access. A developing-as-of
+requirement is accepted only from an explicitly developing QF-21 context.
+
+The exact source-context identity, visible bar IDs, dataset-family references,
+normalized indicator metadata, requirements, and resolution status are stored
+under `prediction_context` in the result manifest and participate in the study
+identity. Changing a timeframe, indicator parameters, backend identity,
+completion policy, freshness limit, session policy, or feed scope therefore
+creates a different study ID. A skipped context produces zero predictions and
+records the deterministic reason without invoking the rule. The default
+single-timeframe path still calls `generate(MarketDataset)` and retains its
+existing manifest shape and identities when no context declaration is present.
+
 The study identity includes the dataset provenance, prediction-rule identity
 and configuration, labeler identity and configuration, future-session horizon,
 required market fields, evaluator identity and configuration, feature
@@ -391,6 +433,20 @@ study = PredictionStudy.create(
 )
 study_result = run_prediction_study(dataset, study)
 ```
+
+For a multi-timeframe rule, pass the provider that constructs the exact
+declared QF-20/QF-21 context:
+
+```python
+study_result = run_prediction_study(
+    dataset,
+    study,
+    context_provider=context_provider,
+)
+```
+
+The provider may load or compose validated QF-15/QF-18/QF-19 artifacts, but the
+prediction rule cannot retrieve data or choose undeclared context itself.
 
 The maintained SPY command wraps the same API:
 

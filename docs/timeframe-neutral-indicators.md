@@ -116,6 +116,13 @@ boundary. `bind_indicator()` returns a `ConfiguredTimeframeIndicator` when a
 caller needs to inspect or retain the source-bound configuration before
 calculation.
 
+QF-28 may also pass an explicit `completion_policy=`. The default remains the
+context's policy, preserving every existing QF-22 configuration and identity.
+Within an explicitly developing QF-21 context, a completed-only override
+excludes the developing row before calculation and records completed-only in
+the bound indicator identity. An override cannot request developing values from
+a completed-only context.
+
 ## Bar-count semantics
 
 Every period, window, and warm-up is measured in input observations/bars:
@@ -605,8 +612,8 @@ presented as the eventual completed candle. An indicator declaring
 
 ## Deliberate limits
 
-QF-22 through QF-27 and QF-35 through QF-38 do not add On-Balance Volume,
-volume-profile indicators, prediction filters, MACD crossover/divergence
-behavior, Bollinger-based prediction or squeeze-classification rules,
-prediction integration, feature export, or strategy/backtest multi-timeframe
-integration. Those remain sibling-ticket concerns under QF-12.
+QF-22 through QF-28 and QF-35 through QF-38 do not add On-Balance Volume,
+volume-profile indicators, production prediction filters, MACD
+crossover/divergence behavior, Bollinger-based prediction or
+squeeze-classification rules, feature export, or strategy/backtest
+multi-timeframe integration. Those remain sibling-ticket concerns under QF-12.

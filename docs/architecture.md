@@ -522,12 +522,24 @@ boundary with a directional rule, an immediate-next-session-open gap labeler,
 and a directional evaluator. Its signal close is retained only as the outcome
 reference price and is never represented as a fill.
 
+QF-28 adds an opt-in multi-timeframe prediction contract. The rule declares its
+primary and contextual timeframes, indicator/backend configurations,
+completion and freshness policies, and session/feed requirements. An injected
+context provider obtains the exact QF-20/QF-21 context; generic prediction
+orchestration validates it, computes QF-22 indicators through the QF-35
+backend-neutral boundary, and supplies a restricted view containing only
+declared bars and normalized outputs. The source context, requirements, and
+indicator provenance participate in the study identity and manifest. Existing
+QF-11 single-timeframe rules retain the original QF-3 dataset path.
+
 Responsibilities:
 
 - preserve a strict boundary between contemporaneous features and future labels;
 - declare and validate each outcome's future-session horizon and market fields;
 - keep label construction separate from study-specific evaluation;
 - retain rule, outcome, evaluator, feature, dataset, and schema provenance;
+- enforce declared multi-timeframe, completion, freshness, session, feed, and
+  indicator-backend requirements before rule execution;
 - preserve deterministic typed study rows and identities;
 - export study-specific deterministic immutable analysis artifacts.
 
@@ -536,6 +548,7 @@ Must not:
 - create orders, fills, positions, or trade P&L;
 - alter QF-5 timing or execution assumptions;
 - expose future outcome values to prediction generation;
+- expose undeclared timeframes or backend-specific indicator objects to rules;
 - assume every prediction is directional or every evaluation is classification;
 - describe direction accuracy as executable performance.
 
