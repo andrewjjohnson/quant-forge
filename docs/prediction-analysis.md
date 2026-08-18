@@ -92,9 +92,12 @@ row before both indicator calculation and rule access. A developing-as-of
 requirement is accepted only from an explicitly developing QF-21 context.
 One resolved context represents one causal decision snapshot, so any signal
 returned by `generate_with_context()` must use the session of the latest visible
-primary-timeframe bar. Producing signals for earlier sessions requires the
-caller to run the rule with a separately resolved as-of context for each such
-session.
+primary-timeframe bar. No rule-visible contextual bar may end after that primary
+decision boundary; a context with a stale primary series and later contextual
+observations fails or skips according to the declared policy. Producing signals
+for earlier sessions requires the caller to run the rule with a separately
+resolved as-of context for each such session. Under `SKIP`, an invalid provider
+return is recorded without source-context evidence and produces zero predictions.
 
 The exact source-context identity, visible bar IDs, dataset-family references,
 normalized indicator metadata, requirements, and resolution status are stored

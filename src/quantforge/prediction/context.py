@@ -511,6 +511,21 @@ def build_prediction_rule_context(
             "prediction context timeframes or staleness policies are incompatible"
         )
 
+    try:
+        primary_context_bars = context.bars_for(requirements.primary.timeframe)
+    except ValueError as error:
+        raise PredictionContextError(str(error)) from error
+    primary_bars = tuple(
+        bar
+        for bar in primary_context_bars
+        if bar.completion is not BarCompletion.DEVELOPING
+    )
+    if not primary_bars:
+        raise PredictionContextError(
+            "prediction context has no completed primary decision bar"
+        )
+    primary_decision_boundary = primary_bars[-1].end_timestamp
+
     visible_context_bars = tuple(
         bar for timeframe in context.timeframes for bar in timeframe.bars
     )
@@ -567,6 +582,10 @@ def build_prediction_rule_context(
             raise PredictionContextError(
                 "prediction context has no bar under the declared completion policy"
             )
+        if any(bar.end_timestamp > primary_decision_boundary for bar in bars):
+            raise PredictionContextError(
+                "prediction context exposes a bar after the primary decision boundary"
+            )
         age = context.as_of - bars[-1].end_timestamp
         if metadata.availability is ContextAvailability.STALE or (
             requirement.maximum_age is not None and age > requirement.maximum_age
@@ -613,7 +632,9 @@ def skipped_prediction_context_manifest(
         "requirements": requirements.to_primitive(),
         "reason": reason,
         "source_context": (
-            None if source_context is None else source_context.to_primitive()
+            source_context.to_primitive()
+            if isinstance(source_context, MultiTimeframeContext)
+            else None
         ),
     }
 

@@ -533,7 +533,8 @@ indicator provenance participate in the study identity and manifest. Existing
 QF-11 single-timeframe rules retain the original QF-3 dataset path. Contextual
 execution also requires exact canonical-symbol and adjustment-basis compatibility
 with that QF-3 dataset, and one context snapshot may emit a signal only for its
-latest primary-bar decision session.
+latest primary-bar decision session. Contextual bars after the primary bar's
+causal boundary are rejected rather than combined with that older decision.
 
 Responsibilities:
 

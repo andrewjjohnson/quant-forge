@@ -47,7 +47,7 @@ from quantforge.prediction import (
     PredictionTimeframeRequirement,
     run_prediction_study,
 )
-from quantforge.timeframes import IntradayInterval, Timeframe
+from quantforge.timeframes import BarCompletion, IntradayInterval, Timeframe
 from tests.unit.indicators import test_timeframe_evaluation as timeframe_fixtures
 
 from ..helpers import make_dataset
@@ -71,6 +71,14 @@ class FixtureContextProvider:
     ) -> MultiTimeframeContext:
         self.requests.append(requirements)
         return self.context
+
+
+class InvalidContextProvider:
+    def get_context(
+        self, requirements: PredictionContextRequirements
+    ) -> MultiTimeframeContext:
+        del requirements
+        return cast(MultiTimeframeContext, None)
 
 
 class FixtureMultiTimeframeRule:
@@ -286,13 +294,42 @@ def _context_with_provenance(
     )
 
 
+def _prediction_context() -> MultiTimeframeContext:
+    source = (
+        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
+    )
+    decision_boundary = source.latest_bar_for(source.primary_timeframe).end_timestamp
+    aligned: list[TimeframeContext] = []
+    for item in source.timeframes:
+        bars = tuple(bar for bar in item.bars if bar.end_timestamp <= decision_boundary)
+        completed = tuple(
+            bar for bar in bars if bar.completion is not BarCompletion.DEVELOPING
+        )
+        aligned.append(
+            TimeframeContext._from_aligned_series(  # pyright: ignore[reportPrivateUsage]
+                requirement=item.requirement,
+                dataset_reference=item.dataset_reference,
+                availability=item.availability,
+                bars=bars,
+                latest_completed_bar_timestamp=completed[-1].end_timestamp,
+                age=source.as_of - bars[-1].end_timestamp,
+            )
+        )
+    return MultiTimeframeContext._from_aligned_timeframes(  # pyright: ignore[reportPrivateUsage]
+        as_of=source.as_of,
+        primary_timeframe=source.primary_timeframe,
+        required_timeframes=source.required_timeframes,
+        completion_policy=source.completion_policy,
+        source_consistency=source.source_consistency,
+        timeframes=tuple(aligned),
+    )
+
+
 def _context_with_daily_state(
     requirements: PredictionContextRequirements,
     availability: ContextAvailability,
 ) -> MultiTimeframeContext:
-    source = (
-        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
-    )
+    source = _prediction_context()
     daily = timeframe_fixtures._timeframes()[2]  # pyright: ignore[reportPrivateUsage]
     contextual_requirements = requirements.context_timeframe_requirements()
     by_id = {item.timeframe.configuration_id: item for item in contextual_requirements}
@@ -334,9 +371,7 @@ def _context_with_daily_state(
 def test_fixture_rule_runs_through_generic_study_with_declared_normalized_inputs() -> (
     None
 ):
-    context = (
-        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
-    )
+    context = _prediction_context()
     requirements = _requirements()
     provider = FixtureContextProvider(context)
     rule = FixtureMultiTimeframeRule(requirements)
@@ -376,7 +411,7 @@ def test_fixture_rule_runs_through_generic_study_with_declared_normalized_inputs
 
 def test_context_symbol_must_match_prediction_dataset_before_rule_execution() -> None:
     context = _context_with_provenance(
-        timeframe_fixtures._all_completed_context(),  # pyright: ignore[reportPrivateUsage]
+        _prediction_context(),
         symbol="QQQ",
     )
     rule = FixtureMultiTimeframeRule(_requirements())
@@ -392,9 +427,7 @@ def test_context_symbol_must_match_prediction_dataset_before_rule_execution() ->
 
 
 def test_context_adjustment_basis_must_match_before_rule_execution() -> None:
-    context = (
-        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
-    )
+    context = _prediction_context()
     rule = FixtureMultiTimeframeRule(_requirements())
 
     with pytest.raises(InvalidPredictionDataError, match="adjustment basis"):
@@ -408,9 +441,7 @@ def test_context_adjustment_basis_must_match_before_rule_execution() -> None:
 
 
 def test_contextual_signal_must_use_the_context_decision_session() -> None:
-    context = (
-        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
-    )
+    context = _prediction_context()
     rule = BackdatedFixtureMultiTimeframeRule(_requirements())
 
     with pytest.raises(InvalidPredictionOutputError, match="context decision session"):
@@ -424,9 +455,7 @@ def test_contextual_signal_must_use_the_context_decision_session() -> None:
 
 
 def test_incompatible_context_fails_or_skips_by_explicit_policy() -> None:
-    context = (
-        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
-    )
+    context = _prediction_context()
     failing_rule = FixtureMultiTimeframeRule(
         _requirements(feed_scope=FeedScope.iex_only())
     )
@@ -459,6 +488,44 @@ def test_incompatible_context_fails_or_skips_by_explicit_policy() -> None:
     )
     assert skipped_context["status"] == "skipped"
     assert skipped_context["source_context"] == context.to_primitive()
+
+
+def test_context_rejects_bars_after_the_primary_decision_boundary() -> None:
+    context = (
+        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
+    )
+    rule = FixtureMultiTimeframeRule(_requirements())
+
+    with pytest.raises(InvalidPredictionDataError, match="primary decision boundary"):
+        run_prediction_study(
+            _prediction_dataset(),
+            _study(rule),
+            context_provider=FixtureContextProvider(context),
+        )
+
+    assert rule.calls == 0
+
+
+def test_skip_policy_handles_an_invalid_provider_return() -> None:
+    rule = FixtureMultiTimeframeRule(
+        _requirements(failure_policy=PredictionContextFailurePolicy.SKIP)
+    )
+
+    result = run_prediction_study(
+        _prediction_dataset(),
+        _study(rule),
+        context_provider=InvalidContextProvider(),
+    )
+
+    assert rule.calls == 0
+    assert result.generated_prediction_count == 0
+    skipped_context = cast(
+        PrimitiveMapping,
+        result.manifest_primitive()["prediction_context"],
+    )
+    assert skipped_context["status"] == "skipped"
+    assert skipped_context["source_context"] is None
+    assert "invalid context" in cast(str, skipped_context["reason"])
 
 
 @pytest.mark.parametrize(
@@ -561,9 +628,7 @@ def test_requirement_identity_binds_timeframe_indicator_backend_and_completion()
     }
     assert len(identities) == 5
 
-    context = (
-        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
-    )
+    context = _prediction_context()
     results = tuple(
         run_prediction_study(
             _prediction_dataset(),
