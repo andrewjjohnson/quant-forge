@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, Decimal, InvalidOperation, localcontext
@@ -1008,21 +1008,24 @@ def _trial_definition(
 def _validate_factory(
     factory: PredictionStudyFactory,
     config: PredictionGridConfig,
+    configuration_snapshot: PrimitiveMappingSnapshot,
+    parameter_order: tuple[str, ...],
+    required_parameter_names: frozenset[str],
 ) -> None:
     if not factory.name or not factory.version:
         raise InvalidPredictionGridConfigurationError(
             "prediction study factory identity and version are required"
         )
-    order = factory.parameter_order
+    order = parameter_order
     if not order or len(order) != len(set(order)):
         raise InvalidPredictionGridConfigurationError(
             "prediction study factory parameter order must be nonempty and unique"
         )
-    if not factory.required_parameter_names.issubset(order):
+    if not required_parameter_names.issubset(order):
         raise InvalidPredictionGridConfigurationError(
             "factory required parameters must belong to its parameter contract"
         )
-    missing = factory.required_parameter_names.difference(config.search_space.names)
+    missing = required_parameter_names.difference(config.search_space.names)
     if missing:
         raise InvalidPredictionGridConfigurationError(
             "search space omits required prediction parameters: "
@@ -1030,7 +1033,7 @@ def _validate_factory(
         )
     config.search_space.ordered_items(order)
     try:
-        configuration_identity(factory.configuration())
+        configuration_identity(configuration_snapshot.to_primitive())
     except (TypeError, ValueError) as error:
         raise InvalidPredictionGridConfigurationError(
             "prediction study factory configuration is not deterministic"
@@ -1041,15 +1044,19 @@ def _validate_factory(
 
 
 def _combination_id(
-    factory: PredictionStudyFactory, parameters: PrimitiveMapping
+    *,
+    factory_name: str,
+    factory_version: str,
+    factory_configuration: PrimitiveMapping,
+    parameters: PrimitiveMapping,
 ) -> str:
     return configuration_identity(
         {
             "component": "quantforge_prediction_grid_combination",
             "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
-            "factory_name": factory.name,
-            "factory_version": factory.version,
-            "factory_configuration": factory.configuration(),
+            "factory_name": factory_name,
+            "factory_version": factory_version,
+            "factory_configuration": factory_configuration,
             "parameters": parameters,
         }
     )
@@ -1059,13 +1066,18 @@ def _iter_candidates(
     factory: PredictionStudyFactory,
     config: PredictionGridConfig,
     backend: PredictionIndicatorBackendEnvironment,
-) -> tuple[PredictionGridCandidate, ...]:
-    _validate_factory(factory, config)
-    ordered = config.search_space.ordered_items(factory.parameter_order)
+    *,
+    factory_name: str,
+    factory_version: str,
+    factory_configuration: PrimitiveMapping,
+    parameter_order: tuple[str, ...],
+    validate_components: Callable[[], None],
+) -> Iterator[PredictionGridCandidate]:
+    ordered = config.search_space.ordered_items(parameter_order)
     axes = tuple(values.values for _, values in ordered)
     coordinate_axes = tuple(range(len(axis)) for axis in axes)
-    candidates: list[PredictionGridCandidate] = []
     for index, coordinates in enumerate(product(*coordinate_axes)):
+        validate_components()
         search_values: dict[str, SearchValue] = {
             name: axes[axis][coordinate]
             for axis, ((name, _), coordinate) in enumerate(
@@ -1076,7 +1088,12 @@ def _iter_candidates(
             name: search_value_to_primitive(value)
             for name, value in search_values.items()
         }
-        combination_id = _combination_id(factory, parameters)
+        combination_id = _combination_id(
+            factory_name=factory_name,
+            factory_version=factory_version,
+            factory_configuration=factory_configuration,
+            parameters=parameters,
+        )
         snapshot = PrimitiveMappingSnapshot.capture(parameters)
         failed = next(
             (
@@ -1087,15 +1104,14 @@ def _iter_candidates(
             None,
         )
         if failed is not None:
-            candidates.append(
-                PredictionGridExclusion(
-                    index,
-                    combination_id,
-                    snapshot,
-                    tuple(coordinates),
-                    failed.code,
-                    failed.message,
-                )
+            validate_components()
+            yield PredictionGridExclusion(
+                index,
+                combination_id,
+                snapshot,
+                tuple(coordinates),
+                failed.code,
+                failed.message,
             )
             continue
         try:
@@ -1107,29 +1123,26 @@ def _iter_candidates(
             PredictionContextError,
         ) as error:
             _, message = _sanitize_failure(error)
-            candidates.append(
-                PredictionGridExclusion(
-                    index,
-                    combination_id,
-                    snapshot,
-                    tuple(coordinates),
-                    "invalid_prediction_parameters",
-                    message,
-                )
-            )
-            continue
-        candidates.append(
-            PredictionGridCombination(
+            validate_components()
+            yield PredictionGridExclusion(
                 index,
                 combination_id,
                 snapshot,
                 tuple(coordinates),
-                PrimitiveMappingSnapshot.capture(definition),
-                indicator_ids,
-                study,
+                "invalid_prediction_parameters",
+                message,
             )
+            continue
+        validate_components()
+        yield PredictionGridCombination(
+            index,
+            combination_id,
+            snapshot,
+            tuple(coordinates),
+            PrimitiveMappingSnapshot.capture(definition),
+            indicator_ids,
+            study,
         )
-    return tuple(candidates)
 
 
 def _utc_now() -> str:
@@ -1655,13 +1668,36 @@ class PredictionGridStudy:
                 "dataset-family fingerprint is required"
             )
         prepared = prepare_prediction_study_dataset(dataset)
-        _validate_factory(study_factory, config)
-        analyzer_configuration = analyzer.configuration()
+        try:
+            factory_configuration_snapshot = PrimitiveMappingSnapshot.capture(
+                study_factory.configuration()
+            )
+            analyzer_configuration_snapshot = PrimitiveMappingSnapshot.capture(
+                analyzer.configuration()
+            )
+            factory_name = study_factory.name
+            factory_version = study_factory.version
+            parameter_order = tuple(study_factory.parameter_order)
+            required_parameter_names = frozenset(study_factory.required_parameter_names)
+            analyzer_name = analyzer.name
+            analyzer_version = analyzer.version
+            analyzer_configuration_id = analyzer.configuration_id
+        except (AttributeError, TypeError, ValueError) as error:
+            raise InvalidPredictionGridConfigurationError(
+                "prediction factory or analyzer configuration is invalid"
+            ) from error
+        _validate_factory(
+            study_factory,
+            config,
+            factory_configuration_snapshot,
+            parameter_order,
+            required_parameter_names,
+        )
         if (
-            not analyzer.name
-            or not analyzer.version
-            or configuration_identity(analyzer_configuration)
-            != analyzer.configuration_id
+            not analyzer_name
+            or not analyzer_version
+            or configuration_identity(analyzer_configuration_snapshot.to_primitive())
+            != analyzer_configuration_id
         ):
             raise InvalidPredictionGridConfigurationError(
                 "prediction trial analyzer identity is invalid"
@@ -1672,7 +1708,6 @@ class PredictionGridStudy:
                 f"prediction grid contains {count} combinations, exceeding "
                 f"maximum {config.maximum_combinations}"
             )
-        candidates = _iter_candidates(study_factory, config, indicator_backend)
         identity: PrimitiveMapping = {
             "component": "quantforge_prediction_parameter_grid",
             "engine_version": PREDICTION_GRID_ENGINE_VERSION,
@@ -1681,21 +1716,19 @@ class PredictionGridStudy:
             "dataset": prepared.market_data.to_primitive(),
             "dataset_family_fingerprint": dataset_family_fingerprint,
             "study_factory": {
-                "name": study_factory.name,
-                "version": study_factory.version,
-                "configuration": study_factory.configuration(),
+                "name": factory_name,
+                "version": factory_version,
+                "configuration": factory_configuration_snapshot.to_primitive(),
             },
             "analyzer": {
-                "name": analyzer.name,
-                "version": analyzer.version,
-                "configuration_id": analyzer.configuration_id,
-                "configuration": analyzer_configuration,
+                "name": analyzer_name,
+                "version": analyzer_version,
+                "configuration_id": analyzer_configuration_id,
+                "configuration": analyzer_configuration_snapshot.to_primitive(),
             },
             "context_environment": context_environment.to_primitive(),
             "indicator_backend": indicator_backend.to_primitive(),
-            "search_space": config.search_space.to_primitive(
-                study_factory.parameter_order
-            ),
+            "search_space": config.search_space.to_primitive(parameter_order),
             "parameter_constraints": [
                 item.to_primitive() for item in config.parameter_constraints
             ],
@@ -1725,12 +1758,20 @@ class PredictionGridStudy:
         self._prepared = prepared
         self._dataset_family_fingerprint = dataset_family_fingerprint
         self._factory = study_factory
+        self._factory_name = factory_name
+        self._factory_version = factory_version
+        self._factory_configuration_snapshot = factory_configuration_snapshot
+        self._factory_parameter_order = parameter_order
+        self._factory_required_parameter_names = required_parameter_names
         self._analyzer = analyzer
+        self._analyzer_name = analyzer_name
+        self._analyzer_version = analyzer_version
+        self._analyzer_configuration_id = analyzer_configuration_id
+        self._analyzer_configuration_snapshot = analyzer_configuration_snapshot
         self._context_provider = context_provider
         self._context_environment = context_environment
         self._backend = indicator_backend
         self._config = config
-        self._candidates = candidates
         self._store = _PredictionGridStore(config.output_root, self.study_id)
 
     def run(self) -> PredictionGridResult:
@@ -1740,6 +1781,7 @@ class PredictionGridStudy:
         return self._execute(resume=True)
 
     def load_result(self) -> PredictionGridResult:
+        self._validate_components_unchanged()
         if not self._store.manifest_path.exists():
             raise PredictionGridPersistenceError(
                 "prediction-grid study has not been persisted"
@@ -1748,8 +1790,56 @@ class PredictionGridStudy:
             raise PredictionGridPersistenceError(
                 "persisted prediction-grid manifest is incompatible"
             )
+        candidates = tuple(self._iter_candidates())
         return self._result(
-            self._store.load_trials(), PredictionGridCacheStatistics(0, 0, 0, 0)
+            self._store.load_trials(),
+            PredictionGridCacheStatistics(0, 0, 0, 0),
+            candidates,
+        )
+
+    def _validate_components_unchanged(self) -> None:
+        try:
+            factory_configuration = PrimitiveMappingSnapshot.capture(
+                self._factory.configuration()
+            )
+            analyzer_configuration = PrimitiveMappingSnapshot.capture(
+                self._analyzer.configuration()
+            )
+            factory_required_parameter_names = frozenset(
+                self._factory.required_parameter_names
+            )
+            analyzer_configuration_id = self._analyzer.configuration_id
+        except (AttributeError, TypeError, ValueError) as error:
+            raise InvalidPredictionGridConfigurationError(
+                "prediction factory or analyzer changed after grid construction"
+            ) from error
+        if (
+            self._factory.name != self._factory_name
+            or self._factory.version != self._factory_version
+            or tuple(self._factory.parameter_order) != self._factory_parameter_order
+            or factory_required_parameter_names
+            != self._factory_required_parameter_names
+            or factory_configuration != self._factory_configuration_snapshot
+            or self._analyzer.name != self._analyzer_name
+            or self._analyzer.version != self._analyzer_version
+            or analyzer_configuration_id != self._analyzer_configuration_id
+            or analyzer_configuration != self._analyzer_configuration_snapshot
+        ):
+            raise InvalidPredictionGridConfigurationError(
+                "prediction factory or analyzer changed after grid construction"
+            )
+
+    def _iter_candidates(self) -> Iterator[PredictionGridCandidate]:
+        self._validate_components_unchanged()
+        return _iter_candidates(
+            self._factory,
+            self._config,
+            self._backend,
+            factory_name=self._factory_name,
+            factory_version=self._factory_version,
+            factory_configuration=(self._factory_configuration_snapshot.to_primitive()),
+            parameter_order=self._factory_parameter_order,
+            validate_components=self._validate_components_unchanged,
         )
 
     def _trial_id(self, candidate: PredictionGridCandidate) -> str:
@@ -1790,13 +1880,16 @@ class PredictionGridStudy:
 
     def _execute(self, *, resume: bool) -> PredictionGridResult:
         self._store.initialize(self._manifest, resume=resume)
+        self._validate_components_unchanged()
         cache = PredictionGridExecutionCache(
             dataset_family_fingerprint=self._dataset_family_fingerprint,
             backend=self._backend,
             context_environment=self._context_environment,
         )
         provider = _CachedContextProvider(self._context_provider, cache)
-        for candidate in self._candidates:
+        candidates: list[PredictionGridCandidate] = []
+        for candidate in self._iter_candidates():
+            candidates.append(candidate)
             initial = self._initial_record(candidate)
             existing = self._store.load_trial(initial.trial_id)
             if existing is None:
@@ -1851,13 +1944,17 @@ class PredictionGridStudy:
                 )
                 analysis = self._analyzer.analyze(result)
                 _validate_analysis_for_grid(analysis, self._config.ranking)
-                if (
-                    configuration_identity(self._analyzer.configuration())
-                    != self._analyzer.configuration_id
-                ):
-                    raise InvalidPredictionGridConfigurationError(
-                        "prediction analyzer changed during trial execution"
-                    )
+            except Exception as error:
+                failure_type, failure_message = _sanitize_failure(error)
+                completed = replace(
+                    started,
+                    status=TrialStatus.FAILED,
+                    failure_type=failure_type,
+                    failure_message=failure_message,
+                    finished_at=_utc_now(),
+                )
+            else:
+                self._validate_components_unchanged()
                 artifact, artifact_fingerprint = self._store.write_artifact(
                     started.trial_id, result, analysis
                 )
@@ -1869,18 +1966,11 @@ class PredictionGridStudy:
                     artifact_fingerprint=artifact_fingerprint,
                     finished_at=_utc_now(),
                 )
-            except Exception as error:
-                failure_type, failure_message = _sanitize_failure(error)
-                completed = replace(
-                    started,
-                    status=TrialStatus.FAILED,
-                    failure_type=failure_type,
-                    failure_message=failure_message,
-                    finished_at=_utc_now(),
-                )
             self._store.write_trial(completed)
+        candidate_snapshot = tuple(candidates)
         records = self._store.load_trials()
-        result = self._result(records, cache.statistics)
+        self._validate_components_unchanged()
+        result = self._result(records, cache.statistics, candidate_snapshot)
         _atomic_json(
             self._store.study_path / "summary.json", result.summary_primitive()
         )
@@ -1890,21 +1980,22 @@ class PredictionGridStudy:
         self,
         records: tuple[PredictionGridTrialRecord, ...],
         cache_statistics: PredictionGridCacheStatistics,
+        candidates: tuple[PredictionGridCandidate, ...],
     ) -> PredictionGridResult:
-        expected_ids = {self._trial_id(candidate) for candidate in self._candidates}
+        expected_ids = {self._trial_id(candidate) for candidate in candidates}
         actual_ids = {record.trial_id for record in records}
         if actual_ids != expected_ids:
             raise PredictionGridPersistenceError(
                 "persisted prediction trials do not match the deterministic grid"
             )
         candidates_by_trial_id = {
-            self._trial_id(candidate): candidate for candidate in self._candidates
+            self._trial_id(candidate): candidate for candidate in candidates
         }
         for record in records:
             self._validate_record(candidates_by_trial_id[record.trial_id], record)
         rankings, ineligible = _rank(records, self._config.ranking)
         stability = _stability(
-            self._candidates,
+            candidates,
             rankings,
             self._config.search_space,
             self._factory,
@@ -1912,7 +2003,7 @@ class PredictionGridStudy:
             self._config.stability,
         )
         warnings = [
-            f"searched {len(self._candidates)} parameter combinations without a "
+            f"searched {len(candidates)} parameter combinations without a "
             "multiple-comparison correction; in-sample rankings may contain "
             "false discoveries"
         ]

@@ -18,6 +18,7 @@ from quantforge.optimization.models import (
     TrialStatus,
 )
 from quantforge.prediction import (
+    InvalidPredictionGridConfigurationError,
     InvalidPredictionGridParametersError,
     PredictionContextEnvironment,
     PredictionContextError,
@@ -64,6 +65,17 @@ class FixtureStudyFactory:
         )
 
 
+class InterruptingStudyFactory(FixtureStudyFactory):
+    def __init__(self) -> None:
+        self.should_interrupt = True
+
+    def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]:
+        if cast(int, parameters["window"]) == 3 and self.should_interrupt:
+            self.should_interrupt = False
+            raise KeyboardInterrupt("fixture candidate construction interruption")
+        return super().build(parameters)
+
+
 class FixtureAnalyzer:
     name = "fixture_prediction_grid_analyzer"
     version = "1"
@@ -93,6 +105,23 @@ class FixtureAnalyzer:
             ),
             artifacts={"comparison_schema_version": "1"},
         )
+
+
+class MutableAnalyzer(FixtureAnalyzer):
+    name = "fixture_prediction_grid_mutable_analyzer"
+
+    def __init__(self) -> None:
+        self.configuration_state: PrimitiveMapping = {"mode": "initial"}
+
+    def configuration(self) -> PrimitiveMapping:
+        return self.configuration_state
+
+    def analyze(
+        self, result: PredictionStudyResult[Any, Any, Any]
+    ) -> PredictionTrialAnalysis:
+        analysis = super().analyze(result)
+        self.configuration_state["mode"] = "mutated"
+        return analysis
 
 
 class SpikeAnalyzer(FixtureAnalyzer):
@@ -155,11 +184,12 @@ def _grid(
     retry_failed: bool = False,
     analyzer: FixtureAnalyzer | None = None,
     stability: StabilityConfig | None = None,
+    factory: FixtureStudyFactory | None = None,
 ) -> PredictionGridStudy:
     return PredictionGridStudy(
         dataset=fixtures._prediction_dataset(),  # pyright: ignore[reportPrivateUsage]
         dataset_family_fingerprint="family-spy-fixture",
-        study_factory=FixtureStudyFactory(),
+        study_factory=FixtureStudyFactory() if factory is None else factory,
         analyzer=FixtureAnalyzer() if analyzer is None else analyzer,
         context_provider=fixtures.FixtureContextProvider(
             fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
@@ -277,14 +307,74 @@ def test_equivalent_grids_have_stable_order_and_backend_configuration_changes_id
     )
 
     assert first.study_id == equivalent.study_id
-    assert tuple(first._trial_id(item) for item in first._candidates) == tuple(  # pyright: ignore[reportPrivateUsage]
-        equivalent._trial_id(item)  # pyright: ignore[reportPrivateUsage]
-        for item in equivalent._candidates  # pyright: ignore[reportPrivateUsage]
-    )
     assert first.study_id != changed_backend.study_id
-    assert tuple(first._trial_id(item) for item in first._candidates) != tuple(  # pyright: ignore[reportPrivateUsage]
-        changed_backend._trial_id(item)  # pyright: ignore[reportPrivateUsage]
-        for item in changed_backend._candidates  # pyright: ignore[reportPrivateUsage]
+
+
+def test_component_configuration_mutation_fails_before_success_is_persisted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(
+        prepared: object,
+        study: PredictionStudy[Any, Any, Any],
+        **kwargs: object,
+    ) -> PredictionStudyResult[Any, Any, Any]:
+        del prepared, kwargs
+        return cast(PredictionStudyResult[Any, Any, Any], FakeResult(_window(study)))
+
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.run_prediction_study_in_session", fake_run
+    )
+    analyzer = MutableAnalyzer()
+    grid = _grid(tmp_path, analyzer=analyzer)
+
+    with pytest.raises(
+        InvalidPredictionGridConfigurationError,
+        match="factory or analyzer changed",
+    ):
+        grid.run()
+
+    manifest_path = tmp_path / grid.study_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["analyzer"]["configuration"] == {"mode": "initial"}
+    assert analyzer.configuration_state == {"mode": "mutated"}
+    trial_documents = tuple((tmp_path / grid.study_id / "trials").glob("*.json"))
+    assert any(
+        json.loads(path.read_text(encoding="utf-8"))["status"] == "running"
+        for path in trial_documents
+    )
+
+
+def test_candidate_construction_interruption_preserves_enumerated_trials_for_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(
+        prepared: object,
+        study: PredictionStudy[Any, Any, Any],
+        **kwargs: object,
+    ) -> PredictionStudyResult[Any, Any, Any]:
+        del prepared, kwargs
+        return cast(PredictionStudyResult[Any, Any, Any], FakeResult(_window(study)))
+
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.run_prediction_study_in_session", fake_run
+    )
+    factory = InterruptingStudyFactory()
+    grid = _grid(tmp_path, factory=factory)
+
+    with pytest.raises(KeyboardInterrupt, match="candidate construction"):
+        grid.run()
+
+    study_path = tmp_path / grid.study_id
+    persisted_before_resume = tuple((study_path / "trials").glob("*.json"))
+    assert (study_path / "manifest.json").is_file()
+    assert len(persisted_before_resume) == 2
+
+    resumed = grid.resume()
+
+    assert len(resumed.trials) == 4
+    assert all(
+        item.status in (TrialStatus.EXCLUDED, TrialStatus.SUCCEEDED, TrialStatus.FAILED)
+        for item in resumed.trials
     )
 
 

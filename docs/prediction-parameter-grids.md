@@ -57,6 +57,10 @@ trial additionally binds its full built prediction definition:
 
 Changing any backend or indicator configuration produces a different identity.
 It cannot resume an old study or use an incompatible indicator-cache entry.
+Factory and analyzer configurations are captured as detached immutable
+snapshots before identity hashing. Their names, versions, parameter contracts,
+configuration IDs, and configuration content are revalidated during candidate
+construction and after analysis, before a successful artifact can be persisted.
 
 ## Persistence and resume
 
@@ -69,8 +73,10 @@ trials/<trial-id>.json
 artifacts/<trial-id>/prediction-study.json
 ```
 
-The manifest is written before trial execution. Each candidate is persisted as
-`pending` or `excluded`, then each executable trial transitions through
+The manifest is written before candidate construction. Candidates are built in
+deterministic order and each is immediately persisted as `pending` or
+`excluded`, so an interruption during a later factory build retains all earlier
+grid state for `resume()`. Each executable trial then transitions through
 `running` to `succeeded` or `failed`. Writes use a same-directory temporary file,
 `fsync`, and atomic replacement. A failed trial records a sanitized exception
 type/message and does not stop later trials. `resume()` skips completed and
