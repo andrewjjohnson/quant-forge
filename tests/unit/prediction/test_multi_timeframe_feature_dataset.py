@@ -1,11 +1,12 @@
 import json
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+import quantforge.prediction.feature_dataset as feature_dataset_module
 from quantforge.configuration import (
     PrimitiveMapping,
     PrimitiveMappingSnapshot,
@@ -16,6 +17,7 @@ from quantforge.data import (
     FeedScope,
     MarketDataset,
     MultiTimeframeContext,
+    TimeframeContext,
 )
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
@@ -26,6 +28,7 @@ from quantforge.indicators import (
     SimpleMovingAverageParameters,
 )
 from quantforge.prediction import (
+    MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION,
     ForwardReturnValues,
     MultiTimeframeFeatureRequest,
     PredictionContextRequirements,
@@ -218,12 +221,37 @@ def _build(
         dataset=dataset or _dataset(),
         prediction_study=study,
         contextual_features=(),
-        multi_timeframe_features=requests or _requests(selected_requirements),
+        multi_timeframe_features=(
+            _requests(selected_requirements) if requests is None else requests
+        ),
         context_provider=provider,
         outcomes=(primary,),
         output_root=output_root,
     )
     return result, rule, provider
+
+
+def _shifted_context(source: MultiTimeframeContext) -> MultiTimeframeContext:
+    shift = timedelta(seconds=1)
+    aligned = tuple(
+        TimeframeContext._from_aligned_series(  # pyright: ignore[reportPrivateUsage]
+            requirement=item.requirement,
+            dataset_reference=item.dataset_reference,
+            availability=item.availability,
+            bars=item.bars,
+            latest_completed_bar_timestamp=item.latest_completed_bar_timestamp,
+            age=None if item.age is None else item.age + shift,
+        )
+        for item in source.timeframes
+    )
+    return MultiTimeframeContext._from_aligned_timeframes(  # pyright: ignore[reportPrivateUsage]
+        as_of=source.as_of + shift,
+        primary_timeframe=source.primary_timeframe,
+        required_timeframes=source.required_timeframes,
+        completion_policy=source.completion_policy,
+        source_consistency=source.source_consistency,
+        timeframes=aligned,
+    )
 
 
 def test_one_row_flattens_four_timeframes_with_complete_provenance_and_parquet(
@@ -413,6 +441,58 @@ def test_complete_resume_keeps_one_aligned_row_and_exact_parquet(
     assert len(resumed.rows) == 1
     assert resumed.rows[0].row_id == first.rows[0].row_id
     assert parquet_path.read_bytes() == parquet_before
+
+
+def test_context_identity_is_bound_without_requested_feature_columns(
+    tmp_path: Path,
+) -> None:
+    source_context = study_fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
+    first, first_rule, first_provider = _build(
+        tmp_path,
+        context=source_context,
+        requests=(),
+    )
+    shifted_context = _shifted_context(source_context)
+    second, second_rule, second_provider = _build(
+        tmp_path,
+        context=shifted_context,
+        requests=(),
+    )
+
+    assert first.dataset_id != second.dataset_id
+    assert first.configuration["prediction_context_id"] == source_context.context_id
+    assert second.configuration["prediction_context_id"] == shifted_context.context_id
+    assert first.engine_version == MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION
+    assert second.engine_version == MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION
+    assert first_rule.generate_calls == second_rule.generate_calls == 1
+    assert first_provider.requests == [first_rule.context_requirements]
+    assert second_provider.requests == [second_rule.context_requirements]
+
+
+def test_progress_manifest_uses_selected_multi_timeframe_engine_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt_candidate_generation(
+        *_args: object, **_kwargs: object
+    ) -> tuple[SignalFeatureCandidate, ...]:
+        raise RuntimeError("fixture interruption")
+
+    monkeypatch.setattr(
+        feature_dataset_module,
+        "_generate_candidate_population",
+        interrupt_candidate_generation,
+    )
+
+    with pytest.raises(RuntimeError, match="fixture interruption"):
+        _build(tmp_path)
+
+    destination = next(tmp_path.iterdir())
+    manifest = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["engine_version"] == (
+        MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION
+    )
+    assert manifest["engine_version"] == manifest["configuration"]["engine_version"]
 
 
 def test_timeframe_and_completion_policy_change_dataset_identity(

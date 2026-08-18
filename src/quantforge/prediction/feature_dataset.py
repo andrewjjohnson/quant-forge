@@ -940,13 +940,15 @@ def build_signal_feature_dataset[
             "prediction strategy configuration identity is invalid"
         )
     strategy_fields = _strategy_fields(strategy)
-    captured_multi_timeframe_features, effective_context_provider = (
-        _capture_multi_timeframe_feature_context(
-            dataset,
-            prediction_study.strategy,
-            tuple(multi_timeframe_features),
-            context_provider,
-        )
+    (
+        captured_multi_timeframe_features,
+        effective_context_provider,
+        prediction_context_id,
+    ) = _capture_multi_timeframe_feature_context(
+        dataset,
+        prediction_study.strategy,
+        tuple(multi_timeframe_features),
+        context_provider,
     )
     sorted_features = tuple(
         sorted(
@@ -956,12 +958,12 @@ def build_signal_feature_dataset[
     )
     engine_version = (
         MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION
-        if captured_multi_timeframe_features
+        if prediction_context_id is not None
         else FEATURE_DATASET_ENGINE_VERSION
     )
     limitations = (
         _MULTI_TIMEFRAME_LIMITATIONS
-        if captured_multi_timeframe_features
+        if prediction_context_id is not None
         else _LIMITATIONS
     )
     contextual_definitions = tuple(feature.definition for feature in sorted_features)
@@ -1009,6 +1011,7 @@ def build_signal_feature_dataset[
         market_data,
         prediction_study,
         strategy_configuration_snapshot,
+        prediction_context_id,
         strategy_fields,
         contextual_definitions,
         contextual_configuration_snapshots,
@@ -1062,6 +1065,7 @@ def build_signal_feature_dataset[
         market_data,
         configuration_snapshot,
         schema,
+        engine_version,
     )
     completed_rows = _load_progress_rows(destination, feature_dataset_id, schema)
 
@@ -1298,11 +1302,11 @@ def _capture_multi_timeframe_feature_context(
     | MultiTimeframePredictionRule[SignalFeatureCandidate],
     requests: tuple[MultiTimeframeFeatureRequest, ...],
     context_provider: PredictionContextProvider | None,
-) -> tuple[tuple[ContextualFeature, ...], PredictionContextProvider | None]:
-    if not requests:
-        return (), context_provider
+) -> tuple[tuple[ContextualFeature, ...], PredictionContextProvider | None, str | None]:
     requirements = getattr(strategy, "context_requirements", None)
     if not isinstance(requirements, PredictionContextRequirements):
+        if not requests:
+            return (), context_provider, None
         raise SignalFeatureDatasetError(
             "multi-timeframe feature requests require a QF-28 prediction rule"
         )
@@ -1345,6 +1349,7 @@ def _capture_multi_timeframe_feature_context(
             capture_multi_timeframe_features(requests, rule_context),
         ),
         captured_provider,
+        rule_context.context_id,
     )
 
 
@@ -1529,6 +1534,7 @@ def _dataset_configuration[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
     strategy_configuration_snapshot: PrimitiveMappingSnapshot,
+    prediction_context_id: str | None,
     strategy_fields: tuple[SchemaField, ...],
     contextual_definitions: tuple[SchemaField, ...],
     contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
@@ -1537,7 +1543,7 @@ def _dataset_configuration[
     outcome_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> PrimitiveMapping:
-    return {
+    configuration: PrimitiveMapping = {
         "component": "quantforge_signal_feature_dataset",
         "engine_version": engine_version,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
@@ -1574,6 +1580,9 @@ def _dataset_configuration[
             )
         ],
     }
+    if prediction_context_id is not None:
+        configuration["prediction_context_id"] = prediction_context_id
+    return configuration
 
 
 def _normalized_outcome_configuration(
@@ -2130,12 +2139,13 @@ def _initialize_or_validate_progress(
     market_data: PredictionMarketData,
     configuration: PrimitiveMappingSnapshot,
     schema: SignalFeatureSchema,
+    engine_version: str,
 ) -> None:
     manifest: PrimitiveMapping = {
         "component": "quantforge_signal_feature_dataset",
         "configuration": configuration.to_primitive(),
         "dataset_id": feature_dataset_id,
-        "engine_version": FEATURE_DATASET_ENGINE_VERSION,
+        "engine_version": engine_version,
         "market_data": market_data.to_primitive(),
         "status": "in_progress",
     }

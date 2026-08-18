@@ -89,11 +89,12 @@ are not duplicated, so lower-timeframe relative volume can become
 `feature_five_minute_relative_volume`.
 
 The builder obtains the provider context once, validates it through the same
-QF-28 boundary used for rule execution, and replays that exact immutable
-QF-20/QF-21 context during candidate generation. A request cannot name an
-undeclared timeframe, indicator alias, or normalized output. QF-7 reads only
-`TimeframeIndicatorOutput`; it does not import TA-Lib or invoke a backend
-directly.
+QF-28 boundary used for rule execution, binds its context ID into the dataset
+configuration even when no extra feature columns are requested, and replays
+that exact immutable QF-20/QF-21 context during candidate generation. A request
+cannot name an undeclared timeframe, indicator alias, or normalized output.
+QF-7 reads only `TimeframeIndicatorOutput`; it does not import TA-Lib or invoke
+a backend directly.
 
 ## Candidate identity and disposition
 
