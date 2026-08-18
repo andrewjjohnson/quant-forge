@@ -112,7 +112,9 @@ def _adjustment_basis() -> AdjustmentBasis:
         adjustment_mode=AdjustmentMode.UNADJUSTED,
         ohlc_basis="raw_provider",
         volume_basis="raw_provider",
-        corporate_action_policy="separate_provider_actions",
+        corporate_action_policy=(
+            "separate_provider_reported_cash_dividends_and_splits"
+        ),
         adjusted_fields_used=False,
     )
 

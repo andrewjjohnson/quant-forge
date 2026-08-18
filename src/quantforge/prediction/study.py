@@ -13,6 +13,7 @@ from quantforge.configuration import (
 )
 from quantforge.data import dataset_identity_matches, validate_market_dataset
 from quantforge.data.exceptions import ValidationError as MarketDataValidationError
+from quantforge.data.lineage import AdjustmentBasis
 from quantforge.data.models import SCHEMA_VERSION, MarketDataset
 from quantforge.data.multi_timeframe import MultiTimeframeContextError
 from quantforge.prediction.context import (
@@ -354,6 +355,9 @@ def run_prediction_study_in_session(
         signal_snapshots,
         configuration.strategy_configuration_id,
         configuration.strategy_warm_up_observations,
+        context_decision_session=(
+            None if rule_context is None else rule_context.decision_session
+        ),
     )
     _validate_signal_snapshots(generated_signals, signal_snapshots)
 
@@ -759,6 +763,13 @@ def _prepare_prediction_context(
             source_context,
             prediction_dataset_id=dataset.metadata.dataset_id,
             symbol=dataset.metadata.canonical_symbol,
+            prediction_adjustment_basis=AdjustmentBasis(
+                adjustment_mode=dataset.metadata.adjustment_mode,
+                ohlc_basis=dataset.metadata.ohlc_basis,
+                volume_basis=dataset.metadata.volume_basis,
+                corporate_action_policy=dataset.metadata.corporate_action_policy,
+                adjusted_fields_used=dataset.metadata.adjusted_fields_used,
+            ),
         )
     except (PredictionContextError, MultiTimeframeContextError) as error:
         if requirements.failure_policy is PredictionContextFailurePolicy.FAIL:
@@ -1070,6 +1081,7 @@ def _validate_strategy_output(
     signal_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     expected_configuration_id: str,
     expected_warm_up_observations: int,
+    context_decision_session: date | None,
 ) -> None:
     if (
         output.contract_version != "1"
@@ -1109,6 +1121,14 @@ def _validate_strategy_output(
         ):
             raise InvalidPredictionOutputError(
                 "prediction signal identity or parameter snapshot is invalid"
+            )
+        if (
+            context_decision_session is not None
+            and signal.signal_session != context_decision_session
+        ):
+            raise InvalidPredictionOutputError(
+                "multi-timeframe prediction signal must use the context decision "
+                "session"
             )
         if signal_index + 1 < expected_warm_up_observations:
             raise InvalidPredictionOutputError(

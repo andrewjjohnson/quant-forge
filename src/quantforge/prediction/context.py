@@ -1,7 +1,7 @@
 """Declarative, restricted multi-timeframe inputs for prediction rules."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol, cast
 
@@ -11,7 +11,8 @@ from quantforge.configuration import (
     PrimitiveMappingSnapshot,
     configuration_identity,
 )
-from quantforge.data.lineage import FeedScope
+from quantforge.data.intraday import IntradayBar
+from quantforge.data.lineage import AdjustmentBasis, FeedScope
 from quantforge.data.multi_timeframe import (
     ContextAvailability,
     ContextBar,
@@ -386,6 +387,7 @@ class PredictionRuleContext:
 
     prediction_dataset_id: str
     symbol: str
+    adjustment_basis: AdjustmentBasis
     requirements: PredictionContextRequirements
     source_context_snapshot: PrimitiveMappingSnapshot
     timeframes: tuple[PredictionTimeframeInput, ...]
@@ -399,6 +401,14 @@ class PredictionRuleContext:
     def context_id(self) -> str:
         value = self.source_context_snapshot.to_primitive()["context_id"]
         return cast(str, value)
+
+    @property
+    def decision_session(self) -> date:
+        """Return the sole session for which this as-of snapshot may emit a signal."""
+        latest_primary_bar = self.latest_bar_for(self.requirements.primary.timeframe)
+        if isinstance(latest_primary_bar, IntradayBar):
+            return latest_primary_bar.session_date
+        return latest_primary_bar.session_dates[-1]
 
     def _for_timeframe(self, timeframe: Timeframe) -> PredictionTimeframeInput:
         if not isinstance(cast(object, timeframe), Timeframe):
@@ -431,6 +441,8 @@ class PredictionRuleContext:
         return {
             "prediction_dataset_id": self.prediction_dataset_id,
             "symbol": self.symbol,
+            "adjustment_basis": self.adjustment_basis.to_primitive(),
+            "decision_session": self.decision_session.isoformat(),
             "requirements": self.requirements.to_primitive(),
             "source_context": self.source_context_snapshot.to_primitive(),
             "timeframes": [item.manifest_primitive() for item in self.timeframes],
@@ -470,6 +482,7 @@ def build_prediction_rule_context(
     *,
     prediction_dataset_id: str,
     symbol: str,
+    prediction_adjustment_basis: AdjustmentBasis,
 ) -> PredictionRuleContext:
     """Validate, restrict, and evaluate one declared prediction context."""
     if not isinstance(cast(object, requirements), PredictionContextRequirements):
@@ -482,6 +495,8 @@ def build_prediction_rule_context(
         raise PredictionContextError(
             "prediction dataset identity and symbol are required"
         )
+    if not isinstance(cast(object, prediction_adjustment_basis), AdjustmentBasis):
+        raise PredictionContextError("prediction dataset adjustment basis is invalid")
     if context.primary_timeframe != requirements.primary.timeframe:
         raise PredictionContextError(
             "prediction context primary timeframe is incompatible"
@@ -494,6 +509,24 @@ def build_prediction_rule_context(
     if context.required_timeframes != expected_contextual:
         raise PredictionContextError(
             "prediction context timeframes or staleness policies are incompatible"
+        )
+
+    visible_context_bars = tuple(
+        bar for timeframe in context.timeframes for bar in timeframe.bars
+    )
+    if any(bar.symbol != symbol for bar in visible_context_bars):
+        raise PredictionContextError(
+            "prediction context symbol is incompatible with the prediction dataset"
+        )
+    context_adjustment_bases = {
+        bar.provenance.adjustment_basis
+        for bar in visible_context_bars
+        if isinstance(bar, IntradayBar)
+    }
+    if context_adjustment_bases != {prediction_adjustment_basis}:
+        raise PredictionContextError(
+            "prediction context adjustment basis is incompatible with the "
+            "prediction dataset"
         )
 
     resolved: list[PredictionTimeframeInput] = []
@@ -559,6 +592,7 @@ def build_prediction_rule_context(
     rule_context = PredictionRuleContext(
         prediction_dataset_id,
         symbol,
+        prediction_adjustment_basis,
         requirements,
         source_snapshot,
         tuple(resolved),

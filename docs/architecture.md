@@ -530,7 +530,10 @@ orchestration validates it, computes QF-22 indicators through the QF-35
 backend-neutral boundary, and supplies a restricted view containing only
 declared bars and normalized outputs. The source context, requirements, and
 indicator provenance participate in the study identity and manifest. Existing
-QF-11 single-timeframe rules retain the original QF-3 dataset path.
+QF-11 single-timeframe rules retain the original QF-3 dataset path. Contextual
+execution also requires exact canonical-symbol and adjustment-basis compatibility
+with that QF-3 dataset, and one context snapshot may emit a signal only for its
+latest primary-bar decision session.
 
 Responsibilities:
 

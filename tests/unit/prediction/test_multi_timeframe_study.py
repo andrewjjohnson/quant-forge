@@ -1,5 +1,5 @@
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
@@ -8,10 +8,13 @@ import pytest
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.data import (
+    AdjustmentBasis,
+    AdjustmentMode,
     ContextAvailability,
     ContextCompletionPolicy,
     ContextTimeframeRequirement,
     FeedScope,
+    IntradayBar,
     MultiTimeframeContext,
     TimeframeContext,
 )
@@ -25,6 +28,7 @@ from quantforge.indicators import (
 )
 from quantforge.prediction import (
     InvalidPredictionDataError,
+    InvalidPredictionOutputError,
     NextSessionOpenGapOutcomeLabeler,
     NextSessionOpenGapValues,
     OvernightGapDirectionEvaluationValues,
@@ -161,6 +165,15 @@ class FixtureMultiTimeframeRule:
         )
 
 
+class BackdatedFixtureMultiTimeframeRule(FixtureMultiTimeframeRule):
+    def generate_with_context(
+        self, context: PredictionRuleContext
+    ) -> PredictionStrategyOutput:
+        output = super().generate_with_context(context)
+        backdated_signal = replace(output.signals[0], signal_session=date(2024, 7, 10))
+        return replace(output, signals=(backdated_signal,))
+
+
 def _requirements(
     *,
     backend_id: str = NATIVE_INDICATOR_BACKEND,
@@ -215,13 +228,61 @@ def _study(
     )
 
 
-def _prediction_dataset():
+def _prediction_dataset(
+    adjustment_mode: AdjustmentMode = AdjustmentMode.UNADJUSTED,
+):
     return make_dataset(
         ("100", "101", "102"),
         sessions=(date(2024, 7, 10), date(2024, 7, 11), date(2024, 7, 12)),
         opens=("99", "100", "103"),
         highs=("101", "102", "104"),
         lows=("98", "99", "101"),
+        adjustment_mode=adjustment_mode,
+    )
+
+
+def _context_with_provenance(
+    source: MultiTimeframeContext,
+    *,
+    symbol: str = "SPY",
+    adjustment_basis: AdjustmentBasis | None = None,
+) -> MultiTimeframeContext:
+    aligned: list[TimeframeContext] = []
+    for item in source.timeframes:
+        bars = tuple(
+            replace(
+                bar,
+                symbol=symbol,
+                **(
+                    {
+                        "provenance": replace(
+                            bar.provenance,
+                            adjustment_basis=adjustment_basis,
+                        )
+                    }
+                    if isinstance(bar, IntradayBar) and adjustment_basis is not None
+                    else {}
+                ),
+            )
+            for bar in item.bars
+        )
+        aligned.append(
+            TimeframeContext._from_aligned_series(  # pyright: ignore[reportPrivateUsage]
+                requirement=item.requirement,
+                dataset_reference=item.dataset_reference,
+                availability=item.availability,
+                bars=bars,
+                latest_completed_bar_timestamp=item.latest_completed_bar_timestamp,
+                age=item.age,
+            )
+        )
+    return MultiTimeframeContext._from_aligned_timeframes(  # pyright: ignore[reportPrivateUsage]
+        as_of=source.as_of,
+        primary_timeframe=source.primary_timeframe,
+        required_timeframes=source.required_timeframes,
+        completion_policy=source.completion_policy,
+        source_consistency=source.source_consistency,
+        timeframes=tuple(aligned),
     )
 
 
@@ -295,6 +356,12 @@ def test_fixture_rule_runs_through_generic_study_with_declared_normalized_inputs
     prediction_context = cast(PrimitiveMapping, manifest["prediction_context"])
     configuration = cast(PrimitiveMapping, manifest["configuration"])
     assert prediction_context["status"] == "available"
+    assert prediction_context["decision_session"] == "2024-07-11"
+    primary_bar = context.bars_for(requirements.primary.timeframe)[0]
+    assert isinstance(primary_bar, IntradayBar)
+    assert prediction_context["adjustment_basis"] == (
+        primary_bar.provenance.adjustment_basis.to_primitive()
+    )
     assert (
         configuration["prediction_context_requirements"] == requirements.to_primitive()
     )
@@ -305,6 +372,55 @@ def test_fixture_rule_runs_through_generic_study_with_declared_normalized_inputs
     indicator_manifests = cast(list[Primitive], primary_manifest["indicators"])
     primary_indicator = cast(PrimitiveMapping, indicator_manifests[0])
     assert primary_indicator["backend"] == configured_backend.to_primitive()
+
+
+def test_context_symbol_must_match_prediction_dataset_before_rule_execution() -> None:
+    context = _context_with_provenance(
+        timeframe_fixtures._all_completed_context(),  # pyright: ignore[reportPrivateUsage]
+        symbol="QQQ",
+    )
+    rule = FixtureMultiTimeframeRule(_requirements())
+
+    with pytest.raises(InvalidPredictionDataError, match="context symbol"):
+        run_prediction_study(
+            _prediction_dataset(),
+            _study(rule),
+            context_provider=FixtureContextProvider(context),
+        )
+
+    assert rule.calls == 0
+
+
+def test_context_adjustment_basis_must_match_before_rule_execution() -> None:
+    context = (
+        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
+    )
+    rule = FixtureMultiTimeframeRule(_requirements())
+
+    with pytest.raises(InvalidPredictionDataError, match="adjustment basis"):
+        run_prediction_study(
+            _prediction_dataset(AdjustmentMode.SPLIT_ADJUSTED),
+            _study(rule),
+            context_provider=FixtureContextProvider(context),
+        )
+
+    assert rule.calls == 0
+
+
+def test_contextual_signal_must_use_the_context_decision_session() -> None:
+    context = (
+        timeframe_fixtures._all_completed_context()  # pyright: ignore[reportPrivateUsage]
+    )
+    rule = BackdatedFixtureMultiTimeframeRule(_requirements())
+
+    with pytest.raises(InvalidPredictionOutputError, match="context decision session"):
+        run_prediction_study(
+            _prediction_dataset(),
+            _study(rule),
+            context_provider=FixtureContextProvider(context),
+        )
+
+    assert rule.calls == 1
 
 
 def test_incompatible_context_fails_or_skips_by_explicit_policy() -> None:

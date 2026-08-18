@@ -76,7 +76,11 @@ declaration to that provider, requires the returned QF-20/QF-21
 `MultiTimeframeContext` to match it exactly, evaluates every declared indicator
 through the QF-22/QF-35 backend-neutral contract, and then calls
 `generate_with_context()`. There are no rule-name or indicator-name branches in
-the runner.
+the runner. Before rule execution, every visible context bar must match the
+prediction dataset's canonical symbol and the context's intraday provenance
+must carry the same adjustment, OHLC, volume, adjusted-field, and corporate-
+action basis as that dataset. QuantForge does not silently convert between
+incompatible bases.
 
 Rule code receives only a `PredictionRuleContext`. It exposes bars and
 `TimeframeIndicatorOutput` values for declared timeframes and named indicators;
@@ -86,6 +90,11 @@ indicator raises `PredictionContextAccessError`. When a QF-21 context includes
 developing bars, a completed-only timeframe requirement filters that developing
 row before both indicator calculation and rule access. A developing-as-of
 requirement is accepted only from an explicitly developing QF-21 context.
+One resolved context represents one causal decision snapshot, so any signal
+returned by `generate_with_context()` must use the session of the latest visible
+primary-timeframe bar. Producing signals for earlier sessions requires the
+caller to run the rule with a separately resolved as-of context for each such
+session.
 
 The exact source-context identity, visible bar IDs, dataset-family references,
 normalized indicator metadata, requirements, and resolution status are stored
