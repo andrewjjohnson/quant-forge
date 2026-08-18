@@ -568,6 +568,15 @@ completed signal session. The builder then composes and runs configured QF-11
 outcome labelers/evaluators, flattens their typed values, and checkpoints rows
 atomically for resume.
 
+QF-29 composes this boundary with QF-28 without creating another alignment or
+indicator implementation. A multi-timeframe request selects one declared
+normalized `TimeframeIndicatorOutput`; QF-7 flattens its latest causal value and
+attaches source-bar timing/completion/staleness, QF-35 backend identity, and
+QF-14 dataset-family/feed lineage. The exact validated QF-20/QF-21 context is
+replayed for candidate generation, so feature capture and rule execution share
+one source snapshot. Multi-timeframe artifacts add Parquet while legacy
+single-timeframe datasets retain their existing identity and CSV contract.
+
 Responsibilities:
 
 - capture every strategy input and configured unused contextual feature;
@@ -576,6 +585,8 @@ Responsibilities:
   only after dispositions are fixed;
 - preserve daily-bar target/stop ambiguity;
 - document every flattened field's type, unit, source, and timing;
+- preserve multi-timeframe source timestamps, completion state, staleness,
+  normalized output/configuration, backend, and family/feed provenance;
 - bind QF-3, rule, feature, labeler, evaluator, and schema configuration into a
   deterministic identity;
 - produce resumable CSV and machine-readable schema/manifest artifacts.
@@ -583,6 +594,7 @@ Responsibilities:
 Must not:
 
 - expose any forward label to prediction generation or contextual features;
+- call TA-Lib or another indicator backend directly from QF-7;
 - invent overlap semantics for stateless rules;
 - represent excursions as executable prices;
 - place orders or alter QF-5 execution/accounting;

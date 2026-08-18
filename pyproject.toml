@@ -18,6 +18,7 @@ classifiers = [
 ]
 dependencies = [
   "exchange-calendars>=4.11,<5",
+  "pyarrow>=21,<22",
   "ta-lib==0.7.1",
 ]
 

@@ -408,6 +408,15 @@ then runs as a generic QF-11 study over the fixed candidates. Rejected and
 blocked rows receive direction-independent returns when available, while a
 missing direction makes only direction-dependent labels explicitly unavailable.
 
+For QF-29 multi-timeframe capture, QF-7 first validates the exact QF-20/QF-21
+context through QF-28, then selects only declared normalized QF-22 indicator
+outputs. Each exported value carries its source bar's observed-through and
+completion timestamps, completion state, staleness, backend/configuration
+identity, and common dataset-family/feed lineage. Appending later market bars
+may change the enclosing immutable dataset identity but must not change those
+historical feature values. Developing bars preserve their causal
+observed-through boundary separately from their expected completion boundary.
+
 Daily target/stop conflicts default to `both_same_session` and preserve the
 ambiguous range. MFE/MAE are labeled as descriptive extrema, not executable
 returns. The example winner/loser report shows all fixed bins and sample counts,

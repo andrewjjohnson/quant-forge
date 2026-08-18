@@ -248,7 +248,10 @@ declarations, export features, or execute trades. QF-22's
 layer without moving calculation responsibility into the data module. QF-28's
 prediction orchestrator composes those two existing boundaries and gives a
 rule only a restricted declared view; the context type itself remains generic
-and unchanged.
+and unchanged. QF-29 selects normalized values from that restricted view for
+QF-7 exports and records the context's bar timing, completion, age, lineage,
+and indicator provenance beside each value; it does not move feature-export
+responsibility into this data-layer type.
 It also does not silently combine provider-native higher-timeframe products
 with QuantForge-derived datasets. Multi-session daily and multi-week developing
 targets remain unsupported, matching QF-19's current completed aggregation

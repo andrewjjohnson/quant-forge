@@ -10,7 +10,6 @@ from quantforge.configuration import (
     Primitive,
     PrimitiveMapping,
     PrimitiveMappingSnapshot,
-    PrimitiveScalar,
     decimal_to_primitive,
 )
 from quantforge.prediction.errors import (
@@ -45,7 +44,7 @@ class SchemaFieldCategory(StrEnum):
     DISPOSITION = "disposition"
 
 
-type FeatureScalar = Decimal | PrimitiveScalar
+type FeatureValue = Decimal | Primitive
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +52,7 @@ class SignalFeatureValue:
     """One typed causal feature value; ``None`` means explicitly unavailable."""
 
     name: str
-    value: FeatureScalar
+    value: FeatureValue
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -63,7 +62,7 @@ class SignalFeatureValue:
                 "signal feature decimals must be finite or unavailable"
             )
 
-    def primitive_value(self) -> PrimitiveScalar:
+    def primitive_value(self) -> Primitive:
         if isinstance(self.value, Decimal):
             return decimal_to_primitive(self.value)
         return self.value
@@ -80,6 +79,7 @@ class SchemaField:
     nullable: bool
     calculation_or_source: str
     temporal_availability: str
+    provenance_snapshot: PrimitiveMappingSnapshot | None = None
 
     def __post_init__(self) -> None:
         if any(
@@ -101,7 +101,7 @@ class SchemaField:
             )
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "calculation_or_source": self.calculation_or_source,
             "category": self.category.value,
             "data_type": self.data_type,
@@ -110,6 +110,9 @@ class SchemaField:
             "temporal_availability": self.temporal_availability,
             "unit": self.unit,
         }
+        if self.provenance_snapshot is not None:
+            primitive["provenance"] = self.provenance_snapshot.to_primitive()
+        return primitive
 
 
 @dataclass(frozen=True, slots=True)

@@ -79,6 +79,22 @@ by the initial `PredictionStudy`. This makes the study a real composition rather
 than a prediction-only shortcut. The builder is provider neutral and consumes
 only a validated QF-3 `MarketDataset`.
 
+QF-29 additionally accepts `MultiTimeframeFeatureRequest` values together with
+the QF-28 `PredictionContextProvider` used by a multi-timeframe candidate rule.
+Each request names a declared timeframe, declared indicator alias, normalized
+QuantForge output, unit, and nullability. For example, an alias of `macd` and
+output of `histogram` under the `weekly` namespace becomes
+`feature_weekly_macd_histogram`. When the alias and output are identical they
+are not duplicated, so lower-timeframe relative volume can become
+`feature_five_minute_relative_volume`.
+
+The builder obtains the provider context once, validates it through the same
+QF-28 boundary used for rule execution, and replays that exact immutable
+QF-20/QF-21 context during candidate generation. A request cannot name an
+undeclared timeframe, indicator alias, or normalized output. QF-7 reads only
+`TimeframeIndicatorOutput`; it does not import TA-Lib or invoke a backend
+directly.
+
 ## Candidate identity and disposition
 
 `SignalFeatureCandidate` is a QF-11 `PredictionRecord`. It contains no future
@@ -183,6 +199,31 @@ values rather than silently replacing them. Each contextual component
 configuration is snapshotted for identity and rehashed from the actual
 `configuration()` mapping immediately after every callback; a cached
 self-reported ID cannot conceal mutated parameters.
+
+### Multi-timeframe contextual features
+
+Every requested multi-timeframe value has a sibling `__metadata` object column.
+The value remains a flat analytics column while the metadata records, for that
+exact value:
+
+- timeframe name and complete timeframe configuration;
+- QF-20/QF-21 context ID and as-of timestamp;
+- source bar ID, nominal completion timestamp, observed-through timestamp,
+  completion state, completion policy, and staleness in microseconds;
+- declared indicator alias/name, indicator configuration ID, configured
+  timeframe-indicator ID, and normalized output name;
+- complete QF-35 backend ID, contract version, wrapper/library version,
+  function, and native runtime version where applicable;
+- dataset family, exact source dataset, canonical source snapshot, and feed
+  scope.
+
+Developing values retain both their expected completion timestamp and their
+causal observed-through timestamp, so they cannot be mistaken for completed
+bars. The same provenance object is attached structurally to the value's
+`schema.json` definition. Changing a timeframe, completion policy, request,
+indicator configuration, backend identity, dataset-family reference, or source
+context changes the QF-29 dataset identity. Native and `talib_v1` results for
+the same logical indicator therefore cannot alias.
 
 ## Forward returns
 
@@ -303,6 +344,7 @@ manifest.json
 schema.json
 summary.json
 features.csv
+features.parquet  # QF-29 multi-timeframe datasets
 rows/
   <row-id>.json
 ```
@@ -331,9 +373,14 @@ from the configured outcome compositions so manifest corruption cannot replace
 their provenance. Corrupt or incompatible state fails clearly and is never
 silently reconciled.
 
-CSV is required and implemented. Parquet is intentionally not emitted because
-the repository has no existing Parquet dependency; QF-7 does not add one solely
-for a duplicate representation.
+CSV remains the compatibility artifact for every QF-7 dataset. QF-29
+multi-timeframe datasets also emit deterministic Parquet with the exact QF-7
+schema and dataset ID embedded as file metadata. Decimal values remain exact
+strings, and object/array columns use canonical JSON, matching CSV semantics.
+Completed resume validates both exports byte-for-byte. Historical
+single-timeframe QF-7 configuration, engine identity, schema serialization, and
+CSV-only behavior remain unchanged rather than silently migrating to the
+multi-timeframe contract.
 
 ## Exploratory three-feature example
 
