@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal, DecimalException
+from importlib import import_module
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -21,14 +22,29 @@ from quantforge.configuration import (
 )
 from quantforge.data import dataset_identity_matches, validate_market_dataset
 from quantforge.data.exceptions import ValidationError as MarketDataValidationError
+from quantforge.data.lineage import AdjustmentBasis
 from quantforge.data.models import (
     SCHEMA_VERSION,
     CashDividend,
     CorporateAction,
     MarketDataset,
 )
+from quantforge.data.multi_timeframe import (
+    MultiTimeframeContext,
+    MultiTimeframeContextError,
+)
 from quantforge.indicators import Indicator
+from quantforge.prediction.context import (
+    PredictionContextError,
+    PredictionContextFailurePolicy,
+    PredictionContextProvider,
+    PredictionContextRequirements,
+    available_prediction_context_manifest,
+    build_prediction_rule_context,
+    skipped_prediction_context_manifest,
+)
 from quantforge.prediction.contracts import (
+    MultiTimeframePredictionRule,
     OutcomeLabel,
     OutcomeLabeler,
     PredictionEvaluator,
@@ -60,6 +76,11 @@ from quantforge.prediction.feature_outcomes import (
     TargetStopPathValues,
 )
 from quantforge.prediction.models import PredictionMarketData
+from quantforge.prediction.multi_timeframe_features import (
+    MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION,
+    MultiTimeframeFeatureRequest,
+    capture_multi_timeframe_features,
+)
 from quantforge.prediction.signal_feature_context import (
     AtrPercentageContext,
     ContextualFeature,
@@ -87,6 +108,53 @@ from quantforge.prediction.study import (
     run_prediction_study_in_session,
 )
 
+
+class _ArrowBuffer(Protocol):
+    def to_pybytes(self) -> bytes: ...
+
+
+class _ArrowSink(Protocol):
+    def getvalue(self) -> _ArrowBuffer: ...
+
+
+class _ArrowTableFactory(Protocol):
+    def from_pylist(
+        self, rows: list[dict[str, str | int | bool | None]], *, schema: object
+    ) -> object: ...
+
+
+class _ArrowModule(Protocol):
+    Table: _ArrowTableFactory
+    BufferOutputStream: Callable[[], _ArrowSink]
+
+    def bool_(self) -> object: ...
+
+    def int64(self) -> object: ...
+
+    def string(self) -> object: ...
+
+    def field(self, name: str, data_type: object, *, nullable: bool) -> object: ...
+
+    def schema(
+        self, fields: list[object], *, metadata: dict[bytes, bytes]
+    ) -> object: ...
+
+
+class _ParquetModule(Protocol):
+    def write_table(
+        self,
+        table: object,
+        where: object,
+        *,
+        compression: str,
+        use_dictionary: bool,
+        write_statistics: bool,
+    ) -> None: ...
+
+
+pa = cast(_ArrowModule, import_module("pyarrow"))
+pq = cast(_ParquetModule, import_module("pyarrow.parquet"))
+
 _LIMITATIONS = (
     "all feature relationships are exploratory hypotheses, not validated filters",
     "MFE and MAE are research labels and do not imply executable extreme prices",
@@ -95,6 +163,9 @@ _LIMITATIONS = (
     "a prediction rule has no overlap concept",
     "CSV is the supported analytics artifact; Parquet is not emitted because the "
     "repository has no existing Parquet dependency",
+)
+_MULTI_TIMEFRAME_LIMITATIONS = tuple(
+    limitation for limitation in _LIMITATIONS if "Parquet" not in limitation
 )
 _CAUSAL_PROVENANCE_SENTINEL = "causal-prefix-not-persisted"
 
@@ -111,6 +182,37 @@ class OutcomeRun:
 
     study_id: str
     values_by_session: dict[date, PrimitiveMapping]
+
+
+@dataclass(frozen=True, slots=True)
+class _CapturedContextProvider:
+    """Replay one already-validated provider result without a second lookup."""
+
+    requirements_snapshot: PrimitiveMappingSnapshot
+    context: MultiTimeframeContext | None
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.context is None) == (self.error_message is None):
+            raise PredictionContextError(
+                "captured context provider requires exactly one result"
+            )
+
+    def get_context(
+        self, requirements: PredictionContextRequirements
+    ) -> MultiTimeframeContext:
+        if (
+            PrimitiveMappingSnapshot.capture(requirements.to_primitive())
+            != self.requirements_snapshot
+        ):
+            raise PredictionContextError(
+                "prediction context requirements changed after QF-7 capture"
+            )
+        if self.error_message is not None:
+            raise PredictionContextError(self.error_message)
+        if self.context is None:  # pragma: no cover - guarded by construction
+            raise PredictionContextError("captured prediction context is unavailable")
+        return self.context
 
 
 @dataclass(frozen=True, slots=True)
@@ -830,6 +932,8 @@ def build_signal_feature_dataset[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
     contextual_features: Sequence[ContextualFeature],
+    multi_timeframe_features: Sequence[MultiTimeframeFeatureRequest] = (),
+    context_provider: PredictionContextProvider | None = None,
     outcomes: Sequence[ConfiguredOutcome],
     output_root: Path,
     chunk_size: int = 100,
@@ -850,7 +954,32 @@ def build_signal_feature_dataset[
             "prediction strategy configuration identity is invalid"
         )
     strategy_fields = _strategy_fields(strategy)
-    sorted_features = tuple(sorted(contextual_features, key=lambda item: item.name))
+    (
+        captured_multi_timeframe_features,
+        effective_context_provider,
+        prediction_context_snapshot,
+    ) = _capture_multi_timeframe_feature_context(
+        dataset,
+        prediction_study.strategy,
+        tuple(multi_timeframe_features),
+        context_provider,
+    )
+    sorted_features = tuple(
+        sorted(
+            (*contextual_features, *captured_multi_timeframe_features),
+            key=lambda item: item.name,
+        )
+    )
+    engine_version = (
+        MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION
+        if prediction_context_snapshot is not None
+        else FEATURE_DATASET_ENGINE_VERSION
+    )
+    limitations = (
+        _MULTI_TIMEFRAME_LIMITATIONS
+        if prediction_context_snapshot is not None
+        else _LIMITATIONS
+    )
     contextual_definitions = tuple(feature.definition for feature in sorted_features)
     contextual_configuration_snapshots = tuple(
         PrimitiveMappingSnapshot.capture(feature.configuration())
@@ -892,9 +1021,11 @@ def build_signal_feature_dataset[
         )
     }
     configuration = _dataset_configuration(
+        engine_version,
         market_data,
         prediction_study,
         strategy_configuration_snapshot,
+        prediction_context_snapshot,
         strategy_fields,
         contextual_definitions,
         contextual_configuration_snapshots,
@@ -939,6 +1070,8 @@ def build_signal_feature_dataset[
             outcome_field_snapshots,
             unavailable_outcome_values,
             outcome_configuration_ids,
+            engine_version,
+            limitations,
         )
     _initialize_or_validate_progress(
         destination,
@@ -946,6 +1079,7 @@ def build_signal_feature_dataset[
         market_data,
         configuration_snapshot,
         schema,
+        engine_version,
     )
     completed_rows = _load_progress_rows(destination, feature_dataset_id, schema)
 
@@ -953,6 +1087,7 @@ def build_signal_feature_dataset[
         dataset,
         prediction_study,
         strategy_configuration_id,
+        effective_context_provider,
     )
     candidate_ids = {
         _candidate_id(market_data, candidate): candidate for candidate in candidates
@@ -1122,14 +1257,14 @@ def build_signal_feature_dataset[
             )
     result = SignalFeatureDatasetResult(
         feature_dataset_id,
-        FEATURE_DATASET_ENGINE_VERSION,
+        engine_version,
         market_data,
         configuration_snapshot,
         schema,
         ordered_rows,
         summarize_dispositions(ordered_rows),
         tuple(study_ids_by_namespace[name] for name in sorted(study_ids_by_namespace)),
-        _LIMITATIONS,
+        limitations,
     )
     _finalize_export(destination, result)
     return result
@@ -1144,6 +1279,7 @@ def _generate_candidate_population[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
     expected_strategy_configuration_id: str,
+    context_provider: PredictionContextProvider | None,
 ) -> tuple[SignalFeatureCandidate, ...]:
     _validate_strategy_configuration(
         cast(PredictionRule[SignalFeatureCandidate], prediction_study.strategy),
@@ -1160,12 +1296,101 @@ def _generate_candidate_population[
         feature_configuration=prediction_study.feature_configuration,
         result_schema_version=prediction_study.result_schema_version,
     )
-    signals = tuple(run_prediction_study(dataset, boundary_study).signals)
+    signals = tuple(
+        run_prediction_study(
+            dataset,
+            boundary_study,
+            context_provider=context_provider,
+        ).signals
+    )
     _validate_strategy_configuration(
         cast(PredictionRule[SignalFeatureCandidate], prediction_study.strategy),
         expected_strategy_configuration_id,
     )
     return signals
+
+
+def _capture_multi_timeframe_feature_context(
+    dataset: MarketDataset,
+    strategy: PredictionRule[SignalFeatureCandidate]
+    | MultiTimeframePredictionRule[SignalFeatureCandidate],
+    requests: tuple[MultiTimeframeFeatureRequest, ...],
+    context_provider: PredictionContextProvider | None,
+) -> tuple[
+    tuple[ContextualFeature, ...],
+    PredictionContextProvider | None,
+    PrimitiveMappingSnapshot | None,
+]:
+    requirements = getattr(strategy, "context_requirements", None)
+    if not isinstance(requirements, PredictionContextRequirements):
+        if not requests:
+            return (), context_provider, None
+        raise SignalFeatureDatasetError(
+            "multi-timeframe feature requests require a QF-28 prediction rule"
+        )
+    if context_provider is None or not callable(
+        getattr(context_provider, "get_context", None)
+    ):
+        raise SignalFeatureDatasetError(
+            "multi-timeframe feature requests require a context provider"
+        )
+    requirements_snapshot = PrimitiveMappingSnapshot.capture(
+        requirements.to_primitive()
+    )
+    source_context: MultiTimeframeContext | None = None
+    try:
+        provider_context = cast(object, context_provider.get_context(requirements))
+        if isinstance(provider_context, MultiTimeframeContext):
+            source_context = provider_context
+        metadata = dataset.metadata
+        rule_context = build_prediction_rule_context(
+            requirements,
+            cast(MultiTimeframeContext, provider_context),
+            prediction_dataset_id=metadata.dataset_id,
+            symbol=metadata.canonical_symbol,
+            prediction_adjustment_basis=AdjustmentBasis(
+                adjustment_mode=metadata.adjustment_mode,
+                ohlc_basis=metadata.ohlc_basis,
+                volume_basis=metadata.volume_basis,
+                corporate_action_policy=metadata.corporate_action_policy,
+                adjusted_fields_used=metadata.adjusted_fields_used,
+            ),
+        )
+    except (PredictionContextError, MultiTimeframeContextError) as error:
+        if (
+            not requests
+            and requirements.failure_policy is PredictionContextFailurePolicy.SKIP
+        ):
+            skipped_snapshot = PrimitiveMappingSnapshot.capture(
+                skipped_prediction_context_manifest(
+                    requirements,
+                    str(error),
+                    source_context=source_context,
+                )
+            )
+            captured_provider = _CapturedContextProvider(
+                requirements_snapshot,
+                source_context,
+                None if source_context is not None else str(error),
+            )
+            return (), captured_provider, skipped_snapshot
+        raise SignalFeatureDatasetError(
+            f"multi-timeframe feature context failed: {error}"
+        ) from error
+    captured_provider = _CapturedContextProvider(
+        requirements_snapshot,
+        source_context,
+    )
+    return (
+        cast(
+            tuple[ContextualFeature, ...],
+            capture_multi_timeframe_features(requests, rule_context),
+        ),
+        captured_provider,
+        PrimitiveMappingSnapshot.capture(
+            available_prediction_context_manifest(rule_context)
+        ),
+    )
 
 
 def _validate_strategy_configuration(
@@ -1343,11 +1568,13 @@ def _dataset_configuration[
     InitialOutcomeT: PredictionValues,
     InitialEvaluationT: PredictionValues,
 ](
+    engine_version: str,
     market_data: PredictionMarketData,
     prediction_study: PredictionStudy[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
     strategy_configuration_snapshot: PrimitiveMappingSnapshot,
+    prediction_context_snapshot: PrimitiveMappingSnapshot | None,
     strategy_fields: tuple[SchemaField, ...],
     contextual_definitions: tuple[SchemaField, ...],
     contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
@@ -1356,9 +1583,9 @@ def _dataset_configuration[
     outcome_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> PrimitiveMapping:
-    return {
+    configuration: PrimitiveMapping = {
         "component": "quantforge_signal_feature_dataset",
-        "engine_version": FEATURE_DATASET_ENGINE_VERSION,
+        "engine_version": engine_version,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "outcome_schema_version": OUTCOME_SCHEMA_VERSION,
         "prediction_study_template": {
@@ -1393,6 +1620,9 @@ def _dataset_configuration[
             )
         ],
     }
+    if prediction_context_snapshot is not None:
+        configuration["prediction_context"] = prediction_context_snapshot.to_primitive()
+    return configuration
 
 
 def _normalized_outcome_configuration(
@@ -1619,7 +1849,7 @@ def _enrich_candidates(
             configuration_snapshot.to_primitive()
         )
         if feature.__class__ not in _TRUSTED_ALIGNED_CONTEXT_TYPES:
-            values: dict[date, Decimal | None] = {}
+            values: dict[date, Decimal | Primitive] = {}
             for candidate in candidates:
                 value = feature.value_from_history(
                     _causal_history(
@@ -1949,12 +2179,13 @@ def _initialize_or_validate_progress(
     market_data: PredictionMarketData,
     configuration: PrimitiveMappingSnapshot,
     schema: SignalFeatureSchema,
+    engine_version: str,
 ) -> None:
     manifest: PrimitiveMapping = {
         "component": "quantforge_signal_feature_dataset",
         "configuration": configuration.to_primitive(),
         "dataset_id": feature_dataset_id,
-        "engine_version": FEATURE_DATASET_ENGINE_VERSION,
+        "engine_version": engine_version,
         "market_data": market_data.to_primitive(),
         "status": "in_progress",
     }
@@ -2106,6 +2337,8 @@ def _persist_progress_row(destination: Path, row: SignalFeatureRow) -> None:
 
 def _finalize_export(destination: Path, result: SignalFeatureDatasetResult) -> None:
     _atomic_text(destination / "features.csv", _render_csv(result))
+    if result.engine_version == MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION:
+        _atomic_bytes(destination / "features.parquet", _render_parquet(result))
     _atomic_json(destination / "summary.json", result.summary.to_primitive())
     _atomic_json(destination / "schema.json", result.schema.to_primitive())
     _atomic_json(destination / "manifest.json", result.manifest_primitive())
@@ -2125,6 +2358,8 @@ def _load_completed_result(
     outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
     outcome_configuration_ids: dict[str, str],
+    engine_version: str,
+    limitations: tuple[str, ...],
 ) -> SignalFeatureDatasetResult:
     manifest = _read_mapping(destination / "manifest.json")
     rows_by_candidate = _load_progress_rows(destination, feature_dataset_id, schema)
@@ -2145,14 +2380,14 @@ def _load_completed_result(
         )
     result = SignalFeatureDatasetResult(
         feature_dataset_id,
-        FEATURE_DATASET_ENGINE_VERSION,
+        engine_version,
         market_data,
         configuration,
         schema,
         rows,
         summarize_dispositions(rows),
         prediction_study_ids,
-        _LIMITATIONS,
+        limitations,
     )
     if (
         manifest != result.manifest_primitive()
@@ -2172,6 +2407,17 @@ def _load_completed_result(
         raise SignalFeaturePersistenceError(
             "completed signal-feature CSV does not match deterministic rows"
         )
+    if engine_version == MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION:
+        try:
+            existing_parquet = (destination / "features.parquet").read_bytes()
+        except OSError as error:
+            raise SignalFeaturePersistenceError(
+                "completed signal-feature Parquet cannot be read"
+            ) from error
+        if existing_parquet != _render_parquet(result):
+            raise SignalFeaturePersistenceError(
+                "completed signal-feature Parquet does not match deterministic rows"
+            )
     return result
 
 
@@ -2241,6 +2487,68 @@ def _render_csv(result: SignalFeatureDatasetResult) -> str:
     return stream.getvalue()
 
 
+def _render_parquet(result: SignalFeatureDatasetResult) -> bytes:
+    arrow_fields = [
+        pa.field(
+            field.name,
+            (
+                pa.bool_()
+                if field.data_type == "boolean"
+                else pa.int64()
+                if field.data_type == "integer"
+                else pa.string()
+            ),
+            nullable=field.nullable,
+        )
+        for field in result.schema.fields
+    ]
+    schema_metadata = json.dumps(
+        result.schema.to_primitive(),
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    arrow_schema = pa.schema(
+        arrow_fields,
+        metadata={
+            b"quantforge_dataset_id": result.dataset_id.encode("ascii"),
+            b"quantforge_schema": schema_metadata.encode("utf-8"),
+        },
+    )
+    rows = [
+        {
+            name: _parquet_value(row.to_primitive().get(name))
+            for name in result.schema.column_names
+        }
+        for row in result.rows
+    ]
+    table = pa.Table.from_pylist(rows, schema=arrow_schema)
+    sink = pa.BufferOutputStream()
+    pq.write_table(
+        table,
+        sink,
+        compression="zstd",
+        use_dictionary=False,
+        write_statistics=True,
+    )
+    return sink.getvalue().to_pybytes()
+
+
+def _parquet_value(value: Primitive) -> str | int | bool | None:
+    if isinstance(value, (dict, list)):
+        return json.dumps(
+            value,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    if isinstance(value, float):
+        return str(value)
+    return value
+
+
 def _csv_value(value: Primitive) -> str | int | float | bool | None:
     if isinstance(value, (dict, list)):
         return json.dumps(
@@ -2274,6 +2582,26 @@ def _atomic_text(path: Path, text: str) -> None:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
             stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    except OSError as error:
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise SignalFeaturePersistenceError(
+            f"failed to atomically persist signal-feature artifact: {path.name}"
+        ) from error
+
+
+def _atomic_bytes(path: Path, payload: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary_name, path)

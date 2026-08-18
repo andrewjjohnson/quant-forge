@@ -197,6 +197,13 @@ ignored `reports/feature-analysis/`. See
 [`signal-feature-datasets.md`](signal-feature-datasets.md) for schemas, formulas,
 resume behavior, and research limitations.
 
+Run the focused QF-29 causal capture, provenance, backend-identity, Parquet, and
+resume tests with:
+
+```bash
+uv run pytest tests/unit/prediction/test_multi_timeframe_feature_dataset.py
+```
+
 Downloaded provider responses remain under ignored `data/`; structured results
 remain under ignored `reports/`. Use `--refresh` only when intentionally
 retrieving a new immutable provider revision. Never stage either directory.

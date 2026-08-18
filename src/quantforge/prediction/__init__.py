@@ -162,6 +162,12 @@ from quantforge.prediction.models import (
     PredictionSignal,
     PredictionStrategyOutput,
 )
+from quantforge.prediction.multi_timeframe_features import (
+    MULTI_TIMEFRAME_FEATURE_CONTRACT_VERSION,
+    MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION,
+    MULTI_TIMEFRAME_FEATURE_ENGINE_VERSION,
+    MultiTimeframeFeatureRequest,
+)
 from quantforge.prediction.outcomes import (
     NextSessionOpenGapOutcomeLabeler,
     NextSessionOpenGapValues,
@@ -231,6 +237,9 @@ __all__ = [
     "FEATURE_DATASET_ENGINE_VERSION",
     "FEATURE_SCHEMA_VERSION",
     "FOCUSED_REASONS",
+    "MULTI_TIMEFRAME_FEATURE_CONTRACT_VERSION",
+    "MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION",
+    "MULTI_TIMEFRAME_FEATURE_ENGINE_VERSION",
     "OUTCOME_SCHEMA_VERSION",
     "PREDICTION_ARTIFACT_FILENAMES",
     "PREDICTION_BACKEND_COMPARISON_ARTIFACT_FILENAMES",
@@ -272,6 +281,7 @@ __all__ = [
     "InvalidPredictionDataError",
     "InvalidPredictionOutputError",
     "MetricSummary",
+    "MultiTimeframeFeatureRequest",
     "MultiTimeframePredictionRule",
     "NamedPredictionIndicatorOutput",
     "NextSessionOpenGapOutcomeLabeler",

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal, DecimalException
 from typing import Protocol
 
-from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.data.lineage import FeedScope
 from quantforge.data.models import MarketDataset
 from quantforge.indicators import (
@@ -39,7 +39,7 @@ class ContextualFeature(Protocol):
 
     def configuration(self) -> PrimitiveMapping: ...
 
-    def value_from_history(self, history: MarketDataset) -> Decimal | None: ...
+    def value_from_history(self, history: MarketDataset) -> Decimal | Primitive: ...
 
 
 @dataclass(frozen=True, slots=True)
