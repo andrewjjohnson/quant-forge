@@ -186,14 +186,15 @@ def _grid(
     stability: StabilityConfig | None = None,
     factory: FixtureStudyFactory | None = None,
 ) -> PredictionGridStudy:
+    context = fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
+    family_id = context.source_consistency.family_id
+    assert family_id is not None
     return PredictionGridStudy(
         dataset=fixtures._prediction_dataset(),  # pyright: ignore[reportPrivateUsage]
-        dataset_family_fingerprint="family-spy-fixture",
+        dataset_family_fingerprint=family_id,
         study_factory=FixtureStudyFactory() if factory is None else factory,
         analyzer=FixtureAnalyzer() if analyzer is None else analyzer,
-        context_provider=fixtures.FixtureContextProvider(
-            fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
-        ),
+        context_provider=fixtures.FixtureContextProvider(context),
         context_environment=PredictionContextEnvironment.create(
             "fixture_context_provider", "1", {"dataset_family": "fixture"}
         ),
@@ -382,18 +383,19 @@ def test_context_and_normalized_indicator_cache_reuses_only_compatible_identity(
     None
 ):
     requirements = fixtures._requirements(window=2)  # pyright: ignore[reportPrivateUsage]
-    provider = fixtures.FixtureContextProvider(
-        fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
-    )
+    context = fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
+    family_id = context.source_consistency.family_id
+    assert family_id is not None
+    provider = fixtures.FixtureContextProvider(context)
     cache = PredictionGridExecutionCache(
-        dataset_family_fingerprint="family-spy-fixture",
+        dataset_family_fingerprint=family_id,
         backend=_backend_environment(),
         context_environment=PredictionContextEnvironment.create(
             "fixture_context_provider", "1", {"dataset_family": "fixture"}
         ),
     )
 
-    context = cache.context(requirements, provider)
+    assert cache.context(requirements, provider) is context
     assert cache.context(requirements, provider) is context
     indicator = requirements.primary.indicators[0]
     first = cache.resolve(
@@ -422,9 +424,10 @@ def test_context_and_normalized_indicator_cache_reuses_only_compatible_identity(
             "fixture_context_provider", "1", {"dataset_family": "fixture"}
         ),
     )
-    assert incompatible.context(requirements, provider) is context
+    with pytest.raises(PredictionContextError, match="dataset family"):
+        incompatible.context(requirements, provider)
     assert incompatible.statistics.context_hits == 0
-    assert incompatible.statistics.context_misses == 1
+    assert incompatible.statistics.context_misses == 0
 
     object.__setattr__(
         indicator.indicator,
@@ -516,6 +519,32 @@ def test_load_result_rejects_corrupt_success_artifacts(
         artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
 
     with pytest.raises(PredictionGridPersistenceError, match="artifact"):
+        grid.load_result()
+
+
+def test_load_result_rejects_trial_whose_filename_mismatches_its_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(
+        prepared: object,
+        study: PredictionStudy[Any, Any, Any],
+        **kwargs: object,
+    ) -> PredictionStudyResult[Any, Any, Any]:
+        del prepared, kwargs
+        return cast(PredictionStudyResult[Any, Any, Any], FakeResult(_window(study)))
+
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.run_prediction_study_in_session", fake_run
+    )
+    grid = _grid(tmp_path)
+    grid.run()
+    trials_path = tmp_path / grid.study_id / "trials"
+    source = next(trials_path.glob("*.json"))
+    (trials_path / "renamed.json").write_text(
+        source.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    with pytest.raises(PredictionGridPersistenceError, match="artifact path"):
         grid.load_result()
 
 

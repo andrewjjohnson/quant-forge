@@ -836,6 +836,11 @@ class PredictionGridExecutionCache(PredictionIndicatorOutputCache):
             self._context_hits += 1
             return cached
         context = provider.get_context(requirements)
+        if context.source_consistency.family_id != self._dataset_family_fingerprint:
+            raise PredictionContextError(
+                "prediction context dataset family does not match the fixed "
+                "prediction-grid dataset family"
+            )
         self._contexts[key] = context
         self._context_misses += 1
         return context
@@ -1246,10 +1251,20 @@ class _PredictionGridStore:
     def load_trials(self) -> tuple[PredictionGridTrialRecord, ...]:
         if not self.trials_path.exists():
             return ()
-        records = tuple(
-            PredictionGridTrialRecord.from_primitive(_load_mapping(path))
-            for path in sorted(self.trials_path.glob("*.json"))
-        )
+        records: list[PredictionGridTrialRecord] = []
+        trial_ids: set[str] = set()
+        for path in sorted(self.trials_path.glob("*.json")):
+            record = PredictionGridTrialRecord.from_primitive(_load_mapping(path))
+            if path.stem != record.trial_id:
+                raise PredictionGridPersistenceError(
+                    f"trial identity does not match its artifact path: {path}"
+                )
+            if record.trial_id in trial_ids:
+                raise PredictionGridPersistenceError(
+                    f"duplicate prediction trial ID: {record.trial_id}"
+                )
+            trial_ids.add(record.trial_id)
+            records.append(record)
         return tuple(sorted(records, key=lambda item: item.combination_index))
 
     def write_artifact(

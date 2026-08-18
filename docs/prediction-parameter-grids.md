@@ -110,7 +110,8 @@ Each execution owns a `PredictionGridExecutionCache`.
 - Context bars reuse a key containing the dataset-family fingerprint, context
   provider environment, timeframes, feed/session policies, staleness limits,
   and completed/developing policy. Indicator declarations are intentionally
-  excluded from that context-bar key.
+  excluded from that context-bar key. Before a returned context is cached, its
+  QF-14 source-consistency evidence must identify that same dataset family.
 - Normalized indicator output reuse additionally binds the QF-20 context ID,
   timeframe, completion policy, indicator configuration ID, complete backend
   function identity, and fixed backend configuration.
@@ -173,14 +174,17 @@ from quantforge.prediction import (
 # chronological-period, weekday, and matched-baseline records.
 grid = PredictionGridStudy(
     dataset=spy_prediction_dataset,
-    dataset_family_fingerprint=spy_context_family.manifest_id,
+    dataset_family_fingerprint=spy_context_family.family_id,
     study_factory=confluence_factory,
     analyzer=comparison_analyzer,
     context_provider=cached_spy_context_provider,
     context_environment=PredictionContextEnvironment.create(
         "cached_spy_qf20_context",
         "1",
-        {"dataset_family_manifest_id": spy_context_family.manifest_id},
+        {
+            "dataset_family_id": spy_context_family.family_id,
+            "dataset_family_manifest_id": spy_context_family.manifest_id,
+        },
     ),
     indicator_backend=PredictionIndicatorBackendEnvironment.create(
         backend_id="native_v1",
