@@ -65,6 +65,8 @@ single-timeframe rule contract. A multi-timeframe rule owns one immutable
 - the resolved backend ID, contract version, wrapper/runtime versions, and
   mapped function for every indicator requirement;
 - completed-only or developing-as-of policy per timeframe;
+- configuration-time validation that every developing-as-of indicator explicitly
+  supports causal developing bars;
 - a positive maximum context age when freshness is bounded;
 - the required exchange-session policy and provider-neutral feed scope; and
 - an explicit `FAIL` or `SKIP` policy for missing, stale, or incompatible

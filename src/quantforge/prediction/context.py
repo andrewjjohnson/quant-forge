@@ -21,6 +21,7 @@ from quantforge.data.multi_timeframe import (
     MultiTimeframeContext,
 )
 from quantforge.indicators import (
+    DevelopingBarSupport,
     IndicatorBackendIdentity,
     TimeframeIndicatorOutput,
     TimeframeNeutralIndicator,
@@ -69,6 +70,7 @@ class PredictionIndicatorRequirement:
     _configuration_id: str = field(init=False, repr=False)
     _indicator_name: str = field(init=False, repr=False)
     _backend_identity: IndicatorBackendIdentity = field(init=False, repr=False)
+    _developing_bar_support: DevelopingBarSupport = field(init=False, repr=False)
     _output_fields: tuple[str, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -110,7 +112,7 @@ class PredictionIndicatorRequirement:
             or isinstance(warm_up, bool)
             or not isinstance(cast(object, warm_up), int)
             or warm_up < 1
-            or cast(object, developing_support) is None
+            or not isinstance(cast(object, developing_support), DevelopingBarSupport)
         ):
             raise PredictionContextError(
                 "indicator requirement metadata or backend identity is invalid"
@@ -119,6 +121,7 @@ class PredictionIndicatorRequirement:
         object.__setattr__(self, "_configuration_id", configuration_id)
         object.__setattr__(self, "_indicator_name", indicator_name)
         object.__setattr__(self, "_backend_identity", backend_identity)
+        object.__setattr__(self, "_developing_bar_support", developing_support)
         object.__setattr__(self, "_output_fields", output_fields)
 
     @property
@@ -129,6 +132,10 @@ class PredictionIndicatorRequirement:
     def backend_identity(self) -> IndicatorBackendIdentity:
         return self._backend_identity
 
+    @property
+    def developing_bar_support(self) -> DevelopingBarSupport:
+        return self._developing_bar_support
+
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "alias": self.alias,
@@ -137,6 +144,7 @@ class PredictionIndicatorRequirement:
                 "configuration_id": self._configuration_id,
                 "configuration": self._configuration_snapshot.to_primitive(),
                 "backend": self._backend_identity.to_primitive(),
+                "developing_bar_support": self._developing_bar_support.value,
                 "output_fields": list(self._output_fields),
             },
         }
@@ -155,6 +163,7 @@ class PredictionIndicatorRequirement:
             or self.indicator.name != self._indicator_name
             or getattr(self.indicator, "backend_identity", None)
             != self._backend_identity
+            or self.indicator.developing_bar_support is not self._developing_bar_support
             or self.indicator.output_fields != self._output_fields
         ):
             raise PredictionContextError(
@@ -202,6 +211,17 @@ class PredictionTimeframeRequirement:
         if len(aliases) != len(set(aliases)):
             raise PredictionContextError(
                 "prediction indicator aliases must be unique per timeframe"
+            )
+        if (
+            self.completion_policy is ContextCompletionPolicy.DEVELOPING_BAR_AS_OF
+            and any(
+                item.developing_bar_support is not DevelopingBarSupport.DEVELOPING_AS_OF
+                for item in self.indicators
+            )
+        ):
+            raise PredictionContextError(
+                "developing prediction timeframe requires indicators that support "
+                "developing bars"
             )
         object.__setattr__(
             self,

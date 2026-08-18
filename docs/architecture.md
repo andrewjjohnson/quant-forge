@@ -545,6 +545,7 @@ Responsibilities:
 - retain rule, outcome, evaluator, feature, dataset, and schema provenance;
 - enforce declared multi-timeframe, completion, freshness, session, feed, and
   indicator-backend requirements before rule execution;
+- reject developing-as-of declarations whose indicators are completed-only;
 - preserve deterministic typed study rows and identities;
 - export study-specific deterministic immutable analysis artifacts.
 

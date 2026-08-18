@@ -22,6 +22,7 @@ from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
     SIMPLE_MOVING_AVERAGE_OUTPUT,
     TALIB_INDICATOR_BACKEND,
+    DevelopingBarSupport,
     Indicator,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
@@ -230,6 +231,25 @@ def test_prediction_context_requires_an_intraday_primary_timeframe() -> None:
         PredictionContextRequirements(
             by_timeframe[daily.configuration_id],
             (by_timeframe[weekly.configuration_id],),
+        )
+
+
+def test_developing_timeframe_rejects_a_completed_only_indicator() -> None:
+    class CompletedOnlySimpleMovingAverage(SimpleMovingAverage):
+        developing_bar_support = DevelopingBarSupport.COMPLETED_ONLY
+
+    _, four_hour, _, _ = timeframe_fixtures._timeframes()  # pyright: ignore[reportPrivateUsage]
+    indicator = PredictionIndicatorRequirement(
+        "trend",
+        CompletedOnlySimpleMovingAverage(SimpleMovingAverageParameters(2)),
+    )
+
+    with pytest.raises(PredictionContextError, match=r"indicators.*developing bars"):
+        PredictionTimeframeRequirement(
+            four_hour,
+            FeedScope.consolidated(),
+            (indicator,),
+            completion_policy=ContextCompletionPolicy.DEVELOPING_BAR_AS_OF,
         )
 
 
