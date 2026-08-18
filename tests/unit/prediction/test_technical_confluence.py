@@ -1,5 +1,6 @@
 import json
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TypedDict, cast
@@ -22,6 +23,7 @@ from quantforge.indicators import (
     RelativeVolumeParameters,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
+    TimeframeIndicatorOutput,
     TimeframeNeutralIndicator,
     VolumeMovingAverage,
     VolumeMovingAverageParameters,
@@ -29,6 +31,7 @@ from quantforge.indicators import (
 from quantforge.prediction import (
     ForwardReturnValues,
     InvalidPredictionDataError,
+    PredictionContextError,
     PredictionContextRequirements,
     PredictionDirection,
     PredictionIndicatorRequirement,
@@ -115,6 +118,46 @@ def _context(case: _FixtureCase) -> MultiTimeframeContext:
             ),
         }
     )
+
+
+class _CorruptingIndicatorCache:
+    def __init__(self, corruption: str) -> None:
+        self.corruption = corruption
+
+    def resolve(
+        self,
+        requirement: PredictionIndicatorRequirement,
+        context: MultiTimeframeContext,
+        timeframe: Timeframe,
+        completion_policy: ContextCompletionPolicy,
+    ) -> TimeframeIndicatorOutput:
+        output = requirement.evaluate(context, timeframe, completion_policy)
+        if self.corruption == "future_timestamp":
+            return replace(
+                output,
+                bar_end_timestamps=(
+                    *output.bar_end_timestamps[:-1],
+                    output.bar_end_timestamps[-1] + timedelta(days=365),
+                ),
+            )
+        if self.corruption == "lineage":
+            return replace(
+                output,
+                dataset_reference=replace(
+                    output.dataset_reference, dataset_id="foreign-dataset"
+                ),
+            )
+        if self.corruption == "metadata":
+            return replace(
+                output,
+                configuration_id="foreign-configuration",
+                source_fields=(MarketField.OPEN,),
+                warm_up_bars=output.warm_up_bars + 1,
+            )
+        return replace(
+            output,
+            fields=(replace(output.fields[0], name="foreign_output"),),
+        )
 
 
 def _rule(
@@ -212,6 +255,28 @@ def _rule(
         TechnicalConfluenceParameters(up, down, "fixture_v1"),
         requirements,
     )
+
+
+@pytest.mark.parametrize(
+    "corruption", ["future_timestamp", "lineage", "metadata", "output_fields"]
+)
+def test_cached_indicator_output_must_match_the_exact_causal_source(
+    corruption: str,
+) -> None:
+    rule = _rule()
+
+    with pytest.raises(
+        PredictionContextError,
+        match="resolved indicator output does not match its causal source",
+    ):
+        build_prediction_rule_context(
+            rule.context_requirements,
+            _context(_cases()[0]),
+            prediction_dataset_id=_dataset().metadata.dataset_id,
+            symbol="SPY",
+            prediction_adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
+            indicator_output_cache=_CorruptingIndicatorCache(corruption),
+        )
 
 
 def _study(rule: TechnicalConfluencePredictionRule):

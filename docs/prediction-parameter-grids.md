@@ -119,6 +119,11 @@ The cache calls the existing QF-35-normalized indicator contract. Grid
 orchestration does not import or call TA-Lib directly. Cache hits first
 revalidate the live indicator metadata against its captured declaration, so a
 mutated indicator cannot receive output computed for its earlier configuration.
+Every fresh or cached output is then checked against the exact restricted bar
+IDs, end timestamps, completion states, dataset-family lineage, timeframe,
+indicator/configuration/backend identity, source and output fields, and warm-up
+metadata before strategy logic can access it. Custom and stale caches therefore
+cannot introduce bars beyond the causal decision boundary.
 
 ## Multiple comparisons
 
