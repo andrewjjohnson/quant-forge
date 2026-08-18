@@ -586,8 +586,13 @@ class TechnicalConfluencePredictionRule:
             for item in self.parameters.down_conditions
             if item.enabled
         )
+        has_unavailable_condition = any(
+            item.status is TechnicalConditionStatus.UNAVAILABLE for item in results
+        )
         outcome = (
-            TechnicalConfluenceOutcome.UP
+            TechnicalConfluenceOutcome.NO_PREDICTION
+            if has_unavailable_condition
+            else TechnicalConfluenceOutcome.UP
             if up_passed and not down_passed
             else TechnicalConfluenceOutcome.DOWN
             if down_passed and not up_passed

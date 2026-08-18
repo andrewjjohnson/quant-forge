@@ -421,6 +421,51 @@ def test_future_context_bar_is_rejected_before_rule_evaluation() -> None:
         )
 
 
+def test_unavailable_condition_forces_abstention_when_other_side_passes() -> None:
+    case = _cases()[1]
+    base_rule = _rule()
+    _, _, _, weekly = timeframe_fixtures._timeframes()  # pyright: ignore[reportPrivateUsage]
+    warming_up_condition = TechnicalCondition(
+        "up_weekly_warmup",
+        "weekly",
+        weekly,
+        TechnicalConditionOperand.indicator(
+            "trend", SIMPLE_MOVING_AVERAGE_OUTPUT, "price_per_share"
+        ),
+        TechnicalConditionOperator.CROSSES_ABOVE,
+        Decimal("10"),
+    )
+    up_conditions = tuple(
+        warming_up_condition if item.name == "up_weekly_trend" else item
+        for item in base_rule.parameters.up_conditions
+    )
+    rule = TechnicalConfluencePredictionRule(
+        TechnicalConfluenceParameters(
+            up_conditions,
+            base_rule.parameters.down_conditions,
+            "unavailable_guard_v1",
+        ),
+        base_rule.context_requirements,
+    )
+    study, _ = _study(rule)
+
+    result = run_prediction_study(
+        _dataset(),
+        study,
+        context_provider=study_fixtures.FixtureContextProvider(_context(case)),
+    )
+
+    candidate = result.signals[0]
+    assert candidate.disposition is SignalDisposition.REJECTED
+    assert candidate.direction is None
+    assert candidate.features_primitive()["prediction_outcome"] == (
+        TechnicalConfluenceOutcome.NO_PREDICTION.value
+    )
+    assert candidate.features_primitive()["condition_up_weekly_warmup_status"] == (
+        TechnicalConditionStatus.UNAVAILABLE.value
+    )
+
+
 def test_crossover_boundaries_are_strict_at_current_and_inclusive_at_previous() -> None:
     case = _cases()[0]
     base_rule = _rule()
