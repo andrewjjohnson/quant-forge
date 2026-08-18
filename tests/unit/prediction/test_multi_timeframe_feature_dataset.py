@@ -31,6 +31,7 @@ from quantforge.prediction import (
     MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION,
     ForwardReturnValues,
     MultiTimeframeFeatureRequest,
+    PredictionContextFailurePolicy,
     PredictionContextRequirements,
     PredictionDirection,
     PredictionIndicatorRequirement,
@@ -460,13 +461,70 @@ def test_context_identity_is_bound_without_requested_feature_columns(
     )
 
     assert first.dataset_id != second.dataset_id
-    assert first.configuration["prediction_context_id"] == source_context.context_id
-    assert second.configuration["prediction_context_id"] == shifted_context.context_id
+    first_prediction_context = cast(
+        PrimitiveMapping, first.configuration["prediction_context"]
+    )
+    second_prediction_context = cast(
+        PrimitiveMapping, second.configuration["prediction_context"]
+    )
+    assert first_prediction_context["status"] == "available"
+    assert second_prediction_context["status"] == "available"
+    assert (
+        cast(PrimitiveMapping, first_prediction_context["source_context"])["context_id"]
+        == source_context.context_id
+    )
+    assert (
+        cast(PrimitiveMapping, second_prediction_context["source_context"])[
+            "context_id"
+        ]
+        == shifted_context.context_id
+    )
     assert first.engine_version == MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION
     assert second.engine_version == MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION
     assert first_rule.generate_calls == second_rule.generate_calls == 1
     assert first_provider.requests == [first_rule.context_requirements]
     assert second_provider.requests == [second_rule.context_requirements]
+
+
+def test_skip_policy_produces_context_bound_empty_dataset_without_feature_requests(
+    tmp_path: Path,
+) -> None:
+    requirements = study_fixtures._requirements(  # pyright: ignore[reportPrivateUsage]
+        feed_scope=FeedScope.iex_only(),
+        failure_policy=PredictionContextFailurePolicy.SKIP,
+    )
+    source_context = study_fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
+    first, first_rule, first_provider = _build(
+        tmp_path,
+        context=source_context,
+        requirements=requirements,
+        requests=(),
+    )
+    shifted_context = _shifted_context(source_context)
+    second, second_rule, second_provider = _build(
+        tmp_path,
+        context=shifted_context,
+        requirements=requirements,
+        requests=(),
+    )
+
+    assert first.rows == second.rows == ()
+    assert first.dataset_id != second.dataset_id
+    assert first_rule.generate_calls == second_rule.generate_calls == 0
+    assert first_provider.requests == [requirements]
+    assert second_provider.requests == [requirements]
+    first_prediction_context = cast(
+        PrimitiveMapping, first.configuration["prediction_context"]
+    )
+    second_prediction_context = cast(
+        PrimitiveMapping, second.configuration["prediction_context"]
+    )
+    assert first_prediction_context["status"] == "skipped"
+    assert second_prediction_context["status"] == "skipped"
+    assert first_prediction_context["source_context"] == source_context.to_primitive()
+    assert second_prediction_context["source_context"] == (
+        shifted_context.to_primitive()
+    )
 
 
 def test_progress_manifest_uses_selected_multi_timeframe_engine_version(

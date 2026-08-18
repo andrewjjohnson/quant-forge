@@ -88,13 +88,17 @@ output of `histogram` under the `weekly` namespace becomes
 are not duplicated, so lower-timeframe relative volume can become
 `feature_five_minute_relative_volume`.
 
-The builder obtains the provider context once, validates it through the same
-QF-28 boundary used for rule execution, binds its context ID into the dataset
-configuration even when no extra feature columns are requested, and replays
-that exact immutable QF-20/QF-21 context during candidate generation. A request
-cannot name an undeclared timeframe, indicator alias, or normalized output.
-QF-7 reads only `TimeframeIndicatorOutput`; it does not import TA-Lib or invoke
-a backend directly.
+The builder obtains the provider context once and validates it through the same
+QF-28 boundary used for rule execution. It binds the resulting available or
+skipped QF-28 context manifest into the dataset configuration even when no extra
+feature columns are requested, then replays that exact immutable context result
+during candidate generation. A rule using the QF-28 `skip` failure policy can
+therefore produce a deterministic empty, context-bound dataset. Requested
+feature columns still fail closed when no valid context exists because their
+schema requires resolved causal provenance. A request cannot name an undeclared
+timeframe, indicator alias, or normalized output. QF-7 reads only
+`TimeframeIndicatorOutput`; it does not import TA-Lib or invoke a backend
+directly.
 
 ## Candidate identity and disposition
 

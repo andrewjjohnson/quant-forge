@@ -36,9 +36,12 @@ from quantforge.data.multi_timeframe import (
 from quantforge.indicators import Indicator
 from quantforge.prediction.context import (
     PredictionContextError,
+    PredictionContextFailurePolicy,
     PredictionContextProvider,
     PredictionContextRequirements,
+    available_prediction_context_manifest,
     build_prediction_rule_context,
+    skipped_prediction_context_manifest,
 )
 from quantforge.prediction.contracts import (
     MultiTimeframePredictionRule,
@@ -186,7 +189,14 @@ class _CapturedContextProvider:
     """Replay one already-validated provider result without a second lookup."""
 
     requirements_snapshot: PrimitiveMappingSnapshot
-    context: MultiTimeframeContext
+    context: MultiTimeframeContext | None
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.context is None) == (self.error_message is None):
+            raise PredictionContextError(
+                "captured context provider requires exactly one result"
+            )
 
     def get_context(
         self, requirements: PredictionContextRequirements
@@ -198,6 +208,10 @@ class _CapturedContextProvider:
             raise PredictionContextError(
                 "prediction context requirements changed after QF-7 capture"
             )
+        if self.error_message is not None:
+            raise PredictionContextError(self.error_message)
+        if self.context is None:  # pragma: no cover - guarded by construction
+            raise PredictionContextError("captured prediction context is unavailable")
         return self.context
 
 
@@ -943,7 +957,7 @@ def build_signal_feature_dataset[
     (
         captured_multi_timeframe_features,
         effective_context_provider,
-        prediction_context_id,
+        prediction_context_snapshot,
     ) = _capture_multi_timeframe_feature_context(
         dataset,
         prediction_study.strategy,
@@ -958,12 +972,12 @@ def build_signal_feature_dataset[
     )
     engine_version = (
         MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION
-        if prediction_context_id is not None
+        if prediction_context_snapshot is not None
         else FEATURE_DATASET_ENGINE_VERSION
     )
     limitations = (
         _MULTI_TIMEFRAME_LIMITATIONS
-        if prediction_context_id is not None
+        if prediction_context_snapshot is not None
         else _LIMITATIONS
     )
     contextual_definitions = tuple(feature.definition for feature in sorted_features)
@@ -1011,7 +1025,7 @@ def build_signal_feature_dataset[
         market_data,
         prediction_study,
         strategy_configuration_snapshot,
-        prediction_context_id,
+        prediction_context_snapshot,
         strategy_fields,
         contextual_definitions,
         contextual_configuration_snapshots,
@@ -1302,7 +1316,11 @@ def _capture_multi_timeframe_feature_context(
     | MultiTimeframePredictionRule[SignalFeatureCandidate],
     requests: tuple[MultiTimeframeFeatureRequest, ...],
     context_provider: PredictionContextProvider | None,
-) -> tuple[tuple[ContextualFeature, ...], PredictionContextProvider | None, str | None]:
+) -> tuple[
+    tuple[ContextualFeature, ...],
+    PredictionContextProvider | None,
+    PrimitiveMappingSnapshot | None,
+]:
     requirements = getattr(strategy, "context_requirements", None)
     if not isinstance(requirements, PredictionContextRequirements):
         if not requests:
@@ -1319,12 +1337,15 @@ def _capture_multi_timeframe_feature_context(
     requirements_snapshot = PrimitiveMappingSnapshot.capture(
         requirements.to_primitive()
     )
+    source_context: MultiTimeframeContext | None = None
     try:
-        source_context = context_provider.get_context(requirements)
+        provider_context = cast(object, context_provider.get_context(requirements))
+        if isinstance(provider_context, MultiTimeframeContext):
+            source_context = provider_context
         metadata = dataset.metadata
         rule_context = build_prediction_rule_context(
             requirements,
-            source_context,
+            cast(MultiTimeframeContext, provider_context),
             prediction_dataset_id=metadata.dataset_id,
             symbol=metadata.canonical_symbol,
             prediction_adjustment_basis=AdjustmentBasis(
@@ -1336,6 +1357,23 @@ def _capture_multi_timeframe_feature_context(
             ),
         )
     except (PredictionContextError, MultiTimeframeContextError) as error:
+        if (
+            not requests
+            and requirements.failure_policy is PredictionContextFailurePolicy.SKIP
+        ):
+            skipped_snapshot = PrimitiveMappingSnapshot.capture(
+                skipped_prediction_context_manifest(
+                    requirements,
+                    str(error),
+                    source_context=source_context,
+                )
+            )
+            captured_provider = _CapturedContextProvider(
+                requirements_snapshot,
+                source_context,
+                None if source_context is not None else str(error),
+            )
+            return (), captured_provider, skipped_snapshot
         raise SignalFeatureDatasetError(
             f"multi-timeframe feature context failed: {error}"
         ) from error
@@ -1349,7 +1387,9 @@ def _capture_multi_timeframe_feature_context(
             capture_multi_timeframe_features(requests, rule_context),
         ),
         captured_provider,
-        rule_context.context_id,
+        PrimitiveMappingSnapshot.capture(
+            available_prediction_context_manifest(rule_context)
+        ),
     )
 
 
@@ -1534,7 +1574,7 @@ def _dataset_configuration[
         SignalFeatureCandidate, InitialOutcomeT, InitialEvaluationT
     ],
     strategy_configuration_snapshot: PrimitiveMappingSnapshot,
-    prediction_context_id: str | None,
+    prediction_context_snapshot: PrimitiveMappingSnapshot | None,
     strategy_fields: tuple[SchemaField, ...],
     contextual_definitions: tuple[SchemaField, ...],
     contextual_configuration_snapshots: tuple[PrimitiveMappingSnapshot, ...],
@@ -1580,8 +1620,8 @@ def _dataset_configuration[
             )
         ],
     }
-    if prediction_context_id is not None:
-        configuration["prediction_context_id"] = prediction_context_id
+    if prediction_context_snapshot is not None:
+        configuration["prediction_context"] = prediction_context_snapshot.to_primitive()
     return configuration
 
 
