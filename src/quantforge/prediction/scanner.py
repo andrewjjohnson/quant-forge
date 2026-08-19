@@ -423,10 +423,7 @@ class PredictionAlert:
             rule_id=self.rule_id,
             rule_implementation_version=self.rule_implementation_version,
             rule_configuration_id=self.rule_configuration_id,
-            historical_study_id=self.historical_study.study_id,
-            historical_dataset_fingerprint=(
-                self.historical_study.historical_dataset_fingerprint
-            ),
+            historical_study=self.historical_study,
             source_mode=cast(str, provenance["source_mode"]),
             indicators=self.indicators,
             decision_timestamp=self.decision_timestamp,
@@ -1074,10 +1071,7 @@ def _build_alert(
             rule_id=binding.rule.name,
             rule_implementation_version=binding.rule.implementation_version,
             rule_configuration_id=binding.rule.configuration_id,
-            historical_study_id=binding.historical_study.study_id,
-            historical_dataset_fingerprint=(
-                binding.historical_study.historical_dataset_fingerprint
-            ),
+            historical_study=binding.historical_study,
             source_mode=snapshot.source_mode,
             indicators=indicators,
             decision_timestamp=decision_timestamp,
@@ -1111,8 +1105,7 @@ def _alert_identity_primitive(
     rule_id: str,
     rule_implementation_version: str,
     rule_configuration_id: str,
-    historical_study_id: str,
-    historical_dataset_fingerprint: str,
+    historical_study: HistoricalPredictionStudyReference,
     source_mode: str,
     indicators: tuple[PrimitiveMappingSnapshot, ...],
     decision_timestamp: datetime,
@@ -1139,8 +1132,7 @@ def _alert_identity_primitive(
         "rule_id": rule_id,
         "rule_implementation_version": rule_implementation_version,
         "rule_configuration_id": rule_configuration_id,
-        "historical_study_id": historical_study_id,
-        "historical_dataset_fingerprint": historical_dataset_fingerprint,
+        "historical_study": historical_study.to_primitive(),
         "source_mode": source_mode,
         "indicator_configurations": indicator_configurations,
         "decision_timestamp": decision_timestamp.astimezone(UTC).isoformat(),
@@ -1282,10 +1274,7 @@ def _deduplication_key(alert: PredictionAlert, policy: AlertDeduplicationPolicy)
             "rule_id": alert.rule_id,
             "rule_implementation_version": alert.rule_implementation_version,
             "rule_configuration_id": alert.rule_configuration_id,
-            "historical_study_id": alert.historical_study.study_id,
-            "historical_dataset_fingerprint": (
-                alert.historical_study.historical_dataset_fingerprint
-            ),
+            "historical_study": alert.historical_study.to_primitive(),
             "indicator_configurations": indicator_configurations,
             "decision_timestamp": alert.decision_timestamp.astimezone(UTC).isoformat(),
             "completion_policy": alert.completion_policy,

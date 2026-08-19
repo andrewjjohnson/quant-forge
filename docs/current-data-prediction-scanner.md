@@ -97,12 +97,12 @@ Alert schema version 1 includes:
   summary, and optional sample count; and
 - an explicit research-only/no-order disclaimer.
 
-The alert ID binds symbol, study, rule/version/configuration, normalized
-indicator configuration/backend identities, primary decision timestamp,
-completion policy, exact context identity, and source mode. Binding source mode
-ensures that operational provenance changes also change the artifact ID, so a
-source-mode transition cannot produce different serialized bytes under an
-existing alert ID.
+The alert ID binds symbol, the complete serialized historical-study reference,
+rule/version/configuration, normalized indicator configuration/backend
+identities, primary decision timestamp, completion policy, exact context
+identity, and source mode. Binding the full study reference and source mode
+ensures that metadata or operational-provenance changes cannot produce
+different serialized bytes under an existing alert ID.
 Alert construction has no broker, order, fill, portfolio, or outcome-label
 dependency.
 

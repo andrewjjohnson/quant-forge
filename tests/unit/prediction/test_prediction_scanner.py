@@ -462,6 +462,50 @@ def test_source_mode_change_produces_a_distinct_idempotent_artifact(
     }
 
 
+def test_historical_metadata_change_produces_a_distinct_idempotent_artifact(
+    tmp_path: Path,
+) -> None:
+    rule = _rule()
+    context = _case_context(0)
+    source = _source(context)
+    output_directory = tmp_path / "alerts"
+    sink = JsonFilePredictionAlertSink(output_directory)
+    store = InMemoryAlertDeduplicationStore()
+    references = tuple(
+        HistoricalPredictionStudyReference.capture(
+            study_id="validated-study-1",
+            rule=rule,
+            historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
+            adjustment_basis=source.adjustment_basis,
+            summary={"validation_note": validation_note},
+            sample_count=sample_count,
+        )
+        for validation_note, sample_count in (("original", 42), ("corrected", 43))
+    )
+
+    alerts = tuple(
+        PredictionScanner(
+            source,
+            (PredictionScannerRuleBinding(rule, reference),),
+            (sink,),
+            store,
+            AlertDeduplicationPolicy.DECISION_BAR,
+        )
+        .scan(as_of=context.as_of)
+        .alerts[0]
+        for reference in references
+    )
+
+    assert alerts[0].alert_id != alerts[1].alert_id
+    assert alerts[0].serialize() != alerts[1].serialize()
+    assert alerts[0].identity_primitive()["historical_study"] == (
+        references[0].to_primitive()
+    )
+    assert {path.name for path in output_directory.glob("*.json")} == {
+        f"{alert.alert_id}.json" for alert in alerts
+    }
+
+
 def test_no_prediction_is_audited_without_emitting_an_alert() -> None:
     rule = _rule()
     context = _case_context(2)
