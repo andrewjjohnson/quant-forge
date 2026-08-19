@@ -187,4 +187,6 @@ and auditability only; they are not market evidence or profitability results.
 QF-31 does not select a best rule, compare parameters, alert, place orders,
 simulate fills, calculate portfolio returns, model options, or claim
 profitability. Deterministic parameter comparison remains QF-32 scope, and
-scanner/alert behavior remains QF-33 scope.
+scanner/alert behavior is implemented separately by QF-33 without changing this
+rule contract. See
+[`current-data-prediction-scanner.md`](current-data-prediction-scanner.md).

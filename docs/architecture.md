@@ -557,6 +557,15 @@ uses explicit `talib_v1` standard indicators plus normalized QF-27 relative
 volume; the rule never imports or calls TA-Lib. See
 `docs/technical-confluence-prediction.md`.
 
+QF-33 adds a research-only current-data scanner above those same contracts. An
+injected ingestion/data adapter refreshes or replays canonical data and rebuilds
+the declared QF-20/QF-21 context. The scanner requires an exact validated-study
+reference, fails on rule/indicator/backend/policy drift, invokes the existing
+QF-28/QF-31 evaluation path, and emits identity-bearing alerts through generic
+console or JSON sinks. Deduplication is explicit and persistent-capable. No
+outcome label, provider credential, broker, order, fill, or portfolio model
+enters this path. See `docs/current-data-prediction-scanner.md`.
+
 Responsibilities:
 
 - preserve a strict boundary between contemporaneous features and future labels;
@@ -568,6 +577,10 @@ Responsibilities:
 - reject developing-as-of declarations whose indicators are completed-only;
 - preserve deterministic typed study rows and identities;
 - export study-specific deterministic immutable analysis artifacts.
+- evaluate a validated historical multi-timeframe rule against an exact current
+  causal context without changing its rule or indicator semantics;
+- preserve alert identity, causal evidence, source provenance, historical-study
+  parity, and deterministic deduplication.
 
 Must not:
 
@@ -577,6 +590,8 @@ Must not:
 - expose undeclared timeframes or backend-specific indicator objects to rules;
 - assume every prediction is directional or every evaluation is classification;
 - describe direction accuracy as executable performance.
+- refresh provider data directly from prediction or alert code;
+- submit or authorize brokerage orders from a scanner alert.
 
 ### Signal-feature datasets
 

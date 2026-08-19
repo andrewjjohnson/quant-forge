@@ -226,6 +226,26 @@ uv run pytest tests/unit/prediction/test_technical_confluence.py
 The fixed rule specification and exact comparison boundaries are documented in
 [`technical-confluence-prediction.md`](technical-confluence-prediction.md).
 
+Run the QF-33 scanner, historical/current parity, alert payload, sink,
+deduplication, developing-bar, stale-data, backend-mismatch, and temporal-safety
+tests with:
+
+```bash
+uv run pytest tests/unit/prediction/test_prediction_scanner.py
+```
+
+Run the deterministic cache-only SPY scanner example with:
+
+```bash
+uv run python scripts/scan_spy_predictions.py
+```
+
+The example constructs no provider client, reads no credentials, and submits no
+orders. It rebuilds all declared derived timeframes from the QF-30 immutable
+cache fixture and writes alerts under ignored `reports/qf33-spy-alerts/`. See
+[`current-data-prediction-scanner.md`](current-data-prediction-scanner.md) for
+the historical-study parity guard, alert schema, and deduplication policies.
+
 Downloaded provider responses remain under ignored `data/`; structured results
 remain under ignored `reports/`. Use `--refresh` only when intentionally
 retrieving a new immutable provider revision. Never stage either directory.
