@@ -238,6 +238,7 @@ from quantforge.prediction.scanner import (
     PredictionScannerRuleBinding,
     PredictionScannerSnapshot,
     PredictionScanResult,
+    PublishedAlertDeduplication,
 )
 from quantforge.prediction.signal_feature_context import (
     AtrPercentageContext,
@@ -453,6 +454,7 @@ __all__ = [
     "PredictionTrialAnalysis",
     "PredictionTrialAnalyzer",
     "PredictionValues",
+    "PublishedAlertDeduplication",
     "RsiOversoldUpParameters",
     "RsiOversoldUpPredictionStrategy",
     "RuleSummary",

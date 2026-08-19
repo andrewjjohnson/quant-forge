@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -82,6 +83,15 @@ def _required_record_bool(value: PrimitiveMapping, field_name: str) -> bool:
     return field_value
 
 
+def _required_record_sha256(value: PrimitiveMapping, field_name: str) -> str:
+    field_value = _required_record_text(value, field_name)
+    if len(field_value) != 64 or any(
+        character not in "0123456789abcdef" for character in field_value
+    ):
+        raise TypeError(f"{field_name} must be a lowercase SHA-256 fingerprint")
+    return field_value
+
+
 def _optional_record_count(value: PrimitiveMapping, field_name: str) -> int | None:
     field_value = value.get(field_name)
     if field_value is None:
@@ -121,6 +131,7 @@ class HistoricalPredictionStudyReference:
     rule_implementation_version: str
     rule_configuration_id: str
     context_requirements_id: str
+    historical_dataset_fingerprint: str
     adjustment_basis: AdjustmentBasis
     summary: PrimitiveMappingSnapshot | None = None
     sample_count: int | None = None
@@ -134,10 +145,18 @@ class HistoricalPredictionStudyReference:
                 self.rule_implementation_version,
                 self.rule_configuration_id,
                 self.context_requirements_id,
+                self.historical_dataset_fingerprint,
             )
         ):
             raise PredictionScannerError(
                 "historical study references require complete rule identity"
+            )
+        if len(self.historical_dataset_fingerprint) != 64 or any(
+            character not in "0123456789abcdef"
+            for character in self.historical_dataset_fingerprint
+        ):
+            raise PredictionScannerError(
+                "historical study dataset fingerprint must be a lowercase SHA-256"
             )
         if not isinstance(cast(object, self.adjustment_basis), AdjustmentBasis):
             raise PredictionScannerError("historical study adjustment basis is invalid")
@@ -157,6 +176,7 @@ class HistoricalPredictionStudyReference:
         *,
         study_id: str,
         rule: PredictionScannerRule,
+        historical_dataset_fingerprint: str,
         adjustment_basis: AdjustmentBasis,
         summary: PrimitiveMapping | None = None,
         sample_count: int | None = None,
@@ -170,6 +190,7 @@ class HistoricalPredictionStudyReference:
             context_requirements_id=configuration_identity(
                 rule.context_requirements.to_primitive()
             ),
+            historical_dataset_fingerprint=historical_dataset_fingerprint,
             adjustment_basis=adjustment_basis,
             summary=(
                 None if summary is None else PrimitiveMappingSnapshot.capture(summary)
@@ -207,6 +228,9 @@ class HistoricalPredictionStudyReference:
                 ),
                 context_requirements_id=_required_record_text(
                     value, "context_requirements_id"
+                ),
+                historical_dataset_fingerprint=_required_record_sha256(
+                    value, "historical_dataset_fingerprint"
                 ),
                 adjustment_basis=AdjustmentBasis(
                     AdjustmentMode(
@@ -266,6 +290,7 @@ class HistoricalPredictionStudyReference:
             "rule_implementation_version": self.rule_implementation_version,
             "rule_configuration_id": self.rule_configuration_id,
             "context_requirements_id": self.context_requirements_id,
+            "historical_dataset_fingerprint": self.historical_dataset_fingerprint,
             "adjustment_basis": self.adjustment_basis.to_primitive(),
             "summary": None if self.summary is None else self.summary.to_primitive(),
             "sample_count": self.sample_count,
@@ -392,6 +417,9 @@ class PredictionAlert:
             rule_implementation_version=self.rule_implementation_version,
             rule_configuration_id=self.rule_configuration_id,
             historical_study_id=self.historical_study.study_id,
+            historical_dataset_fingerprint=(
+                self.historical_study.historical_dataset_fingerprint
+            ),
             indicators=self.indicators,
             decision_timestamp=self.decision_timestamp,
             context_id=self.context_id,
@@ -513,12 +541,23 @@ class AlertDeduplicationClaim(Protocol):
     def release(self) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class PublishedAlertDeduplication:
+    """Identity of the published alert that caused a duplicate decision."""
+
+    alert_id: str
+
+    def __post_init__(self) -> None:
+        if not self.alert_id:
+            raise AlertPersistenceError("published duplicate alert ID is required")
+
+
 class AlertDeduplicationStore(Protocol):
     """Atomically reserve an alert key through a recoverable claim lifecycle."""
 
     def claim(
         self, deduplication_key: str, alert_id: str
-    ) -> AlertDeduplicationClaim | None: ...
+    ) -> AlertDeduplicationClaim | PublishedAlertDeduplication: ...
 
 
 class InMemoryAlertDeduplicationStore:
@@ -526,23 +565,34 @@ class InMemoryAlertDeduplicationStore:
 
     def __init__(self) -> None:
         self._claims: dict[str, tuple[str, str]] = {}
+        self._condition = threading.Condition()
 
     def claim(
         self, deduplication_key: str, alert_id: str
-    ) -> AlertDeduplicationClaim | None:
-        if deduplication_key in self._claims:
-            return None
-        self._claims[deduplication_key] = (alert_id, "pending")
+    ) -> AlertDeduplicationClaim | PublishedAlertDeduplication:
+        with self._condition:
+            while self._claims.get(deduplication_key, ("", ""))[1] == "pending":
+                self._condition.wait()
+            existing = self._claims.get(deduplication_key)
+            if existing is not None:
+                return PublishedAlertDeduplication(existing[0])
+            self._claims[deduplication_key] = (alert_id, "pending")
         return _InMemoryAlertDeduplicationClaim(self, deduplication_key, alert_id)
 
     def publish_claim(self, deduplication_key: str, alert_id: str) -> None:
-        if self._claims.get(deduplication_key) != (alert_id, "pending"):
-            raise AlertPersistenceError("in-memory deduplication claim is not pending")
-        self._claims[deduplication_key] = (alert_id, "published")
+        with self._condition:
+            if self._claims.get(deduplication_key) != (alert_id, "pending"):
+                raise AlertPersistenceError(
+                    "in-memory deduplication claim is not pending"
+                )
+            self._claims[deduplication_key] = (alert_id, "published")
+            self._condition.notify_all()
 
     def release_claim(self, deduplication_key: str, alert_id: str) -> None:
-        if self._claims.get(deduplication_key) == (alert_id, "pending"):
-            del self._claims[deduplication_key]
+        with self._condition:
+            if self._claims.get(deduplication_key) == (alert_id, "pending"):
+                del self._claims[deduplication_key]
+                self._condition.notify_all()
 
 
 @dataclass(slots=True)
@@ -579,7 +629,7 @@ class JsonFileAlertDeduplicationStore:
 
     def claim(
         self, deduplication_key: str, alert_id: str
-    ) -> AlertDeduplicationClaim | None:
+    ) -> AlertDeduplicationClaim | PublishedAlertDeduplication:
         self.state_directory.mkdir(parents=True, exist_ok=True)
         path = self._path(deduplication_key)
         lock_descriptor = os.open(
@@ -588,18 +638,18 @@ class JsonFileAlertDeduplicationStore:
             0o600,
         )
         try:
-            fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        except BaseException:
             os.close(lock_descriptor)
-            return None
+            raise
         claim = _JsonFileAlertDeduplicationClaim(
             path, lock_descriptor, deduplication_key, alert_id
         )
         try:
             existing_state = claim.read_state()
-            if existing_state == "published":
+            if existing_state is not None and existing_state[0] == "published":
                 claim.close()
-                return None
+                return PublishedAlertDeduplication(existing_state[1])
             claim.write_state("pending")
         except BaseException:
             claim.close()
@@ -615,7 +665,7 @@ class _JsonFileAlertDeduplicationClaim:
     alert_id: str
     _closed: bool = False
 
-    def read_state(self) -> str | None:
+    def read_state(self) -> tuple[str, str] | None:
         try:
             content = self.path.read_bytes()
         except FileNotFoundError:
@@ -641,17 +691,22 @@ class _JsonFileAlertDeduplicationClaim:
             raise AlertPersistenceError(
                 f"deduplication state identity is inconsistent: {self.path}"
             )
+        existing_alert_id = existing.get("alert_id")
+        if not isinstance(existing_alert_id, str) or not existing_alert_id:
+            raise AlertPersistenceError(
+                f"deduplication state alert identity is invalid: {self.path}"
+            )
         state = existing.get("state")
-        if state is None and isinstance(existing.get("alert_id"), str):
+        if state is None:
             # The original write-on-claim format did not distinguish delivery
             # from interruption. Recover it as pending so it cannot suppress an
             # undelivered alert forever.
-            return "pending"
+            return "pending", existing_alert_id
         if state not in {"pending", "published"}:
             raise AlertPersistenceError(
                 f"deduplication state lifecycle is invalid: {self.path}"
             )
-        return cast(str, state)
+        return cast(str, state), existing_alert_id
 
     def write_state(self, state: str) -> None:
         if state not in {"pending", "published"}:
@@ -839,10 +894,10 @@ class PredictionScanner:
                 )
                 continue
             deduplication_key = _deduplication_key(alert, self.deduplication_policy)
-            deduplication_claim = self.deduplication_store.claim(
+            deduplication_result = self.deduplication_store.claim(
                 deduplication_key, alert.alert_id
             )
-            if deduplication_claim is None:
+            if isinstance(deduplication_result, PublishedAlertDeduplication):
                 results.append(
                     PredictionRuleScanResult(
                         binding.rule.name,
@@ -850,10 +905,11 @@ class PredictionScanner:
                         rule_context.context_id,
                         PrimitiveMappingSnapshot.capture(evaluation.to_primitive()),
                         None,
-                        alert.alert_id,
+                        deduplication_result.alert_id,
                     )
                 )
                 continue
+            deduplication_claim = deduplication_result
             try:
                 for sink in self.sinks:
                     sink.emit(alert)
@@ -961,6 +1017,9 @@ def _build_alert(
             rule_implementation_version=binding.rule.implementation_version,
             rule_configuration_id=binding.rule.configuration_id,
             historical_study_id=binding.historical_study.study_id,
+            historical_dataset_fingerprint=(
+                binding.historical_study.historical_dataset_fingerprint
+            ),
             indicators=indicators,
             decision_timestamp=decision_timestamp,
             context_id=context.context_id,
@@ -994,6 +1053,7 @@ def _alert_identity_primitive(
     rule_implementation_version: str,
     rule_configuration_id: str,
     historical_study_id: str,
+    historical_dataset_fingerprint: str,
     indicators: tuple[PrimitiveMappingSnapshot, ...],
     decision_timestamp: datetime,
     context_id: str,
@@ -1020,6 +1080,7 @@ def _alert_identity_primitive(
         "rule_implementation_version": rule_implementation_version,
         "rule_configuration_id": rule_configuration_id,
         "historical_study_id": historical_study_id,
+        "historical_dataset_fingerprint": historical_dataset_fingerprint,
         "indicator_configurations": indicator_configurations,
         "decision_timestamp": decision_timestamp.astimezone(UTC).isoformat(),
         "context_id": context_id,
@@ -1161,6 +1222,9 @@ def _deduplication_key(alert: PredictionAlert, policy: AlertDeduplicationPolicy)
             "rule_implementation_version": alert.rule_implementation_version,
             "rule_configuration_id": alert.rule_configuration_id,
             "historical_study_id": alert.historical_study.study_id,
+            "historical_dataset_fingerprint": (
+                alert.historical_study.historical_dataset_fingerprint
+            ),
             "indicator_configurations": indicator_configurations,
             "decision_timestamp": alert.decision_timestamp.astimezone(UTC).isoformat(),
             "completion_policy": alert.completion_policy,
@@ -1193,4 +1257,5 @@ __all__ = [
     "PredictionScannerRule",
     "PredictionScannerRuleBinding",
     "PredictionScannerSnapshot",
+    "PublishedAlertDeduplication",
 ]

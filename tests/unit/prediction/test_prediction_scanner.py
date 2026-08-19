@@ -1,4 +1,5 @@
 import ast
+import concurrent.futures
 import io
 import json
 import os
@@ -49,6 +50,7 @@ from quantforge.prediction import (
     PredictionScannerRuleBinding,
     PredictionScannerSnapshot,
     PredictionTimeframeRequirement,
+    PublishedAlertDeduplication,
     TechnicalCondition,
     TechnicalConditionOperand,
     TechnicalConditionOperator,
@@ -59,6 +61,8 @@ from quantforge.prediction import (
 from quantforge.timeframes import BarCompletion, Timeframe
 from tests.unit.indicators import test_timeframe_evaluation as timeframe_fixtures
 from tests.unit.prediction import test_technical_confluence as rule_fixtures
+
+HISTORICAL_DATASET_FINGERPRINT = "a" * 64
 
 
 class _CapturingSink:
@@ -197,6 +201,7 @@ def _scanner(
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=historical,
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=source.adjustment_basis,
         summary={"validation_period": "untouched_holdout"},
         sample_count=42,
@@ -293,6 +298,7 @@ def test_accepted_alert_has_complete_causal_payload_and_dry_run_sinks(
                 HistoricalPredictionStudyReference.capture(
                     study_id="validated-study-1",
                     rule=rule,
+                    historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
                     adjustment_basis=source.adjustment_basis,
                     summary={"accuracy": "descriptive_only"},
                     sample_count=42,
@@ -320,6 +326,10 @@ def test_accepted_alert_has_complete_causal_payload_and_dry_run_sinks(
     assert payload["disclaimer"]
     historical_study = cast(PrimitiveMapping, payload["historical_study"])
     assert historical_study["sample_count"] == 42
+    assert (
+        historical_study["historical_dataset_fingerprint"]
+        == HISTORICAL_DATASET_FINGERPRINT
+    )
     assert historical_study["adjustment_basis"] == (
         source.adjustment_basis.to_primitive()
     )
@@ -411,6 +421,7 @@ def test_one_scan_can_evaluate_multiple_independently_validated_rules() -> None:
                 HistoricalPredictionStudyReference.capture(
                     study_id=f"validated-study-{index}",
                     rule=rule,
+                    historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
                     adjustment_basis=source.adjustment_basis,
                 ),
             )
@@ -475,9 +486,11 @@ def test_file_store_recovers_abandoned_pending_claims(
     store = JsonFileAlertDeduplicationStore(state_directory)
     recovered = store.claim("recoverable-key", "retried-alert")
 
-    assert recovered is not None
+    assert not isinstance(recovered, PublishedAlertDeduplication)
     recovered.publish()
-    assert store.claim("recoverable-key", "later-alert") is None
+    published = store.claim("recoverable-key", "later-alert")
+    assert isinstance(published, PublishedAlertDeduplication)
+    assert published.alert_id == "retried-alert"
 
 
 def test_file_store_blocks_an_active_claim_and_reuses_a_released_key(
@@ -487,12 +500,18 @@ def test_file_store_blocks_an_active_claim_and_reuses_a_released_key(
     second_store = JsonFileAlertDeduplicationStore(tmp_path / "dedup")
     active = first_store.claim("active-key", "first-alert")
 
-    assert active is not None
-    assert second_store.claim("active-key", "concurrent-alert") is None
+    assert not isinstance(active, PublishedAlertDeduplication)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        waiting_claim = executor.submit(
+            second_store.claim, "active-key", "replacement-alert"
+        )
+        with pytest.raises(concurrent.futures.TimeoutError):
+            waiting_claim.result(timeout=0.05)
 
-    active.release()
-    replacement = second_store.claim("active-key", "replacement-alert")
-    assert replacement is not None
+        active.release()
+        replacement = waiting_claim.result(timeout=1)
+
+    assert not isinstance(replacement, PublishedAlertDeduplication)
     replacement.publish()
 
 
@@ -502,7 +521,7 @@ def test_file_store_transition_never_truncates_the_live_state(
     state_directory = tmp_path / "dedup"
     store = JsonFileAlertDeduplicationStore(state_directory)
     claim = store.claim("atomic-key", "atomic-alert")
-    assert claim is not None
+    assert not isinstance(claim, PublishedAlertDeduplication)
     state_path = state_directory / "atomic-key.json"
     pending_content = state_path.read_bytes()
 
@@ -529,6 +548,7 @@ def test_historical_backend_or_configuration_mismatch_fails_before_data_access()
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=historical_rule,
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -541,6 +561,7 @@ def test_historical_study_reference_record_round_trips() -> None:
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=rule,
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
         summary={"validated": True},
         sample_count=42,
@@ -550,6 +571,25 @@ def test_historical_study_reference_record_round_trips() -> None:
         HistoricalPredictionStudyReference.from_primitive(reference.to_primitive())
         == reference
     )
+    assert (
+        reference.to_primitive()["historical_dataset_fingerprint"]
+        == HISTORICAL_DATASET_FINGERPRINT
+    )
+
+
+def test_historical_study_reference_requires_a_dataset_fingerprint() -> None:
+    rule = _rule()
+    reference = HistoricalPredictionStudyReference.capture(
+        study_id="validated-study-1",
+        rule=rule,
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
+        adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
+    )
+    record = dict(reference.to_primitive())
+    del record["historical_dataset_fingerprint"]
+
+    with pytest.raises(PredictionScannerError, match="record is invalid"):
+        HistoricalPredictionStudyReference.from_primitive(record)
 
 
 def test_historical_adjustment_mismatch_fails_before_rule_evaluation() -> None:
@@ -568,6 +608,7 @@ def test_historical_adjustment_mismatch_fails_before_rule_evaluation() -> None:
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=rule,
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=historical_adjustment,
     )
     sink = _CapturingSink()
@@ -736,7 +777,11 @@ def test_developing_context_can_alert_again_only_under_explicit_context_policy(
     )
     assert len(bar_results[0].alerts) == 1
     assert bar_results[1].alerts == ()
-    assert bar_results[1].rule_results[0].duplicate_alert_id is not None
+    assert exact_alert_ids[0] != exact_alert_ids[1]
+    assert (
+        bar_results[1].rule_results[0].duplicate_alert_id
+        == bar_results[0].alerts[0].alert_id
+    )
 
 
 def test_scanner_and_alert_module_has_no_direct_talib_import() -> None:

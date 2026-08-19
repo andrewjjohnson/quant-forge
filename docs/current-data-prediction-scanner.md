@@ -19,6 +19,7 @@ scanner verifies all of the following against that reference:
 - complete rule configuration and configuration ID;
 - every condition and normalized operand;
 - timeframe, session, feed, completion, freshness, and failure policies;
+- the immutable historical input-bars SHA-256 fingerprint;
 - the exact price, volume, and corporate-action adjustment basis;
 - every indicator configuration ID; and
 - resolved standard-backend ID, contract version, mapped function, Python
@@ -86,8 +87,8 @@ Alert schema version 1 includes:
 - source bar IDs, start/end timestamps, completion states, and session dates;
 - timeframe, session, feed, dataset-family, source-dataset, adjustment, and
   source-mode provenance;
-- the referenced historical study, optional summary, and optional sample
-  count; and
+- the referenced historical study, its input-dataset fingerprint, optional
+  summary, and optional sample count; and
 - an explicit research-only/no-order disclaimer.
 
 The alert ID binds symbol, study, rule/version/configuration, normalized
@@ -100,9 +101,13 @@ broker, order, fill, portfolio, or outcome-label dependency.
 Deduplication uses an exclusive pending claim so two scanner processes cannot
 emit the same key concurrently. The file-backed store holds an operating-system
 lock while sinks run, marks the claim `published` only after every sink succeeds,
-and releases a pending claim when a sink fails. If a scanner process exits while
-a claim is pending, the operating system releases its lock and the next scan
-recovers the abandoned claim instead of suppressing the alert forever.
+and releases a pending claim when a sink fails. A competing scan waits for the
+active claim: after the lock becomes available, it either retries a released or
+abandoned claim or returns the ID stored by the successful publisher. Duplicate
+scan results therefore identify the actual emitted alert artifact. If a scanner
+process exits while a claim is pending, the operating system releases its lock
+and the next scan recovers the abandoned claim instead of suppressing the alert
+forever.
 
 Lock files use stable inodes and remain in the state directory. Pending and
 published JSON states are written and synced to private temporary files, then
@@ -161,8 +166,9 @@ replay that cache. It rebuilds 4-hour, daily, and weekly artifacts, constructs
 the fixed midweek developing context, and evaluates the exact `talib_v1`
 SMA(2) configuration captured under
 `qf33_spy_fixture_parity_study_v1`. The scanner loads that identity and its
-unadjusted-price policy from a committed immutable study record; it does not
-derive the study reference from the current rule. The default developing-bar
+unadjusted-price policy, plus the fixture input-bars fingerprint, from a
+committed immutable study record; it does not derive the study reference from
+the current rule. The default developing-bar
 mode uses `examples/spy_multi_timeframe/qf33_historical_study_reference.json`;
 the completed-bars mode uses the independently validated
 `examples/spy_multi_timeframe/qf33_completed_bars_historical_study_reference.json`.

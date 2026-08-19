@@ -59,6 +59,7 @@ DEFAULT_STATE_ROOT = REPOSITORY_ROOT / "data" / "qf33-spy-alert-state"
 HISTORICAL_STUDY_RECORDS = {
     ContextCompletionPolicy.DEVELOPING_BAR_AS_OF: (
         "qf33_spy_fixture_parity_study_v1",
+        "5466d927574ed161c1fabc822433455d9f70263e81a17c961cdab5a449a8cf5e",
         REPOSITORY_ROOT
         / "examples"
         / "spy_multi_timeframe"
@@ -66,6 +67,7 @@ HISTORICAL_STUDY_RECORDS = {
     ),
     ContextCompletionPolicy.COMPLETED_BARS_ONLY: (
         "qf33_spy_fixture_completed_bars_parity_study_v1",
+        "5466d927574ed161c1fabc822433455d9f70263e81a17c961cdab5a449a8cf5e",
         REPOSITORY_ROOT
         / "examples"
         / "spy_multi_timeframe"
@@ -78,7 +80,9 @@ def load_historical_study_reference(
     completion_policy: ContextCompletionPolicy,
 ) -> HistoricalPredictionStudyReference:
     """Load the committed study record independently of the current rule."""
-    expected_study_id, path = HISTORICAL_STUDY_RECORDS[completion_policy]
+    expected_study_id, expected_dataset_fingerprint, path = HISTORICAL_STUDY_RECORDS[
+        completion_policy
+    ]
     try:
         decoded = cast(object, json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError) as error:
@@ -95,6 +99,10 @@ def load_historical_study_reference(
     if reference.study_id != expected_study_id:
         raise PredictionScannerError(
             "historical study reference ID does not match the scanner"
+        )
+    if reference.historical_dataset_fingerprint != expected_dataset_fingerprint:
+        raise PredictionScannerError(
+            "historical study dataset fingerprint does not match the scanner fixture"
         )
     return reference
 
