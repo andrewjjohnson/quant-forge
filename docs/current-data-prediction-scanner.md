@@ -64,6 +64,12 @@ parity therefore means that the same fixed context, rule configuration, and
 backend environment produce the same normalized indicator values and rule
 decision in both paths.
 
+Context failure policy is preserved per bound rule. `fail` propagates missing,
+stale, or incompatible context errors and stops the scan. `skip` records a
+stable skipped-context manifest in `PredictionRuleScanResult.context_failure`
+and continues to later rule bindings without evaluating or alerting the skipped
+rule. Rule, provenance, and scanner-contract mismatches still fail closed.
+
 Completed-bars-only remains the conservative policy. Developing mode must be
 declared by the historical rule. QF-21 then reconstructs each developing
 higher-timeframe bar only from completed canonical source intervals whose ends

@@ -12,7 +12,7 @@ from typing import cast
 import pytest
 from scripts import export_spy_multi_timeframe_context as spy_example
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data import (
     AdjustmentBasis,
     AdjustmentMode,
@@ -42,6 +42,7 @@ from quantforge.prediction import (
     JsonFilePredictionAlertSink,
     PredictionAlert,
     PredictionContextError,
+    PredictionContextFailurePolicy,
     PredictionContextRequirements,
     PredictionDirection,
     PredictionIndicatorRequirement,
@@ -105,6 +106,36 @@ class _FixtureSource:
         )
 
 
+class _SelectiveFixtureSource:
+    def __init__(
+        self,
+        delegate: _FixtureSource,
+        unavailable_requirements: PredictionContextRequirements,
+    ) -> None:
+        self.delegate = delegate
+        self.unavailable_requirements_id = configuration_identity(
+            unavailable_requirements.to_primitive()
+        )
+        self.requirement_ids: list[str] = []
+
+    def prepare_context(
+        self,
+        requirements: PredictionContextRequirements,
+        *,
+        as_of: datetime,
+        refresh: bool,
+    ) -> PredictionScannerSnapshot:
+        requirements_id = configuration_identity(requirements.to_primitive())
+        self.requirement_ids.append(requirements_id)
+        if requirements_id == self.unavailable_requirements_id:
+            raise PredictionContextError("required current context is unavailable")
+        return self.delegate.prepare_context(
+            requirements,
+            as_of=as_of,
+            refresh=refresh,
+        )
+
+
 def _rule(
     *,
     feed_scope: FeedScope = FeedScope.consolidated(),
@@ -113,6 +144,9 @@ def _rule(
     ),
     backend_id: str = TALIB_INDICATOR_BACKEND,
     maximum_age: timedelta | None = None,
+    failure_policy: PredictionContextFailurePolicy = (
+        PredictionContextFailurePolicy.FAIL
+    ),
 ) -> TechnicalConfluencePredictionRule:
     five_minute, four_hour, daily, weekly = timeframe_fixtures._timeframes()  # pyright: ignore[reportPrivateUsage]
 
@@ -136,6 +170,7 @@ def _rule(
     requirements = PredictionContextRequirements(
         PredictionTimeframeRequirement(five_minute, feed_scope),
         (requirement(four_hour), requirement(daily), requirement(weekly)),
+        failure_policy,
     )
     trend = TechnicalConditionOperand.indicator(
         "trend", SIMPLE_MOVING_AVERAGE_OUTPUT, "price_per_share"
@@ -439,9 +474,9 @@ def test_no_prediction_is_audited_without_emitting_an_alert() -> None:
     assert result.alerts == ()
     assert sink.alerts == []
     assert not result.rule_results[0].accepted
-    assert result.rule_results[0].evaluation.to_primitive()["outcome"] == (
-        "no_prediction"
-    )
+    evaluation = result.rule_results[0].evaluation
+    assert evaluation is not None
+    assert evaluation.to_primitive()["outcome"] == "no_prediction"
 
 
 def test_one_scan_can_evaluate_multiple_independently_validated_rules() -> None:
@@ -688,6 +723,70 @@ def test_stale_data_fails_before_rule_evaluation() -> None:
         _scanner(rule, _source(stale_context), _CapturingSink()).scan(
             as_of=stale_context.as_of
         )
+
+
+def test_stale_data_is_audited_when_context_policy_skips() -> None:
+    rule = _rule(
+        maximum_age=timedelta(days=1),
+        failure_policy=PredictionContextFailurePolicy.SKIP,
+    )
+    base_context = _case_context(0)
+    stale_context = _context_with_requirements(
+        base_context,
+        rule.context_requirements,
+        as_of=base_context.as_of + timedelta(days=10),
+    )
+    source = _source(stale_context)
+    sink = _CapturingSink()
+
+    result = _scanner(rule, source, sink).scan(as_of=stale_context.as_of)
+
+    rule_result = result.rule_results[0]
+    assert rule_result.skipped
+    assert not rule_result.accepted
+    assert rule_result.context_id is None
+    assert rule_result.evaluation is None
+    assert rule_result.context_failure is not None
+    failure = rule_result.context_failure.to_primitive()
+    assert failure["status"] == "skipped"
+    assert "stale" in cast(str, failure["reason"])
+    assert failure["source_context"] == stale_context.to_primitive()
+    assert source.refresh_values == [True]
+    assert sink.alerts == []
+
+
+def test_skipped_context_preparation_continues_to_later_rules() -> None:
+    skipped_rule = _rule(failure_policy=PredictionContextFailurePolicy.SKIP)
+    available_rule = _rule(backend_id="native_v1")
+    context = _case_context(0)
+    delegate = _source(context)
+    source = _SelectiveFixtureSource(delegate, skipped_rule.context_requirements)
+    sink = _CapturingSink()
+    bindings = tuple(
+        PredictionScannerRuleBinding(
+            rule,
+            HistoricalPredictionStudyReference.capture(
+                study_id=f"validated-study-{index}",
+                rule=rule,
+                historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
+                adjustment_basis=delegate.adjustment_basis,
+            ),
+        )
+        for index, rule in enumerate((skipped_rule, available_rule))
+    )
+
+    result = PredictionScanner(source, bindings, (sink,)).scan(as_of=context.as_of)
+
+    assert result.rule_results[0].skipped
+    assert result.rule_results[0].context_failure is not None
+    assert "unavailable" in cast(
+        str, result.rule_results[0].context_failure.to_primitive()["reason"]
+    )
+    assert not result.rule_results[1].skipped
+    assert result.rule_results[1].alert is not None
+    assert len(result.alerts) == len(sink.alerts) == 1
+    assert len(source.requirement_ids) == 2
+    assert delegate.refresh_values == [True]
 
 
 def test_future_context_is_rejected_and_no_alert_is_emitted() -> None:

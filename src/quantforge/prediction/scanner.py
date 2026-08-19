@@ -24,11 +24,17 @@ from quantforge.configuration import (
 from quantforge.data.intraday import IntradayBar
 from quantforge.data.lineage import AdjustmentBasis
 from quantforge.data.models import AdjustmentMode
-from quantforge.data.multi_timeframe import MultiTimeframeContext
+from quantforge.data.multi_timeframe import (
+    MultiTimeframeContext,
+    MultiTimeframeContextError,
+)
 from quantforge.prediction.context import (
+    PredictionContextError,
+    PredictionContextFailurePolicy,
     PredictionContextRequirements,
     PredictionRuleContext,
     build_prediction_rule_context,
+    skipped_prediction_context_manifest,
 )
 from quantforge.prediction.models import PredictionDirection
 from quantforge.prediction.signal_feature_models import (
@@ -782,10 +788,35 @@ class PredictionRuleScanResult:
 
     rule_id: str
     rule_configuration_id: str
-    context_id: str
-    evaluation: PrimitiveMappingSnapshot
+    context_id: str | None
+    evaluation: PrimitiveMappingSnapshot | None
     alert: PredictionAlert | None
     duplicate_alert_id: str | None = None
+    context_failure: PrimitiveMappingSnapshot | None = None
+
+    def __post_init__(self) -> None:
+        if self.context_failure is None:
+            if self.context_id is None or self.evaluation is None:
+                raise PredictionScannerError(
+                    "evaluated scanner results require context and evaluation evidence"
+                )
+            return
+        if any(
+            value is not None
+            for value in (
+                self.context_id,
+                self.evaluation,
+                self.alert,
+                self.duplicate_alert_id,
+            )
+        ):
+            raise PredictionScannerError(
+                "skipped scanner results cannot contain evaluation or alert evidence"
+            )
+
+    @property
+    def skipped(self) -> bool:
+        return self.context_failure is not None
 
     @property
     def accepted(self) -> bool:
@@ -850,25 +881,50 @@ class PredictionScanner:
         results: list[PredictionRuleScanResult] = []
         for binding in self.bindings:
             binding.historical_study.validate_rule(binding.rule)
-            snapshot = self.source.prepare_context(
-                binding.rule.context_requirements,
-                as_of=decision_as_of,
-                refresh=not dry_run,
-            )
-            if snapshot.context.as_of != decision_as_of:
-                raise PredictionScannerError(
-                    "scanner source context as-of does not match the requested decision"
+            snapshot: PredictionScannerSnapshot | None = None
+            try:
+                snapshot = self.source.prepare_context(
+                    binding.rule.context_requirements,
+                    as_of=decision_as_of,
+                    refresh=not dry_run,
                 )
-            binding.historical_study.validate_adjustment_basis(
-                snapshot.adjustment_basis
-            )
-            rule_context = build_prediction_rule_context(
-                binding.rule.context_requirements,
-                snapshot.context,
-                prediction_dataset_id=snapshot.prediction_dataset_id,
-                symbol=snapshot.symbol,
-                prediction_adjustment_basis=snapshot.adjustment_basis,
-            )
+                if snapshot.context.as_of != decision_as_of:
+                    raise PredictionScannerError(
+                        "scanner source context as-of does not match the requested "
+                        "decision"
+                    )
+                binding.historical_study.validate_adjustment_basis(
+                    snapshot.adjustment_basis
+                )
+                rule_context = build_prediction_rule_context(
+                    binding.rule.context_requirements,
+                    snapshot.context,
+                    prediction_dataset_id=snapshot.prediction_dataset_id,
+                    symbol=snapshot.symbol,
+                    prediction_adjustment_basis=snapshot.adjustment_basis,
+                )
+            except (PredictionContextError, MultiTimeframeContextError) as error:
+                if (
+                    binding.rule.context_requirements.failure_policy
+                    is PredictionContextFailurePolicy.FAIL
+                ):
+                    raise
+                failure = skipped_prediction_context_manifest(
+                    binding.rule.context_requirements,
+                    str(error),
+                    source_context=(None if snapshot is None else snapshot.context),
+                )
+                results.append(
+                    PredictionRuleScanResult(
+                        binding.rule.name,
+                        binding.rule.configuration_id,
+                        None,
+                        None,
+                        None,
+                        context_failure=PrimitiveMappingSnapshot.capture(failure),
+                    )
+                )
+                continue
             evaluation = binding.rule.evaluate(rule_context)
             output = binding.rule.generate_with_context(rule_context)
             candidate = _validated_rule_candidate(binding.rule, rule_context, output)
