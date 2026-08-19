@@ -154,6 +154,16 @@ class _CorruptingIndicatorCache:
                 source_fields=(MarketField.OPEN,),
                 warm_up_bars=output.warm_up_bars + 1,
             )
+        if self.corruption == "values":
+            return replace(
+                output,
+                fields=(
+                    replace(
+                        output.fields[0],
+                        values=tuple(Decimal("999") for _ in output.fields[0].values),
+                    ),
+                ),
+            )
         return replace(
             output,
             fields=(replace(output.fields[0], name="foreign_output"),),
@@ -258,7 +268,8 @@ def _rule(
 
 
 @pytest.mark.parametrize(
-    "corruption", ["future_timestamp", "lineage", "metadata", "output_fields"]
+    "corruption",
+    ["future_timestamp", "lineage", "metadata", "output_fields", "values"],
 )
 def test_cached_indicator_output_must_match_the_exact_causal_source(
     corruption: str,

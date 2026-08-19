@@ -219,6 +219,7 @@ class PredictionIndicatorRequirement:
         completion_policy: ContextCompletionPolicy,
         dataset_reference: DatasetFamilyReference,
         bars: tuple[ContextBar, ...],
+        verify_values: bool = False,
     ) -> TimeframeIndicatorOutput:
         """Validate cached or fresh output against the exact causal source."""
         self.validate_unchanged()
@@ -232,6 +233,11 @@ class PredictionIndicatorRequirement:
             timeframe,
             completion_policy=completion_policy,
         ).configuration_id
+        expected_fields = (
+            self.evaluate(context, timeframe, completion_policy).fields
+            if verify_values
+            else None
+        )
         if (
             output.indicator_name != self._indicator_name
             or output.configuration_id != expected_configuration_id
@@ -247,6 +253,7 @@ class PredictionIndicatorRequirement:
             or output.completion_states != tuple(bar.completion for bar in bars)
             or tuple(field.name for field in output.fields) != self._output_fields
             or output.backend_identity != self._backend_identity
+            or (expected_fields is not None and output.fields != expected_fields)
         ):
             raise PredictionContextError(
                 f"resolved indicator output does not match its causal source: "
@@ -735,6 +742,7 @@ def build_prediction_rule_context(
                         completion_policy=requirement.completion_policy,
                         dataset_reference=metadata.dataset_reference,
                         bars=bars,
+                        verify_values=indicator_output_cache is not None,
                     ),
                 )
             )

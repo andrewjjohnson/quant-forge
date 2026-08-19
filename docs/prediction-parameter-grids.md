@@ -130,8 +130,10 @@ mutated indicator cannot receive output computed for its earlier configuration.
 Every fresh or cached output is then checked against the exact restricted bar
 IDs, end timestamps, completion states, dataset-family lineage, timeframe,
 indicator/configuration/backend identity, source and output fields, and warm-up
-metadata before strategy logic can access it. Custom and stale caches therefore
-cannot introduce bars beyond the causal decision boundary.
+metadata before strategy logic can access it. Cached field values are also
+recomputed from the restricted causal bars and must match exactly. Custom and
+stale caches therefore cannot introduce future bars or fabricated feature
+values beyond the causal decision boundary.
 
 ## Multiple comparisons
 
