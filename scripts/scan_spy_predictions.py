@@ -219,7 +219,7 @@ def create_fixture_parity_rule(
     )
 
 
-def _parser(default_as_of: datetime) -> argparse.ArgumentParser:
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE_PATH)
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
@@ -228,7 +228,7 @@ def _parser(default_as_of: datetime) -> argparse.ArgumentParser:
     parser.add_argument(
         "--as-of",
         type=_aware_timestamp,
-        default=default_as_of,
+        default=None,
         help="timezone-aware decision timestamp (default: fixture midweek scenario)",
     )
     parser.add_argument(
@@ -245,12 +245,22 @@ def _parser(default_as_of: datetime) -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    fixture = load_fixture(DEFAULT_FIXTURE_PATH)
-    default_scenario = next(
-        item for item in fixture.decision_scenarios if item.name == "midweek"
-    )
-    arguments = _parser(default_scenario.as_of).parse_args(argv)
+    parser = _parser()
+    arguments = parser.parse_args(argv)
     fixture = load_fixture(arguments.fixture)
+    as_of = arguments.as_of
+    if as_of is None:
+        try:
+            as_of = next(
+                item.as_of
+                for item in fixture.decision_scenarios
+                if item.name == "midweek"
+            )
+        except StopIteration:
+            parser.error(
+                "--as-of is required when the selected fixture has no "
+                "midweek decision scenario"
+            )
     datasets = build_datasets(fixture, arguments.cache_root)
     completion_policy = ContextCompletionPolicy(arguments.completion_policy)
     rule = create_fixture_parity_rule(datasets, completion_policy)
@@ -274,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         deduplication_store=JsonFileAlertDeduplicationStore(arguments.state_root),
         deduplication_policy=AlertDeduplicationPolicy(arguments.deduplication_policy),
     )
-    result = scanner.scan(as_of=arguments.as_of, dry_run=True)
+    result = scanner.scan(as_of=as_of, dry_run=True)
     summary = {
         "alerts_emitted": len(result.alerts),
         "as_of": result.as_of.isoformat(),

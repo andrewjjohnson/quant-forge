@@ -93,9 +93,17 @@ broker, order, fill, portfolio, or outcome-label dependency.
 
 ## Deduplication
 
-Deduplication uses an atomic `claim()` contract so two scanner processes cannot
-emit the same key concurrently. If a sink fails, the scanner releases that
-claim before re-raising.
+Deduplication uses an exclusive pending claim so two scanner processes cannot
+emit the same key concurrently. The file-backed store holds an operating-system
+lock while sinks run, marks the claim `published` only after every sink succeeds,
+and releases a pending claim when a sink fails. If a scanner process exits while
+a claim is pending, the operating system releases its lock and the next scan
+recovers the abandoned claim instead of suppressing the alert forever.
+
+Delivery is therefore at least once across an abrupt exit: a process that exits
+after a sink succeeds but before the claim becomes `published` may cause that
+sink to receive the alert again. Sinks should use `alert_id` as their idempotency
+key. The bundled JSON file sink already enforces idempotent create-only writes.
 
 Two explicit policies are available:
 
@@ -109,8 +117,8 @@ Two explicit policies are available:
   developing-context updates are intentionally actionable.
 
 `InMemoryAlertDeduplicationStore` supports one process.
-`JsonFileAlertDeduplicationStore` persists private, content-addressed claim
-files for cross-run deduplication.
+`JsonFileAlertDeduplicationStore` persists private, content-addressed lifecycle
+files for cross-run deduplication and recovers abandoned pending claims.
 
 ## Sinks
 

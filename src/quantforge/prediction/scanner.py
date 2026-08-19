@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sys
@@ -366,34 +367,68 @@ class JsonFilePredictionAlertSink:
                 ) from None
 
 
+class AlertDeduplicationClaim(Protocol):
+    """One exclusive pending claim that can become published or be released."""
+
+    def publish(self) -> None: ...
+
+    def release(self) -> None: ...
+
+
 class AlertDeduplicationStore(Protocol):
-    """Atomically reserve and, on failure, release an alert key."""
+    """Atomically reserve an alert key through a recoverable claim lifecycle."""
 
-    def claim(self, deduplication_key: str, alert_id: str) -> bool: ...
-
-    def release(self, deduplication_key: str, alert_id: str) -> None: ...
+    def claim(
+        self, deduplication_key: str, alert_id: str
+    ) -> AlertDeduplicationClaim | None: ...
 
 
 class InMemoryAlertDeduplicationStore:
     """Process-local deterministic deduplication for embedded scanners and tests."""
 
     def __init__(self) -> None:
-        self._claims: dict[str, str] = {}
+        self._claims: dict[str, tuple[str, str]] = {}
 
-    def claim(self, deduplication_key: str, alert_id: str) -> bool:
-        existing = self._claims.get(deduplication_key)
-        if existing is not None:
-            return False
-        self._claims[deduplication_key] = alert_id
-        return True
+    def claim(
+        self, deduplication_key: str, alert_id: str
+    ) -> AlertDeduplicationClaim | None:
+        if deduplication_key in self._claims:
+            return None
+        self._claims[deduplication_key] = (alert_id, "pending")
+        return _InMemoryAlertDeduplicationClaim(self, deduplication_key, alert_id)
 
-    def release(self, deduplication_key: str, alert_id: str) -> None:
-        if self._claims.get(deduplication_key) == alert_id:
+    def publish_claim(self, deduplication_key: str, alert_id: str) -> None:
+        if self._claims.get(deduplication_key) != (alert_id, "pending"):
+            raise AlertPersistenceError("in-memory deduplication claim is not pending")
+        self._claims[deduplication_key] = (alert_id, "published")
+
+    def release_claim(self, deduplication_key: str, alert_id: str) -> None:
+        if self._claims.get(deduplication_key) == (alert_id, "pending"):
             del self._claims[deduplication_key]
 
 
+@dataclass(slots=True)
+class _InMemoryAlertDeduplicationClaim:
+    store: InMemoryAlertDeduplicationStore
+    deduplication_key: str
+    alert_id: str
+    _closed: bool = False
+
+    def publish(self) -> None:
+        if self._closed:
+            raise AlertPersistenceError("deduplication claim is already closed")
+        self.store.publish_claim(self.deduplication_key, self.alert_id)
+        self._closed = True
+
+    def release(self) -> None:
+        if self._closed:
+            return
+        self.store.release_claim(self.deduplication_key, self.alert_id)
+        self._closed = True
+
+
 class JsonFileAlertDeduplicationStore:
-    """Cross-run deduplication using atomic content-addressed claim files."""
+    """Cross-run deduplication with crash-recoverable locked state files."""
 
     def __init__(self, state_directory: Path) -> None:
         self.state_directory = state_directory
@@ -401,43 +436,124 @@ class JsonFileAlertDeduplicationStore:
     def _path(self, deduplication_key: str) -> Path:
         return self.state_directory / f"{deduplication_key}.json"
 
-    def claim(self, deduplication_key: str, alert_id: str) -> bool:
+    def claim(
+        self, deduplication_key: str, alert_id: str
+    ) -> AlertDeduplicationClaim | None:
         self.state_directory.mkdir(parents=True, exist_ok=True)
         path = self._path(deduplication_key)
+        descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(descriptor)
+            return None
+        claim = _JsonFileAlertDeduplicationClaim(
+            path, descriptor, deduplication_key, alert_id
+        )
+        try:
+            existing_state = claim.read_state()
+            if existing_state == "published":
+                claim.close()
+                return None
+            claim.write_state("pending")
+        except BaseException:
+            claim.close()
+            raise
+        return claim
+
+
+@dataclass(slots=True)
+class _JsonFileAlertDeduplicationClaim:
+    path: Path
+    descriptor: int
+    deduplication_key: str
+    alert_id: str
+    _closed: bool = False
+
+    def read_state(self) -> str | None:
+        os.lseek(self.descriptor, 0, os.SEEK_SET)
+        try:
+            content = os.read(self.descriptor, 64 * 1024)
+            if not content:
+                return None
+            decoded = cast(object, json.loads(content))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+            raise AlertPersistenceError(
+                f"cannot validate deduplication state: {self.path}"
+            ) from error
+        if not isinstance(decoded, dict):
+            raise AlertPersistenceError(
+                f"deduplication state is not a JSON object: {self.path}"
+            )
+        existing = cast(dict[str, object], decoded)
+        if existing.get("deduplication_key") != self.deduplication_key:
+            raise AlertPersistenceError(
+                f"deduplication state identity is inconsistent: {self.path}"
+            )
+        state = existing.get("state")
+        if state is None and isinstance(existing.get("alert_id"), str):
+            # The original write-on-claim format did not distinguish delivery
+            # from interruption. Recover it as pending so it cannot suppress an
+            # undelivered alert forever.
+            return "pending"
+        if state not in {"pending", "published"}:
+            raise AlertPersistenceError(
+                f"deduplication state lifecycle is invalid: {self.path}"
+            )
+        return cast(str, state)
+
+    def write_state(self, state: str) -> None:
+        if state not in {"pending", "published"}:
+            raise AlertPersistenceError("deduplication lifecycle state is invalid")
         content = json.dumps(
-            {"alert_id": alert_id, "deduplication_key": deduplication_key},
+            {
+                "alert_id": self.alert_id,
+                "deduplication_key": self.deduplication_key,
+                "state": state,
+            },
             ensure_ascii=True,
             allow_nan=False,
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
         try:
-            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            return False
-        try:
-            with os.fdopen(descriptor, "wb") as stream:
+            os.lseek(self.descriptor, 0, os.SEEK_SET)
+            os.ftruncate(self.descriptor, 0)
+            with os.fdopen(self.descriptor, "wb", closefd=False) as stream:
                 stream.write(content)
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
-        return True
-
-    def release(self, deduplication_key: str, alert_id: str) -> None:
-        path = self._path(deduplication_key)
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return
-        except (json.JSONDecodeError, OSError) as error:
+                stream.flush()
+            os.fsync(self.descriptor)
+        except OSError as error:
             raise AlertPersistenceError(
-                f"cannot validate deduplication claim before release: {path}"
+                f"cannot persist deduplication state: {self.path}"
             ) from error
-        if existing == {
-            "alert_id": alert_id,
-            "deduplication_key": deduplication_key,
-        }:
-            path.unlink(missing_ok=True)
+
+    def publish(self) -> None:
+        if self._closed:
+            raise AlertPersistenceError("deduplication claim is already closed")
+        self.write_state("published")
+        self.close()
+
+    def release(self) -> None:
+        if self._closed:
+            return
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError as error:
+            raise AlertPersistenceError(
+                f"cannot release deduplication claim: {self.path}"
+            ) from error
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(self.descriptor)
+            self._closed = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -557,7 +673,10 @@ class PredictionScanner:
                 )
                 continue
             deduplication_key = _deduplication_key(alert, self.deduplication_policy)
-            if not self.deduplication_store.claim(deduplication_key, alert.alert_id):
+            deduplication_claim = self.deduplication_store.claim(
+                deduplication_key, alert.alert_id
+            )
+            if deduplication_claim is None:
                 results.append(
                     PredictionRuleScanResult(
                         binding.rule.name,
@@ -572,8 +691,9 @@ class PredictionScanner:
             try:
                 for sink in self.sinks:
                     sink.emit(alert)
+                deduplication_claim.publish()
             except BaseException:
-                self.deduplication_store.release(deduplication_key, alert.alert_id)
+                deduplication_claim.release()
                 raise
             results.append(
                 PredictionRuleScanResult(
@@ -886,6 +1006,7 @@ __all__ = [
     "PREDICTION_ALERT_SCHEMA_VERSION",
     "PREDICTION_SCANNER_ENGINE_VERSION",
     "RESEARCH_ONLY_DISCLAIMER",
+    "AlertDeduplicationClaim",
     "AlertDeduplicationPolicy",
     "AlertDeduplicationStore",
     "AlertPersistenceError",

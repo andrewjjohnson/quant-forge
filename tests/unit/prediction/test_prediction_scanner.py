@@ -402,6 +402,46 @@ def test_repeated_unchanged_context_is_deduplicated_across_file_store_instances(
     assert second_sink.alerts == []
 
 
+@pytest.mark.parametrize("lifecycle_state", [None, "pending"])
+def test_file_store_recovers_abandoned_pending_claims(
+    tmp_path: Path, lifecycle_state: str | None
+) -> None:
+    state_directory = tmp_path / "dedup"
+    state_directory.mkdir()
+    payload = {
+        "alert_id": "interrupted-alert",
+        "deduplication_key": "recoverable-key",
+    }
+    if lifecycle_state is not None:
+        payload["state"] = lifecycle_state
+    (state_directory / "recoverable-key.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    store = JsonFileAlertDeduplicationStore(state_directory)
+    recovered = store.claim("recoverable-key", "retried-alert")
+
+    assert recovered is not None
+    recovered.publish()
+    assert store.claim("recoverable-key", "later-alert") is None
+
+
+def test_file_store_blocks_an_active_claim_and_reuses_a_released_key(
+    tmp_path: Path,
+) -> None:
+    first_store = JsonFileAlertDeduplicationStore(tmp_path / "dedup")
+    second_store = JsonFileAlertDeduplicationStore(tmp_path / "dedup")
+    active = first_store.claim("active-key", "first-alert")
+
+    assert active is not None
+    assert second_store.claim("active-key", "concurrent-alert") is None
+
+    active.release()
+    replacement = second_store.claim("active-key", "replacement-alert")
+    assert replacement is not None
+    replacement.publish()
+
+
 def test_historical_backend_or_configuration_mismatch_fails_before_data_access() -> (
     None
 ):
