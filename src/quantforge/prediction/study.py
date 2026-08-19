@@ -21,6 +21,7 @@ from quantforge.prediction.context import (
     PredictionContextFailurePolicy,
     PredictionContextProvider,
     PredictionContextRequirements,
+    PredictionIndicatorOutputCache,
     PredictionRuleContext,
     available_prediction_context_manifest,
     build_prediction_rule_context,
@@ -253,12 +254,14 @@ def run_prediction_study(
     study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
     *,
     context_provider: PredictionContextProvider | None = None,
+    indicator_output_cache: PredictionIndicatorOutputCache | None = None,
 ) -> PredictionStudyResult[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]:
     """Run prediction, labeling, then evaluation as three ordered stages."""
     return run_prediction_study_in_session(
         prepare_prediction_study_dataset(dataset),
         study,
         context_provider=context_provider,
+        indicator_output_cache=indicator_output_cache,
     )
 
 
@@ -287,6 +290,7 @@ def run_prediction_study_in_session(
     study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
     *,
     context_provider: PredictionContextProvider | None = None,
+    indicator_output_cache: PredictionIndicatorOutputCache | None = None,
 ) -> PredictionStudyResult[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]:
     """Run one study while preserving the session's validation boundaries."""
     dataset_snapshot = prepared.dataset_snapshot
@@ -296,7 +300,10 @@ def run_prediction_study_in_session(
     configuration = _capture_study_configuration(study)
     market_data = prepared.market_data
     rule_context, prediction_context_snapshot = _prepare_prediction_context(
-        study.strategy, context_provider, component_dataset
+        study.strategy,
+        context_provider,
+        component_dataset,
+        indicator_output_cache,
     )
     study_identity: PrimitiveMapping = {
         "component": "quantforge_prediction_study",
@@ -747,6 +754,7 @@ def _prepare_prediction_context(
     | MultiTimeframePredictionRule[PredictionRecordT],
     provider: PredictionContextProvider | None,
     dataset: MarketDataset,
+    indicator_output_cache: PredictionIndicatorOutputCache | None,
 ) -> tuple[PredictionRuleContext | None, PrimitiveMappingSnapshot | None]:
     requirements = _strategy_context_requirements(strategy)
     if requirements is None:
@@ -770,6 +778,7 @@ def _prepare_prediction_context(
                 corporate_action_policy=dataset.metadata.corporate_action_policy,
                 adjusted_fields_used=dataset.metadata.adjusted_fields_used,
             ),
+            indicator_output_cache=indicator_output_cache,
         )
     except (PredictionContextError, MultiTimeframeContextError) as error:
         if requirements.failure_policy is PredictionContextFailurePolicy.FAIL:

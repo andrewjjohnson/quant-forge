@@ -12,7 +12,7 @@ from quantforge.configuration import (
     configuration_identity,
 )
 from quantforge.data.intraday import IntradayBar
-from quantforge.data.lineage import AdjustmentBasis, FeedScope
+from quantforge.data.lineage import AdjustmentBasis, DatasetFamilyReference, FeedScope
 from quantforge.data.multi_timeframe import (
     ContextAvailability,
     ContextBar,
@@ -23,8 +23,10 @@ from quantforge.data.multi_timeframe import (
 from quantforge.indicators import (
     DevelopingBarSupport,
     IndicatorBackendIdentity,
+    MarketField,
     TimeframeIndicatorOutput,
     TimeframeNeutralIndicator,
+    bind_indicator,
     evaluate_indicator,
 )
 from quantforge.timeframes import BarCompletion, IntradayInterval, Timeframe
@@ -71,7 +73,9 @@ class PredictionIndicatorRequirement:
     _indicator_name: str = field(init=False, repr=False)
     _backend_identity: IndicatorBackendIdentity | None = field(init=False, repr=False)
     _developing_bar_support: DevelopingBarSupport = field(init=False, repr=False)
+    _source_fields: tuple[MarketField, ...] = field(init=False, repr=False)
     _output_fields: tuple[str, ...] = field(init=False, repr=False)
+    _warm_up_bars: int = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(cast(object, self.alias), str) or not self.alias:
@@ -114,6 +118,10 @@ class PredictionIndicatorRequirement:
                 for name in output_fields
             )
             or not isinstance(cast(object, required_fields), frozenset)
+            or any(
+                not isinstance(cast(object, source_field), MarketField)
+                for source_field in required_fields
+            )
             or isinstance(warm_up, bool)
             or not isinstance(cast(object, warm_up), int)
             or warm_up < 1
@@ -127,7 +135,13 @@ class PredictionIndicatorRequirement:
         object.__setattr__(self, "_indicator_name", indicator_name)
         object.__setattr__(self, "_backend_identity", backend_identity)
         object.__setattr__(self, "_developing_bar_support", developing_support)
+        object.__setattr__(
+            self,
+            "_source_fields",
+            tuple(sorted(required_fields, key=lambda item: item.value)),
+        )
         object.__setattr__(self, "_output_fields", output_fields)
+        object.__setattr__(self, "_warm_up_bars", warm_up)
 
     @property
     def configuration_id(self) -> str:
@@ -154,7 +168,9 @@ class PredictionIndicatorRequirement:
                     else self._backend_identity.to_primitive()
                 ),
                 "developing_bar_support": self._developing_bar_support.value,
+                "source_fields": [item.value for item in self._source_fields],
                 "output_fields": list(self._output_fields),
+                "warm_up_bars": self._warm_up_bars,
             },
         }
 
@@ -165,6 +181,16 @@ class PredictionIndicatorRequirement:
         completion_policy: ContextCompletionPolicy,
     ) -> TimeframeIndicatorOutput:
         """Evaluate after proving the declaration did not change."""
+        self.validate_unchanged()
+        return evaluate_indicator(
+            self.indicator,
+            context,
+            timeframe,
+            completion_policy=completion_policy,
+        )
+
+    def validate_unchanged(self) -> None:
+        """Prove the live indicator still matches its captured declaration."""
         if (
             PrimitiveMappingSnapshot.capture(self.indicator.configuration())
             != self._configuration_snapshot
@@ -173,17 +199,67 @@ class PredictionIndicatorRequirement:
             or getattr(self.indicator, "backend_identity", None)
             != self._backend_identity
             or self.indicator.developing_bar_support is not self._developing_bar_support
+            or tuple(
+                sorted(self.indicator.required_fields, key=lambda item: item.value)
+            )
+            != self._source_fields
             or self.indicator.output_fields != self._output_fields
+            or self.indicator.warm_up_observations != self._warm_up_bars
         ):
             raise PredictionContextError(
                 f"declared indicator changed before evaluation: {self.alias}"
             )
-        return evaluate_indicator(
+
+    def validate_output(
+        self,
+        output: TimeframeIndicatorOutput,
+        *,
+        context: MultiTimeframeContext,
+        timeframe: Timeframe,
+        completion_policy: ContextCompletionPolicy,
+        dataset_reference: DatasetFamilyReference,
+        bars: tuple[ContextBar, ...],
+        verify_values: bool = False,
+    ) -> TimeframeIndicatorOutput:
+        """Validate cached or fresh output against the exact causal source."""
+        self.validate_unchanged()
+        if not isinstance(cast(object, output), TimeframeIndicatorOutput):
+            raise PredictionContextError(
+                f"resolved indicator output is invalid: {self.alias}"
+            )
+        expected_configuration_id = bind_indicator(
             self.indicator,
             context,
             timeframe,
             completion_policy=completion_policy,
+        ).configuration_id
+        expected_fields = (
+            self.evaluate(context, timeframe, completion_policy).fields
+            if verify_values
+            else None
         )
+        if (
+            output.indicator_name != self._indicator_name
+            or output.configuration_id != expected_configuration_id
+            or output.source_timeframe != timeframe
+            or output.source_fields != self._source_fields
+            or output.completion_policy is not completion_policy
+            or output.developing_bar_support is not self._developing_bar_support
+            or output.dataset_reference != dataset_reference
+            or output.feed_scope != dataset_reference.feed_scope
+            or output.warm_up_bars != self._warm_up_bars
+            or output.bar_ids != tuple(bar.bar_id for bar in bars)
+            or output.bar_end_timestamps != tuple(bar.end_timestamp for bar in bars)
+            or output.completion_states != tuple(bar.completion for bar in bars)
+            or tuple(field.name for field in output.fields) != self._output_fields
+            or output.backend_identity != self._backend_identity
+            or (expected_fields is not None and output.fields != expected_fields)
+        ):
+            raise PredictionContextError(
+                f"resolved indicator output does not match its causal source: "
+                f"{self.alias}"
+            )
+        return output
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +437,18 @@ class PredictionContextProvider(Protocol):
     ) -> MultiTimeframeContext: ...
 
 
+class PredictionIndicatorOutputCache(Protocol):
+    """Resolve normalized indicator output under an identity-aware cache policy."""
+
+    def resolve(
+        self,
+        requirement: PredictionIndicatorRequirement,
+        context: MultiTimeframeContext,
+        timeframe: Timeframe,
+        completion_policy: ContextCompletionPolicy,
+    ) -> TimeframeIndicatorOutput: ...
+
+
 @dataclass(frozen=True, slots=True)
 class NamedPredictionIndicatorOutput:
     """A rule-facing alias paired only with a normalized QuantForge output."""
@@ -516,6 +604,7 @@ def build_prediction_rule_context(
     prediction_dataset_id: str,
     symbol: str,
     prediction_adjustment_basis: AdjustmentBasis,
+    indicator_output_cache: PredictionIndicatorOutputCache | None = None,
 ) -> PredictionRuleContext:
     """Validate, restrict, and evaluate one declared prediction context."""
     if not isinstance(cast(object, requirements), PredictionContextRequirements):
@@ -627,18 +716,37 @@ def build_prediction_rule_context(
                 "prediction context is stale for timeframe: "
                 f"{requirement.timeframe.configuration_id}"
             )
-        outputs = tuple(
-            NamedPredictionIndicatorOutput(
-                item.alias,
+        outputs: list[NamedPredictionIndicatorOutput] = []
+        for item in requirement.indicators:
+            output = (
                 item.evaluate(
                     context,
                     requirement.timeframe,
                     requirement.completion_policy,
-                ),
+                )
+                if indicator_output_cache is None
+                else indicator_output_cache.resolve(
+                    item,
+                    context,
+                    requirement.timeframe,
+                    requirement.completion_policy,
+                )
             )
-            for item in requirement.indicators
-        )
-        resolved.append(PredictionTimeframeInput(requirement, bars, outputs))
+            outputs.append(
+                NamedPredictionIndicatorOutput(
+                    item.alias,
+                    item.validate_output(
+                        output,
+                        context=context,
+                        timeframe=requirement.timeframe,
+                        completion_policy=requirement.completion_policy,
+                        dataset_reference=metadata.dataset_reference,
+                        bars=bars,
+                        verify_values=indicator_output_cache is not None,
+                    ),
+                )
+            )
+        resolved.append(PredictionTimeframeInput(requirement, bars, tuple(outputs)))
 
     source_snapshot = PrimitiveMappingSnapshot.capture(context.to_primitive())
     rule_context = PredictionRuleContext(
