@@ -311,14 +311,13 @@ class PredictionScannerSnapshot:
     prediction_dataset_id: str
     symbol: str
     adjustment_basis: AdjustmentBasis
-    source_mode: str
 
     def __post_init__(self) -> None:
         if not isinstance(cast(object, self.context), MultiTimeframeContext):
             raise PredictionScannerError("scanner source returned an invalid context")
-        if not self.prediction_dataset_id or not self.symbol or not self.source_mode:
+        if not self.prediction_dataset_id or not self.symbol:
             raise PredictionScannerError(
-                "scanner source snapshot requires dataset, symbol, and source mode"
+                "scanner source snapshot requires dataset and symbol identity"
             )
         if not isinstance(cast(object, self.adjustment_basis), AdjustmentBasis):
             raise PredictionScannerError(
@@ -416,7 +415,6 @@ class PredictionAlert:
 
     def identity_primitive(self) -> PrimitiveMapping:
         """Return every field required to identify one exact alert decision."""
-        provenance = self.provenance.to_primitive()
         return _alert_identity_primitive(
             schema_version=self.schema_version,
             symbol=self.symbol,
@@ -424,7 +422,6 @@ class PredictionAlert:
             rule_implementation_version=self.rule_implementation_version,
             rule_configuration_id=self.rule_configuration_id,
             historical_study=self.historical_study,
-            source_mode=cast(str, provenance["source_mode"]),
             indicators=self.indicators,
             decision_timestamp=self.decision_timestamp,
             context_id=self.context_id,
@@ -1056,7 +1053,6 @@ def _build_alert(
     provenance = PrimitiveMappingSnapshot.capture(
         {
             "prediction_dataset_id": snapshot.prediction_dataset_id,
-            "source_mode": snapshot.source_mode,
             "adjustment_basis": snapshot.adjustment_basis.to_primitive(),
             "context_source_consistency": (
                 snapshot.context.source_consistency.to_primitive()
@@ -1072,7 +1068,6 @@ def _build_alert(
             rule_implementation_version=binding.rule.implementation_version,
             rule_configuration_id=binding.rule.configuration_id,
             historical_study=binding.historical_study,
-            source_mode=snapshot.source_mode,
             indicators=indicators,
             decision_timestamp=decision_timestamp,
             context_id=context.context_id,
@@ -1106,7 +1101,6 @@ def _alert_identity_primitive(
     rule_implementation_version: str,
     rule_configuration_id: str,
     historical_study: HistoricalPredictionStudyReference,
-    source_mode: str,
     indicators: tuple[PrimitiveMappingSnapshot, ...],
     decision_timestamp: datetime,
     context_id: str,
@@ -1133,7 +1127,6 @@ def _alert_identity_primitive(
         "rule_implementation_version": rule_implementation_version,
         "rule_configuration_id": rule_configuration_id,
         "historical_study": historical_study.to_primitive(),
-        "source_mode": source_mode,
         "indicator_configurations": indicator_configurations,
         "decision_timestamp": decision_timestamp.astimezone(UTC).isoformat(),
         "context_id": context_id,

@@ -34,7 +34,9 @@ refresh canonical source data or replay an immutable cache, rebuild the
 required derived timeframes, and return a `PredictionScannerSnapshot`.
 Provider clients, endpoints, and credentials remain behind that data/ingestion
 adapter. The scanner receives only the canonical context, dataset identity,
-symbol, adjustment basis, and a non-secret source-mode description.
+symbol, and adjustment basis. Transient acquisition details such as whether an
+immutable cache was seeded or replayed are run-level diagnostics, not causal
+alert provenance.
 `PredictionScannerSnapshot` rejects a reported prediction dataset ID unless it
 matches the canonical source snapshot ID carried by every context lineage
 reference, preventing provenance from naming unrelated or stale data.
@@ -91,8 +93,8 @@ Alert schema version 1 includes:
 - both unbound indicator and timeframe-bound configuration IDs;
 - exact backend identity/version metadata when a standard backend applies;
 - source bar IDs, start/end timestamps, completion states, and session dates;
-- timeframe, session, feed, dataset-family, source-dataset, adjustment, and
-  source-mode provenance;
+- timeframe, session, feed, dataset-family, source-dataset, and adjustment
+  provenance;
 - the referenced historical study, its input-dataset fingerprint, optional
   summary, and optional sample count; and
 - an explicit research-only/no-order disclaimer.
@@ -100,9 +102,10 @@ Alert schema version 1 includes:
 The alert ID binds symbol, the complete serialized historical-study reference,
 rule/version/configuration, normalized indicator configuration/backend
 identities, primary decision timestamp, completion policy, exact context
-identity, and source mode. Binding the full study reference and source mode
-ensures that metadata or operational-provenance changes cannot produce
-different serialized bytes under an existing alert ID.
+identity. Binding the full study reference ensures that metadata changes cannot
+produce different serialized bytes under an existing alert ID. Transient cache
+state is excluded so an interrupted delivery keeps one stable ID and byte-for-
+byte payload when retried from the same canonical dataset.
 Alert construction has no broker, order, fill, portfolio, or outcome-label
 dependency.
 

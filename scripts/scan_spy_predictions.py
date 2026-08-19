@@ -182,7 +182,6 @@ class CachedSpyScannerSource:
             prediction_dataset_id=self.datasets.source.metadata.dataset_id,
             symbol=self.datasets.source.request.symbol,
             adjustment_basis=self.datasets.source.request.adjustment_basis,
-            source_mode=self.datasets.cache_status,
         )
 
 
