@@ -548,6 +548,31 @@ def test_load_result_rejects_trial_whose_filename_mismatches_its_id(
         grid.load_result()
 
 
+def test_load_result_rejects_nonterminal_trial_after_interruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(
+        prepared: object,
+        study: PredictionStudy[Any, Any, Any],
+        **kwargs: object,
+    ) -> PredictionStudyResult[Any, Any, Any]:
+        del prepared, kwargs
+        window = _window(study)
+        if window == 4:
+            raise KeyboardInterrupt("fixture final-trial interruption")
+        return cast(PredictionStudyResult[Any, Any, Any], FakeResult(window))
+
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.run_prediction_study_in_session", fake_run
+    )
+    grid = _grid(tmp_path)
+
+    with pytest.raises(KeyboardInterrupt, match="final-trial interruption"):
+        grid.run()
+    with pytest.raises(PredictionGridPersistenceError, match="incomplete"):
+        grid.load_result()
+
+
 def test_stability_marks_an_isolated_center_as_fragile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -95,6 +95,10 @@ analyzer output against the immutable trial record. A truncated or modified
 artifact is rejected rather than ranked from duplicated trial metadata. The
 trial record separately retains a canonical SHA-256 fingerprint of the complete
 artifact content, binding prediction rows and analysis evidence to that trial.
+Result loading also requires every deterministic candidate to have a terminal
+`succeeded`, `failed`, or `excluded` record; interrupted `pending` or `running`
+trials must be resumed before any rankings can be produced.
+
 `PredictionTrialAnalysis` requires rankable numeric metrics and
 retains period, weekday, matched-baseline, and analyzer-specific artifact
 records. Ranking first enforces `minimum_prediction_count`, then all configured

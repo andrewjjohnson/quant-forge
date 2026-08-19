@@ -2008,6 +2008,18 @@ class PredictionGridStudy:
         }
         for record in records:
             self._validate_record(candidates_by_trial_id[record.trial_id], record)
+        if any(
+            record.status
+            not in (
+                TrialStatus.SUCCEEDED,
+                TrialStatus.FAILED,
+                TrialStatus.EXCLUDED,
+            )
+            for record in records
+        ):
+            raise PredictionGridPersistenceError(
+                "cannot produce rankings from incomplete prediction trials"
+            )
         rankings, ineligible = _rank(records, self._config.ranking)
         stability = _stability(
             candidates,
