@@ -1000,6 +1000,7 @@ def _validated_rule_candidate(
 ) -> SignalFeatureCandidate:
     if (
         not isinstance(cast(object, output), SignalFeatureCandidateOutput)
+        or output.contract_version != "1"
         or output.strategy_id != rule.name
         or output.strategy_configuration_id != rule.configuration_id
         or output.dataset_id != context.prediction_dataset_id
@@ -1012,6 +1013,9 @@ def _validated_rule_candidate(
     if (
         candidate.symbol != context.symbol
         or candidate.signal_session != context.decision_session
+        or candidate.strategy_id != rule.name
+        or candidate.strategy_implementation_version != rule.implementation_version
+        or candidate.strategy_configuration_id != rule.configuration_id
         or candidate.source_rule_id != rule.name
         or candidate.source_rule_implementation_version != rule.implementation_version
         or candidate.source_rule_configuration_id != rule.configuration_id

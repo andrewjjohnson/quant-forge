@@ -3,7 +3,7 @@ import concurrent.futures
 import io
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -46,15 +46,19 @@ from quantforge.prediction import (
     PredictionContextRequirements,
     PredictionDirection,
     PredictionIndicatorRequirement,
+    PredictionRuleContext,
     PredictionScanner,
     PredictionScannerError,
+    PredictionScannerRule,
     PredictionScannerRuleBinding,
     PredictionScannerSnapshot,
     PredictionTimeframeRequirement,
     PublishedAlertDeduplication,
+    SignalFeatureCandidateOutput,
     TechnicalCondition,
     TechnicalConditionOperand,
     TechnicalConditionOperator,
+    TechnicalConfluenceEvaluation,
     TechnicalConfluenceParameters,
     TechnicalConfluencePredictionRule,
     build_prediction_rule_context,
@@ -130,6 +134,52 @@ class _SelectiveFixtureSource:
             requirements,
             as_of=as_of,
             refresh=refresh,
+        )
+
+
+@dataclass
+class _MalformedOutputRule:
+    delegate: TechnicalConfluencePredictionRule
+    output_contract_version: str = "1"
+    candidate_strategy_identity: tuple[str, str, str] | None = None
+    name: str = field(init=False)
+    implementation_version: str = field(init=False)
+    context_requirements: PredictionContextRequirements = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.name = self.delegate.name
+        self.implementation_version = self.delegate.implementation_version
+        self.context_requirements = self.delegate.context_requirements
+
+    @property
+    def configuration_id(self) -> str:
+        return self.delegate.configuration_id
+
+    def configuration(self) -> PrimitiveMapping:
+        return self.delegate.configuration()
+
+    def evaluate(self, context: PredictionRuleContext) -> TechnicalConfluenceEvaluation:
+        return self.delegate.evaluate(context)
+
+    def generate_with_context(
+        self, context: PredictionRuleContext
+    ) -> SignalFeatureCandidateOutput:
+        output = self.delegate.generate_with_context(context)
+        if self.candidate_strategy_identity is None:
+            return replace(output, contract_version=self.output_contract_version)
+        strategy_id, implementation_version, configuration_id = (
+            self.candidate_strategy_identity
+        )
+        candidate = replace(
+            output.signals[0],
+            strategy_id=strategy_id,
+            strategy_implementation_version=implementation_version,
+            strategy_configuration_id=configuration_id,
+        )
+        return replace(
+            output,
+            signals=(candidate,),
+            contract_version=self.output_contract_version,
         )
 
 
@@ -221,11 +271,11 @@ def _rule(
 
 
 def _scanner(
-    rule: TechnicalConfluencePredictionRule,
+    rule: PredictionScannerRule,
     source: _FixtureSource,
     sink: _CapturingSink,
     *,
-    historical_rule: TechnicalConfluencePredictionRule | None = None,
+    historical_rule: PredictionScannerRule | None = None,
     deduplication_policy: AlertDeduplicationPolicy = (
         AlertDeduplicationPolicy.EXACT_CONTEXT
     ),
@@ -387,6 +437,51 @@ def test_accepted_alert_has_complete_causal_payload_and_dry_run_sinks(
         == payload
     )
     assert "outcome_label" not in json.dumps(payload, sort_keys=True)
+
+
+def test_scanner_rejects_an_unsupported_candidate_output_contract() -> None:
+    rule = _MalformedOutputRule(_rule(), output_contract_version="2")
+    context = _case_context(0)
+    source = _source(context)
+    sink = _CapturingSink()
+
+    with pytest.raises(PredictionScannerError, match="incompatible current-data"):
+        _scanner(rule, source, sink).scan(as_of=context.as_of)
+
+    assert source.refresh_values == [True]
+    assert sink.alerts == []
+
+
+@pytest.mark.parametrize("identity_index", [0, 1, 2])
+def test_scanner_rejects_mismatched_candidate_strategy_identity(
+    identity_index: int,
+) -> None:
+    current_rule = _rule()
+    candidate_identity = [
+        current_rule.name,
+        current_rule.implementation_version,
+        current_rule.configuration_id,
+    ]
+    candidate_identity[identity_index] = (
+        "b" * 64 if identity_index == 2 else "mismatched-identity"
+    )
+    rule = _MalformedOutputRule(
+        current_rule,
+        candidate_strategy_identity=(
+            candidate_identity[0],
+            candidate_identity[1],
+            candidate_identity[2],
+        ),
+    )
+    context = _case_context(0)
+    source = _source(context)
+    sink = _CapturingSink()
+
+    with pytest.raises(PredictionScannerError, match="candidate identity"):
+        _scanner(rule, source, sink).scan(as_of=context.as_of)
+
+    assert source.refresh_values == [True]
+    assert sink.alerts == []
 
 
 def test_json_alert_sink_syncs_temporary_content_before_atomic_install(

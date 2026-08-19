@@ -61,10 +61,12 @@ QF-28 contract before the rule runs:
 
 The scanner calls the normal QF-31 evaluator and QF-11-compatible
 `generate_with_context()` path, then proves their accepted/rejected direction
-agrees. It does not construct or call an outcome labeler. Historical/current
-parity therefore means that the same fixed context, rule configuration, and
-backend environment produce the same normalized indicator values and rule
-decision in both paths.
+agrees. It accepts only output contract version 1 and requires both the outer
+output and its candidate to carry the bound rule's exact strategy and source-
+rule identity. It does not construct or call an outcome labeler.
+Historical/current parity therefore means that the same fixed context, rule
+configuration, and backend environment produce the same normalized indicator
+values and rule decision in both paths.
 
 Context failure policy is preserved per bound rule. `fail` propagates missing,
 stale, or incompatible context errors and stops the scan. `skip` records a
