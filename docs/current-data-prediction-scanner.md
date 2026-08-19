@@ -19,6 +19,7 @@ scanner verifies all of the following against that reference:
 - complete rule configuration and configuration ID;
 - every condition and normalized operand;
 - timeframe, session, feed, completion, freshness, and failure policies;
+- the exact price, volume, and corporate-action adjustment basis;
 - every indicator configuration ID; and
 - resolved standard-backend ID, contract version, mapped function, Python
   wrapper version, and native runtime version.
@@ -123,11 +124,14 @@ files for cross-run deduplication and recovers abandoned pending claims.
 ## Sinks
 
 `ConsolePredictionAlertSink` writes the complete alert as formatted JSON.
-`JsonFilePredictionAlertSink` writes `<alert-id>.json` with create-only
-semantics. If that path already exists, identical bytes are accepted and
-different content fails instead of overwriting prior evidence. Additional
-sinks implement the small `PredictionAlertSink` protocol; push, email, and SMS
-providers are not included in QF-33.
+`JsonFilePredictionAlertSink` writes and syncs a private temporary file, then
+atomically installs `<alert-id>.json` with create-only hard-link semantics. A
+process exit can therefore leave either no final path or a complete final
+artifact, never a partially written final artifact. If the final path already
+exists, identical bytes are accepted and different content fails instead of
+overwriting prior evidence. Additional sinks implement the small
+`PredictionAlertSink` protocol; push, email, and SMS providers are not included
+in QF-33.
 
 ## Offline SPY dry run
 
@@ -146,9 +150,12 @@ the fixture through the immutable QF-16 cache; subsequent runs validate and
 replay that cache. It rebuilds 4-hour, daily, and weekly artifacts, constructs
 the fixed midweek developing context, and evaluates the exact `talib_v1`
 SMA(2) configuration captured under
-`qf33_spy_fixture_parity_study_v1`. The deterministic ascending fixture emits
-one UP alert. Repeating the command emits no second alert under the default
-`decision_bar` policy.
+`qf33_spy_fixture_parity_study_v1`. The scanner loads that identity and its
+unadjusted-price policy from the committed immutable
+`examples/spy_multi_timeframe/qf33_historical_study_reference.json` record;
+it does not derive the study reference from the current rule. The deterministic
+ascending fixture emits one UP alert. Repeating the command emits no second
+alert under the default `decision_bar` policy.
 
 Use completed bars only with:
 

@@ -9,6 +9,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from export_spy_multi_timeframe_context import (
     DEFAULT_CACHE_ROOT,
@@ -18,6 +19,7 @@ from export_spy_multi_timeframe_context import (
     load_fixture,
 )
 
+from quantforge.configuration import PrimitiveMapping
 from quantforge.data import (
     ContextCompletionPolicy,
     TimeframeBarSeries,
@@ -55,6 +57,36 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ALERT_ROOT = REPOSITORY_ROOT / "reports" / "qf33-spy-alerts"
 DEFAULT_STATE_ROOT = REPOSITORY_ROOT / "data" / "qf33-spy-alert-state"
 HISTORICAL_STUDY_ID = "qf33_spy_fixture_parity_study_v1"
+HISTORICAL_STUDY_PATH = (
+    REPOSITORY_ROOT
+    / "examples"
+    / "spy_multi_timeframe"
+    / "qf33_historical_study_reference.json"
+)
+
+
+def load_historical_study_reference(
+    path: Path = HISTORICAL_STUDY_PATH,
+) -> HistoricalPredictionStudyReference:
+    """Load the committed study record independently of the current rule."""
+    try:
+        decoded = cast(object, json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError) as error:
+        raise PredictionScannerError(
+            f"cannot load historical study reference: {path}"
+        ) from error
+    if not isinstance(decoded, dict):
+        raise PredictionScannerError(
+            f"historical study reference must be a JSON object: {path}"
+        )
+    reference = HistoricalPredictionStudyReference.from_primitive(
+        cast(PrimitiveMapping, decoded)
+    )
+    if reference.study_id != HISTORICAL_STUDY_ID:
+        raise PredictionScannerError(
+            "historical study reference ID does not match the scanner"
+        )
+    return reference
 
 
 def _aware_timestamp(value: str) -> datetime:
@@ -247,6 +279,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
+    historical_reference = load_historical_study_reference()
     fixture = load_fixture(arguments.fixture)
     as_of = arguments.as_of
     if as_of is None:
@@ -264,16 +297,6 @@ def main(argv: list[str] | None = None) -> int:
     datasets = build_datasets(fixture, arguments.cache_root)
     completion_policy = ContextCompletionPolicy(arguments.completion_policy)
     rule = create_fixture_parity_rule(datasets, completion_policy)
-    historical_reference = HistoricalPredictionStudyReference.capture(
-        study_id=HISTORICAL_STUDY_ID,
-        rule=rule,
-        summary={
-            "scope": "deterministic SPY fixture parity validation",
-            "validated": True,
-            "profitability_claim": False,
-        },
-        sample_count=2,
-    )
     scanner = PredictionScanner(
         source=CachedSpyScannerSource(datasets),
         bindings=(PredictionScannerRuleBinding(rule, historical_reference),),

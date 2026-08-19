@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -21,6 +22,7 @@ from quantforge.configuration import (
 )
 from quantforge.data.intraday import IntradayBar
 from quantforge.data.lineage import AdjustmentBasis
+from quantforge.data.models import AdjustmentMode
 from quantforge.data.multi_timeframe import MultiTimeframeContext
 from quantforge.prediction.context import (
     PredictionContextRequirements,
@@ -40,6 +42,7 @@ from quantforge.prediction.technical_confluence import (
 
 PREDICTION_ALERT_SCHEMA_VERSION = "1"
 PREDICTION_SCANNER_ENGINE_VERSION = "1"
+HISTORICAL_PREDICTION_STUDY_REFERENCE_SCHEMA_VERSION = "1"
 RESEARCH_ONLY_DISCLAIMER = (
     "Research only. This alert is not financial advice and does not submit or "
     "authorize any brokerage order or trade."
@@ -63,6 +66,29 @@ class AlertDeduplicationPolicy(StrEnum):
 
     EXACT_CONTEXT = "exact_context"
     DECISION_BAR = "decision_bar"
+
+
+def _required_record_text(value: PrimitiveMapping, field_name: str) -> str:
+    field_value = value[field_name]
+    if not isinstance(field_value, str) or not field_value.strip():
+        raise TypeError(f"{field_name} must be a nonempty string")
+    return field_value
+
+
+def _required_record_bool(value: PrimitiveMapping, field_name: str) -> bool:
+    field_value = value[field_name]
+    if not isinstance(field_value, bool):
+        raise TypeError(f"{field_name} must be a boolean")
+    return field_value
+
+
+def _optional_record_count(value: PrimitiveMapping, field_name: str) -> int | None:
+    field_value = value.get(field_name)
+    if field_value is None:
+        return None
+    if isinstance(field_value, bool) or not isinstance(field_value, int):
+        raise TypeError(f"{field_name} must be an integer or null")
+    return field_value
 
 
 class PredictionScannerRule(Protocol):
@@ -94,8 +120,8 @@ class HistoricalPredictionStudyReference:
     rule_id: str
     rule_implementation_version: str
     rule_configuration_id: str
-    rule_configuration: PrimitiveMappingSnapshot
-    context_requirements: PrimitiveMappingSnapshot
+    context_requirements_id: str
+    adjustment_basis: AdjustmentBasis
     summary: PrimitiveMappingSnapshot | None = None
     sample_count: int | None = None
 
@@ -107,14 +133,22 @@ class HistoricalPredictionStudyReference:
                 self.rule_id,
                 self.rule_implementation_version,
                 self.rule_configuration_id,
+                self.context_requirements_id,
             )
         ):
             raise PredictionScannerError(
                 "historical study references require complete rule identity"
             )
-        if self.sample_count is not None and self.sample_count < 0:
+        if not isinstance(cast(object, self.adjustment_basis), AdjustmentBasis):
+            raise PredictionScannerError("historical study adjustment basis is invalid")
+        sample_count = cast(object, self.sample_count)
+        if sample_count is not None and (
+            isinstance(sample_count, bool)
+            or not isinstance(sample_count, int)
+            or sample_count < 0
+        ):
             raise PredictionScannerError(
-                "historical study sample count cannot be negative"
+                "historical study sample count must be a nonnegative integer"
             )
 
     @classmethod
@@ -123,6 +157,7 @@ class HistoricalPredictionStudyReference:
         *,
         study_id: str,
         rule: PredictionScannerRule,
+        adjustment_basis: AdjustmentBasis,
         summary: PrimitiveMapping | None = None,
         sample_count: int | None = None,
     ) -> HistoricalPredictionStudyReference:
@@ -132,44 +167,106 @@ class HistoricalPredictionStudyReference:
             rule_id=rule.name,
             rule_implementation_version=rule.implementation_version,
             rule_configuration_id=rule.configuration_id,
-            rule_configuration=PrimitiveMappingSnapshot.capture(rule.configuration()),
-            context_requirements=PrimitiveMappingSnapshot.capture(
+            context_requirements_id=configuration_identity(
                 rule.context_requirements.to_primitive()
             ),
+            adjustment_basis=adjustment_basis,
             summary=(
                 None if summary is None else PrimitiveMappingSnapshot.capture(summary)
             ),
             sample_count=sample_count,
         )
 
+    @classmethod
+    def from_primitive(
+        cls, value: PrimitiveMapping
+    ) -> HistoricalPredictionStudyReference:
+        """Load one immutable historical-study record and reject malformed input."""
+        try:
+            if (
+                value["schema_version"]
+                != HISTORICAL_PREDICTION_STUDY_REFERENCE_SCHEMA_VERSION
+                or value["artifact_type"] != "historical_prediction_study_reference"
+            ):
+                raise ValueError("unsupported historical-study reference schema")
+            adjustment_value = value["adjustment_basis"]
+            if not isinstance(adjustment_value, dict):
+                raise TypeError("adjustment_basis must be an object")
+            adjustment = cast(PrimitiveMapping, adjustment_value)
+            summary_value = value.get("summary")
+            if summary_value is not None and not isinstance(summary_value, dict):
+                raise TypeError("summary must be an object or null")
+            return cls(
+                study_id=_required_record_text(value, "study_id"),
+                rule_id=_required_record_text(value, "rule_id"),
+                rule_implementation_version=_required_record_text(
+                    value, "rule_implementation_version"
+                ),
+                rule_configuration_id=_required_record_text(
+                    value, "rule_configuration_id"
+                ),
+                context_requirements_id=_required_record_text(
+                    value, "context_requirements_id"
+                ),
+                adjustment_basis=AdjustmentBasis(
+                    AdjustmentMode(
+                        _required_record_text(adjustment, "adjustment_mode")
+                    ),
+                    _required_record_text(adjustment, "ohlc_basis"),
+                    _required_record_text(adjustment, "volume_basis"),
+                    _required_record_text(adjustment, "corporate_action_policy"),
+                    _required_record_bool(adjustment, "adjusted_fields_used"),
+                ),
+                summary=(
+                    None
+                    if summary_value is None
+                    else PrimitiveMappingSnapshot.capture(
+                        cast(PrimitiveMapping, summary_value)
+                    )
+                ),
+                sample_count=_optional_record_count(value, "sample_count"),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise PredictionScannerError(
+                "historical study reference record is invalid"
+            ) from error
+
     def validate_rule(self, rule: PredictionScannerRule) -> None:
         """Fail closed if any logical, indicator, backend, or policy input differs."""
-        current_configuration = PrimitiveMappingSnapshot.capture(rule.configuration())
-        current_requirements = PrimitiveMappingSnapshot.capture(
+        current_configuration_id = configuration_identity(rule.configuration())
+        current_requirements_id = configuration_identity(
             rule.context_requirements.to_primitive()
         )
         if (
             rule.name != self.rule_id
             or rule.implementation_version != self.rule_implementation_version
             or rule.configuration_id != self.rule_configuration_id
-            or current_configuration != self.rule_configuration
-            or current_requirements != self.context_requirements
-            or configuration_identity(current_configuration.to_primitive())
-            != self.rule_configuration_id
+            or current_configuration_id != self.rule_configuration_id
+            or current_requirements_id != self.context_requirements_id
         ):
             raise HistoricalStudyMismatchError(
                 "current rule, indicator configuration/backend, or context policy "
                 f"does not match historical study {self.study_id}"
             )
 
+    def validate_adjustment_basis(self, adjustment_basis: AdjustmentBasis) -> None:
+        """Reject current prices that use different historical adjustment semantics."""
+        if adjustment_basis != self.adjustment_basis:
+            raise HistoricalStudyMismatchError(
+                "current data adjustment basis does not match historical study "
+                f"{self.study_id}"
+            )
+
     def to_primitive(self) -> PrimitiveMapping:
         return {
+            "schema_version": HISTORICAL_PREDICTION_STUDY_REFERENCE_SCHEMA_VERSION,
+            "artifact_type": "historical_prediction_study_reference",
             "study_id": self.study_id,
             "rule_id": self.rule_id,
             "rule_implementation_version": self.rule_implementation_version,
             "rule_configuration_id": self.rule_configuration_id,
-            "rule_configuration": self.rule_configuration.to_primitive(),
-            "context_requirements": self.context_requirements.to_primitive(),
+            "context_requirements_id": self.context_requirements_id,
+            "adjustment_basis": self.adjustment_basis.to_primitive(),
             "summary": None if self.summary is None else self.summary.to_primitive(),
             "sample_count": self.sample_count,
         }
@@ -348,7 +445,7 @@ class ConsolePredictionAlertSink:
 
 
 class JsonFilePredictionAlertSink:
-    """Persist one content-addressed JSON file per alert without overwrites."""
+    """Atomically persist one content-addressed alert without overwrites."""
 
     def __init__(self, output_directory: Path) -> None:
         self.output_directory = output_directory
@@ -357,14 +454,46 @@ class JsonFilePredictionAlertSink:
         self.output_directory.mkdir(parents=True, exist_ok=True)
         path = self.output_directory / f"{alert.alert_id}.json"
         content = alert.serialize()
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{alert.alert_id}.",
+            suffix=".tmp",
+            dir=self.output_directory,
+        )
+        temporary_path = Path(temporary_name)
         try:
-            with path.open("xb") as stream:
+            with os.fdopen(descriptor, "wb") as stream:
                 stream.write(content)
-        except FileExistsError:
-            if path.read_bytes() != content:
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                os.link(temporary_path, path)
+            except FileExistsError:
+                if path.read_bytes() != content:
+                    raise AlertPersistenceError(
+                        f"existing alert artifact differs: {path}"
+                    ) from None
+            _fsync_directory(self.output_directory)
+        except AlertPersistenceError:
+            raise
+        except OSError as error:
+            raise AlertPersistenceError(
+                f"cannot persist alert artifact: {path}"
+            ) from error
+        finally:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError as error:
                 raise AlertPersistenceError(
-                    f"existing alert artifact differs: {path}"
-                ) from None
+                    f"cannot remove temporary alert artifact: {temporary_path}"
+                ) from error
+
+
+def _fsync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 class AlertDeduplicationClaim(Protocol):
@@ -639,6 +768,9 @@ class PredictionScanner:
                 raise PredictionScannerError(
                     "scanner source context as-of does not match the requested decision"
                 )
+            binding.historical_study.validate_adjustment_basis(
+                snapshot.adjustment_basis
+            )
             rule_context = build_prediction_rule_context(
                 binding.rule.context_requirements,
                 snapshot.context,
@@ -1003,6 +1135,7 @@ def _deduplication_key(alert: PredictionAlert, policy: AlertDeduplicationPolicy)
 
 
 __all__ = [
+    "HISTORICAL_PREDICTION_STUDY_REFERENCE_SCHEMA_VERSION",
     "PREDICTION_ALERT_SCHEMA_VERSION",
     "PREDICTION_SCANNER_ENGINE_VERSION",
     "RESEARCH_ONLY_DISCLAIMER",

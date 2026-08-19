@@ -1,6 +1,7 @@
 import ast
 import io
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -13,6 +14,7 @@ from scripts import export_spy_multi_timeframe_context as spy_example
 from quantforge.configuration import PrimitiveMapping
 from quantforge.data import (
     AdjustmentBasis,
+    AdjustmentMode,
     ContextAvailability,
     ContextCompletionPolicy,
     ContextTimeframeRequirement,
@@ -193,6 +195,7 @@ def _scanner(
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=historical,
+        adjustment_basis=source.adjustment_basis,
         summary={"validation_period": "untouched_holdout"},
         sample_count=42,
     )
@@ -282,6 +285,7 @@ def test_accepted_alert_has_complete_causal_payload_and_dry_run_sinks(
                 HistoricalPredictionStudyReference.capture(
                     study_id="validated-study-1",
                     rule=rule,
+                    adjustment_basis=source.adjustment_basis,
                     summary={"accuracy": "descriptive_only"},
                     sample_count=42,
                 ),
@@ -306,7 +310,11 @@ def test_accepted_alert_has_complete_causal_payload_and_dry_run_sinks(
     assert cast(str, payload["decision_timestamp"]) <= cast(str, payload["as_of"])
     assert payload["context_id"] == context.context_id
     assert payload["disclaimer"]
-    assert cast(PrimitiveMapping, payload["historical_study"])["sample_count"] == 42
+    historical_study = cast(PrimitiveMapping, payload["historical_study"])
+    assert historical_study["sample_count"] == 42
+    assert historical_study["adjustment_basis"] == (
+        source.adjustment_basis.to_primitive()
+    )
     assert len(cast(list[object], payload["conditions"])) == 6
     indicators = cast(list[PrimitiveMapping], payload["indicators"])
     assert len(indicators) == 3
@@ -327,6 +335,42 @@ def test_accepted_alert_has_complete_causal_payload_and_dry_run_sinks(
         == payload
     )
     assert "outcome_label" not in json.dumps(payload, sort_keys=True)
+
+
+def test_json_alert_sink_syncs_temporary_content_before_atomic_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rule = _rule()
+    context = _case_context(0)
+    capture = _CapturingSink()
+    alert = (
+        _scanner(rule, _source(context), capture).scan(as_of=context.as_of).alerts[0]
+    )
+    output_directory = tmp_path / "alerts"
+    content_was_synced = False
+    original_fsync = os.fsync
+    original_link = os.link
+
+    def track_fsync(descriptor: int) -> None:
+        nonlocal content_was_synced
+        content_was_synced = True
+        original_fsync(descriptor)
+
+    def verify_atomic_install(source: Path, destination: Path) -> None:
+        assert content_was_synced
+        assert not destination.exists()
+        assert source.read_bytes() == alert.serialize()
+        original_link(source, destination)
+
+    monkeypatch.setattr(os, "fsync", track_fsync)
+    monkeypatch.setattr(os, "link", verify_atomic_install)
+
+    JsonFilePredictionAlertSink(output_directory).emit(alert)
+
+    assert (output_directory / f"{alert.alert_id}.json").read_bytes() == (
+        alert.serialize()
+    )
+    assert tuple(output_directory.glob(".*.tmp")) == ()
 
 
 def test_no_prediction_is_audited_without_emitting_an_alert() -> None:
@@ -357,7 +401,9 @@ def test_one_scan_can_evaluate_multiple_independently_validated_rules() -> None:
             PredictionScannerRuleBinding(
                 rule,
                 HistoricalPredictionStudyReference.capture(
-                    study_id=f"validated-study-{index}", rule=rule
+                    study_id=f"validated-study-{index}",
+                    rule=rule,
+                    adjustment_basis=source.adjustment_basis,
                 ),
             )
             for index, rule in enumerate(rules)
@@ -448,11 +494,61 @@ def test_historical_backend_or_configuration_mismatch_fails_before_data_access()
     historical_rule = _rule()
     current_rule = _rule(backend_id="native_v1")
     reference = HistoricalPredictionStudyReference.capture(
-        study_id="validated-study-1", rule=historical_rule
+        study_id="validated-study-1",
+        rule=historical_rule,
+        adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
     )
 
     with pytest.raises(HistoricalStudyMismatchError, match="does not match"):
         PredictionScannerRuleBinding(current_rule, reference)
+
+
+def test_historical_study_reference_record_round_trips() -> None:
+    rule = _rule()
+    reference = HistoricalPredictionStudyReference.capture(
+        study_id="validated-study-1",
+        rule=rule,
+        adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
+        summary={"validated": True},
+        sample_count=42,
+    )
+
+    assert (
+        HistoricalPredictionStudyReference.from_primitive(reference.to_primitive())
+        == reference
+    )
+
+
+def test_historical_adjustment_mismatch_fails_before_rule_evaluation() -> None:
+    rule = _rule()
+    context = _case_context(0)
+    historical_adjustment = timeframe_fixtures._adjustment_basis()  # pyright: ignore[reportPrivateUsage]
+    current_adjustment = AdjustmentBasis(
+        AdjustmentMode.SPLIT_ADJUSTED,
+        "split_adjusted",
+        "split_adjusted",
+        "split_adjusted_prices_without_dividend_adjustment",
+        True,
+    )
+    source = _source(context)
+    source.adjustment_basis = current_adjustment
+    reference = HistoricalPredictionStudyReference.capture(
+        study_id="validated-study-1",
+        rule=rule,
+        adjustment_basis=historical_adjustment,
+    )
+    sink = _CapturingSink()
+    scanner = PredictionScanner(
+        source,
+        (PredictionScannerRuleBinding(rule, reference),),
+        (sink,),
+    )
+
+    with pytest.raises(HistoricalStudyMismatchError, match="adjustment basis"):
+        scanner.scan(as_of=context.as_of)
+
+    assert source.refresh_values == [True]
+    assert sink.alerts == []
 
 
 def test_stale_data_fails_before_rule_evaluation() -> None:

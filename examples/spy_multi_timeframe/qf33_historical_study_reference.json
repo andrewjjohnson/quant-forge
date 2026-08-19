@@ -1,0 +1,22 @@
+{
+  "schema_version": "1",
+  "artifact_type": "historical_prediction_study_reference",
+  "study_id": "qf33_spy_fixture_parity_study_v1",
+  "rule_id": "multi_timeframe_technical_confluence",
+  "rule_implementation_version": "1",
+  "rule_configuration_id": "9b4e58c189dc59fdb940772149677b09f648062a88b05f1b33d2de220f130f01",
+  "context_requirements_id": "f468aea91206a21ffd2e79e47f07b3389a1d6e9bcbf2b5d9d71a171c3fe4e63a",
+  "adjustment_basis": {
+    "adjustment_mode": "unadjusted",
+    "ohlc_basis": "raw_provider",
+    "volume_basis": "raw_provider",
+    "corporate_action_policy": "not_provided_for_synthetic_intraday_fixture",
+    "adjusted_fields_used": false
+  },
+  "summary": {
+    "scope": "deterministic SPY fixture parity validation",
+    "validated": true,
+    "profitability_claim": false
+  },
+  "sample_count": 2
+}
