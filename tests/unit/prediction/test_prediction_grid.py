@@ -10,13 +10,19 @@ from quantforge.indicators import (
     IndicatorBackendIdentity,
     SimpleMovingAverageParameters,
 )
-from quantforge.optimization import IntegerValues, ParameterSearchSpace
+from quantforge.optimization import (
+    IntegerValues,
+    ParameterConstraint,
+    ParameterSearchSpace,
+)
+from quantforge.optimization.constraints import ConstraintDecision
 from quantforge.optimization.models import (
     StabilityClassification,
     StabilityConfig,
     ThresholdOperator,
     TrialStatus,
 )
+from quantforge.optimization.spaces import SearchValue
 from quantforge.prediction import (
     InvalidPredictionGridConfigurationError,
     InvalidPredictionGridParametersError,
@@ -124,6 +130,26 @@ class MutableAnalyzer(FixtureAnalyzer):
         return analysis
 
 
+class MutableConstraint:
+    name = "fixture_mutable_constraint"
+
+    def __init__(self, *, mutate_during_evaluation: bool) -> None:
+        self.version = "1"
+        self.mutate_during_evaluation = mutate_during_evaluation
+
+    def validate(self, parameter_names: frozenset[str]) -> None:
+        assert "window" in parameter_names
+
+    def evaluate(self, parameters: dict[str, SearchValue]) -> ConstraintDecision:
+        assert "window" in parameters
+        if self.mutate_during_evaluation:
+            self.version = "2"
+        return ConstraintDecision(True, self.name, "constraint passed")
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {"name": self.name, "version": self.version}
+
+
 class SpikeAnalyzer(FixtureAnalyzer):
     name = "fixture_prediction_grid_spike_analyzer"
 
@@ -185,6 +211,7 @@ def _grid(
     analyzer: FixtureAnalyzer | None = None,
     stability: StabilityConfig | None = None,
     factory: FixtureStudyFactory | None = None,
+    parameter_constraints: tuple[ParameterConstraint, ...] = (),
 ) -> PredictionGridStudy:
     context = fixtures._prediction_context()  # pyright: ignore[reportPrivateUsage]
     family_id = context.source_consistency.family_id
@@ -218,6 +245,7 @@ def _grid(
                 else stability
             ),
             output_root=output_root,
+            parameter_constraints=parameter_constraints,
             retry_failed=retry_failed,
         ),
     )
@@ -343,6 +371,33 @@ def test_component_configuration_mutation_fails_before_success_is_persisted(
         json.loads(path.read_text(encoding="utf-8"))["status"] == "running"
         for path in trial_documents
     )
+
+
+@pytest.mark.parametrize("mutation_point", ["after_construction", "during_evaluation"])
+def test_parameter_constraint_mutation_fails_before_trial_is_persisted(
+    tmp_path: Path,
+    mutation_point: str,
+) -> None:
+    constraint = MutableConstraint(
+        mutate_during_evaluation=mutation_point == "during_evaluation"
+    )
+    grid = _grid(tmp_path, parameter_constraints=(constraint,))
+    if mutation_point == "after_construction":
+        constraint.version = "2"
+
+    with pytest.raises(
+        InvalidPredictionGridConfigurationError,
+        match="parameter constraints changed",
+    ):
+        grid.run()
+
+    manifest_path = tmp_path / grid.study_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["parameter_constraints"] == [
+        {"name": constraint.name, "version": "1"}
+    ]
+    assert constraint.version == "2"
+    assert not tuple((tmp_path / grid.study_id / "trials").glob("*.json"))
 
 
 def test_candidate_construction_interruption_preserves_enumerated_trials_for_resume(

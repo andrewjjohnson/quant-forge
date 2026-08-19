@@ -27,6 +27,7 @@ from quantforge.data.multi_timeframe import (
 )
 from quantforge.indicators import IndicatorBackendIdentity, TimeframeIndicatorOutput
 from quantforge.optimization.constraints import ParameterConstraint
+from quantforge.optimization.errors import InvalidStudyConfigurationError
 from quantforge.optimization.models import (
     RankingDirection,
     StabilityClassification,
@@ -456,6 +457,9 @@ class PredictionGridConfig:
             raise InvalidPredictionGridConfigurationError(
                 "maximum combinations must be positive"
             )
+        object.__setattr__(
+            self, "parameter_constraints", tuple(self.parameter_constraints)
+        )
         object.__setattr__(self, "output_root", Path(self.output_root))
 
 
@@ -1014,6 +1018,7 @@ def _validate_factory(
     factory: PredictionStudyFactory,
     config: PredictionGridConfig,
     configuration_snapshot: PrimitiveMappingSnapshot,
+    constraint_snapshots: tuple[PrimitiveMappingSnapshot, ...],
     parameter_order: tuple[str, ...],
     required_parameter_names: frozenset[str],
 ) -> None:
@@ -1043,9 +1048,39 @@ def _validate_factory(
         raise InvalidPredictionGridConfigurationError(
             "prediction study factory configuration is not deterministic"
         ) from error
-    for constraint in config.parameter_constraints:
-        constraint.validate(config.search_space.names)
-        configuration_identity(constraint.to_primitive())
+    _validate_constraints_unchanged(
+        config.parameter_constraints,
+        constraint_snapshots,
+        config.search_space.names,
+    )
+
+
+def _validate_constraints_unchanged(
+    constraints: Sequence[ParameterConstraint],
+    snapshots: tuple[PrimitiveMappingSnapshot, ...],
+    parameter_names: frozenset[str],
+) -> None:
+    if len(constraints) != len(snapshots):
+        raise InvalidPredictionGridConfigurationError(
+            "prediction parameter constraints changed after grid construction"
+        )
+    try:
+        for constraint, snapshot in zip(constraints, snapshots, strict=True):
+            constraint.validate(parameter_names)
+            current = PrimitiveMappingSnapshot.capture(constraint.to_primitive())
+            if current != snapshot:
+                raise InvalidPredictionGridConfigurationError(
+                    "prediction parameter constraints changed after grid construction"
+                )
+    except (
+        AttributeError,
+        TypeError,
+        ValueError,
+        InvalidStudyConfigurationError,
+    ) as error:
+        raise InvalidPredictionGridConfigurationError(
+            "prediction parameter constraints changed after grid construction"
+        ) from error
 
 
 def _combination_id(
@@ -1100,14 +1135,14 @@ def _iter_candidates(
             parameters=parameters,
         )
         snapshot = PrimitiveMappingSnapshot.capture(parameters)
-        failed = next(
-            (
-                decision
-                for constraint in config.parameter_constraints
-                if not (decision := constraint.evaluate(search_values.copy())).passed
-            ),
-            None,
-        )
+        failed = None
+        for constraint in config.parameter_constraints:
+            validate_components()
+            decision = constraint.evaluate(search_values.copy())
+            validate_components()
+            if not decision.passed:
+                failed = decision
+                break
         if failed is not None:
             validate_components()
             yield PredictionGridExclusion(
@@ -1690,6 +1725,10 @@ class PredictionGridStudy:
             analyzer_configuration_snapshot = PrimitiveMappingSnapshot.capture(
                 analyzer.configuration()
             )
+            constraint_snapshots = tuple(
+                PrimitiveMappingSnapshot.capture(constraint.to_primitive())
+                for constraint in config.parameter_constraints
+            )
             factory_name = study_factory.name
             factory_version = study_factory.version
             parameter_order = tuple(study_factory.parameter_order)
@@ -1705,6 +1744,7 @@ class PredictionGridStudy:
             study_factory,
             config,
             factory_configuration_snapshot,
+            constraint_snapshots,
             parameter_order,
             required_parameter_names,
         )
@@ -1745,7 +1785,7 @@ class PredictionGridStudy:
             "indicator_backend": indicator_backend.to_primitive(),
             "search_space": config.search_space.to_primitive(parameter_order),
             "parameter_constraints": [
-                item.to_primitive() for item in config.parameter_constraints
+                snapshot.to_primitive() for snapshot in constraint_snapshots
             ],
             "ranking": config.ranking.to_primitive(),
             "stability": config.stability.to_primitive(),
@@ -1778,6 +1818,7 @@ class PredictionGridStudy:
         self._factory_configuration_snapshot = factory_configuration_snapshot
         self._factory_parameter_order = parameter_order
         self._factory_required_parameter_names = required_parameter_names
+        self._constraint_snapshots = constraint_snapshots
         self._analyzer = analyzer
         self._analyzer_name = analyzer_name
         self._analyzer_version = analyzer_version
@@ -1843,6 +1884,11 @@ class PredictionGridStudy:
             raise InvalidPredictionGridConfigurationError(
                 "prediction factory or analyzer changed after grid construction"
             )
+        _validate_constraints_unchanged(
+            self._config.parameter_constraints,
+            self._constraint_snapshots,
+            self._config.search_space.names,
+        )
 
     def _iter_candidates(self) -> Iterator[PredictionGridCandidate]:
         self._validate_components_unchanged()

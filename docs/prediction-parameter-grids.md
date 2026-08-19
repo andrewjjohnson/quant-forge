@@ -61,6 +61,9 @@ Factory and analyzer configurations are captured as detached immutable
 snapshots before identity hashing. Their names, versions, parameter contracts,
 configuration IDs, and configuration content are revalidated during candidate
 construction and after analysis, before a successful artifact can be persisted.
+Parameter constraints are likewise snapshotted for the manifest and revalidated
+immediately before and after every predicate evaluation, so mutable constraints
+cannot silently change the recorded grid semantics.
 
 ## Persistence and resume
 
