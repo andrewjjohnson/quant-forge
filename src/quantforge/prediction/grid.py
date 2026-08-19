@@ -832,7 +832,7 @@ class PredictionGridExecutionCache(PredictionIndicatorOutputCache):
                 "component": "prediction_grid_context_cache_key",
                 "dataset_family_fingerprint": self._dataset_family_fingerprint,
                 "context_environment": self._context_environment.to_primitive(),
-                "request": _context_request_primitive(requirements),
+                "request": requirements.to_primitive(),
             }
         )
         cached = self._contexts.get(key)
@@ -919,23 +919,6 @@ class _CachedContextProvider:
         self, requirements: PredictionContextRequirements
     ) -> MultiTimeframeContext:
         return self.cache.context(requirements, self.source)
-
-
-def _context_request_primitive(
-    requirements: PredictionContextRequirements,
-) -> PrimitiveMapping:
-    def without_indicators(value: PrimitiveMapping) -> PrimitiveMapping:
-        detached = PrimitiveMappingSnapshot.capture(value).to_primitive()
-        detached["indicators"] = []
-        return detached
-
-    return {
-        "primary": without_indicators(requirements.primary.to_primitive()),
-        "contextual": [
-            without_indicators(item.to_primitive()) for item in requirements.contextual
-        ],
-        "context_completion_policy": requirements.context_completion_policy.value,
-    }
 
 
 def _component_primitive(component: object, label: str) -> PrimitiveMapping:

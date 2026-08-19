@@ -115,10 +115,10 @@ period, weekday, and matched-baseline records using that baseline.
 Each execution owns a `PredictionGridExecutionCache`.
 
 - Context bars reuse a key containing the dataset-family fingerprint, context
-  provider environment, timeframes, feed/session policies, staleness limits,
-  and completed/developing policy. Indicator declarations are intentionally
-  excluded from that context-bar key. Before a returned context is cached, its
-  QF-14 source-consistency evidence must identify that same dataset family.
+  provider environment, and the complete provider request, including indicator
+  declarations, timeframes, feed/session policies, staleness limits, failure
+  policy, and completed/developing policy. Before a returned context is cached,
+  its QF-14 source-consistency evidence must identify that same dataset family.
 - Normalized indicator output reuse additionally binds the QF-20 context ID,
   timeframe, completion policy, indicator configuration ID, complete backend
   function identity, and fixed backend configuration.

@@ -452,6 +452,10 @@ def test_context_and_normalized_indicator_cache_reuses_only_compatible_identity(
 
     assert cache.context(requirements, provider) is context
     assert cache.context(requirements, provider) is context
+    changed_requirements = fixtures._requirements(  # pyright: ignore[reportPrivateUsage]
+        window=3
+    )
+    assert cache.context(changed_requirements, provider) is context
     indicator = requirements.primary.indicators[0]
     first = cache.resolve(
         indicator,
@@ -467,8 +471,9 @@ def test_context_and_normalized_indicator_cache_reuses_only_compatible_identity(
     )
 
     assert first is second
+    assert provider.requests == [requirements, changed_requirements]
     assert cache.statistics.context_hits == 1
-    assert cache.statistics.context_misses == 1
+    assert cache.statistics.context_misses == 2
     assert cache.statistics.indicator_hits == 1
     assert cache.statistics.indicator_misses == 1
 
