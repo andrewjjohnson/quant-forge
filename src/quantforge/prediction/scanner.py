@@ -649,9 +649,16 @@ class JsonFileAlertDeduplicationStore:
         )
         try:
             existing_state = claim.read_state()
-            if existing_state is not None and existing_state[0] == "published":
-                claim.close()
-                return PublishedAlertDeduplication(existing_state[1])
+            if existing_state is not None:
+                existing_lifecycle, existing_alert_id = existing_state
+                if existing_lifecycle == "published":
+                    claim.close()
+                    return PublishedAlertDeduplication(existing_alert_id)
+                if existing_alert_id != alert_id:
+                    raise AlertPersistenceError(
+                        "pending deduplication claim belongs to a different "
+                        "alert identity"
+                    )
             claim.write_state("pending")
         except BaseException:
             claim.close()

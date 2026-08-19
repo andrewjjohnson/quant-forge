@@ -562,13 +562,36 @@ def test_file_store_recovers_abandoned_pending_claims(
     )
 
     store = JsonFileAlertDeduplicationStore(state_directory)
-    recovered = store.claim("recoverable-key", "retried-alert")
+    recovered = store.claim("recoverable-key", "interrupted-alert")
 
     assert not isinstance(recovered, PublishedAlertDeduplication)
     recovered.publish()
     published = store.claim("recoverable-key", "later-alert")
     assert isinstance(published, PublishedAlertDeduplication)
-    assert published.alert_id == "retried-alert"
+    assert published.alert_id == "interrupted-alert"
+
+
+def test_file_store_rejects_pending_claim_with_a_different_alert_id(
+    tmp_path: Path,
+) -> None:
+    state_directory = tmp_path / "dedup"
+    state_directory.mkdir()
+    state_path = state_directory / "decision-key.json"
+    pending = {
+        "alert_id": "interrupted-alert",
+        "deduplication_key": "decision-key",
+        "state": "pending",
+    }
+    state_path.write_text(json.dumps(pending), encoding="utf-8")
+    store = JsonFileAlertDeduplicationStore(state_directory)
+
+    with pytest.raises(AlertPersistenceError, match="different alert identity"):
+        store.claim("decision-key", "newer-context-alert")
+
+    assert json.loads(state_path.read_text(encoding="utf-8")) == pending
+    recovered = store.claim("decision-key", "interrupted-alert")
+    assert not isinstance(recovered, PublishedAlertDeduplication)
+    recovered.release()
 
 
 def test_file_store_blocks_an_active_claim_and_reuses_a_released_key(
@@ -924,6 +947,44 @@ def test_developing_context_can_alert_again_only_under_explicit_context_policy(
         bar_results[1].rule_results[0].duplicate_alert_id
         == bar_results[0].alerts[0].alert_id
     )
+
+    state_directory = tmp_path / "pending-decision-bar"
+    first_sink = _CapturingSink()
+    first_result = _scanner(
+        rule,
+        _FixtureSource(
+            contexts[0],
+            example.datasets.source.metadata.dataset_id,
+            example.datasets.source.request.adjustment_basis,
+        ),
+        first_sink,
+        store=JsonFileAlertDeduplicationStore(state_directory),
+        deduplication_policy=AlertDeduplicationPolicy.DECISION_BAR,
+    ).scan(as_of=contexts[0].as_of, dry_run=True)
+    state_path = next(state_directory.glob("*.json"))
+    pending_state = json.loads(state_path.read_text(encoding="utf-8"))
+    pending_state["state"] = "pending"
+    state_path.write_text(json.dumps(pending_state), encoding="utf-8")
+
+    second_sink = _CapturingSink()
+    with pytest.raises(AlertPersistenceError, match="different alert identity"):
+        _scanner(
+            rule,
+            _FixtureSource(
+                contexts[1],
+                example.datasets.source.metadata.dataset_id,
+                example.datasets.source.request.adjustment_basis,
+            ),
+            second_sink,
+            store=JsonFileAlertDeduplicationStore(state_directory),
+            deduplication_policy=AlertDeduplicationPolicy.DECISION_BAR,
+        ).scan(as_of=contexts[1].as_of, dry_run=True)
+
+    preserved_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert first_sink.alerts == list(first_result.alerts)
+    assert second_sink.alerts == []
+    assert preserved_state["state"] == "pending"
+    assert preserved_state["alert_id"] == first_result.alerts[0].alert_id
 
 
 def test_scanner_and_alert_module_has_no_direct_talib_import() -> None:

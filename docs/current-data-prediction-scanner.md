@@ -119,8 +119,10 @@ active claim: after the lock becomes available, it either retries a released or
 abandoned claim or returns the ID stored by the successful publisher. Duplicate
 scan results therefore identify the actual emitted alert artifact. If a scanner
 process exits while a claim is pending, the operating system releases its lock
-and the next scan recovers the abandoned claim instead of suppressing the alert
-forever.
+and the same alert identity can recover the abandoned claim instead of being
+suppressed forever. A different alert identity sharing the decision-bar key
+cannot overwrite pending evidence; recovery fails closed until the original
+identity is retried or the state is explicitly reconciled.
 
 Lock files use stable inodes and remain in the state directory. Pending and
 published JSON states are written and synced to private temporary files, then
