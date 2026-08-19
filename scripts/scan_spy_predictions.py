@@ -56,19 +56,29 @@ from quantforge.timeframes import Timeframe
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ALERT_ROOT = REPOSITORY_ROOT / "reports" / "qf33-spy-alerts"
 DEFAULT_STATE_ROOT = REPOSITORY_ROOT / "data" / "qf33-spy-alert-state"
-HISTORICAL_STUDY_ID = "qf33_spy_fixture_parity_study_v1"
-HISTORICAL_STUDY_PATH = (
-    REPOSITORY_ROOT
-    / "examples"
-    / "spy_multi_timeframe"
-    / "qf33_historical_study_reference.json"
-)
+HISTORICAL_STUDY_RECORDS = {
+    ContextCompletionPolicy.DEVELOPING_BAR_AS_OF: (
+        "qf33_spy_fixture_parity_study_v1",
+        REPOSITORY_ROOT
+        / "examples"
+        / "spy_multi_timeframe"
+        / "qf33_historical_study_reference.json",
+    ),
+    ContextCompletionPolicy.COMPLETED_BARS_ONLY: (
+        "qf33_spy_fixture_completed_bars_parity_study_v1",
+        REPOSITORY_ROOT
+        / "examples"
+        / "spy_multi_timeframe"
+        / "qf33_completed_bars_historical_study_reference.json",
+    ),
+}
 
 
 def load_historical_study_reference(
-    path: Path = HISTORICAL_STUDY_PATH,
+    completion_policy: ContextCompletionPolicy,
 ) -> HistoricalPredictionStudyReference:
     """Load the committed study record independently of the current rule."""
+    expected_study_id, path = HISTORICAL_STUDY_RECORDS[completion_policy]
     try:
         decoded = cast(object, json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError) as error:
@@ -82,7 +92,7 @@ def load_historical_study_reference(
     reference = HistoricalPredictionStudyReference.from_primitive(
         cast(PrimitiveMapping, decoded)
     )
-    if reference.study_id != HISTORICAL_STUDY_ID:
+    if reference.study_id != expected_study_id:
         raise PredictionScannerError(
             "historical study reference ID does not match the scanner"
         )
@@ -279,7 +289,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
-    historical_reference = load_historical_study_reference()
+    completion_policy = ContextCompletionPolicy(arguments.completion_policy)
+    historical_reference = load_historical_study_reference(completion_policy)
     fixture = load_fixture(arguments.fixture)
     as_of = arguments.as_of
     if as_of is None:
@@ -295,7 +306,6 @@ def main(argv: list[str] | None = None) -> int:
                 "midweek decision scenario"
             )
     datasets = build_datasets(fixture, arguments.cache_root)
-    completion_policy = ContextCompletionPolicy(arguments.completion_policy)
     rule = create_fixture_parity_rule(datasets, completion_policy)
     scanner = PredictionScanner(
         source=CachedSpyScannerSource(datasets),
@@ -314,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         "cache_status": datasets.cache_status,
         "completion_policy": completion_policy.value,
         "dry_run": result.dry_run,
-        "historical_study_id": HISTORICAL_STUDY_ID,
+        "historical_study_id": historical_reference.study_id,
         "rule_configuration_id": rule.configuration_id,
     }
     print(json.dumps(summary, sort_keys=True), file=sys.stderr)

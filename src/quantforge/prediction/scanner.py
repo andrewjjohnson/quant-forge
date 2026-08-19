@@ -293,6 +293,15 @@ class PredictionScannerSnapshot:
             raise PredictionScannerError(
                 "scanner source snapshot adjustment basis is invalid"
             )
+        canonical_source_snapshot_ids = {
+            reference.canonical_source_snapshot_id
+            for timeframe_context in self.context.timeframes
+            if (reference := timeframe_context.dataset_reference) is not None
+        }
+        if canonical_source_snapshot_ids != {self.prediction_dataset_id}:
+            raise PredictionScannerError(
+                "scanner prediction dataset ID does not match context lineage"
+            )
 
 
 class PredictionScannerDataSource(Protocol):
@@ -557,7 +566,7 @@ class _InMemoryAlertDeduplicationClaim:
 
 
 class JsonFileAlertDeduplicationStore:
-    """Cross-run deduplication with crash-recoverable locked state files."""
+    """Cross-run deduplication with stable locks and atomic state files."""
 
     def __init__(self, state_directory: Path) -> None:
         self.state_directory = state_directory
@@ -565,19 +574,26 @@ class JsonFileAlertDeduplicationStore:
     def _path(self, deduplication_key: str) -> Path:
         return self.state_directory / f"{deduplication_key}.json"
 
+    def _lock_path(self, deduplication_key: str) -> Path:
+        return self.state_directory / f"{deduplication_key}.lock"
+
     def claim(
         self, deduplication_key: str, alert_id: str
     ) -> AlertDeduplicationClaim | None:
         self.state_directory.mkdir(parents=True, exist_ok=True)
         path = self._path(deduplication_key)
-        descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        lock_descriptor = os.open(
+            self._lock_path(deduplication_key),
+            os.O_CREAT | os.O_RDWR | os.O_CLOEXEC,
+            0o600,
+        )
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            os.close(descriptor)
+            os.close(lock_descriptor)
             return None
         claim = _JsonFileAlertDeduplicationClaim(
-            path, descriptor, deduplication_key, alert_id
+            path, lock_descriptor, deduplication_key, alert_id
         )
         try:
             existing_state = claim.read_state()
@@ -594,19 +610,25 @@ class JsonFileAlertDeduplicationStore:
 @dataclass(slots=True)
 class _JsonFileAlertDeduplicationClaim:
     path: Path
-    descriptor: int
+    lock_descriptor: int
     deduplication_key: str
     alert_id: str
     _closed: bool = False
 
     def read_state(self) -> str | None:
-        os.lseek(self.descriptor, 0, os.SEEK_SET)
         try:
-            content = os.read(self.descriptor, 64 * 1024)
+            content = self.path.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise AlertPersistenceError(
+                f"cannot read deduplication state: {self.path}"
+            ) from error
+        try:
             if not content:
                 return None
             decoded = cast(object, json.loads(content))
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise AlertPersistenceError(
                 f"cannot validate deduplication state: {self.path}"
             ) from error
@@ -646,12 +668,7 @@ class _JsonFileAlertDeduplicationClaim:
             sort_keys=True,
         ).encode("utf-8")
         try:
-            os.lseek(self.descriptor, 0, os.SEEK_SET)
-            os.ftruncate(self.descriptor, 0)
-            with os.fdopen(self.descriptor, "wb", closefd=False) as stream:
-                stream.write(content)
-                stream.flush()
-            os.fsync(self.descriptor)
+            _atomic_replace_private_file(self.path, content)
         except OSError as error:
             raise AlertPersistenceError(
                 f"cannot persist deduplication state: {self.path}"
@@ -668,6 +685,7 @@ class _JsonFileAlertDeduplicationClaim:
             return
         try:
             self.path.unlink(missing_ok=True)
+            _fsync_directory(self.path.parent)
         except OSError as error:
             raise AlertPersistenceError(
                 f"cannot release deduplication claim: {self.path}"
@@ -679,10 +697,26 @@ class _JsonFileAlertDeduplicationClaim:
         if self._closed:
             return
         try:
-            fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+            fcntl.flock(self.lock_descriptor, fcntl.LOCK_UN)
         finally:
-            os.close(self.descriptor)
+            os.close(self.lock_descriptor)
             self._closed = True
+
+
+def _atomic_replace_private_file(path: Path, content: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)

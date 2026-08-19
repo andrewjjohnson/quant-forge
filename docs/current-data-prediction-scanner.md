@@ -34,6 +34,9 @@ required derived timeframes, and return a `PredictionScannerSnapshot`.
 Provider clients, endpoints, and credentials remain behind that data/ingestion
 adapter. The scanner receives only the canonical context, dataset identity,
 symbol, adjustment basis, and a non-secret source-mode description.
+`PredictionScannerSnapshot` rejects a reported prediction dataset ID unless it
+matches the canonical source snapshot ID carried by every context lineage
+reference, preventing provenance from naming unrelated or stale data.
 
 `dry_run=True` always passes `refresh=False` to the source. A cache-only source
 should reject `refresh=True` rather than silently accessing a provider.
@@ -101,6 +104,12 @@ and releases a pending claim when a sink fails. If a scanner process exits while
 a claim is pending, the operating system releases its lock and the next scan
 recovers the abandoned claim instead of suppressing the alert forever.
 
+Lock files use stable inodes and remain in the state directory. Pending and
+published JSON states are written and synced to private temporary files, then
+atomically replaced while the stable lock remains held. An interrupted state
+transition therefore leaves either the prior complete state or the next
+complete state, never a truncated live marker.
+
 Delivery is therefore at least once across an abrupt exit: a process that exits
 after a sink succeeds but before the claim becomes `published` may cause that
 sink to receive the alert again. Sinks should use `alert_id` as their idempotency
@@ -119,7 +128,8 @@ Two explicit policies are available:
 
 `InMemoryAlertDeduplicationStore` supports one process.
 `JsonFileAlertDeduplicationStore` persists private, content-addressed lifecycle
-files for cross-run deduplication and recovers abandoned pending claims.
+and lock files for cross-run deduplication and recovers abandoned pending
+claims.
 
 ## Sinks
 
@@ -151,11 +161,13 @@ replay that cache. It rebuilds 4-hour, daily, and weekly artifacts, constructs
 the fixed midweek developing context, and evaluates the exact `talib_v1`
 SMA(2) configuration captured under
 `qf33_spy_fixture_parity_study_v1`. The scanner loads that identity and its
-unadjusted-price policy from the committed immutable
-`examples/spy_multi_timeframe/qf33_historical_study_reference.json` record;
-it does not derive the study reference from the current rule. The deterministic
-ascending fixture emits one UP alert. Repeating the command emits no second
-alert under the default `decision_bar` policy.
+unadjusted-price policy from a committed immutable study record; it does not
+derive the study reference from the current rule. The default developing-bar
+mode uses `examples/spy_multi_timeframe/qf33_historical_study_reference.json`;
+the completed-bars mode uses the independently validated
+`examples/spy_multi_timeframe/qf33_completed_bars_historical_study_reference.json`.
+The deterministic ascending fixture emits one UP alert. Repeating the command
+emits no second alert under the default `decision_bar` policy.
 
 Use completed bars only with:
 

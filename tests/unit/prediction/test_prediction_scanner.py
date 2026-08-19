@@ -32,6 +32,7 @@ from quantforge.indicators import (
 from quantforge.prediction import (
     AlertDeduplicationPolicy,
     AlertDeduplicationStore,
+    AlertPersistenceError,
     ConsolePredictionAlertSink,
     HistoricalPredictionStudyReference,
     HistoricalStudyMismatchError,
@@ -44,6 +45,7 @@ from quantforge.prediction import (
     PredictionDirection,
     PredictionIndicatorRequirement,
     PredictionScanner,
+    PredictionScannerError,
     PredictionScannerRuleBinding,
     PredictionScannerSnapshot,
     PredictionTimeframeRequirement,
@@ -213,9 +215,15 @@ def _case_context(case_index: int) -> MultiTimeframeContext:
 
 
 def _source(context: MultiTimeframeContext) -> _FixtureSource:
+    canonical_source_ids = {
+        reference.canonical_source_snapshot_id
+        for timeframe_context in context.timeframes
+        if (reference := timeframe_context.dataset_reference) is not None
+    }
+    assert len(canonical_source_ids) == 1
     return _FixtureSource(
         context,
-        rule_fixtures._dataset().metadata.dataset_id,  # pyright: ignore[reportPrivateUsage]
+        next(iter(canonical_source_ids)),
         timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -488,6 +496,31 @@ def test_file_store_blocks_an_active_claim_and_reuses_a_released_key(
     replacement.publish()
 
 
+def test_file_store_transition_never_truncates_the_live_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_directory = tmp_path / "dedup"
+    store = JsonFileAlertDeduplicationStore(state_directory)
+    claim = store.claim("atomic-key", "atomic-alert")
+    assert claim is not None
+    state_path = state_directory / "atomic-key.json"
+    pending_content = state_path.read_bytes()
+
+    def interrupt_replace(source: Path, destination: Path) -> None:
+        del source, destination
+        raise OSError("simulated interruption before atomic replace")
+
+    monkeypatch.setattr(os, "replace", interrupt_replace)
+
+    with pytest.raises(AlertPersistenceError, match="deduplication state"):
+        claim.publish()
+
+    assert state_path.read_bytes() == pending_content
+    assert json.loads(pending_content)["state"] == "pending"
+    assert tuple(state_directory.glob(".*.tmp")) == ()
+    claim.release()
+
+
 def test_historical_backend_or_configuration_mismatch_fails_before_data_access() -> (
     None
 ):
@@ -546,6 +579,20 @@ def test_historical_adjustment_mismatch_fails_before_rule_evaluation() -> None:
 
     with pytest.raises(HistoricalStudyMismatchError, match="adjustment basis"):
         scanner.scan(as_of=context.as_of)
+
+    assert source.refresh_values == [True]
+    assert sink.alerts == []
+
+
+def test_snapshot_dataset_id_must_match_context_lineage() -> None:
+    rule = _rule()
+    context = _case_context(0)
+    source = _source(context)
+    source.dataset_id = "unrelated-dataset-id"
+    sink = _CapturingSink()
+
+    with pytest.raises(PredictionScannerError, match="context lineage"):
+        _scanner(rule, source, sink).scan(as_of=context.as_of)
 
     assert source.refresh_values == [True]
     assert sink.alerts == []
