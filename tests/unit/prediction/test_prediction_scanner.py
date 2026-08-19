@@ -79,6 +79,7 @@ class _FixtureSource:
     dataset_id: str
     adjustment_basis: AdjustmentBasis
     symbol: str = "SPY"
+    source_mode: str | None = None
 
     def __post_init__(self) -> None:
         self.refresh_values: list[bool] = []
@@ -99,7 +100,8 @@ class _FixtureSource:
             self.dataset_id,
             self.symbol,
             self.adjustment_basis,
-            "refreshed_provider_data" if refresh else "replayed_local_cache",
+            self.source_mode
+            or ("refreshed_provider_data" if refresh else "replayed_local_cache"),
         )
 
 
@@ -389,6 +391,40 @@ def test_json_alert_sink_syncs_temporary_content_before_atomic_install(
         alert.serialize()
     )
     assert tuple(output_directory.glob(".*.tmp")) == ()
+
+
+def test_source_mode_change_produces_a_distinct_idempotent_artifact(
+    tmp_path: Path,
+) -> None:
+    rule = _rule()
+    context = _case_context(0)
+    seeded_source = _source(context)
+    seeded_source.source_mode = "seeded_local_cache_from_committed_fixture"
+    replayed_source = _source(context)
+    replayed_source.source_mode = "replayed_local_cache"
+    output_directory = tmp_path / "alerts"
+    sink = JsonFilePredictionAlertSink(output_directory)
+
+    seeded_alert = (
+        _scanner(rule, seeded_source, _CapturingSink())
+        .scan(as_of=context.as_of)
+        .alerts[0]
+    )
+    replayed_alert = (
+        _scanner(rule, replayed_source, _CapturingSink())
+        .scan(as_of=context.as_of)
+        .alerts[0]
+    )
+
+    sink.emit(seeded_alert)
+    sink.emit(replayed_alert)
+
+    assert seeded_alert.alert_id != replayed_alert.alert_id
+    assert seeded_alert.serialize() != replayed_alert.serialize()
+    assert {path.name for path in output_directory.glob("*.json")} == {
+        f"{seeded_alert.alert_id}.json",
+        f"{replayed_alert.alert_id}.json",
+    }
 
 
 def test_no_prediction_is_audited_without_emitting_an_alert() -> None:

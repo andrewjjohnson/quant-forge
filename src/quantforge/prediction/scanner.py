@@ -410,6 +410,7 @@ class PredictionAlert:
 
     def identity_primitive(self) -> PrimitiveMapping:
         """Return every field required to identify one exact alert decision."""
+        provenance = self.provenance.to_primitive()
         return _alert_identity_primitive(
             schema_version=self.schema_version,
             symbol=self.symbol,
@@ -420,6 +421,7 @@ class PredictionAlert:
             historical_dataset_fingerprint=(
                 self.historical_study.historical_dataset_fingerprint
             ),
+            source_mode=cast(str, provenance["source_mode"]),
             indicators=self.indicators,
             decision_timestamp=self.decision_timestamp,
             context_id=self.context_id,
@@ -1020,6 +1022,7 @@ def _build_alert(
             historical_dataset_fingerprint=(
                 binding.historical_study.historical_dataset_fingerprint
             ),
+            source_mode=snapshot.source_mode,
             indicators=indicators,
             decision_timestamp=decision_timestamp,
             context_id=context.context_id,
@@ -1054,6 +1057,7 @@ def _alert_identity_primitive(
     rule_configuration_id: str,
     historical_study_id: str,
     historical_dataset_fingerprint: str,
+    source_mode: str,
     indicators: tuple[PrimitiveMappingSnapshot, ...],
     decision_timestamp: datetime,
     context_id: str,
@@ -1081,6 +1085,7 @@ def _alert_identity_primitive(
         "rule_configuration_id": rule_configuration_id,
         "historical_study_id": historical_study_id,
         "historical_dataset_fingerprint": historical_dataset_fingerprint,
+        "source_mode": source_mode,
         "indicator_configurations": indicator_configurations,
         "decision_timestamp": decision_timestamp.astimezone(UTC).isoformat(),
         "context_id": context_id,

@@ -93,8 +93,12 @@ Alert schema version 1 includes:
 
 The alert ID binds symbol, study, rule/version/configuration, normalized
 indicator configuration/backend identities, primary decision timestamp,
-completion policy, and exact context identity. Alert construction has no
-broker, order, fill, portfolio, or outcome-label dependency.
+completion policy, exact context identity, and source mode. Binding source mode
+ensures that operational provenance changes also change the artifact ID, so a
+source-mode transition cannot produce different serialized bytes under an
+existing alert ID.
+Alert construction has no broker, order, fill, portfolio, or outcome-label
+dependency.
 
 ## Deduplication
 
