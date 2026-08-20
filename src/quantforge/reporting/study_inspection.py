@@ -16,7 +16,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
@@ -195,6 +195,9 @@ class StudyInspectionReport:
 
     selections: tuple[StudyInspectionSelection, ...]
     config: StudyInspectionReportConfig
+    _identity_snapshot: PrimitiveMappingSnapshot = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(cast(object, self.selections), tuple) or not self.selections:
@@ -208,22 +211,31 @@ class StudyInspectionReport:
             raise StudyInspectionReportError("report selection names must be unique")
         if not isinstance(cast(object, self.config), StudyInspectionReportConfig):
             raise StudyInspectionReportError("report configuration is invalid")
+        for selection in self.selections:
+            _validate_selection(selection)
+        object.__setattr__(
+            self,
+            "_identity_snapshot",
+            PrimitiveMappingSnapshot.capture(
+                {
+                    "schema_version": STUDY_INSPECTION_REPORT_SCHEMA_VERSION,
+                    "artifact_type": "multi_timeframe_study_inspection_report",
+                    "engine_version": STUDY_INSPECTION_REPORT_ENGINE_VERSION,
+                    "configuration": self.config.to_primitive(),
+                    "selections": [
+                        _selection_primitive(selection, self.config)
+                        for selection in self.selections
+                    ],
+                }
+            ),
+        )
 
     @property
     def report_id(self) -> str:
         return configuration_identity(self._identity_primitive())
 
     def _identity_primitive(self) -> PrimitiveMapping:
-        return {
-            "schema_version": STUDY_INSPECTION_REPORT_SCHEMA_VERSION,
-            "artifact_type": "multi_timeframe_study_inspection_report",
-            "engine_version": STUDY_INSPECTION_REPORT_ENGINE_VERSION,
-            "configuration": self.config.to_primitive(),
-            "selections": [
-                _selection_primitive(selection, self.config)
-                for selection in self.selections
-            ],
-        }
+        return self._identity_snapshot.to_primitive()
 
     def manifest_primitive(self) -> PrimitiveMapping:
         return {"report_id": self.report_id, **self._identity_primitive()}
@@ -409,7 +421,9 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
                     },
                     "fields": [item.value for item in output.source_fields],
                     "completion_policy": output.completion_policy.value,
-                    "developing_bar_support": output.developing_bar_support.value,
+                    "developing_bar_support": (
+                        requirement.developing_bar_support.value
+                    ),
                     "observation_unit": "bar",
                     "warm_up_bars": output.warm_up_bars,
                     "aggregation_provenance": (
@@ -425,6 +439,8 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
                 or output.source_timeframe != timeframe_input.requirement.timeframe
                 or output.completion_policy
                 is not timeframe_input.requirement.completion_policy
+                or output.developing_bar_support
+                is not requirement.developing_bar_support
                 or output.source_fields
                 != tuple(
                     sorted(

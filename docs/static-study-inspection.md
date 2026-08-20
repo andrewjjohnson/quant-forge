@@ -59,9 +59,10 @@ recalculation.
 Every panel must resolve to the same common dataset family. The generator
 revalidates symbol and adjustment basis, context references against the supplied
 family manifest, indicator-to-bar IDs/timestamps/completion states, normalized
-indicator configuration, timeframe binding, backend identity, and the historical
-study/rule identity. A changed backend or configuration needs a matching new
-study reference and produces a different content-addressed report ID.
+indicator configuration, timeframe binding, developing-bar capability, backend
+identity, and the historical study/rule identity. A changed backend or
+configuration needs a matching new study reference and produces a different
+content-addressed report ID.
 
 ## Developing bars and future outcomes
 
@@ -84,6 +85,9 @@ configuration provenance, rule evaluation, context manifest, historical study,
 dataset-family manifest, and any post-decision annotation. There is no wall-clock
 generation timestamp. Repeating an identical export verifies both files
 byte-for-byte and reuses the directory; differing existing bytes fail closed.
+Validated report inputs are captured as an immutable primitive snapshot during
+construction, so later mutation of a caller-owned rule cannot alter the report
+ID or either serialized artifact.
 
 No generated report belongs in Git except a deliberately reviewed small fixture
 or example. The normal `reports/` location is ignored.

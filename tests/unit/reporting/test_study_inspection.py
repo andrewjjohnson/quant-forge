@@ -8,15 +8,22 @@ import pytest
 import scripts.export_spy_multi_timeframe_context as spy_context_script
 import scripts.scan_spy_predictions as spy_scanner_script
 
-from quantforge.configuration import Primitive, PrimitiveMapping
+from quantforge.configuration import (
+    Primitive,
+    PrimitiveMapping,
+    configuration_identity,
+)
 from quantforge.data import ContextCompletionPolicy
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
+    TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+    DevelopingBarSupport,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
 )
 from quantforge.prediction import (
     HistoricalPredictionStudyReference,
+    PredictionContextFailurePolicy,
     PredictionRuleContext,
     TechnicalConfluenceEvaluation,
     TechnicalConfluenceParameters,
@@ -439,6 +446,106 @@ def test_report_rejects_indicator_alignment_or_family_tampering(
             inspection_fixture.historical_study,
             foreign_family,
         )
+
+
+def test_report_rejects_developing_bar_support_tampering(
+    inspection_fixture: _InspectionFixture,
+) -> None:
+    timeframe = next(
+        item for item in inspection_fixture.context.timeframes if item.indicators
+    )
+    named = timeframe.indicators[0]
+    requirement = next(
+        item for item in timeframe.requirement.indicators if item.alias == named.alias
+    )
+    assert named.output.developing_bar_support is DevelopingBarSupport.DEVELOPING_AS_OF
+    altered_support = DevelopingBarSupport.COMPLETED_ONLY
+    altered_configuration: PrimitiveMapping = {
+        "component_type": "timeframe_indicator",
+        "contract_version": TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+        "indicator": {
+            "configuration_id": requirement.configuration_id,
+            "configuration": requirement.indicator.configuration(),
+        },
+        "source": {
+            "timeframe": {
+                "configuration_id": timeframe.requirement.timeframe.configuration_id,
+                "configuration": timeframe.requirement.timeframe.to_primitive(),
+            },
+            "fields": [item.value for item in named.output.source_fields],
+            "completion_policy": named.output.completion_policy.value,
+            "developing_bar_support": altered_support.value,
+            "observation_unit": "bar",
+            "warm_up_bars": named.output.warm_up_bars,
+            "aggregation_provenance": named.output.dataset_reference.to_primitive(
+                include_feed_scope=True
+            ),
+            "feed_scope": named.output.feed_scope.to_primitive(),
+        },
+    }
+    corrupt_output = replace(
+        named.output,
+        configuration_id=configuration_identity(altered_configuration),
+        developing_bar_support=altered_support,
+    )
+    corrupt_timeframe = replace(
+        timeframe, indicators=(replace(named, output=corrupt_output),)
+    )
+    corrupt_context = replace(
+        inspection_fixture.context,
+        timeframes=tuple(
+            corrupt_timeframe if item is timeframe else item
+            for item in inspection_fixture.context.timeframes
+        ),
+    )
+
+    with pytest.raises(StudyInspectionReportError, match="provenance"):
+        StudyInspectionSelection(
+            "corrupt_support",
+            corrupt_context,
+            inspection_fixture.rule,
+            inspection_fixture.evaluation,
+            inspection_fixture.historical_study,
+            inspection_fixture.datasets.family,
+        )
+
+
+def test_report_snapshots_validated_serialization_inputs(
+    inspection_fixture: _InspectionFixture,
+) -> None:
+    rule = TechnicalConfluencePredictionRule(
+        inspection_fixture.rule.parameters,
+        inspection_fixture.rule.context_requirements,
+    )
+    study = HistoricalPredictionStudyReference.capture(
+        study_id="qf34_report_snapshot_study_v1",
+        rule=rule,
+        validated_symbols=(inspection_fixture.context.symbol,),
+        historical_dataset_fingerprint="d" * 64,
+        adjustment_basis=inspection_fixture.context.adjustment_basis,
+    )
+    report = build_study_inspection_report(
+        (
+            StudyInspectionSelection(
+                "snapshot",
+                inspection_fixture.context,
+                rule,
+                rule.evaluate(inspection_fixture.context),
+                study,
+                inspection_fixture.datasets.family,
+            ),
+        )
+    )
+    expected = (report.report_id, report.manifest_bytes(), report.html_bytes())
+
+    rule.context_requirements = replace(
+        rule.context_requirements,
+        failure_policy=PredictionContextFailurePolicy.SKIP,
+    )
+
+    assert (report.report_id, report.manifest_bytes(), report.html_bytes()) == expected
+    with pytest.raises(StudyInspectionReportError, match="historical-study"):
+        build_study_inspection_report(report.selections)
 
 
 def test_static_export_is_reproducible_immutable_and_viewable_offline(
