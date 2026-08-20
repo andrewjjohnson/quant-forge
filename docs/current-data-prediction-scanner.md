@@ -155,7 +155,9 @@ Two explicit policies are available:
 `InMemoryAlertDeduplicationStore` supports one process.
 `JsonFileAlertDeduplicationStore` persists private, content-addressed lifecycle
 and lock files for cross-run deduplication and recovers abandoned pending
-claims.
+claims. Its POSIX `fcntl` locking backend is loaded only when that optional
+store is claimed; platforms without `fcntl` can import and use every other
+prediction API and receive a clear error only if they select this store.
 
 ## Sinks
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import fcntl
+import importlib
 import json
 import os
 import sys
@@ -66,6 +66,23 @@ class HistoricalStudyMismatchError(PredictionScannerError):
 
 class AlertPersistenceError(PredictionScannerError):
     """An alert or deduplication marker cannot be persisted safely."""
+
+
+class _PosixFileLocking(Protocol):
+    LOCK_EX: int
+    LOCK_UN: int
+
+    def flock(self, descriptor: int, operation: int) -> None: ...
+
+
+def _posix_file_locking() -> _PosixFileLocking:
+    try:
+        module = importlib.import_module("fcntl")
+    except ModuleNotFoundError as error:
+        raise AlertPersistenceError(
+            "file-backed alert deduplication requires POSIX fcntl locking"
+        ) from error
+    return cast(_PosixFileLocking, module)
 
 
 class AlertDeduplicationPolicy(StrEnum):
@@ -666,6 +683,7 @@ class JsonFileAlertDeduplicationStore:
     def claim(
         self, deduplication_key: str, alert_id: str
     ) -> AlertDeduplicationClaim | PublishedAlertDeduplication:
+        locking = _posix_file_locking()
         self.state_directory.mkdir(parents=True, exist_ok=True)
         path = self._path(deduplication_key)
         lock_descriptor = os.open(
@@ -674,12 +692,12 @@ class JsonFileAlertDeduplicationStore:
             0o600,
         )
         try:
-            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+            locking.flock(lock_descriptor, locking.LOCK_EX)
         except BaseException:
             os.close(lock_descriptor)
             raise
         claim = _JsonFileAlertDeduplicationClaim(
-            path, lock_descriptor, deduplication_key, alert_id
+            path, lock_descriptor, deduplication_key, alert_id, locking
         )
         try:
             existing_state = claim.read_state()
@@ -706,6 +724,7 @@ class _JsonFileAlertDeduplicationClaim:
     lock_descriptor: int
     deduplication_key: str
     alert_id: str
+    locking: _PosixFileLocking
     _closed: bool = False
 
     def read_state(self) -> tuple[str, str] | None:
@@ -795,7 +814,7 @@ class _JsonFileAlertDeduplicationClaim:
         if self._closed:
             return
         try:
-            fcntl.flock(self.lock_descriptor, fcntl.LOCK_UN)
+            self.locking.flock(self.lock_descriptor, self.locking.LOCK_UN)
         finally:
             os.close(self.lock_descriptor)
             self._closed = True

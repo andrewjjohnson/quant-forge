@@ -1,5 +1,6 @@
 import ast
 import concurrent.futures
+import importlib
 import io
 import json
 import os
@@ -7,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 
 import pytest
@@ -701,6 +703,26 @@ def test_repeated_unchanged_context_is_deduplicated_across_file_store_instances(
     assert second_sink.alerts == []
 
 
+def test_file_store_loads_posix_locking_only_when_claimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_import_module = importlib.import_module
+
+    def import_without_fcntl(name: str, package: str | None = None) -> ModuleType:
+        if name == "fcntl":
+            raise ModuleNotFoundError("No module named 'fcntl'")
+        return original_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", import_without_fcntl)
+    state_directory = tmp_path / "dedup"
+    store = JsonFileAlertDeduplicationStore(state_directory)
+
+    with pytest.raises(AlertPersistenceError, match="requires POSIX fcntl locking"):
+        store.claim("unsupported-platform", "alert-id")
+
+    assert not state_directory.exists()
+
+
 @pytest.mark.parametrize("lifecycle_state", [None, "pending"])
 def test_file_store_recovers_abandoned_pending_claims(
     tmp_path: Path, lifecycle_state: str | None
@@ -1259,7 +1281,7 @@ def test_developing_context_can_alert_again_only_under_explicit_context_policy(
     assert preserved_state["alert_id"] == first_result.alerts[0].alert_id
 
 
-def test_scanner_and_alert_module_has_no_direct_talib_import() -> None:
+def test_scanner_module_has_no_direct_talib_or_eager_fcntl_import() -> None:
     module_path = Path(__file__).parents[3] / "src/quantforge/prediction/scanner.py"
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
     imported_modules = {
@@ -1272,3 +1294,4 @@ def test_scanner_and_alert_module_has_no_direct_talib_import() -> None:
     }
 
     assert all("talib" not in name.casefold() for name in imported_modules)
+    assert "fcntl" not in imported_modules
