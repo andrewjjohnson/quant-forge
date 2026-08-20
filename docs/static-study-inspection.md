@@ -22,6 +22,10 @@ fixed midweek timestamp. Use `--completion-policy completed_bars_only` for the
 separate completed-bars QF-33 study, or `--exclude-primary-timeframe` to omit the
 optional 5-minute panel.
 
+When several rule condition aliases identify the same timeframe, its panel title
+lists the aliases in deterministic sorted order instead of rejecting the valid
+rule configuration.
+
 The checked-in intentional example is under
 `examples/spy_multi_timeframe/study_inspection_reports/<report-id>/`. Generated
 reports under `reports/` remain ignored.

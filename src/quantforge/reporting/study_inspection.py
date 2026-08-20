@@ -586,17 +586,16 @@ def _context_references(
 
 
 def _timeframe_aliases(selection: StudyInspectionSelection) -> dict[str, str]:
-    aliases: dict[str, str] = {}
+    aliases: dict[str, set[str]] = {}
     for result in selection.evaluation.condition_results:
         condition = result.condition
-        existing = aliases.setdefault(
-            condition.timeframe.configuration_id, condition.timeframe_name
+        aliases.setdefault(condition.timeframe.configuration_id, set()).add(
+            condition.timeframe_name
         )
-        if existing != condition.timeframe_name:
-            raise StudyInspectionReportError(
-                "one timeframe cannot use multiple report aliases"
-            )
-    return aliases
+    return {
+        configuration_id: " / ".join(sorted(timeframe_aliases))
+        for configuration_id, timeframe_aliases in aliases.items()
+    }
 
 
 def _timeframe_sort_key(timeframe: Timeframe) -> tuple[int, int, str]:

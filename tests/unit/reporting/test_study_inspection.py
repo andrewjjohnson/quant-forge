@@ -19,6 +19,7 @@ from quantforge.prediction import (
     HistoricalPredictionStudyReference,
     PredictionRuleContext,
     TechnicalConfluenceEvaluation,
+    TechnicalConfluenceParameters,
     TechnicalConfluencePredictionRule,
     build_prediction_rule_context,
     create_reference_technical_confluence_rule,
@@ -204,6 +205,59 @@ def test_report_latest_values_match_qf29_feature_capture_exactly(
         reference = cast(PrimitiveMapping, panel["dataset_reference"])
         assert reference["family_id"] == metadata["dataset_family_id"]
         assert reference["dataset_id"] == metadata["source_dataset_id"]
+
+
+def test_report_supports_multiple_condition_aliases_for_one_timeframe(
+    inspection_fixture: _InspectionFixture,
+) -> None:
+    original_rule = inspection_fixture.rule
+    daily_id = next(
+        condition.timeframe.configuration_id
+        for condition in original_rule.parameters.conditions
+        if condition.timeframe_name == "daily"
+    )
+    renamed_up_conditions = tuple(
+        replace(condition, timeframe_name="daily_trend")
+        if condition.timeframe.configuration_id == daily_id
+        else condition
+        for condition in original_rule.parameters.up_conditions
+    )
+    rule = TechnicalConfluencePredictionRule(
+        TechnicalConfluenceParameters(
+            renamed_up_conditions,
+            original_rule.parameters.down_conditions,
+            original_rule.parameters.reference_name,
+        ),
+        original_rule.context_requirements,
+    )
+    study = HistoricalPredictionStudyReference.capture(
+        study_id="qf34_multiple_timeframe_aliases_study_v1",
+        rule=rule,
+        validated_symbols=(inspection_fixture.context.symbol,),
+        historical_dataset_fingerprint="c" * 64,
+        adjustment_basis=inspection_fixture.context.adjustment_basis,
+    )
+    report = build_study_inspection_report(
+        (
+            StudyInspectionSelection(
+                "multiple_aliases",
+                inspection_fixture.context,
+                rule,
+                rule.evaluate(inspection_fixture.context),
+                study,
+                inspection_fixture.datasets.family,
+            ),
+        )
+    )
+    selection = _manifest_selection(report.manifest_bytes())
+
+    panels = cast(list[PrimitiveMapping], selection["panels"])
+    assert [panel["name"] for panel in panels] == [
+        "weekly",
+        "daily / daily_trend",
+        "four_hour",
+        "primary_5m",
+    ]
 
 
 def test_full_reference_suite_renders_normalized_standard_and_volume_outputs(
