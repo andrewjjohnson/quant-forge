@@ -1,6 +1,6 @@
 """Declarative, restricted multi-timeframe inputs for prediction rules."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol, cast
@@ -512,6 +512,9 @@ class PredictionRuleContext:
     requirements: PredictionContextRequirements
     source_context_snapshot: PrimitiveMappingSnapshot
     timeframes: tuple[PredictionTimeframeInput, ...]
+    _values_snapshot: PrimitiveMappingSnapshot | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def as_of(self) -> datetime:
@@ -595,6 +598,23 @@ class PredictionRuleContext:
             **self.manifest_primitive(),
             "timeframe_values": timeframe_values,
         }
+
+    def validate_values_unchanged(self) -> None:
+        """Prove all current bars and indicator values match their build snapshot."""
+        if self._values_snapshot is None:
+            raise PredictionContextError(
+                "prediction rule context has no immutable values snapshot"
+            )
+        try:
+            current_snapshot = PrimitiveMappingSnapshot.capture(self.values_primitive())
+        except (TypeError, ValueError) as error:
+            raise PredictionContextError(
+                "prediction rule context values are not stably serializable"
+            ) from error
+        if current_snapshot != self._values_snapshot:
+            raise PredictionContextError(
+                "prediction rule context values changed after construction"
+            )
 
 
 def build_prediction_rule_context(
@@ -757,9 +777,10 @@ def build_prediction_rule_context(
         source_snapshot,
         tuple(resolved),
     )
-    # Force deterministic JSON-compatible manifest validation at the boundary.
-    PrimitiveMappingSnapshot.capture(rule_context.manifest_primitive())
-    return rule_context
+    # Retain complete build-time values so downstream consumers can prove that a
+    # reconstructed context still carries the exact validated bars and outputs.
+    values_snapshot = PrimitiveMappingSnapshot.capture(rule_context.values_primitive())
+    return replace(rule_context, _values_snapshot=values_snapshot)
 
 
 def skipped_prediction_context_manifest(

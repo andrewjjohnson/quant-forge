@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
@@ -721,6 +722,54 @@ def test_report_rejects_indicator_dataset_from_another_panel(
     with pytest.raises(StudyInspectionReportError, match="provenance"):
         StudyInspectionSelection(
             "corrupt_panel_dataset",
+            corrupt_context,
+            inspection_fixture.rule,
+            inspection_fixture.evaluation,
+            inspection_fixture.historical_study,
+            inspection_fixture.datasets.family,
+        )
+
+
+def test_report_rejects_changed_historical_indicator_values(
+    inspection_fixture: _InspectionFixture,
+) -> None:
+    timeframe = next(
+        item for item in inspection_fixture.context.timeframes if item.indicators
+    )
+    named = timeframe.indicators[0]
+    field = named.output.fields[0]
+    assert len(field.values) > 2
+    altered_values = list(field.values)
+    altered_values[0] = (
+        Decimal("987654321")
+        if altered_values[0] != Decimal("987654321")
+        else Decimal("987654320")
+    )
+    corrupt_output = replace(
+        named.output,
+        fields=(
+            replace(field, values=tuple(altered_values)),
+            *named.output.fields[1:],
+        ),
+    )
+    corrupt_timeframe = replace(
+        timeframe,
+        indicators=tuple(
+            replace(item, output=corrupt_output) if item is named else item
+            for item in timeframe.indicators
+        ),
+    )
+    corrupt_context = replace(
+        inspection_fixture.context,
+        timeframes=tuple(
+            corrupt_timeframe if item is timeframe else item
+            for item in inspection_fixture.context.timeframes
+        ),
+    )
+
+    with pytest.raises(StudyInspectionReportError, match="immutable build snapshot"):
+        StudyInspectionSelection(
+            "corrupt_historical_values",
             corrupt_context,
             inspection_fixture.rule,
             inspection_fixture.evaluation,

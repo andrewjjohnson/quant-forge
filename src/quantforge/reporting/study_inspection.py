@@ -36,7 +36,7 @@ from quantforge.data.lineage import (
 )
 from quantforge.data.multi_timeframe import ContextCompletionPolicy
 from quantforge.indicators.timeframe import TIMEFRAME_INDICATOR_CONTRACT_VERSION
-from quantforge.prediction.context import PredictionRuleContext
+from quantforge.prediction.context import PredictionContextError, PredictionRuleContext
 from quantforge.prediction.scanner import (
     HistoricalPredictionStudyReference,
     PredictionScannerRule,
@@ -543,6 +543,12 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
                 raise StudyInspectionReportError(
                     "indicator values or provenance do not match their causal bars"
                 )
+    try:
+        context.validate_values_unchanged()
+    except PredictionContextError as error:
+        raise StudyInspectionReportError(
+            "rendered context values do not match their immutable build snapshot"
+        ) from error
     decision_timestamp = context.latest_bar_for(
         context.requirements.primary.timeframe
     ).end_timestamp

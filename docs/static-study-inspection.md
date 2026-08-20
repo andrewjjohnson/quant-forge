@@ -67,6 +67,11 @@ capability, backend identity, and the historical study/rule identity. A changed
 backend or configuration needs a matching new study reference and produces a
 different content-addressed report ID.
 
+`PredictionRuleContext` retains an immutable build-time snapshot of every bar and
+normalized indicator value. Report validation compares the complete current
+context with that snapshot, so changing an earlier indicator row that does not
+affect the latest rule evaluation still fails closed before serialization.
+
 ## Developing bars and future outcomes
 
 Developing candles use an unfilled amber dashed style. Their embedded records
