@@ -31,6 +31,7 @@ from quantforge.configuration import (
 )
 from quantforge.data.lineage import (
     DatasetFamily,
+    DatasetFamilyReference,
     SourceConsistencyMode,
 )
 from quantforge.data.multi_timeframe import ContextCompletionPolicy
@@ -375,6 +376,7 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
             "selection context has no dataset-family timeframe metadata"
         )
     source_bar_ids: dict[str, tuple[tuple[str, ...], str | None]] = {}
+    source_references: dict[str, DatasetFamilyReference] = {}
     for raw_timeframe in cast(list[object], timeframes):
         timeframe = _mapping(raw_timeframe, "context timeframe")
         source_requirement = _mapping(
@@ -422,11 +424,12 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
         dataset_id = reference.get("dataset_id")
         if not isinstance(dataset_id, str):
             raise StudyInspectionReportError("context dataset ID is invalid")
-        expected = family.reference(dataset_id).to_primitive()
-        if reference != expected:
+        expected_reference = family.reference(dataset_id)
+        if reference != expected_reference.to_primitive():
             raise StudyInspectionReportError(
                 "context dataset reference does not match the supplied family"
             )
+        source_references[configuration_id] = expected_reference
     live_timeframe_ids = tuple(
         item.requirement.timeframe.configuration_id for item in context.timeframes
     )
@@ -461,9 +464,18 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
             raise StudyInspectionReportError(
                 "rendered bars do not match the captured source context"
             )
+        output_aliases = tuple(item.alias for item in timeframe_input.indicators)
+        declared_aliases = tuple(
+            item.alias for item in timeframe_input.requirement.indicators
+        )
+        if output_aliases != declared_aliases:
+            raise StudyInspectionReportError(
+                "indicator outputs do not match the declared aliases"
+            )
         requirement_by_alias = {
             item.alias: item for item in timeframe_input.requirement.indicators
         }
+        source_reference = source_references[configuration_id]
         for named_output in timeframe_input.indicators:
             output = named_output.output
             requirement = requirement_by_alias.get(named_output.alias)
@@ -496,9 +508,9 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
                     "observation_unit": "bar",
                     "warm_up_bars": output.warm_up_bars,
                     "aggregation_provenance": (
-                        output.dataset_reference.to_primitive(include_feed_scope=True)
+                        source_reference.to_primitive(include_feed_scope=True)
                     ),
-                    "feed_scope": output.feed_scope.to_primitive(),
+                    "feed_scope": source_reference.feed_scope.to_primitive(),
                 },
             }
             if (
@@ -524,9 +536,7 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
                 or output.completion_states
                 != tuple(bar.completion for bar in timeframe_input.bars)
                 or output.backend_identity != requirement.backend_identity
-                or output.dataset_reference.family_id != family.family_id
-                or output.dataset_reference
-                != family.reference(output.dataset_reference.dataset_id)
+                or output.dataset_reference != source_reference
                 or tuple(field.name for field in output.fields)
                 != requirement.indicator.output_fields
             ):

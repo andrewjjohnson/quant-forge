@@ -582,6 +582,153 @@ def test_report_rejects_timeframe_requirement_tampering(
         )
 
 
+def test_report_rejects_missing_or_duplicate_indicator_outputs(
+    inspection_fixture: _InspectionFixture,
+) -> None:
+    original_rule = inspection_fixture.rule
+    daily_requirement = next(
+        item
+        for item in original_rule.context_requirements.contextual
+        if any(
+            condition.timeframe.configuration_id == item.timeframe.configuration_id
+            and condition.timeframe_name == "daily"
+            for condition in original_rule.parameters.conditions
+        )
+    )
+    unused_requirement = replace(daily_requirement.indicators[0], alias="unused_trend")
+    expanded_daily_requirement = replace(
+        daily_requirement,
+        indicators=(*daily_requirement.indicators, unused_requirement),
+    )
+    requirements = replace(
+        original_rule.context_requirements,
+        contextual=tuple(
+            expanded_daily_requirement if item is daily_requirement else item
+            for item in original_rule.context_requirements.contextual
+        ),
+    )
+    rule = TechnicalConfluencePredictionRule(original_rule.parameters, requirements)
+    snapshot = spy_scanner_script.CachedSpyScannerSource(
+        inspection_fixture.datasets
+    ).prepare_context(
+        requirements,
+        as_of=inspection_fixture.context.as_of,
+        refresh=False,
+    )
+    context = build_prediction_rule_context(
+        requirements,
+        snapshot.context,
+        prediction_dataset_id=snapshot.prediction_dataset_id,
+        symbol=snapshot.symbol,
+        prediction_adjustment_basis=snapshot.adjustment_basis,
+    )
+    evaluation = rule.evaluate(context)
+    study = HistoricalPredictionStudyReference.capture(
+        study_id="qf34_indicator_alias_completeness_study_v1",
+        rule=rule,
+        validated_symbols=(context.symbol,),
+        historical_dataset_fingerprint="e" * 64,
+        adjustment_basis=context.adjustment_basis,
+    )
+    daily_input = next(
+        item
+        for item in context.timeframes
+        if item.requirement.timeframe.configuration_id
+        == expanded_daily_requirement.timeframe.configuration_id
+    )
+    malformed_outputs = (
+        tuple(item for item in daily_input.indicators if item.alias != "unused_trend"),
+        (*daily_input.indicators, daily_input.indicators[0]),
+    )
+
+    for indicators in malformed_outputs:
+        corrupt_daily = replace(daily_input, indicators=indicators)
+        corrupt_context = replace(
+            context,
+            timeframes=tuple(
+                corrupt_daily if item is daily_input else item
+                for item in context.timeframes
+            ),
+        )
+        with pytest.raises(StudyInspectionReportError, match="declared aliases"):
+            StudyInspectionSelection(
+                "corrupt_indicator_aliases",
+                corrupt_context,
+                rule,
+                evaluation,
+                study,
+                inspection_fixture.datasets.family,
+            )
+
+
+def test_report_rejects_indicator_dataset_from_another_panel(
+    inspection_fixture: _InspectionFixture,
+) -> None:
+    timeframes = tuple(
+        item for item in inspection_fixture.context.timeframes if item.indicators
+    )
+    target = timeframes[0]
+    foreign_reference = timeframes[1].indicators[0].output.dataset_reference
+    named = target.indicators[0]
+    requirement = next(
+        item for item in target.requirement.indicators if item.alias == named.alias
+    )
+    assert named.output.dataset_reference != foreign_reference
+    altered_configuration: PrimitiveMapping = {
+        "component_type": "timeframe_indicator",
+        "contract_version": TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+        "indicator": {
+            "configuration_id": requirement.configuration_id,
+            "configuration": requirement.indicator.configuration(),
+        },
+        "source": {
+            "timeframe": {
+                "configuration_id": target.requirement.timeframe.configuration_id,
+                "configuration": target.requirement.timeframe.to_primitive(),
+            },
+            "fields": [item.value for item in named.output.source_fields],
+            "completion_policy": named.output.completion_policy.value,
+            "developing_bar_support": requirement.developing_bar_support.value,
+            "observation_unit": "bar",
+            "warm_up_bars": named.output.warm_up_bars,
+            "aggregation_provenance": foreign_reference.to_primitive(
+                include_feed_scope=True
+            ),
+            "feed_scope": foreign_reference.feed_scope.to_primitive(),
+        },
+    }
+    corrupt_output = replace(
+        named.output,
+        configuration_id=configuration_identity(altered_configuration),
+        dataset_reference=foreign_reference,
+        feed_scope=foreign_reference.feed_scope,
+    )
+    corrupt_timeframe = replace(
+        target,
+        indicators=tuple(
+            replace(item, output=corrupt_output) if item is named else item
+            for item in target.indicators
+        ),
+    )
+    corrupt_context = replace(
+        inspection_fixture.context,
+        timeframes=tuple(
+            corrupt_timeframe if item is target else item
+            for item in inspection_fixture.context.timeframes
+        ),
+    )
+
+    with pytest.raises(StudyInspectionReportError, match="provenance"):
+        StudyInspectionSelection(
+            "corrupt_panel_dataset",
+            corrupt_context,
+            inspection_fixture.rule,
+            inspection_fixture.evaluation,
+            inspection_fixture.historical_study,
+            inspection_fixture.datasets.family,
+        )
+
+
 def test_report_snapshots_validated_serialization_inputs(
     inspection_fixture: _InspectionFixture,
 ) -> None:
