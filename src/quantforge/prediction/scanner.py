@@ -964,6 +964,7 @@ class PredictionScanner:
             binding.historical_study.validate_rule(binding.rule)
             evaluation = binding.rule.evaluate(rule_context)
             output = binding.rule.generate_with_context(rule_context)
+            binding.historical_study.validate_rule(binding.rule)
             candidate = _validated_rule_candidate(binding.rule, rule_context, output)
             _validate_candidate_evaluation(candidate, evaluation)
             alert = (

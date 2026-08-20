@@ -143,6 +143,7 @@ class _MalformedOutputRule:
     output_contract_version: str = "1"
     candidate_strategy_identity: tuple[str, str, str] | None = None
     configuration_id_override: str | None = None
+    mutate_configuration_on_generate: bool = False
     name: str = field(init=False)
     implementation_version: str = field(init=False)
     context_requirements: PredictionContextRequirements = field(init=False)
@@ -166,6 +167,19 @@ class _MalformedOutputRule:
         self, context: PredictionRuleContext
     ) -> SignalFeatureCandidateOutput:
         output = self.delegate.generate_with_context(context)
+        if self.mutate_configuration_on_generate:
+            self.configuration_id_override = "b" * 64
+            output = replace(
+                output,
+                strategy_configuration_id=self.configuration_id,
+                signals=(
+                    replace(
+                        output.signals[0],
+                        strategy_configuration_id=self.configuration_id,
+                        source_rule_configuration_id=self.configuration_id,
+                    ),
+                ),
+            )
         if self.candidate_strategy_identity is None:
             return replace(output, contract_version=self.output_contract_version)
         strategy_id, implementation_version, configuration_id = (
@@ -917,6 +931,19 @@ def test_rule_is_revalidated_after_context_preparation() -> None:
         scanner.scan(as_of=context.as_of)
 
     assert delegate.refresh_values == [True]
+    assert sink.alerts == []
+
+
+def test_rule_is_revalidated_after_rule_controlled_output_generation() -> None:
+    rule = _MalformedOutputRule(_rule(), mutate_configuration_on_generate=True)
+    context = _case_context(0)
+    source = _source(context)
+    sink = _CapturingSink()
+
+    with pytest.raises(HistoricalStudyMismatchError, match="does not match"):
+        _scanner(rule, source, sink).scan(as_of=context.as_of)
+
+    assert source.refresh_values == [True]
     assert sink.alerts == []
 
 
