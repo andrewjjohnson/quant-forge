@@ -167,9 +167,11 @@ atomically installs `<alert-id>.json` with create-only hard-link semantics. A
 process exit can therefore leave either no final path or a complete final
 artifact, never a partially written final artifact. If the final path already
 exists, identical bytes are accepted and different content fails instead of
-overwriting prior evidence. Additional sinks implement the small
-`PredictionAlertSink` protocol; push, email, and SMS providers are not included
-in QF-33.
+overwriting prior evidence. POSIX systems also sync the containing directory;
+Windows retains the file sync and atomic installation but skips directory
+`fsync`, which is not supported through its standard-library directory handles.
+Additional sinks implement the small `PredictionAlertSink` protocol; push,
+email, and SMS providers are not included in QF-33.
 
 ## Offline SPY dry run
 

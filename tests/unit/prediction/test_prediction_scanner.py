@@ -4,6 +4,8 @@ import importlib
 import io
 import json
 import os
+import stat
+import sys
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -578,6 +580,39 @@ def test_json_alert_sink_syncs_temporary_content_before_atomic_install(
     assert (output_directory / f"{alert.alert_id}.json").read_bytes() == (
         alert.serialize()
     )
+    assert tuple(output_directory.glob(".*.tmp")) == ()
+
+
+def test_json_alert_sink_skips_unsupported_directory_sync_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rule = _rule()
+    context = _case_context(0)
+    alert = (
+        _scanner(rule, _source(context), _CapturingSink())
+        .scan(as_of=context.as_of)
+        .alerts[0]
+    )
+    output_directory = tmp_path / "alerts"
+    original_fsync = os.fsync
+    directory_fsync_attempted = False
+
+    def track_fsync(descriptor: int) -> None:
+        nonlocal directory_fsync_attempted
+        directory_fsync_attempted = directory_fsync_attempted or stat.S_ISDIR(
+            os.fstat(descriptor).st_mode
+        )
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", track_fsync)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    JsonFilePredictionAlertSink(output_directory).emit(alert)
+
+    assert (output_directory / f"{alert.alert_id}.json").read_bytes() == (
+        alert.serialize()
+    )
+    assert not directory_fsync_attempted
     assert tuple(output_directory.glob(".*.tmp")) == ()
 
 

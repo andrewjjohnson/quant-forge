@@ -579,7 +579,12 @@ class JsonFilePredictionAlertSink:
 
 
 def _fsync_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY | os.O_CLOEXEC)
+    if sys.platform == "win32":
+        return
+    descriptor = os.open(
+        directory,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+    )
     try:
         os.fsync(descriptor)
     finally:
@@ -688,7 +693,7 @@ class JsonFileAlertDeduplicationStore:
         path = self._path(deduplication_key)
         lock_descriptor = os.open(
             self._lock_path(deduplication_key),
-            os.O_CREAT | os.O_RDWR | os.O_CLOEXEC,
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0),
             0o600,
         )
         try:
