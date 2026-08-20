@@ -98,6 +98,17 @@ def _required_record_sha256(value: PrimitiveMapping, field_name: str) -> str:
     return field_value
 
 
+def _required_record_text_tuple(
+    value: PrimitiveMapping, field_name: str
+) -> tuple[str, ...]:
+    field_value = value[field_name]
+    if not isinstance(field_value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in field_value
+    ):
+        raise TypeError(f"{field_name} must be an array of nonempty strings")
+    return tuple(cast(list[str], field_value))
+
+
 def _optional_record_count(value: PrimitiveMapping, field_name: str) -> int | None:
     field_value = value.get(field_name)
     if field_value is None:
@@ -137,6 +148,7 @@ class HistoricalPredictionStudyReference:
     rule_implementation_version: str
     rule_configuration_id: str
     context_requirements_id: str
+    validated_symbols: tuple[str, ...]
     historical_dataset_fingerprint: str
     adjustment_basis: AdjustmentBasis
     summary: PrimitiveMappingSnapshot | None = None
@@ -151,11 +163,19 @@ class HistoricalPredictionStudyReference:
                 self.rule_implementation_version,
                 self.rule_configuration_id,
                 self.context_requirements_id,
+                self.validated_symbols,
                 self.historical_dataset_fingerprint,
             )
         ):
             raise PredictionScannerError(
                 "historical study references require complete rule identity"
+            )
+        if any(
+            not isinstance(cast(object, symbol), str) or not symbol.strip()
+            for symbol in self.validated_symbols
+        ) or self.validated_symbols != tuple(sorted(set(self.validated_symbols))):
+            raise PredictionScannerError(
+                "historical study validated symbols must be sorted and unique"
             )
         if len(self.historical_dataset_fingerprint) != 64 or any(
             character not in "0123456789abcdef"
@@ -182,6 +202,7 @@ class HistoricalPredictionStudyReference:
         *,
         study_id: str,
         rule: PredictionScannerRule,
+        validated_symbols: tuple[str, ...],
         historical_dataset_fingerprint: str,
         adjustment_basis: AdjustmentBasis,
         summary: PrimitiveMapping | None = None,
@@ -196,6 +217,7 @@ class HistoricalPredictionStudyReference:
             context_requirements_id=configuration_identity(
                 rule.context_requirements.to_primitive()
             ),
+            validated_symbols=tuple(sorted(set(validated_symbols))),
             historical_dataset_fingerprint=historical_dataset_fingerprint,
             adjustment_basis=adjustment_basis,
             summary=(
@@ -234,6 +256,9 @@ class HistoricalPredictionStudyReference:
                 ),
                 context_requirements_id=_required_record_text(
                     value, "context_requirements_id"
+                ),
+                validated_symbols=_required_record_text_tuple(
+                    value, "validated_symbols"
                 ),
                 historical_dataset_fingerprint=_required_record_sha256(
                     value, "historical_dataset_fingerprint"
@@ -287,6 +312,14 @@ class HistoricalPredictionStudyReference:
                 f"{self.study_id}"
             )
 
+    def validate_symbol(self, symbol: str) -> None:
+        """Reject a current symbol outside the study's validated universe."""
+        if symbol not in self.validated_symbols:
+            raise HistoricalStudyMismatchError(
+                f"current symbol {symbol} is outside historical study "
+                f"{self.study_id} validated universe"
+            )
+
     def to_primitive(self) -> PrimitiveMapping:
         return {
             "schema_version": HISTORICAL_PREDICTION_STUDY_REFERENCE_SCHEMA_VERSION,
@@ -296,6 +329,7 @@ class HistoricalPredictionStudyReference:
             "rule_implementation_version": self.rule_implementation_version,
             "rule_configuration_id": self.rule_configuration_id,
             "context_requirements_id": self.context_requirements_id,
+            "validated_symbols": list(self.validated_symbols),
             "historical_dataset_fingerprint": self.historical_dataset_fingerprint,
             "adjustment_basis": self.adjustment_basis.to_primitive(),
             "summary": None if self.summary is None else self.summary.to_primitive(),
@@ -894,6 +928,7 @@ class PredictionScanner:
                         "scanner source context as-of does not match the requested "
                         "decision"
                     )
+                binding.historical_study.validate_symbol(snapshot.symbol)
                 binding.historical_study.validate_adjustment_basis(
                     snapshot.adjustment_basis
                 )
@@ -926,6 +961,7 @@ class PredictionScanner:
                     )
                 )
                 continue
+            binding.historical_study.validate_rule(binding.rule)
             evaluation = binding.rule.evaluate(rule_context)
             output = binding.rule.generate_with_context(rule_context)
             candidate = _validated_rule_candidate(binding.rule, rule_context, output)

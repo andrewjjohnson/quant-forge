@@ -6,6 +6,9 @@
   "rule_implementation_version": "1",
   "rule_configuration_id": "274ed185a60bb767e6f9f817b5e15950769ac3c6355415d874d9e0799b5b135a",
   "context_requirements_id": "a77c3c9e5ebe0e6a75979e1d0365682c929b31a9d18273a96d5ca2c46c1bc883",
+  "validated_symbols": [
+    "SPY"
+  ],
   "historical_dataset_fingerprint": "5466d927574ed161c1fabc822433455d9f70263e81a17c961cdab5a449a8cf5e",
   "adjustment_basis": {
     "adjustment_mode": "unadjusted",

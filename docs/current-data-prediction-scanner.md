@@ -19,6 +19,7 @@ scanner verifies all of the following against that reference:
 - complete rule configuration and configuration ID;
 - every condition and normalized operand;
 - timeframe, session, feed, completion, freshness, and failure policies;
+- the exact validated symbol universe;
 - the immutable historical input-bars SHA-256 fingerprint;
 - the exact price, volume, and corporate-action adjustment basis;
 - every indicator configuration ID; and
@@ -34,9 +35,10 @@ refresh canonical source data or replay an immutable cache, rebuild the
 required derived timeframes, and return a `PredictionScannerSnapshot`.
 Provider clients, endpoints, and credentials remain behind that data/ingestion
 adapter. The scanner receives only the canonical context, dataset identity,
-symbol, and adjustment basis. Transient acquisition details such as whether an
-immutable cache was seeded or replayed are run-level diagnostics, not causal
-alert provenance.
+symbol, and adjustment basis. The current symbol must belong to the historical
+study's immutable validated universe; cross-universe inference fails closed.
+Transient acquisition details such as whether an immutable cache was seeded or
+replayed are run-level diagnostics, not causal alert provenance.
 `PredictionScannerSnapshot` rejects a reported prediction dataset ID unless it
 matches the canonical source snapshot ID carried by every context lineage
 reference, preventing provenance from naming unrelated or stale data.
@@ -98,7 +100,7 @@ Alert schema version 1 includes:
 - timeframe, session, feed, dataset-family, source-dataset, and adjustment
   provenance;
 - the referenced historical study, its input-dataset fingerprint, optional
-  summary, and optional sample count; and
+  validated symbol universe, optional summary, and optional sample count; and
 - an explicit research-only/no-order disclaimer.
 
 The alert ID binds symbol, the complete serialized historical-study reference,

@@ -142,6 +142,7 @@ class _MalformedOutputRule:
     delegate: TechnicalConfluencePredictionRule
     output_contract_version: str = "1"
     candidate_strategy_identity: tuple[str, str, str] | None = None
+    configuration_id_override: str | None = None
     name: str = field(init=False)
     implementation_version: str = field(init=False)
     context_requirements: PredictionContextRequirements = field(init=False)
@@ -153,7 +154,7 @@ class _MalformedOutputRule:
 
     @property
     def configuration_id(self) -> str:
-        return self.delegate.configuration_id
+        return self.configuration_id_override or self.delegate.configuration_id
 
     def configuration(self) -> PrimitiveMapping:
         return self.delegate.configuration()
@@ -181,6 +182,27 @@ class _MalformedOutputRule:
             signals=(candidate,),
             contract_version=self.output_contract_version,
         )
+
+
+@dataclass
+class _RuleMutatingFixtureSource:
+    delegate: _FixtureSource
+    rule: _MalformedOutputRule
+
+    def prepare_context(
+        self,
+        requirements: PredictionContextRequirements,
+        *,
+        as_of: datetime,
+        refresh: bool,
+    ) -> PredictionScannerSnapshot:
+        snapshot = self.delegate.prepare_context(
+            requirements,
+            as_of=as_of,
+            refresh=refresh,
+        )
+        self.rule.configuration_id_override = "b" * 64
+        return snapshot
 
 
 def _rule(
@@ -285,6 +307,7 @@ def _scanner(
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=historical,
+        validated_symbols=(source.symbol,),
         historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=source.adjustment_basis,
         summary={"validation_period": "untouched_holdout"},
@@ -382,6 +405,7 @@ def test_accepted_alert_has_complete_causal_payload_and_dry_run_sinks(
                 HistoricalPredictionStudyReference.capture(
                     study_id="validated-study-1",
                     rule=rule,
+                    validated_symbols=(source.symbol,),
                     historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
                     adjustment_basis=source.adjustment_basis,
                     summary={"accuracy": "descriptive_only"},
@@ -533,6 +557,7 @@ def test_historical_metadata_change_produces_a_distinct_idempotent_artifact(
         HistoricalPredictionStudyReference.capture(
             study_id="validated-study-1",
             rule=rule,
+            validated_symbols=(source.symbol,),
             historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
             adjustment_basis=source.adjustment_basis,
             summary={"validation_note": validation_note},
@@ -594,6 +619,7 @@ def test_one_scan_can_evaluate_multiple_independently_validated_rules() -> None:
                 HistoricalPredictionStudyReference.capture(
                     study_id=f"validated-study-{index}",
                     rule=rule,
+                    validated_symbols=(source.symbol,),
                     historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
                     adjustment_basis=source.adjustment_basis,
                 ),
@@ -744,6 +770,7 @@ def test_historical_backend_or_configuration_mismatch_fails_before_data_access()
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=historical_rule,
+        validated_symbols=("SPY",),
         historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
     )
@@ -757,6 +784,7 @@ def test_historical_study_reference_record_round_trips() -> None:
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=rule,
+        validated_symbols=("SPY",),
         historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
         summary={"validated": True},
@@ -771,6 +799,7 @@ def test_historical_study_reference_record_round_trips() -> None:
         reference.to_primitive()["historical_dataset_fingerprint"]
         == HISTORICAL_DATASET_FINGERPRINT
     )
+    assert reference.to_primitive()["validated_symbols"] == ["SPY"]
 
 
 def test_historical_study_reference_requires_a_dataset_fingerprint() -> None:
@@ -778,11 +807,28 @@ def test_historical_study_reference_requires_a_dataset_fingerprint() -> None:
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=rule,
+        validated_symbols=("SPY",),
         historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
     )
     record = dict(reference.to_primitive())
     del record["historical_dataset_fingerprint"]
+
+    with pytest.raises(PredictionScannerError, match="record is invalid"):
+        HistoricalPredictionStudyReference.from_primitive(record)
+
+
+def test_historical_study_reference_requires_a_validated_universe() -> None:
+    rule = _rule()
+    reference = HistoricalPredictionStudyReference.capture(
+        study_id="validated-study-1",
+        rule=rule,
+        validated_symbols=("SPY",),
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
+        adjustment_basis=timeframe_fixtures._adjustment_basis(),  # pyright: ignore[reportPrivateUsage]
+    )
+    record = dict(reference.to_primitive())
+    del record["validated_symbols"]
 
     with pytest.raises(PredictionScannerError, match="record is invalid"):
         HistoricalPredictionStudyReference.from_primitive(record)
@@ -804,6 +850,7 @@ def test_historical_adjustment_mismatch_fails_before_rule_evaluation() -> None:
     reference = HistoricalPredictionStudyReference.capture(
         study_id="validated-study-1",
         rule=rule,
+        validated_symbols=("SPY",),
         historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
         adjustment_basis=historical_adjustment,
     )
@@ -818,6 +865,58 @@ def test_historical_adjustment_mismatch_fails_before_rule_evaluation() -> None:
         scanner.scan(as_of=context.as_of)
 
     assert source.refresh_values == [True]
+    assert sink.alerts == []
+
+
+def test_current_symbol_must_belong_to_the_historical_study_universe() -> None:
+    rule = _rule()
+    context = _case_context(0)
+    source = _source(context)
+    source.symbol = "QQQ"
+    reference = HistoricalPredictionStudyReference.capture(
+        study_id="validated-study-1",
+        rule=rule,
+        validated_symbols=("SPY",),
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
+        adjustment_basis=source.adjustment_basis,
+    )
+    sink = _CapturingSink()
+    scanner = PredictionScanner(
+        source,
+        (PredictionScannerRuleBinding(rule, reference),),
+        (sink,),
+    )
+
+    with pytest.raises(HistoricalStudyMismatchError, match="validated universe"):
+        scanner.scan(as_of=context.as_of)
+
+    assert source.refresh_values == [True]
+    assert sink.alerts == []
+
+
+def test_rule_is_revalidated_after_context_preparation() -> None:
+    rule = _MalformedOutputRule(_rule())
+    context = _case_context(0)
+    delegate = _source(context)
+    source = _RuleMutatingFixtureSource(delegate, rule)
+    reference = HistoricalPredictionStudyReference.capture(
+        study_id="validated-study-1",
+        rule=rule,
+        validated_symbols=(delegate.symbol,),
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
+        adjustment_basis=delegate.adjustment_basis,
+    )
+    sink = _CapturingSink()
+    scanner = PredictionScanner(
+        source,
+        (PredictionScannerRuleBinding(rule, reference),),
+        (sink,),
+    )
+
+    with pytest.raises(HistoricalStudyMismatchError, match="does not match"):
+        scanner.scan(as_of=context.as_of)
+
+    assert delegate.refresh_values == [True]
     assert sink.alerts == []
 
 
@@ -893,6 +992,7 @@ def test_skipped_context_preparation_continues_to_later_rules() -> None:
             HistoricalPredictionStudyReference.capture(
                 study_id=f"validated-study-{index}",
                 rule=rule,
+                validated_symbols=(delegate.symbol,),
                 historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
                 adjustment_basis=delegate.adjustment_basis,
             ),
