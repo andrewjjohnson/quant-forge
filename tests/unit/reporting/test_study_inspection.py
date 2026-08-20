@@ -13,7 +13,7 @@ from quantforge.configuration import (
     PrimitiveMapping,
     configuration_identity,
 )
-from quantforge.data import ContextCompletionPolicy
+from quantforge.data import ContextCompletionPolicy, FeedScope
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
     TIMEFRAME_INDICATOR_CONTRACT_VERSION,
@@ -534,6 +534,46 @@ def test_report_rejects_primary_bars_that_differ_from_context_snapshot(
     with pytest.raises(StudyInspectionReportError, match="captured source context"):
         StudyInspectionSelection(
             "corrupt_primary_bars",
+            corrupt_context,
+            inspection_fixture.rule,
+            inspection_fixture.evaluation,
+            inspection_fixture.historical_study,
+            inspection_fixture.datasets.family,
+        )
+
+
+def test_report_rejects_timeframe_requirement_tampering(
+    inspection_fixture: _InspectionFixture,
+) -> None:
+    primary_id = (
+        inspection_fixture.context.requirements.primary.timeframe.configuration_id
+    )
+    primary = next(
+        item
+        for item in inspection_fixture.context.timeframes
+        if item.requirement.timeframe.configuration_id == primary_id
+    )
+    alternate_feed_scope = FeedScope.unknown()
+    if alternate_feed_scope == primary.requirement.required_feed_scope:
+        alternate_feed_scope = FeedScope.consolidated()
+    corrupt_primary = replace(
+        primary,
+        requirement=replace(
+            primary.requirement,
+            required_feed_scope=alternate_feed_scope,
+        ),
+    )
+    corrupt_context = replace(
+        inspection_fixture.context,
+        timeframes=tuple(
+            corrupt_primary if item is primary else item
+            for item in inspection_fixture.context.timeframes
+        ),
+    )
+
+    with pytest.raises(StudyInspectionReportError, match="requirement"):
+        StudyInspectionSelection(
+            "corrupt_primary_requirement",
             corrupt_context,
             inspection_fixture.rule,
             inspection_fixture.evaluation,

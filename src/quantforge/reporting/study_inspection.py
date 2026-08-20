@@ -430,9 +430,15 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
     live_timeframe_ids = tuple(
         item.requirement.timeframe.configuration_id for item in context.timeframes
     )
-    if len(live_timeframe_ids) != len(set(live_timeframe_ids)) or set(
-        live_timeframe_ids
-    ) != set(source_bar_ids):
+    declared_requirements = {
+        item.timeframe.configuration_id: item
+        for item in context.requirements.all_timeframes
+    }
+    if (
+        len(live_timeframe_ids) != len(set(live_timeframe_ids))
+        or set(live_timeframe_ids) != set(source_bar_ids)
+        or set(live_timeframe_ids) != set(declared_requirements)
+    ):
         raise StudyInspectionReportError(
             "rendered timeframes do not match the captured source context"
         )
@@ -440,6 +446,10 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
         if not timeframe_input.bars:
             raise StudyInspectionReportError("rendered timeframe has no bars")
         configuration_id = timeframe_input.requirement.timeframe.configuration_id
+        if timeframe_input.requirement != declared_requirements[configuration_id]:
+            raise StudyInspectionReportError(
+                "rendered timeframe requirement does not match its declaration"
+            )
         expected_bar_ids, developing_bar_id = source_bar_ids[configuration_id]
         if (
             timeframe_input.requirement.completion_policy
