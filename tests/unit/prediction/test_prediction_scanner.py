@@ -219,6 +219,27 @@ class _RuleMutatingFixtureSource:
         return snapshot
 
 
+@dataclass
+class _FailingRuleMutatingFixtureSource:
+    rule: _MalformedOutputRule
+    changed_requirements: PredictionContextRequirements
+
+    def __post_init__(self) -> None:
+        self.refresh_values: list[bool] = []
+
+    def prepare_context(
+        self,
+        requirements: PredictionContextRequirements,
+        *,
+        as_of: datetime,
+        refresh: bool,
+    ) -> PredictionScannerSnapshot:
+        del requirements, as_of
+        self.refresh_values.append(refresh)
+        self.rule.context_requirements = self.changed_requirements
+        raise PredictionContextError("context failed after rule mutation")
+
+
 def _rule(
     *,
     feed_scope: FeedScope = FeedScope.consolidated(),
@@ -931,6 +952,35 @@ def test_rule_is_revalidated_after_context_preparation() -> None:
         scanner.scan(as_of=context.as_of)
 
     assert delegate.refresh_values == [True]
+    assert sink.alerts == []
+
+
+def test_rule_is_revalidated_before_handling_context_failure() -> None:
+    rule = _MalformedOutputRule(_rule())
+    changed_requirements = _rule(
+        failure_policy=PredictionContextFailurePolicy.SKIP
+    ).context_requirements
+    source = _FailingRuleMutatingFixtureSource(rule, changed_requirements)
+    context = _case_context(0)
+    adjustment_basis = _source(context).adjustment_basis
+    reference = HistoricalPredictionStudyReference.capture(
+        study_id="validated-study-1",
+        rule=rule,
+        validated_symbols=("SPY",),
+        historical_dataset_fingerprint=HISTORICAL_DATASET_FINGERPRINT,
+        adjustment_basis=adjustment_basis,
+    )
+    sink = _CapturingSink()
+    scanner = PredictionScanner(
+        source,
+        (PredictionScannerRuleBinding(rule, reference),),
+        (sink,),
+    )
+
+    with pytest.raises(HistoricalStudyMismatchError, match="does not match"):
+        scanner.scan(as_of=context.as_of)
+
+    assert source.refresh_values == [True]
     assert sink.alerts == []
 
 

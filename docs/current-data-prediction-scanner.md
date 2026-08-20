@@ -12,9 +12,10 @@ used by historical studies.
 `PredictionScanner` receives one or more `PredictionScannerRuleBinding`
 objects. Every binding pairs a QF-31 rule with a
 `HistoricalPredictionStudyReference` captured from the validated historical
-study manifest. Before any data access, immediately before evaluation, and
-again after rule-controlled evaluation and output generation, the scanner
-verifies all of the following against that reference:
+study manifest. Before any data access, before handling a preparation failure,
+immediately before evaluation, and again after rule-controlled evaluation and
+output generation, the scanner verifies all of the following against that
+reference:
 
 - rule name and implementation version;
 - complete rule configuration and configuration ID;

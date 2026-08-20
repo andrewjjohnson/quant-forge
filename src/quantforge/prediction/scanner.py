@@ -940,6 +940,7 @@ class PredictionScanner:
                     prediction_adjustment_basis=snapshot.adjustment_basis,
                 )
             except (PredictionContextError, MultiTimeframeContextError) as error:
+                binding.historical_study.validate_rule(binding.rule)
                 if (
                     binding.rule.context_requirements.failure_policy
                     is PredictionContextFailurePolicy.FAIL
