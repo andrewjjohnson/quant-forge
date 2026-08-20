@@ -58,11 +58,12 @@ recalculation.
 
 Every panel must resolve to the same common dataset family. The generator
 revalidates symbol and adjustment basis, context references against the supplied
-family manifest, indicator-to-bar IDs/timestamps/completion states, normalized
-indicator configuration, timeframe binding, developing-bar capability, backend
-identity, and the historical study/rule identity. A changed backend or
-configuration needs a matching new study reference and produces a different
-content-addressed report ID.
+family manifest, every timeframe's exact bar IDs against the captured source
+context, indicator-to-bar IDs/timestamps/completion states, normalized indicator
+configuration, timeframe binding, developing-bar capability, backend identity,
+and the historical study/rule identity. A changed backend or configuration needs
+a matching new study reference and produces a different content-addressed report
+ID.
 
 ## Developing bars and future outcomes
 

@@ -33,6 +33,7 @@ from quantforge.data.lineage import (
     DatasetFamily,
     SourceConsistencyMode,
 )
+from quantforge.data.multi_timeframe import ContextCompletionPolicy
 from quantforge.indicators.timeframe import TIMEFRAME_INDICATOR_CONTRACT_VERSION
 from quantforge.prediction.context import PredictionRuleContext
 from quantforge.prediction.scanner import (
@@ -373,8 +374,45 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
         raise StudyInspectionReportError(
             "selection context has no dataset-family timeframe metadata"
         )
+    source_bar_ids: dict[str, tuple[tuple[str, ...], str | None]] = {}
     for raw_timeframe in cast(list[object], timeframes):
         timeframe = _mapping(raw_timeframe, "context timeframe")
+        source_requirement = _mapping(
+            timeframe.get("requirement"), "context timeframe requirement"
+        )
+        source_timeframe = _mapping(
+            source_requirement.get("timeframe"), "context source timeframe"
+        )
+        configuration_id = source_timeframe.get("configuration_id")
+        visible_bar_ids = timeframe.get("visible_bar_ids")
+        if (
+            not isinstance(configuration_id, str)
+            or not isinstance(visible_bar_ids, list)
+            or not visible_bar_ids
+            or any(not isinstance(bar_id, str) for bar_id in visible_bar_ids)
+            or configuration_id in source_bar_ids
+        ):
+            raise StudyInspectionReportError(
+                "context timeframe bar identity metadata is invalid"
+            )
+        developing_bar = timeframe.get("developing_bar")
+        developing_bar_id: str | None = None
+        if developing_bar is not None:
+            developing_bar_id_value = _mapping(
+                developing_bar, "context developing bar"
+            ).get("bar_id")
+            if (
+                not isinstance(developing_bar_id_value, str)
+                or visible_bar_ids[-1] != developing_bar_id_value
+            ):
+                raise StudyInspectionReportError(
+                    "context developing bar identity metadata is invalid"
+                )
+            developing_bar_id = developing_bar_id_value
+        source_bar_ids[configuration_id] = (
+            tuple(cast(list[str], visible_bar_ids)),
+            developing_bar_id,
+        )
         raw_reference = timeframe.get("dataset_reference")
         if raw_reference is None:
             raise StudyInspectionReportError(
@@ -389,9 +427,30 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
             raise StudyInspectionReportError(
                 "context dataset reference does not match the supplied family"
             )
+    live_timeframe_ids = tuple(
+        item.requirement.timeframe.configuration_id for item in context.timeframes
+    )
+    if len(live_timeframe_ids) != len(set(live_timeframe_ids)) or set(
+        live_timeframe_ids
+    ) != set(source_bar_ids):
+        raise StudyInspectionReportError(
+            "rendered timeframes do not match the captured source context"
+        )
     for timeframe_input in context.timeframes:
         if not timeframe_input.bars:
             raise StudyInspectionReportError("rendered timeframe has no bars")
+        configuration_id = timeframe_input.requirement.timeframe.configuration_id
+        expected_bar_ids, developing_bar_id = source_bar_ids[configuration_id]
+        if (
+            timeframe_input.requirement.completion_policy
+            is ContextCompletionPolicy.COMPLETED_BARS_ONLY
+            and developing_bar_id is not None
+        ):
+            expected_bar_ids = expected_bar_ids[:-1]
+        if tuple(bar.bar_id for bar in timeframe_input.bars) != expected_bar_ids:
+            raise StudyInspectionReportError(
+                "rendered bars do not match the captured source context"
+            )
         requirement_by_alias = {
             item.alias: item for item in timeframe_input.requirement.indicators
         }

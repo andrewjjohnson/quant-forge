@@ -510,6 +510,38 @@ def test_report_rejects_developing_bar_support_tampering(
         )
 
 
+def test_report_rejects_primary_bars_that_differ_from_context_snapshot(
+    inspection_fixture: _InspectionFixture,
+) -> None:
+    primary_id = (
+        inspection_fixture.context.requirements.primary.timeframe.configuration_id
+    )
+    primary = next(
+        item
+        for item in inspection_fixture.context.timeframes
+        if item.requirement.timeframe.configuration_id == primary_id
+    )
+    assert not primary.indicators
+    corrupt_primary = replace(primary, bars=primary.bars[1:])
+    corrupt_context = replace(
+        inspection_fixture.context,
+        timeframes=tuple(
+            corrupt_primary if item is primary else item
+            for item in inspection_fixture.context.timeframes
+        ),
+    )
+
+    with pytest.raises(StudyInspectionReportError, match="captured source context"):
+        StudyInspectionSelection(
+            "corrupt_primary_bars",
+            corrupt_context,
+            inspection_fixture.rule,
+            inspection_fixture.evaluation,
+            inspection_fixture.historical_study,
+            inspection_fixture.datasets.family,
+        )
+
+
 def test_report_snapshots_validated_serialization_inputs(
     inspection_fixture: _InspectionFixture,
 ) -> None:
