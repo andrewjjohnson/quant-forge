@@ -246,6 +246,17 @@ cache fixture and writes alerts under ignored `reports/qf33-spy-alerts/`. See
 [`current-data-prediction-scanner.md`](current-data-prediction-scanner.md) for
 the historical-study parity guard, alert schema, and deduplication policies.
 
+Render the matching fixed SPY decision as a standalone synchronized study
+inspection artifact with no network access or running server:
+
+```bash
+uv run python scripts/render_spy_study_inspection.py
+```
+
+See [`static-study-inspection.md`](static-study-inspection.md) for exact bar,
+indicator, provenance, developing-bar, future-outcome, and immutable-export
+semantics.
+
 Downloaded provider responses remain under ignored `data/`; structured results
 remain under ignored `reports/`. Use `--refresh` only when intentionally
 retrieving a new immutable provider revision. Never stage either directory.

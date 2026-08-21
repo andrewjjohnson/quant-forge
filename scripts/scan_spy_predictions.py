@@ -11,13 +11,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from export_spy_multi_timeframe_context import (
-    DEFAULT_CACHE_ROOT,
-    DEFAULT_FIXTURE_PATH,
-    ExampleDatasets,
-    build_datasets,
-    load_fixture,
-)
+if __package__:
+    from scripts.export_spy_multi_timeframe_context import (
+        DEFAULT_CACHE_ROOT,
+        DEFAULT_FIXTURE_PATH,
+        ExampleDatasets,
+        build_datasets,
+        load_fixture,
+    )
+else:
+    from export_spy_multi_timeframe_context import (
+        DEFAULT_CACHE_ROOT,
+        DEFAULT_FIXTURE_PATH,
+        ExampleDatasets,
+        build_datasets,
+        load_fixture,
+    )
 
 from quantforge.configuration import PrimitiveMapping
 from quantforge.data import (
