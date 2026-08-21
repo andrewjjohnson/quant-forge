@@ -54,7 +54,8 @@ TA-Lib or another backend and does not translate backend-specific tuples or
 parameters. SMA, EMA, Bollinger Bands, MACD, stochastic, Wilder, and volume
 series are selected from normalized output field names only. The manifest and
 HTML therefore contain the exact values used by the study rather than a visual
-recalculation.
+recalculation. A normalized series segment with only one available observation
+is rendered as an exact-value marker rather than being visually omitted.
 
 Every panel must resolve to the same common dataset family. The generator
 revalidates symbol and adjustment basis, context references against the supplied

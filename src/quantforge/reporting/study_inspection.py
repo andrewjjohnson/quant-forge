@@ -1045,21 +1045,34 @@ def _polyline_parts(
     label: str,
 ) -> list[str]:
     parts: list[str] = []
-    segment: list[str] = []
+    segment: list[tuple[float, float, Decimal]] = []
     for index, value in enumerate(values):
         if value is None:
-            if len(segment) >= 2:
-                parts.append(
-                    f'<polyline class="series" stroke="{color}" points="{" ".join(segment)}"><title>{html.escape(label)}</title></polyline>'
-                )
+            parts.extend(_series_segment_parts(segment, color, label))
             segment = []
             continue
-        segment.append(f"{x(index):.2f},{y(value):.2f}")
-    if len(segment) >= 2:
-        parts.append(
-            f'<polyline class="series" stroke="{color}" points="{" ".join(segment)}"><title>{html.escape(label)}</title></polyline>'
-        )
+        segment.append((x(index), y(value), value))
+    parts.extend(_series_segment_parts(segment, color, label))
     return parts
+
+
+def _series_segment_parts(
+    segment: list[tuple[float, float, Decimal]], color: str, label: str
+) -> list[str]:
+    if len(segment) >= 2:
+        points = " ".join(
+            f"{point_x:.2f},{point_y:.2f}" for point_x, point_y, _ in segment
+        )
+        return [
+            f'<polyline class="series" stroke="{color}" points="{points}"><title>{html.escape(label)}</title></polyline>'
+        ]
+    if len(segment) == 1:
+        point_x, point_y, value = segment[0]
+        title = html.escape(f"{label} {value}")
+        return [
+            f'<circle class="series-point" fill="{color}" stroke="{color}" cx="{point_x:.2f}" cy="{point_y:.2f}" r="3.2"><title>{title}</title></circle>'
+        ]
+    return []
 
 
 def _indicator_metadata_row(indicator: PrimitiveMapping) -> str:

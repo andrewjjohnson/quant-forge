@@ -9,6 +9,7 @@ import pytest
 import scripts.export_spy_multi_timeframe_context as spy_context_script
 import scripts.scan_spy_predictions as spy_scanner_script
 
+import quantforge.reporting.study_inspection as study_inspection_module
 from quantforge.configuration import (
     Primitive,
     PrimitiveMapping,
@@ -172,6 +173,22 @@ def test_report_marks_developing_bars_and_separates_future_outcomes(
     assert "POST-DECISION OUTCOME — NOT AVAILABLE AT DECISION TIME" in html_text
     future = cast(PrimitiveMapping, selection["future_outcome"])
     assert future["availability"] == "post_decision_only"
+
+
+def test_isolated_indicator_observation_renders_an_exact_marker() -> None:
+    parts = study_inspection_module._polyline_parts(  # pyright: ignore[reportPrivateUsage]
+        [None, Decimal("42.5"), None],
+        lambda index: float(index * 10),
+        lambda value: float(value),
+        "#4cc9f0",
+        "trend.simple_moving_average",
+    )
+
+    assert parts == [
+        '<circle class="series-point" fill="#4cc9f0" stroke="#4cc9f0" '
+        'cx="10.00" cy="42.50" r="3.2"><title>'
+        "trend.simple_moving_average 42.5</title></circle>"
+    ]
 
 
 def test_report_latest_values_match_qf29_feature_capture_exactly(
