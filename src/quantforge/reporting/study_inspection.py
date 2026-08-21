@@ -292,10 +292,19 @@ def export_study_inspection_report(
                 path.write_bytes(content)
                 with path.open("rb") as stream:
                     os.fsync(stream.fileno())
-            os.rename(temporary, destination)
+            try:
+                os.rename(temporary, destination)
+            except OSError:
+                if not destination.exists():
+                    raise
+                shutil.rmtree(temporary, ignore_errors=True)
+                _validate_existing_export(destination, expected)
+                return destination, StudyInspectionExportStatus.REUSED
         except Exception:
             shutil.rmtree(temporary, ignore_errors=True)
             raise
+    except StudyInspectionReportError:
+        raise
     except (OSError, TypeError, ValueError) as error:
         raise StudyInspectionReportError(
             "failed to export immutable study inspection report"
@@ -358,6 +367,10 @@ def _validate_selection(selection: StudyInspectionSelection) -> None:
     ):
         raise StudyInspectionReportError(
             "selection symbol or adjustment basis differs from its dataset family"
+        )
+    if context.dataset_family_manifest_id != family.manifest_id:
+        raise StudyInspectionReportError(
+            "selection dataset family manifest differs from the context build"
         )
     source_context = context.source_context_snapshot.to_primitive()
     consistency = _mapping(

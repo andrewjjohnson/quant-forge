@@ -1,6 +1,6 @@
 """Leakage-safe as-of alignment across compatible dataset timeframes."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from itertools import pairwise
@@ -144,6 +144,7 @@ class TimeframeBarSeries:
     dataset_reference: DatasetFamilyReference
     timeframe: Timeframe
     bars: tuple[ArtifactBar, ...]
+    dataset_family_manifest_id: str | None
     _developing_source_evidence: _DevelopingSourceEvidence | None
 
     @classmethod
@@ -153,6 +154,7 @@ class TimeframeBarSeries:
         timeframe: Timeframe,
         bars: tuple[ArtifactBar, ...],
         *,
+        dataset_family_manifest_id: str | None = None,
         developing_source_evidence: _DevelopingSourceEvidence | None = None,
     ) -> "TimeframeBarSeries":
         """Construct after a concrete dataset artifact has passed validation."""
@@ -209,6 +211,9 @@ class TimeframeBarSeries:
         object.__setattr__(instance, "timeframe", timeframe_value)
         object.__setattr__(instance, "bars", ordered)
         object.__setattr__(
+            instance, "dataset_family_manifest_id", dataset_family_manifest_id
+        )
+        object.__setattr__(
             instance, "_developing_source_evidence", developing_source_evidence
         )
         return instance
@@ -227,6 +232,7 @@ class TimeframeBarSeries:
             family.reference(validated_dataset.metadata.dataset_id),
             validated_dataset.request.timeframe,
             validated_dataset.bars,
+            dataset_family_manifest_id=family.manifest_id,
             developing_source_evidence=_developing_source_evidence(validated_dataset),
         )
 
@@ -256,7 +262,12 @@ class TimeframeBarSeries:
                 f"derived intraday dataset validation failed: {error}"
             ) from error
         return cls._from_validated_artifact(
-            reference, dataset_value.request.timeframe, dataset_value.bars
+            reference,
+            dataset_value.request.timeframe,
+            dataset_value.bars,
+            dataset_family_manifest_id=(
+                dataset_value.dataset_family if family is None else family
+            ).manifest_id,
         )
 
     @classmethod
@@ -285,7 +296,12 @@ class TimeframeBarSeries:
                 f"session dataset validation failed: {error}"
             ) from error
         return cls._from_validated_artifact(
-            reference, dataset_value.metadata.target_timeframe, dataset_value.bars
+            reference,
+            dataset_value.metadata.target_timeframe,
+            dataset_value.bars,
+            dataset_family_manifest_id=(
+                dataset_value.dataset_family if family is None else family
+            ).manifest_id,
         )
 
 
@@ -613,6 +629,9 @@ class MultiTimeframeContext:
     source_consistency: SourceConsistencyValidation
     timeframes: tuple[TimeframeContext, ...]
     schema_version: str = MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION
+    _dataset_family_manifest_id: str | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @classmethod
     def _from_aligned_timeframes(
@@ -624,6 +643,7 @@ class MultiTimeframeContext:
         completion_policy: ContextCompletionPolicy,
         source_consistency: SourceConsistencyValidation,
         timeframes: tuple[TimeframeContext, ...],
+        dataset_family_manifest_id: str | None = None,
     ) -> "MultiTimeframeContext":
         """Construct only from builder-produced, artifact-bound views."""
         instance = object.__new__(cls)
@@ -633,6 +653,9 @@ class MultiTimeframeContext:
         object.__setattr__(instance, "completion_policy", completion_policy)
         object.__setattr__(instance, "source_consistency", source_consistency)
         object.__setattr__(instance, "timeframes", timeframes)
+        object.__setattr__(
+            instance, "_dataset_family_manifest_id", dataset_family_manifest_id
+        )
         object.__setattr__(
             instance, "schema_version", MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION
         )
@@ -745,6 +768,11 @@ class MultiTimeframeContext:
             raise MultiTimeframeContextValidationError(
                 "context source-consistency evidence does not match its datasets"
             )
+
+    @property
+    def dataset_family_manifest_id(self) -> str | None:
+        """Return the exact family manifest bound by every input series, if one."""
+        return self._dataset_family_manifest_id
 
     def _for_timeframe(self, timeframe: Timeframe) -> TimeframeContext:
         timeframe_value = cast(object, timeframe)
@@ -935,6 +963,17 @@ def build_multi_timeframe_context(
         )
     except ValueError as error:
         raise MultiTimeframeContextValidationError(str(error)) from error
+    family_manifest_ids = {
+        item.dataset_family_manifest_id
+        for item in typed_series
+        if item.dataset_family_manifest_id is not None
+    }
+    dataset_family_manifest_id = (
+        next(iter(family_manifest_ids))
+        if len(family_manifest_ids) == 1
+        and all(item.dataset_family_manifest_id is not None for item in typed_series)
+        else None
+    )
 
     aligned_timeframes: list[TimeframeContext] = []
     for requirement in declared_requirements:
@@ -1010,6 +1049,7 @@ def build_multi_timeframe_context(
         completion_policy=completion_policy,
         source_consistency=source_consistency,
         timeframes=tuple(aligned_timeframes),
+        dataset_family_manifest_id=dataset_family_manifest_id,
     )
 
 

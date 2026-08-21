@@ -58,8 +58,9 @@ recalculation. A normalized series segment with only one available observation
 is rendered as an exact-value marker rather than being visually omitted.
 
 Every panel must resolve to the same common dataset family. The generator
-revalidates symbol and adjustment basis, context references against the supplied
-family manifest, every timeframe's exact bar IDs against the captured source
+revalidates symbol and adjustment basis, the exact family manifest ID captured
+when the context was built, context references against the supplied family
+manifest, every timeframe's exact bar IDs against the captured source
 context, each timeframe's complete rule-declared requirement,
 one-to-one declared indicator outputs, indicator-to-bar
 IDs/timestamps/completion states, each indicator's exact panel dataset reference,
@@ -94,6 +95,8 @@ configuration provenance, rule evaluation, context manifest, historical study,
 dataset-family manifest, and any post-decision annotation. There is no wall-clock
 generation timestamp. Repeating an identical export verifies both files
 byte-for-byte and reuses the directory; differing existing bytes fail closed.
+If another process publishes the same report after the initial existence check,
+the losing exporter verifies the winning directory byte-for-byte and reuses it.
 Validated report inputs are captured as an immutable primitive snapshot during
 construction, so later mutation of a caller-owned rule cannot alter the report
 ID or either serialized artifact.

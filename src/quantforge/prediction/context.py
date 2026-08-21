@@ -512,6 +512,9 @@ class PredictionRuleContext:
     requirements: PredictionContextRequirements
     source_context_snapshot: PrimitiveMappingSnapshot
     timeframes: tuple[PredictionTimeframeInput, ...]
+    dataset_family_manifest_id: str | None = field(
+        default=None, repr=False, compare=False
+    )
     _values_snapshot: PrimitiveMappingSnapshot | None = field(
         default=None, repr=False, compare=False
     )
@@ -596,6 +599,7 @@ class PredictionRuleContext:
             )
         return {
             **self.manifest_primitive(),
+            "dataset_family_manifest_id": self.dataset_family_manifest_id,
             "timeframe_values": timeframe_values,
         }
 
@@ -776,6 +780,7 @@ def build_prediction_rule_context(
         requirements,
         source_snapshot,
         tuple(resolved),
+        dataset_family_manifest_id=context.dataset_family_manifest_id,
     )
     # Retain complete build-time values so downstream consumers can prove that a
     # reconstructed context still carries the exact validated bars and outputs.

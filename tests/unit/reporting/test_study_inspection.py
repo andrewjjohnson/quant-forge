@@ -15,7 +15,7 @@ from quantforge.configuration import (
     PrimitiveMapping,
     configuration_identity,
 )
-from quantforge.data import ContextCompletionPolicy, FeedScope
+from quantforge.data import ContextCompletionPolicy, DatasetLineage, FeedScope
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
     TIMEFRAME_INDICATOR_CONTRACT_VERSION,
@@ -465,6 +465,38 @@ def test_report_rejects_indicator_alignment_or_family_tampering(
             foreign_family,
         )
 
+    family = inspection_fixture.datasets.family
+    source = next(item for item in family.datasets if item.is_canonical_source)
+    extra_dataset_id = "unrelated-valid-derived-dataset"
+    altered_source = replace(
+        source,
+        child_dataset_ids=(*source.child_dataset_ids, extra_dataset_id),
+    )
+    altered_lineage_family = replace(
+        family,
+        datasets=(
+            *(item for item in family.datasets if item is not source),
+            altered_source,
+            DatasetLineage(
+                extra_dataset_id,
+                source.timeframe,
+                family.canonical_source_snapshot_id,
+                source.dataset_id,
+            ),
+        ),
+    )
+    assert altered_lineage_family.family_id == family.family_id
+    assert altered_lineage_family.manifest_id != family.manifest_id
+    with pytest.raises(StudyInspectionReportError, match="family manifest"):
+        StudyInspectionSelection(
+            "altered_lineage",
+            inspection_fixture.context,
+            inspection_fixture.rule,
+            inspection_fixture.evaluation,
+            inspection_fixture.historical_study,
+            altered_lineage_family,
+        )
+
 
 def test_report_rejects_developing_bar_support_tampering(
     inspection_fixture: _InspectionFixture,
@@ -853,6 +885,36 @@ def test_static_export_is_reproducible_immutable_and_viewable_offline(
     (created / "report.html").write_text("changed", encoding="utf-8")
     with pytest.raises(StudyInspectionReportError, match="content differs"):
         export_study_inspection_report(report, tmp_path)
+
+
+def test_static_export_reuses_identical_concurrent_winner(
+    inspection_fixture: _InspectionFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = build_study_inspection_report((_selection(inspection_fixture),))
+    expected = {
+        "manifest.json": report.manifest_bytes(),
+        "report.html": report.html_bytes(),
+    }
+
+    def publish_winner_then_fail_rename(source: object, destination: object) -> None:
+        del source
+        winning_destination = Path(cast(str, destination))
+        winning_destination.mkdir()
+        for filename, content in expected.items():
+            (winning_destination / filename).write_bytes(content)
+        raise OSError("destination was concurrently published")
+
+    monkeypatch.setattr(
+        study_inspection_module.os, "rename", publish_winner_then_fail_rename
+    )
+
+    destination, status = export_study_inspection_report(report, tmp_path)
+
+    assert destination == tmp_path / report.report_id
+    assert status == "reused_immutable_report"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [report.report_id]
 
 
 def test_future_outcome_cannot_overlap_causal_decision_state(
