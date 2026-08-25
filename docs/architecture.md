@@ -83,6 +83,13 @@ and never enters QF-5. Ordinary grids fix one QF-35 backend environment and bind
 its complete identity into study, trial, and cache keys. See
 `docs/prediction-parameter-grids.md`.
 
+QF-34 adds a reporting-only consumer of the immutable multi-timeframe prediction
+branch. It renders exact QF-20/QF-21 bars, QF-28 normalized indicator outputs,
+QF-31 condition evidence, and QF-14/QF-35 provenance into deterministic
+self-contained HTML. It does not retrieve data, recalculate indicators, or feed
+post-decision outcomes into causal chart state. See
+`docs/static-study-inspection.md`.
+
 QF-7 extends that branch after causal candidate classification. It enriches
 already-fixed QF-11 prediction records with configurable QF-4 context, reuses
 QF-11 labeler/evaluator compositions for multi-session outcomes, and exports a
