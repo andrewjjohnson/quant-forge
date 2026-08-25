@@ -425,6 +425,16 @@ does not select a filter, and labels every relationship exploratory. See
 
 ## Walk-forward testing
 
+QF-8 makes the partition definition below this process explicit and reusable for
+both prediction and trading/backtest research. Versioned closed intervals use
+either actual exchange sessions under one QF-13 policy or timezone-aware UTC
+timestamps. Development labels are purged when their configured maximum future
+horizon, plus any explicit embargo, reaches the next selection/test boundary.
+Indicator warm-up observations remain a separate context-only collection and
+are never eligible for selection. One fixed research environment and one
+reserved final holdout participate in the deterministic plan identity. See
+`docs/validation-plans.md`.
+
 A valid walk-forward process:
 
 1. defines a training window;

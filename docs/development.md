@@ -234,6 +234,18 @@ tests with:
 uv run pytest tests/unit/prediction/test_prediction_scanner.py
 ```
 
+Run the QF-8 validation-plan identity, chronological-boundary, prediction-label
+purging, embargo, warm-up, native-backend compatibility, and study-neutral
+backtest fixture tests with:
+
+```bash
+uv run pytest tests/unit/validation
+```
+
+See [`validation-plans.md`](validation-plans.md) for the public contracts,
+closed interval semantics, fixed research provenance, and cache-validation
+rules.
+
 Run the deterministic cache-only SPY scanner example with:
 
 ```bash

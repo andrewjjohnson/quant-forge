@@ -477,17 +477,30 @@ QF-5 calculates typed, nullable performance summaries and a cost-matched
 full-period buy-and-hold benchmark without altering the underlying ledgers.
 Undefined ratios serialize as `null`; metrics never insert `NaN` or infinity.
 
+QF-8 implements the shared validation-plan boundary in
+`quantforge.validation`. It defines deterministic exchange-session or timestamp
+windows for development, optional selection, walk-forward test, and a reserved
+final holdout. One fixed research environment binds dataset-family/fingerprint,
+timeframe/session/aggregation, indicator/backend, rule or strategy, outcome,
+and applicable execution/cost provenance across every window. Horizon-aware
+purging, explicit embargo, and structurally non-selecting indicator warm-up
+context prevent protected observations from entering training or selection.
+The contracts are neutral between prediction and trading/backtest studies and
+do not run either kind of study. See `docs/validation-plans.md`.
+
 Responsibilities:
 
 - calculate performance and risk metrics;
 - compare against benchmarks;
-- implement chronological splits;
+- define and validate identity-bearing chronological partitions;
+- purge future-label overlap and enforce explicit embargo;
 - assemble out-of-sample results;
 - flag low sample sizes and fragile outcomes.
 
 Must not:
 
 - tune strategy parameters using test or holdout periods;
+- attach protected outcomes to warm-up or development membership;
 - rewrite trades;
 - conceal invalid runs.
 
