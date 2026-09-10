@@ -341,6 +341,38 @@ def test_environment_rejects_timeframe_that_mismatches_family_reference() -> Non
         )
 
 
+def test_dataset_provenance_requires_manifest_bound_family_references() -> None:
+    family = _family()
+    references = (family.reference(DAILY_ID),)
+
+    with pytest.raises(ValidationPlanError, match="complete dataset family"):
+        DatasetProvenance(FINGERPRINT, (DAILY_ID,), references)
+
+
+def test_dataset_provenance_rejects_unrelated_family_manifest() -> None:
+    family = _family()
+    unrelated_family = replace(family, provider_name="unrelated-provider")
+
+    with pytest.raises(ValidationPlanError, match="supplied family manifest"):
+        DatasetProvenance(
+            FINGERPRINT,
+            (DAILY_ID,),
+            (family.reference(DAILY_ID),),
+            unrelated_family,
+        )
+
+
+def test_dataset_provenance_embeds_verified_complete_family_manifest() -> None:
+    family = _family()
+    provenance = DatasetProvenance.from_dataset_family(FINGERPRINT, family, (DAILY_ID,))
+    primitive = provenance.to_primitive()
+    dataset_family = cast(PrimitiveMapping, primitive["dataset_family"])
+
+    assert provenance.family_manifest_id == family.manifest_id
+    assert dataset_family["manifest_id"] == family.manifest_id
+    assert dataset_family["manifest"] == family.to_manifest()
+
+
 def test_historical_native_indicator_is_not_silently_migrated() -> None:
     legacy = IndicatorProvenance.capture(
         SimpleMovingAverage(SimpleMovingAverageParameters(3))

@@ -670,12 +670,12 @@ class IndicatorProvenance:
 
 @dataclass(frozen=True, slots=True)
 class DatasetProvenance:
-    """Fixed dataset fingerprint plus optional QF-14 family bindings."""
+    """Fixed dataset fingerprint plus optional verified QF-14 family bindings."""
 
     dataset_fingerprint: str
     dataset_ids: tuple[str, ...]
     family_references: tuple[DatasetFamilyReference, ...] = ()
-    family_manifest_id: str | None = None
+    dataset_family: DatasetFamily | None = None
 
     def __post_init__(self) -> None:
         _validated_hash(self.dataset_fingerprint, "dataset fingerprint")
@@ -695,11 +695,11 @@ class DatasetProvenance:
         if len({item.dataset_id for item in references}) != len(references):
             raise ValidationPlanError("dataset family references must be unique")
         if references:
-            if self.family_manifest_id is None:
+            family = cast(object, self.dataset_family)
+            if not isinstance(family, DatasetFamily):
                 raise ValidationPlanError(
-                    "dataset family references require a family manifest ID"
+                    "dataset family references require the complete dataset family"
                 )
-            _validated_hash(self.family_manifest_id, "dataset family manifest ID")
             family_ids = {item.family_id for item in references}
             source_ids = {item.canonical_source_snapshot_id for item in references}
             if len(family_ids) != 1 or len(source_ids) != 1:
@@ -710,12 +710,31 @@ class DatasetProvenance:
                 raise ValidationPlanError(
                     "dataset IDs must exactly match dataset family references"
                 )
-        elif self.family_manifest_id is not None:
+            try:
+                expected_references = tuple(
+                    family.reference(dataset_id) for dataset_id in ordered_ids
+                )
+            except ValueError as error:
+                raise ValidationPlanError(
+                    "dataset IDs must be recorded in the supplied dataset family"
+                ) from error
+            if references != expected_references:
+                raise ValidationPlanError(
+                    "dataset family references must match the supplied family manifest"
+                )
+        elif self.dataset_family is not None:
             raise ValidationPlanError(
-                "family manifest ID cannot be supplied without family references"
+                "dataset family cannot be supplied without family references"
             )
         object.__setattr__(self, "dataset_ids", ordered_ids)
         object.__setattr__(self, "family_references", references)
+
+    @property
+    def family_manifest_id(self) -> str | None:
+        """Return the verified exact-family manifest identity, when applicable."""
+        if self.dataset_family is None:
+            return None
+        return self.dataset_family.manifest_id
 
     @classmethod
     def from_market_dataset(cls, dataset: MarketDataset) -> "DatasetProvenance":
@@ -738,7 +757,7 @@ class DatasetProvenance:
             dataset_fingerprint,
             dataset_ids,
             tuple(family.reference(dataset_id) for dataset_id in dataset_ids),
-            family.manifest_id,
+            family,
         )
 
     def to_primitive(self) -> PrimitiveMapping:
@@ -751,6 +770,7 @@ class DatasetProvenance:
         )
         family: PrimitiveMapping | None = None
         if references:
+            assert self.dataset_family is not None
             family = {
                 "family_id": self.family_references[0].family_id,
                 "manifest_id": self.family_manifest_id,
@@ -758,6 +778,7 @@ class DatasetProvenance:
                     self.family_references[0].canonical_source_snapshot_id
                 ),
                 "references": references,
+                "manifest": self.dataset_family.to_manifest(),
             }
         return {
             "dataset_fingerprint": self.dataset_fingerprint,

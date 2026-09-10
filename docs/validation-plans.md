@@ -120,7 +120,7 @@ folds and the holdout. It preserves:
 
 - QF-3 dataset IDs and data fingerprint;
 - QF-14 dataset-family references, family ID, canonical source snapshot ID, and
-  exact family manifest ID when a family is used;
+  the complete exact family manifest when a family is used;
 - complete QF-13 timeframe and session-policy configurations and IDs;
 - versioned aggregation-policy configurations;
 - indicator configuration, implementation version, normalized backend ID,
@@ -132,6 +132,10 @@ folds and the holdout. It preserves:
 Every QF-14 family reference must match one of the environment's exact QF-13
 timeframe configuration IDs. A family member cannot be relabeled as another
 session count, intraday duration, or session policy inside a validation plan.
+Construction also recreates every compact reference from the supplied complete
+family and requires exact equality. A valid-looking but unrelated manifest ID
+therefore cannot be paired with persisted references, and the complete verified
+manifest participates in environment and plan identity.
 
 `ResearchStudyType.PREDICTION` and
 `ResearchStudyType.TRADING_BACKTEST` identify the consumer without changing the
