@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data import (
     AdjustmentBasis,
     AdjustmentMode,
@@ -22,6 +22,7 @@ from quantforge.indicators import (
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
 )
+from quantforge.prediction import ForwardReturnOutcomeLabeler
 from quantforge.timeframes import IntradayInterval, SessionInterval, Timeframe
 from quantforge.validation import (
     ConfigurationReference,
@@ -148,25 +149,34 @@ def _environment(
 
 
 def _session_outcome(horizon_sessions: int) -> OutcomeProvenance:
-    return OutcomeProvenance(
-        _component(
-            "outcome_labeler",
-            "forward_close_return",
-            horizon_sessions=horizon_sessions,
-        ),
-        TemporalOffset.sessions(horizon_sessions),
+    return OutcomeProvenance.capture_exchange_sessions(
+        ForwardReturnOutcomeLabeler(horizon_sessions)
     )
+
+
+class _TimestampOutcome:
+    name = "intraday_forward_return"
+    implementation_version = "1"
+
+    def __init__(self, required_future_duration: timedelta) -> None:
+        self.required_future_duration = required_future_duration
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component": self.name,
+            "implementation_version": self.implementation_version,
+            "horizon_microseconds": int(
+                self.required_future_duration.total_seconds() * 1_000_000
+            ),
+        }
 
 
 def _timestamp_outcome(horizon: timedelta) -> OutcomeProvenance:
-    return OutcomeProvenance(
-        _component(
-            "outcome_labeler",
-            "intraday_forward_return",
-            horizon_microseconds=int(horizon.total_seconds() * 1_000_000),
-        ),
-        TemporalOffset.duration(horizon),
-    )
+    return OutcomeProvenance.capture_timestamp(_TimestampOutcome(horizon))
 
 
 def _session(value: str) -> ExchangeSessionBoundary:
@@ -273,7 +283,7 @@ def test_session_plan_serialization_is_stable_and_records_fixed_provenance() -> 
     assert Timeframe.us_equity(SessionInterval()).configuration_id in first.decode()
     assert '"backend_id":"native_v1"' in first.decode()
     assert plan.environment.research_rule.implementation_version == "1"
-    assert '"horizon_sessions":1' in first.decode()
+    assert '"future_sessions":1' in first.decode()
 
 
 def test_manifest_validation_rejects_identity_mismatch_and_noncanonical_cache() -> None:
@@ -773,6 +783,35 @@ def test_plan_rejects_outcome_horizon_that_exceeds_purge_horizon() -> None:
 
     with pytest.raises(ValidationPlanError, match="maximum configured outcome"):
         _session_plan(horizon_sessions=1, environment=environment)
+
+
+def test_outcome_provenance_requires_typed_component_capture() -> None:
+    with pytest.raises(TypeError, match="typed outcome component"):
+        OutcomeProvenance()
+
+    session_outcome = OutcomeProvenance.capture_exchange_sessions(
+        ForwardReturnOutcomeLabeler(2)
+    )
+    timestamp_outcome = OutcomeProvenance.capture_timestamp(
+        _TimestampOutcome(timedelta(minutes=10))
+    )
+
+    assert session_outcome.future_horizon == TemporalOffset.sessions(2)
+    assert timestamp_outcome.future_horizon == TemporalOffset.duration(
+        timedelta(minutes=10)
+    )
+
+
+def test_timestamp_outcome_rejects_invalid_component_horizon() -> None:
+    with pytest.raises(ValidationPlanError, match="non-negative timedelta"):
+        OutcomeProvenance.capture_timestamp(_TimestampOutcome(timedelta(minutes=-1)))
+
+
+def test_trading_environment_requires_execution_provenance() -> None:
+    environment = _environment(ResearchStudyType.TRADING_BACKTEST)
+
+    with pytest.raises(ValidationPlanError, match="requires execution provenance"):
+        replace(environment, execution=None)
 
 
 def test_component_configuration_is_detached_from_caller_mutation() -> None:

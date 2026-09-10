@@ -480,6 +480,12 @@ class SessionOutcomeComponent(ConfiguredComponent, Protocol):
     required_future_sessions: int
 
 
+class TimestampOutcomeComponent(ConfiguredComponent, Protocol):
+    """Existing outcome component with an exact elapsed future horizon."""
+
+    required_future_duration: timedelta
+
+
 @dataclass(frozen=True, slots=True)
 class ConfigurationReference:
     """Immutable reference to one existing versioned component configuration."""
@@ -552,12 +558,17 @@ class ConfigurationReference:
         }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class OutcomeProvenance:
-    """One outcome configuration with its declared maximum future reach."""
+    """One outcome configuration bound to its component's future reach."""
 
     configuration: ConfigurationReference
     future_horizon: TemporalOffset
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "OutcomeProvenance must be captured from a typed outcome component"
+        )
 
     def __post_init__(self) -> None:
         if not isinstance(cast(object, self.configuration), ConfigurationReference):
@@ -586,10 +597,39 @@ class OutcomeProvenance:
             raise ValidationPlanError(
                 "outcome required future sessions must be a non-negative integer"
             )
-        return cls(
-            ConfigurationReference.capture_component("outcome_labeler", outcome),
+        return cls._capture_component(
+            outcome,
             TemporalOffset.sessions(sessions),
         )
+
+    @classmethod
+    def capture_timestamp(
+        cls,
+        outcome: TimestampOutcomeComponent,
+    ) -> "OutcomeProvenance":
+        """Capture an outcome component with an exact elapsed future horizon."""
+        duration = cast(object, outcome.required_future_duration)
+        if not isinstance(duration, timedelta) or duration < timedelta(0):
+            raise ValidationPlanError(
+                "outcome required future duration must be a non-negative timedelta"
+            )
+        return cls._capture_component(outcome, TemporalOffset.duration(duration))
+
+    @classmethod
+    def _capture_component(
+        cls,
+        outcome: ConfiguredComponent,
+        future_horizon: TemporalOffset,
+    ) -> "OutcomeProvenance":
+        instance = object.__new__(cls)
+        object.__setattr__(
+            instance,
+            "configuration",
+            ConfigurationReference.capture_component("outcome_labeler", outcome),
+        )
+        object.__setattr__(instance, "future_horizon", future_horizon)
+        instance.__post_init__()
+        return instance
 
 
 class _IndicatorComponent(ConfiguredComponent, Protocol):
@@ -819,6 +859,13 @@ class ResearchEnvironment:
             cast(object, self.execution), ConfigurationReference
         ):
             raise ValidationPlanError("research execution reference is invalid")
+        if (
+            self.study_type is ResearchStudyType.TRADING_BACKTEST
+            and self.execution is None
+        ):
+            raise ValidationPlanError(
+                "trading/backtest research requires execution provenance"
+            )
         if not self.timeframes or any(
             not isinstance(item, Timeframe)
             for item in cast(tuple[object, ...], self.timeframes)

@@ -84,10 +84,14 @@ test or holdout results available for selection; it only states that individual
 development observations have no forward label window to purge.
 
 Each `OutcomeProvenance` pairs the exact versioned outcome configuration with
-its typed maximum future reach. Plan construction requires the purge horizon to
-equal the maximum declared outcome horizon and rejects axis mismatches. A
-shorter unsafe purge horizon and a longer identity-equivalent over-purge cannot
-silently diverge from the fixed outcome definitions.
+its typed maximum future reach. It cannot be constructed from an independent
+configuration reference and offset. `capture_exchange_sessions()` reads
+`required_future_sessions` from a typed session outcome component, while
+`capture_timestamp()` reads `required_future_duration` from a typed timestamp
+outcome component. Plan construction then requires the purge horizon to equal
+the maximum captured outcome horizon and rejects axis mismatches. A shorter
+unsafe purge horizon and a longer identity-equivalent over-purge cannot silently
+diverge from the fixed outcome definitions.
 
 Appending later observations cannot change historical membership. The plan,
 window boundaries, calendar policy, label reach, and embargo are fixed identity
@@ -139,8 +143,10 @@ manifest participates in environment and plan identity.
 
 `ResearchStudyType.PREDICTION` and
 `ResearchStudyType.TRADING_BACKTEST` identify the consumer without changing the
-partition model. Prediction environments need not define execution, while
-trading environments need not define outcomes.
+partition model. Prediction environments need not define execution. Trading
+environments need not define outcomes, but must provide explicit execution and
+cost provenance so implicit fill, fee, or slippage defaults cannot alias under
+one environment identity.
 
 `IndicatorProvenance.capture()` snapshots both the existing indicator
 configuration and its resolved QF-35 backend identity. For an historical native
