@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+import quantforge.validation.partitioning as validation_partitioning
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data import (
     AdjustmentBasis,
@@ -23,7 +24,13 @@ from quantforge.indicators import (
     SimpleMovingAverageParameters,
 )
 from quantforge.prediction import ForwardReturnOutcomeLabeler
-from quantforge.timeframes import IntradayInterval, SessionInterval, Timeframe
+from quantforge.timeframes import (
+    ExchangeSession,
+    ExchangeSessionPolicy,
+    IntradayInterval,
+    SessionInterval,
+    Timeframe,
+)
 from quantforge.validation import (
     ConfigurationReference,
     DatasetProvenance,
@@ -454,6 +461,43 @@ def test_explicit_session_embargo_adds_separation_beyond_label_horizon() -> None
         date(2024, 1, 8),
     )
     assert with_embargo.result_id != without_embargo.result_id
+
+
+def test_exchange_session_purge_computes_one_calendar_cutoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _session_plan(horizon_sessions=1)
+    observations = tuple(
+        _session(value)
+        for value in (
+            "2024-01-02",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+            "2024-01-08",
+        )
+    )
+    original_resolver = validation_partitioning.resolve_exchange_session
+    calendar_lookups = 0
+
+    def counting_resolver(
+        session_date: date,
+        policy: ExchangeSessionPolicy,
+    ) -> ExchangeSession:
+        nonlocal calendar_lookups
+        calendar_lookups += 1
+        return original_resolver(session_date, policy)
+
+    monkeypatch.setattr(
+        validation_partitioning,
+        "resolve_exchange_session",
+        counting_resolver,
+    )
+
+    result = purge_development_observations(plan, 0, observations)
+
+    assert _session_dates(result.purged) == (date(2024, 1, 8),)
+    assert calendar_lookups == 1
 
 
 def test_selection_and_test_labels_cannot_cross_test_or_holdout_boundaries() -> None:

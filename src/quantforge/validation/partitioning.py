@@ -1,7 +1,7 @@
 """Leakage-safe membership, horizon purging, embargo, and warm-up selection."""
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import timedelta
 from itertools import pairwise
 from typing import cast
 
@@ -110,11 +110,14 @@ def purge_partition_observations(
         raise ValidationPlanError(
             "source validation window has no observations in the supplied chronology"
         )
+    purge_cutoff = _purge_cutoff(plan, source, protected)
     retained: list[ValidationBoundary] = []
     purged: list[ValidationBoundary] = []
     for observation in membership:
         target = (
-            purged if _reaches_protected(plan, observation, protected) else retained
+            purged
+            if boundary_value(observation) >= boundary_value(purge_cutoff)
+            else retained
         )
         target.append(observation)
     return PurgedPartitionObservations(
@@ -153,58 +156,55 @@ def _source_and_protected_windows(
     )
 
 
-def _reaches_protected(
+def _purge_cutoff(
     plan: ValidationPlan,
-    observation: ValidationBoundary,
+    source: ValidationWindow,
     protected: ValidationWindow,
-) -> bool:
+) -> ValidationBoundary:
     protected_start = protected.interval.start
     if plan.axis is BoundaryAxis.TIMESTAMP:
-        observed = cast(TimestampBoundary, observation).timestamp
         start = cast(TimestampBoundary, protected_start).timestamp
         horizon = plan.purge_policy.label_horizon.elapsed
         embargo = plan.purge_policy.embargo.elapsed
         assert horizon is not None
         assert embargo is not None
-        return observed + horizon + embargo >= start
-    observed_session = cast(ExchangeSessionBoundary, observation)
+        return TimestampBoundary(start - horizon - embargo)
+    source_start = cast(ExchangeSessionBoundary, source.interval.start)
     protected_session = cast(ExchangeSessionBoundary, protected_start)
-    distance = _exchange_session_distance(
-        observed_session.session_date,
-        protected_session.session_date,
-        observed_session,
-    )
     horizon_sessions = plan.purge_policy.label_horizon.exchange_sessions
     embargo_sessions = plan.purge_policy.embargo.exchange_sessions
     assert horizon_sessions is not None
     assert embargo_sessions is not None
-    return distance <= horizon_sessions + embargo_sessions
+    return _exchange_session_purge_cutoff(
+        source_start,
+        protected_session,
+        horizon_sessions + embargo_sessions,
+    )
 
 
-def _exchange_session_distance(
-    earlier: date,
-    later: date,
-    semantics: ExchangeSessionBoundary,
-) -> int:
-    if earlier >= later:
+def _exchange_session_purge_cutoff(
+    source_start: ExchangeSessionBoundary,
+    protected_start: ExchangeSessionBoundary,
+    separation_sessions: int,
+) -> ExchangeSessionBoundary:
+    if source_start.session_date >= protected_start.session_date:
         raise ValidationPlanError(
-            "source observation must precede the protected interval"
+            "source partition must precede the protected interval"
         )
-    count = 0
-    candidate = earlier + timedelta(days=1)
-    while candidate <= later:
+    if separation_sessions == 0:
+        return protected_start
+    candidate = protected_start.session_date
+    remaining = separation_sessions
+    while remaining > 0 and candidate > source_start.session_date:
+        candidate -= timedelta(days=1)
         try:
-            resolve_exchange_session(candidate, semantics.session_policy)
+            resolve_exchange_session(candidate, protected_start.session_policy)
         except TimeframeValidationError:
-            pass
+            continue
         else:
-            count += 1
-        candidate += timedelta(days=1)
-    if count < 1:
-        raise ValidationPlanError(
-            "protected exchange-session boundary must follow the source partition"
-        )
-    return count
+            remaining -= 1
+    cutoff = max(candidate, source_start.session_date)
+    return ExchangeSessionBoundary(cutoff, protected_start.session_policy)
 
 
 @dataclass(frozen=True, slots=True)
