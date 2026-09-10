@@ -6,7 +6,11 @@ from itertools import pairwise
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.timeframes import TimeframeValidationError, resolve_exchange_session
+from quantforge.timeframes import (
+    Timeframe,
+    TimeframeValidationError,
+    resolve_exchange_session,
+)
 from quantforge.validation.errors import ValidationPlanError
 from quantforge.validation.models import (
     BoundaryAxis,
@@ -214,10 +218,14 @@ class WindowObservationSelection:
     window_id: str
     warm_up_context: tuple[ValidationBoundary, ...]
     study_observations: tuple[ValidationBoundary, ...]
+    source_timeframe_configuration_id: str | None = None
 
     def _identity_primitive(self) -> PrimitiveMapping:
         return {
             "window_id": self.window_id,
+            "source_timeframe_configuration_id": (
+                self.source_timeframe_configuration_id
+            ),
             "warm_up_context": [
                 _boundary_primitive(item) for item in self.warm_up_context
             ],
@@ -238,9 +246,12 @@ class WindowObservationSelection:
 def select_window_observations(
     window: ValidationWindow,
     observations: tuple[ValidationBoundary, ...],
+    *,
+    source_timeframe: Timeframe | None = None,
 ) -> WindowObservationSelection:
-    """Select exact window membership plus preceding indicator-only warm-up rows."""
+    """Select membership and source-timeframe-specific preceding context."""
     _validate_observations(observations, window.interval.start)
+    warm_up_observations = window.warm_up_observations_for(source_timeframe)
     study_indexes = tuple(
         index
         for index, observation in enumerate(observations)
@@ -251,7 +262,7 @@ def select_window_observations(
             "validation window has no observations in the supplied chronology"
         )
     first_index = study_indexes[0]
-    warm_up_start = first_index - window.warm_up_observations
+    warm_up_start = first_index - warm_up_observations
     if warm_up_start < 0:
         raise ValidationPlanError(
             "insufficient historical observations for validation window warm-up"
@@ -262,4 +273,9 @@ def select_window_observations(
         raise ValidationPlanError(
             "validation warm-up context must precede the protected interval"
         )
-    return WindowObservationSelection(window.window_id, warm_up, study)
+    return WindowObservationSelection(
+        window.window_id,
+        warm_up,
+        study,
+        None if source_timeframe is None else source_timeframe.configuration_id,
+    )

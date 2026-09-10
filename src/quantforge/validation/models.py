@@ -22,7 +22,9 @@ from quantforge.indicators import Indicator, IndicatorBackendIdentity
 from quantforge.timeframes import (
     DEFAULT_US_EQUITY_SESSION_POLICY,
     ExchangeSessionPolicy,
+    SessionInterval,
     Timeframe,
+    TimeframeValidationError,
     resolve_exchange_session,
 )
 from quantforge.validation.errors import ValidationPlanError
@@ -215,6 +217,36 @@ class PartitionRole(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class TimeframeWarmUpRequirement:
+    """Context-only source-bar count expressed in one exact timeframe."""
+
+    timeframe: Timeframe
+    observations: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(cast(object, self.timeframe), Timeframe):
+            raise ValidationPlanError("warm-up source timeframe is invalid")
+        observations = cast(object, self.observations)
+        if (
+            isinstance(observations, bool)
+            or not isinstance(observations, int)
+            or observations < 0
+        ):
+            raise ValidationPlanError(
+                "timeframe warm-up observations must be a non-negative integer"
+            )
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "timeframe": {
+                "configuration_id": self.timeframe.configuration_id,
+                "configuration": self.timeframe.to_primitive(),
+            },
+            "observations": self.observations,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ValidationWindow:
     """One identity-bearing interval and its non-selecting warm-up requirement."""
 
@@ -223,6 +255,7 @@ class ValidationWindow:
     interval: ValidationInterval
     warm_up_observations: int = 0
     schema_version: str = VALIDATION_WINDOW_SCHEMA_VERSION
+    warm_up_by_timeframe: tuple[TimeframeWarmUpRequirement, ...] = ()
 
     def __post_init__(self) -> None:
         _validated_text(self.name, "validation window name")
@@ -235,8 +268,47 @@ class ValidationWindow:
             raise ValidationPlanError(
                 "validation warm-up observations must be a non-negative integer"
             )
+        requirements_value = cast(object, self.warm_up_by_timeframe)
+        if not isinstance(requirements_value, tuple) or any(
+            not isinstance(item, TimeframeWarmUpRequirement)
+            for item in cast(tuple[object, ...], requirements_value)
+        ):
+            raise ValidationPlanError(
+                "validation timeframe warm-up requirements are invalid"
+            )
+        requirements = tuple(
+            sorted(
+                self.warm_up_by_timeframe,
+                key=lambda item: item.timeframe.configuration_id,
+            )
+        )
+        identifiers = tuple(item.timeframe.configuration_id for item in requirements)
+        if len(identifiers) != len(set(identifiers)):
+            raise ValidationPlanError(
+                "validation timeframe warm-up requirements must be unique"
+            )
+        if warm_up and requirements:
+            raise ValidationPlanError(
+                "validation window cannot mix scalar and timeframe-specific warm-up"
+            )
         if self.schema_version != VALIDATION_WINDOW_SCHEMA_VERSION:
             raise ValidationPlanError("validation window schema version is unsupported")
+        object.__setattr__(self, "warm_up_by_timeframe", requirements)
+
+    def warm_up_observations_for(self, source_timeframe: Timeframe | None) -> int:
+        """Resolve a source-specific count, failing on ambiguous multi-source use."""
+        if not self.warm_up_by_timeframe:
+            return self.warm_up_observations
+        if source_timeframe is None:
+            raise ValidationPlanError(
+                "source timeframe is required for timeframe-specific warm-up"
+            )
+        for requirement in self.warm_up_by_timeframe:
+            if requirement.timeframe == source_timeframe:
+                return requirement.observations
+        raise ValidationPlanError(
+            "validation window has no warm-up requirement for the source timeframe"
+        )
 
     def _identity_primitive(self) -> PrimitiveMapping:
         return {
@@ -246,6 +318,9 @@ class ValidationWindow:
             "interval": self.interval.to_primitive(),
             "warm_up": {
                 "observations": self.warm_up_observations,
+                "by_timeframe": [
+                    item.to_primitive() for item in self.warm_up_by_timeframe
+                ],
                 "purpose": "indicator_context_only",
                 "eligible_for_selection": False,
             },
@@ -663,6 +738,7 @@ class IndicatorProvenance:
     backend_identity: IndicatorBackendIdentity | None
     legacy_native_configuration: bool
     warm_up_observations: int
+    source_timeframe: Timeframe
 
     def __init__(self) -> None:
         raise TypeError(
@@ -693,6 +769,8 @@ class IndicatorProvenance:
             raise ValidationPlanError(
                 "indicator warm-up observations must be a positive integer"
             )
+        if not isinstance(cast(object, self.source_timeframe), Timeframe):
+            raise ValidationPlanError("indicator source timeframe is invalid")
 
     @property
     def required_context_observations(self) -> int:
@@ -700,7 +778,13 @@ class IndicatorProvenance:
         return self.warm_up_observations - 1
 
     @classmethod
-    def capture(cls, indicator: IndicatorComponent) -> "IndicatorProvenance":
+    def capture(
+        cls,
+        indicator: IndicatorComponent,
+        source_timeframe: Timeframe,
+    ) -> "IndicatorProvenance":
+        if not isinstance(cast(object, source_timeframe), Timeframe):
+            raise ValidationPlanError("captured indicator source timeframe is invalid")
         configuration = indicator.configuration()
         snapshot = PrimitiveMappingSnapshot.capture(configuration)
         configuration_id = indicator.configuration_id
@@ -733,6 +817,7 @@ class IndicatorProvenance:
         object.__setattr__(instance, "backend_identity", backend)
         object.__setattr__(instance, "legacy_native_configuration", legacy)
         object.__setattr__(instance, "warm_up_observations", warm_up)
+        object.__setattr__(instance, "source_timeframe", source_timeframe)
         instance.__post_init__()
         return instance
 
@@ -752,7 +837,37 @@ class IndicatorProvenance:
                 "observations_required_for_first_result": self.warm_up_observations,
                 "required_pre_window_context": self.required_context_observations,
             },
+            "source_timeframe": {
+                "configuration_id": self.source_timeframe.configuration_id,
+                "configuration": self.source_timeframe.to_primitive(),
+            },
         }
+
+
+def _rule_primary_timeframe_configuration_id(
+    configuration: PrimitiveMapping,
+) -> str | None:
+    context_value = cast(object, configuration.get("context_requirements"))
+    if context_value is None:
+        return None
+    if not isinstance(context_value, dict):
+        raise ValidationPlanError("research rule context requirements are invalid")
+    context = cast(PrimitiveMapping, context_value)
+    primary_value = cast(object, context.get("primary"))
+    if not isinstance(primary_value, dict):
+        raise ValidationPlanError(
+            "research rule primary timeframe requirement is invalid"
+        )
+    primary = cast(PrimitiveMapping, primary_value)
+    timeframe_value = cast(object, primary.get("timeframe"))
+    if not isinstance(timeframe_value, dict):
+        raise ValidationPlanError("research rule primary timeframe is invalid")
+    timeframe = cast(PrimitiveMapping, timeframe_value)
+    configuration_id = cast(object, timeframe.get("configuration_id"))
+    return _validated_hash(
+        configuration_id,
+        "research rule primary timeframe configuration ID",
+    )
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -761,6 +876,7 @@ class ResearchRuleProvenance:
 
     configuration: ConfigurationReference
     warm_up_observations: int
+    warm_up_timeframe_configuration_id: str | None
     required_indicator_configuration_ids: tuple[str, ...]
 
     def __init__(self) -> None:
@@ -782,6 +898,11 @@ class ResearchRuleProvenance:
         if isinstance(warm_up, bool) or not isinstance(warm_up, int) or warm_up < 1:
             raise ValidationPlanError(
                 "research rule warm-up observations must be a positive integer"
+            )
+        if self.warm_up_timeframe_configuration_id is not None:
+            _validated_hash(
+                self.warm_up_timeframe_configuration_id,
+                "research rule warm-up timeframe configuration ID",
             )
         indicator_ids_value = cast(object, self.required_indicator_configuration_ids)
         if not isinstance(indicator_ids_value, tuple):
@@ -857,13 +978,25 @@ class ResearchRuleProvenance:
                 "research rule required indicators must be an immutable tuple"
             )
         required_indicators = cast(tuple[Indicator, ...], required_indicators_value)
-        captured_indicators = tuple(
-            IndicatorProvenance.capture(cast(IndicatorComponent, indicator))
-            for indicator in required_indicators
-        )
-        required_ids = tuple(
-            sorted(indicator.configuration_id for indicator in captured_indicators)
-        )
+        required_ids_values: list[str] = []
+        for indicator in required_indicators:
+            indicator_configuration = indicator.configuration()
+            indicator_id = indicator.configuration_id
+            if configuration_identity(indicator_configuration) != indicator_id:
+                raise ValidationPlanError(
+                    "research rule required indicator configuration identity is invalid"
+                )
+            indicator_warm_up = cast(object, indicator.warm_up_observations)
+            if (
+                isinstance(indicator_warm_up, bool)
+                or not isinstance(indicator_warm_up, int)
+                or indicator_warm_up < 1
+            ):
+                raise ValidationPlanError(
+                    "research rule required indicator warm-up is invalid"
+                )
+            required_ids_values.append(indicator_id)
+        required_ids = tuple(sorted(required_ids_values))
         if len(set(required_ids)) != len(required_ids):
             raise ValidationPlanError(
                 "research rule required indicators must be unique"
@@ -872,14 +1005,6 @@ class ResearchRuleProvenance:
         if isinstance(warm_up, bool) or not isinstance(warm_up, int) or warm_up < 1:
             raise ValidationPlanError(
                 "captured research rule warm-up observations must be a positive integer"
-            )
-        maximum_indicator_warm_up = max(
-            (indicator.warm_up_observations for indicator in captured_indicators),
-            default=1,
-        )
-        if warm_up < maximum_indicator_warm_up:
-            raise ValidationPlanError(
-                "research rule warm-up cannot be shorter than a required indicator"
             )
         instance = object.__new__(cls)
         object.__setattr__(
@@ -896,6 +1021,11 @@ class ResearchRuleProvenance:
         object.__setattr__(instance, "warm_up_observations", warm_up)
         object.__setattr__(
             instance,
+            "warm_up_timeframe_configuration_id",
+            _rule_primary_timeframe_configuration_id(configuration),
+        )
+        object.__setattr__(
+            instance,
             "required_indicator_configuration_ids",
             required_ids,
         )
@@ -908,6 +1038,9 @@ class ResearchRuleProvenance:
             "warm_up": {
                 "observations_required_for_first_result": self.warm_up_observations,
                 "required_pre_window_context": self.required_context_observations,
+                "source_timeframe_configuration_id": (
+                    self.warm_up_timeframe_configuration_id
+                ),
             },
             "required_indicator_configuration_ids": list(
                 self.required_indicator_configuration_ids
@@ -990,6 +1123,7 @@ class DatasetProvenance:
     dataset_ids: tuple[str, ...]
     family_references: tuple[DatasetFamilyReference, ...] = ()
     dataset_family: DatasetFamily | None = None
+    standalone_timeframe: Timeframe | None = None
 
     def __post_init__(self) -> None:
         _validated_hash(self.dataset_fingerprint, "dataset fingerprint")
@@ -1009,6 +1143,10 @@ class DatasetProvenance:
         if len({item.dataset_id for item in references}) != len(references):
             raise ValidationPlanError("dataset family references must be unique")
         if references:
+            if self.standalone_timeframe is not None:
+                raise ValidationPlanError(
+                    "family-backed provenance cannot define a standalone timeframe"
+                )
             family = cast(object, self.dataset_family)
             if not isinstance(family, DatasetFamily):
                 raise ValidationPlanError(
@@ -1040,6 +1178,10 @@ class DatasetProvenance:
             raise ValidationPlanError(
                 "dataset family cannot be supplied without family references"
             )
+        elif not isinstance(cast(object, self.standalone_timeframe), Timeframe):
+            raise ValidationPlanError(
+                "standalone dataset provenance requires its canonical timeframe"
+            )
         object.__setattr__(self, "dataset_ids", ordered_ids)
         object.__setattr__(self, "family_references", references)
 
@@ -1054,9 +1196,32 @@ class DatasetProvenance:
     def from_market_dataset(cls, dataset: MarketDataset) -> "DatasetProvenance":
         """Capture one validated QF-3 dataset without retrofitting QF-14 identity."""
         validate_market_dataset(dataset)
+        timezone_name = (
+            DEFAULT_US_EQUITY_SESSION_POLICY.timezone_name
+            if dataset.metadata.calendar
+            == DEFAULT_US_EQUITY_SESSION_POLICY.calendar_name
+            else dataset.metadata.provider_timezone
+        )
+        if timezone_name is None:
+            raise ValidationPlanError(
+                "standalone dataset timeframe requires the exchange timezone"
+            )
+        try:
+            timeframe = Timeframe(
+                SessionInterval(),
+                ExchangeSessionPolicy(
+                    calendar_name=dataset.metadata.calendar,
+                    timezone_name=timezone_name,
+                ),
+            )
+        except TimeframeValidationError as error:
+            raise ValidationPlanError(
+                "standalone dataset metadata cannot define a canonical timeframe"
+            ) from error
         return cls(
             dataset.metadata.data_sha256,
             (dataset.metadata.dataset_id,),
+            standalone_timeframe=timeframe,
         )
 
     @classmethod
@@ -1098,6 +1263,14 @@ class DatasetProvenance:
             "dataset_fingerprint": self.dataset_fingerprint,
             "dataset_ids": list(self.dataset_ids),
             "dataset_family": family,
+            "standalone_timeframe": (
+                None
+                if self.standalone_timeframe is None
+                else {
+                    "configuration_id": self.standalone_timeframe.configuration_id,
+                    "configuration": self.standalone_timeframe.to_primitive(),
+                }
+            ),
         }
 
 
@@ -1170,23 +1343,46 @@ class ResearchEnvironment:
         configured_timeframe_ids = {
             item.configuration_id for item in ordered_timeframes
         }
-        referenced_timeframe_ids = {
-            item.timeframe_configuration_id for item in self.dataset.family_references
-        }
-        if not referenced_timeframe_ids.issubset(configured_timeframe_ids):
+        if self.dataset.family_references:
+            available_timeframe_ids = {
+                item.timeframe_configuration_id
+                for item in self.dataset.family_references
+            }
+        else:
+            assert self.dataset.standalone_timeframe is not None
+            available_timeframe_ids = {
+                self.dataset.standalone_timeframe.configuration_id
+            }
+        if available_timeframe_ids != configured_timeframe_ids:
             raise ValidationPlanError(
-                "dataset family references must match configured research timeframes"
+                "configured research timeframes must exactly match dataset provenance"
             )
         ordered_aggregations = _ordered_unique_references(
             self.aggregation_policies, "aggregation policies"
         )
         ordered_indicators = tuple(
-            sorted(self.indicators, key=lambda item: item.configuration_id)
+            sorted(
+                self.indicators,
+                key=lambda item: (
+                    item.source_timeframe.configuration_id,
+                    item.configuration_id,
+                ),
+            )
         )
-        if len({item.configuration_id for item in ordered_indicators}) != len(
-            ordered_indicators
-        ):
+        indicator_bindings = {
+            (item.source_timeframe.configuration_id, item.configuration_id)
+            for item in ordered_indicators
+        }
+        if len(indicator_bindings) != len(ordered_indicators):
             raise ValidationPlanError("research indicators must be unique")
+        if any(
+            item.source_timeframe.configuration_id not in configured_timeframe_ids
+            for item in ordered_indicators
+        ):
+            raise ValidationPlanError(
+                "indicator source timeframes must be configured in the research "
+                "environment"
+            )
         configured_indicator_ids = {
             item.configuration_id for item in ordered_indicators
         }
@@ -1197,6 +1393,18 @@ class ResearchEnvironment:
             raise ValidationPlanError(
                 "research environment must include every indicator required by its "
                 "rule or strategy"
+            )
+        rule_timeframe_id = self.research_rule.warm_up_timeframe_configuration_id
+        if rule_timeframe_id is None:
+            if len(ordered_timeframes) != 1:
+                raise ValidationPlanError(
+                    "multi-timeframe research rules must identify the source "
+                    "timeframe for their warm-up"
+                )
+        elif rule_timeframe_id not in configured_timeframe_ids:
+            raise ValidationPlanError(
+                "research rule warm-up timeframe must be configured in the "
+                "research environment"
             )
         if any(
             not isinstance(item, OutcomeProvenance)
@@ -1348,22 +1556,52 @@ class ValidationPlan:
         self,
         windows: tuple[ValidationWindow, ...],
     ) -> None:
-        required_context = max(
+        required_context = {
+            timeframe.configuration_id: 0 for timeframe in self.environment.timeframes
+        }
+        for indicator in self.environment.indicators:
+            timeframe_id = indicator.source_timeframe.configuration_id
+            required_context[timeframe_id] = max(
+                required_context[timeframe_id],
+                indicator.required_context_observations,
+            )
+        rule_timeframe_id = (
+            self.environment.research_rule.warm_up_timeframe_configuration_id
+        )
+        if rule_timeframe_id is None:
+            assert len(self.environment.timeframes) == 1
+            rule_timeframe_id = self.environment.timeframes[0].configuration_id
+        required_context[rule_timeframe_id] = max(
+            required_context[rule_timeframe_id],
             self.environment.research_rule.required_context_observations,
-            max(
-                (
-                    indicator.required_context_observations
-                    for indicator in self.environment.indicators
-                ),
-                default=0,
-            ),
         )
         for window in windows:
-            if window.warm_up_observations < required_context:
+            if len(required_context) == 1 and not window.warm_up_by_timeframe:
+                timeframe_id, required = next(iter(required_context.items()))
+                provided = window.warm_up_observations
+                if provided < required:
+                    raise ValidationPlanError(
+                        f"validation window {window.name!r} requires at least "
+                        f"{required} warm-up observations for timeframe "
+                        f"{timeframe_id}"
+                    )
+                continue
+            provided_by_timeframe = {
+                item.timeframe.configuration_id: item.observations
+                for item in window.warm_up_by_timeframe
+            }
+            if set(provided_by_timeframe) != set(required_context):
                 raise ValidationPlanError(
-                    f"validation window {window.name!r} requires at least "
-                    f"{required_context} research warm-up observations"
+                    f"validation window {window.name!r} must define warm-up for "
+                    "every configured source timeframe"
                 )
+            for timeframe_id, required in required_context.items():
+                if provided_by_timeframe[timeframe_id] < required:
+                    raise ValidationPlanError(
+                        f"validation window {window.name!r} requires at least "
+                        f"{required} warm-up observations for timeframe "
+                        f"{timeframe_id}"
+                    )
 
     def _validate_outcome_horizon(self, axis: BoundaryAxis) -> None:
         outcomes = self.environment.outcomes

@@ -38,6 +38,7 @@ from quantforge.timeframes import (
     IntradayInterval,
     SessionInterval,
     Timeframe,
+    TradingWeekInterval,
 )
 from quantforge.validation import (
     BacktestProvenance,
@@ -54,6 +55,7 @@ from quantforge.validation import (
     ResearchRuleProvenance,
     ResearchStudyType,
     TemporalOffset,
+    TimeframeWarmUpRequirement,
     TimestampBoundary,
     TrainingWindowMode,
     ValidationBoundary,
@@ -70,9 +72,12 @@ from quantforge.validation import (
     validate_validation_plan_manifest,
 )
 
+from ..helpers import make_dataset
+
 FINGERPRINT = "a" * 64
 SOURCE_ID = "qf8-source-1m"
 DAILY_ID = "qf8-derived-daily"
+WEEKLY_ID = "qf8-derived-weekly"
 FIXTURE_ROOT = Path(__file__).parents[2] / "fixtures" / "validation"
 
 
@@ -100,15 +105,17 @@ class _FixtureRule:
         required_indicators: tuple[Indicator, ...],
         warm_up_observations: int,
         configuration: PrimitiveMapping,
+        primary_timeframe: Timeframe | None = None,
     ) -> None:
         self.name = name
         self._canonical_component_type = canonical_component_type
         self.required_indicators = required_indicators
         self.warm_up_observations = warm_up_observations
         self._configuration = configuration
+        self._primary_timeframe = primary_timeframe
 
     def configuration(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "component_type": self._canonical_component_type,
             "component_name": self.name,
             "implementation_version": self.implementation_version,
@@ -118,6 +125,16 @@ class _FixtureRule:
             ],
             "warm_up_observations": self.warm_up_observations,
         }
+        if self._primary_timeframe is not None:
+            primitive["context_requirements"] = {
+                "primary": {
+                    "timeframe": {
+                        "configuration_id": (self._primary_timeframe.configuration_id),
+                        "configuration": self._primary_timeframe.to_primitive(),
+                    }
+                }
+            }
+        return primitive
 
     @property
     def configuration_id(self) -> str:
@@ -141,6 +158,7 @@ def _rule(
     required_indicators: tuple[Indicator, ...],
     *,
     warm_up_observations: int | None = None,
+    primary_timeframe: Timeframe | None = None,
     **configuration: str | int,
 ) -> ResearchRuleProvenance:
     required_warm_up = max(
@@ -156,6 +174,7 @@ def _rule(
         required_indicators,
         required_warm_up if warm_up_observations is None else warm_up_observations,
         cast(PrimitiveMapping, dict(configuration)),
+        primary_timeframe,
     )
     if component_type == "prediction_rule":
         return ResearchRuleProvenance.capture_prediction(component)
@@ -213,6 +232,38 @@ def _family(target_timeframe: Timeframe | None = None) -> DatasetFamily:
     )
 
 
+def _multi_timeframe_family(
+    daily_timeframe: Timeframe,
+    weekly_timeframe: Timeframe,
+) -> DatasetFamily:
+    source_timeframe = Timeframe.us_equity(IntradayInterval(timedelta(minutes=1)))
+    baseline = _family(daily_timeframe)
+    return replace(
+        baseline,
+        datasets=(
+            DatasetLineage(
+                SOURCE_ID,
+                source_timeframe,
+                SOURCE_ID,
+                None,
+                (DAILY_ID, WEEKLY_ID),
+            ),
+            DatasetLineage(
+                DAILY_ID,
+                daily_timeframe,
+                SOURCE_ID,
+                SOURCE_ID,
+            ),
+            DatasetLineage(
+                WEEKLY_ID,
+                weekly_timeframe,
+                SOURCE_ID,
+                SOURCE_ID,
+            ),
+        ),
+    )
+
+
 def _environment(
     study_type: ResearchStudyType = ResearchStudyType.PREDICTION,
     *,
@@ -228,7 +279,8 @@ def _environment(
         SimpleMovingAverageParameters(3)
     )
     selected_indicator = IndicatorProvenance.capture(
-        cast(IndicatorComponent, selected_indicator_component)
+        cast(IndicatorComponent, selected_indicator_component),
+        selected_timeframe,
     )
     selected_outcome = outcome or _session_outcome(1)
     selected_execution = execution
@@ -468,10 +520,30 @@ def test_environment_identity_binds_every_required_scientific_input() -> None:
 def test_environment_rejects_timeframe_that_mismatches_family_reference() -> None:
     environment = _environment()
 
-    with pytest.raises(ValidationPlanError, match="family references"):
+    with pytest.raises(ValidationPlanError, match="exactly match dataset provenance"):
         replace(
             environment,
             timeframes=(Timeframe.us_equity(SessionInterval(2)),),
+        )
+
+
+def test_standalone_dataset_binds_its_canonical_daily_timeframe() -> None:
+    dataset = make_dataset(("100", "101"))
+    provenance = DatasetProvenance.from_market_dataset(dataset)
+    daily = Timeframe.us_equity(SessionInterval())
+    baseline = replace(_environment(), dataset=provenance)
+
+    assert provenance.standalone_timeframe == daily
+    assert baseline.timeframes == (daily,)
+    with pytest.raises(ValidationPlanError, match="exactly match dataset provenance"):
+        replace(
+            baseline,
+            timeframes=(Timeframe.us_equity(IntradayInterval(timedelta(minutes=5))),),
+        )
+    with pytest.raises(ValidationPlanError, match="exactly match dataset provenance"):
+        replace(
+            baseline,
+            timeframes=(daily, Timeframe.us_equity(SessionInterval(2))),
         )
 
 
@@ -513,8 +585,9 @@ def test_historical_native_indicator_is_not_silently_migrated() -> None:
         SimpleMovingAverageParameters(3),
         backend_id=NATIVE_INDICATOR_BACKEND,
     )
-    legacy = IndicatorProvenance.capture(legacy_component)
-    explicit = IndicatorProvenance.capture(explicit_component)
+    timeframe = Timeframe.us_equity(SessionInterval())
+    legacy = IndicatorProvenance.capture(legacy_component, timeframe)
+    explicit = IndicatorProvenance.capture(explicit_component, timeframe)
 
     assert legacy.backend_identity == explicit.backend_identity
     assert legacy.legacy_native_configuration is True
@@ -671,6 +744,151 @@ def test_warm_up_context_precedes_and_is_excluded_from_protected_membership() ->
     assert _session_dates(selected.study_observations) == (date(2024, 1, 9),)
     assert selected.to_primitive()["warm_up_eligible_for_selection"] is False
     assert set(selected.warm_up_context).isdisjoint(selected.study_observations)
+
+
+def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
+    daily = Timeframe.us_equity(SessionInterval())
+    weekly = Timeframe.us_equity(TradingWeekInterval())
+    daily_indicator = cast(
+        Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(3))
+    )
+    weekly_indicator = cast(
+        Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(5))
+    )
+    rule = _rule(
+        "prediction_rule",
+        "multi_timeframe_rule",
+        (daily_indicator, weekly_indicator),
+        warm_up_observations=3,
+        primary_timeframe=daily,
+    )
+    family = _multi_timeframe_family(daily, weekly)
+    environment = ResearchEnvironment(
+        ResearchStudyType.PREDICTION,
+        DatasetProvenance.from_dataset_family(
+            FINGERPRINT,
+            family,
+            (DAILY_ID, WEEKLY_ID),
+        ),
+        (daily, weekly),
+        rule,
+        indicators=(
+            IndicatorProvenance.capture(
+                cast(IndicatorComponent, daily_indicator), daily
+            ),
+            IndicatorProvenance.capture(
+                cast(IndicatorComponent, weekly_indicator), weekly
+            ),
+        ),
+        outcomes=(_session_outcome(1),),
+    )
+    scalar_fold = ValidationFold(
+        "fold_1",
+        _session_window(
+            "development_1",
+            PartitionRole.DEVELOPMENT,
+            "2024-01-02",
+            "2024-01-08",
+        ),
+        _session_window(
+            "test_1",
+            PartitionRole.WALK_FORWARD_TEST,
+            "2024-01-10",
+        ),
+        _session_window(
+            "selection_1",
+            PartitionRole.SELECTION,
+            "2024-01-09",
+        ),
+    )
+    scalar_holdout = FinalHoldout(
+        _session_window(
+            "reserved_holdout",
+            PartitionRole.FINAL_HOLDOUT,
+            "2024-01-11",
+            "2024-01-12",
+        ),
+        "untouched",
+    )
+    with pytest.raises(ValidationPlanError, match="every configured source"):
+        ValidationPlan(
+            "unsafe_scalar_warm_up",
+            environment,
+            (scalar_fold,),
+            scalar_holdout,
+            PurgePolicy(TemporalOffset.sessions(1), TemporalOffset.sessions(0)),
+            TrainingWindowMode.EXPANDING,
+        )
+
+    requirements = (
+        TimeframeWarmUpRequirement(daily, 2),
+        TimeframeWarmUpRequirement(weekly, 4),
+    )
+
+    def bind_warm_up(window: ValidationWindow) -> ValidationWindow:
+        return replace(
+            window,
+            warm_up_observations=0,
+            warm_up_by_timeframe=requirements,
+        )
+
+    fold = replace(
+        scalar_fold,
+        development=bind_warm_up(scalar_fold.development),
+        selection=bind_warm_up(cast(ValidationWindow, scalar_fold.selection)),
+        test=bind_warm_up(scalar_fold.test),
+    )
+    plan = ValidationPlan(
+        "source_specific_warm_up",
+        environment,
+        (fold,),
+        replace(
+            scalar_holdout,
+            window=bind_warm_up(scalar_holdout.window),
+        ),
+        PurgePolicy(TemporalOffset.sessions(1), TemporalOffset.sessions(0)),
+        TrainingWindowMode.EXPANDING,
+    )
+    selection = cast(ValidationWindow, plan.folds[0].selection)
+    daily_chronology = tuple(
+        _session(item)
+        for item in (
+            "2024-01-02",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+            "2024-01-08",
+            "2024-01-09",
+        )
+    )
+    weekly_chronology = tuple(
+        _session(item)
+        for item in (
+            "2023-12-11",
+            "2023-12-18",
+            "2023-12-26",
+            "2024-01-02",
+            "2024-01-09",
+        )
+    )
+
+    selected_daily = select_window_observations(
+        selection,
+        daily_chronology,
+        source_timeframe=daily,
+    )
+    selected_weekly = select_window_observations(
+        selection,
+        weekly_chronology,
+        source_timeframe=weekly,
+    )
+
+    assert len(selected_daily.warm_up_context) == 2
+    assert len(selected_weekly.warm_up_context) == 4
+    assert selected_daily.source_timeframe_configuration_id == daily.configuration_id
+    assert selected_weekly.source_timeframe_configuration_id == weekly.configuration_id
+    with pytest.raises(ValidationPlanError, match="source timeframe is required"):
+        select_window_observations(selection, daily_chronology)
 
 
 def test_appending_future_data_cannot_change_historical_membership() -> None:
@@ -1010,7 +1228,7 @@ def test_plan_rejects_undersized_indicator_warm_up_context() -> None:
     }
 
     undersized_test = replace(plan.folds[0].test, warm_up_observations=1)
-    with pytest.raises(ValidationPlanError, match="research warm-up observations"):
+    with pytest.raises(ValidationPlanError, match="warm-up observations for timeframe"):
         replace(
             plan,
             folds=(replace(plan.folds[0], test=undersized_test),),
@@ -1020,7 +1238,7 @@ def test_plan_rejects_undersized_indicator_warm_up_context() -> None:
         plan.final_holdout.window,
         warm_up_observations=1,
     )
-    with pytest.raises(ValidationPlanError, match="research warm-up observations"):
+    with pytest.raises(ValidationPlanError, match="warm-up observations for timeframe"):
         replace(
             plan,
             final_holdout=replace(plan.final_holdout, window=undersized_holdout),
@@ -1048,8 +1266,9 @@ def test_plan_binds_rule_warm_up_and_required_indicators() -> None:
     assert rule.to_primitive()["warm_up"] == {
         "observations_required_for_first_result": 4,
         "required_pre_window_context": 3,
+        "source_timeframe_configuration_id": None,
     }
-    with pytest.raises(ValidationPlanError, match="3 research warm-up observations"):
+    with pytest.raises(ValidationPlanError, match="3 warm-up observations"):
         _session_plan(environment=environment)
 
     other_indicator = cast(

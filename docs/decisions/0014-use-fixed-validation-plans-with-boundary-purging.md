@@ -40,9 +40,11 @@ Before an earlier partition is used, observations are removed when their label
 horizon plus explicit embargo reaches or crosses the next protected boundary.
 Exchange-session distances use the configured exchange calendar rather than
 weekdays. Warm-up observations are returned in a separate context-only field
-that is never eligible for selection. Every window must provide enough
-preceding context for both the fixed environment's longest indicator warm-up
-and its typed rule or strategy warm-up; the first study row supplies the final
+that is never eligible for selection. A single-timeframe plan may use a scalar
+count; a multi-timeframe plan records and selects an independent count for every
+exact source timeframe. Every window must provide enough preceding context for
+each indicator and its typed rule or strategy in the timeframe where that
+component's count is expressed; the first study row supplies the final
 observation needed for its own result. Rule provenance also binds the exact
 configuration identities of its required indicators to the environment.
 
@@ -57,6 +59,10 @@ Trading/backtest environments factory-capture only the existing validated
 reference, or identity-free execution defaults. Domain-specific rule-provenance
 factories verify the component's own canonical type before capturing it as a
 trading strategy or prediction rule.
+The configured timeframe set must exactly equal the timeframes supported by its
+dataset provenance. The QF-3 standalone adapter captures its canonical daily
+timeframe from validated dataset metadata, while QF-14 members retain their
+manifest-bound timeframe identities.
 
 ## Consequences
 
@@ -65,7 +71,9 @@ sharing prediction metrics, orders, trades, portfolio state, or equity curves.
 Changing any scientific environment field, boundary, horizon, embargo, warm-up,
 fold mode, or holdout reservation produces a different deterministic plan ID.
 Appending future observations cannot change membership inside an already fixed
-historical interval.
+historical interval. Multi-timeframe consumers must select warm-up separately
+from each source chronology; daily and weekly observation counts are never
+treated as interchangeable units.
 
 Consumers must declare the maximum reach of every outcome that influences
 training or selection. A mismatch fails plan construction. The closed interval
@@ -99,7 +107,8 @@ holdout-consumption ledger remain later work.
 Unit fixtures cover prediction and backtest studies, session and timestamp
 boundaries, expanding and rolling folds, overlap rejection, outcome-horizon
 purging, embargo, warm-up separation, future-data appends, family/timeframe and
-manifest identity mismatch, and historical native-backend preservation. A
+manifest identity mismatch, standalone timeframe relabeling, source-specific
+multi-timeframe warm-up, and historical native-backend preservation. A
 deterministic integration test captures existing QF-11 rule, outcome, and
 indicator contracts directly into a validation plan. Canonical manifest tests
 reject non-canonical bytes, tampering, and unsafe cross-plan reuse.

@@ -51,13 +51,18 @@ def test_qf11_prediction_components_bind_directly_to_validation_plan() -> None:
     outcome_labeler = NextSessionOpenGapOutcomeLabeler()
     outcome = OutcomeProvenance.capture_exchange_sessions(outcome_labeler)
     warm_up_context = strategy.warm_up_observations - 1
+    timeframe = Timeframe.us_equity(SessionInterval())
     environment = ResearchEnvironment(
         ResearchStudyType.PREDICTION,
-        DatasetProvenance("a" * 64, ("qf11-fixture-dataset",)),
-        (Timeframe.us_equity(SessionInterval()),),
+        DatasetProvenance(
+            "a" * 64,
+            ("qf11-fixture-dataset",),
+            standalone_timeframe=timeframe,
+        ),
+        (timeframe,),
         ResearchRuleProvenance.capture_prediction(strategy),
         indicators=tuple(
-            IndicatorProvenance.capture(cast(IndicatorComponent, indicator))
+            IndicatorProvenance.capture(cast(IndicatorComponent, indicator), timeframe)
             for indicator in strategy.required_indicators
         ),
         outcomes=(outcome,),

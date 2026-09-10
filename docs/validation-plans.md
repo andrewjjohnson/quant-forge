@@ -100,8 +100,14 @@ the purge result.
 
 ## Indicator warm-up
 
-Each `ValidationWindow` declares a non-negative `warm_up_observations` count.
-`select_window_observations()` returns two structurally separate tuples:
+Each single-timeframe `ValidationWindow` may declare a non-negative scalar
+`warm_up_observations` count. A multi-timeframe window instead declares one
+`TimeframeWarmUpRequirement` for every configured source timeframe; mixing the
+two forms is rejected. Counts remain in their own source-bar units, so a weekly
+count is never compared with or selected from a daily chronology.
+
+`select_window_observations()` accepts the exact source timeframe when a window
+uses timeframe-specific warm-up and returns two structurally separate tuples:
 
 - `warm_up_context` contains the exact preceding observations used only to
   calculate causal indicators;
@@ -113,18 +119,21 @@ The serialized selection explicitly records
 never enter study membership. Insufficient history fails closed instead of
 silently shortening the declared warm-up.
 
-`IndicatorProvenance.capture()` records each indicator's existing
-`warm_up_observations` contract. The domain-specific
+`IndicatorProvenance.capture()` binds each indicator's existing
+`warm_up_observations` contract to the exact QF-13 source timeframe on which the
+count is expressed. The domain-specific
 `ResearchRuleProvenance.capture_prediction()` and `capture_trading()` factories
 verify the component's own canonical configuration type, then capture its own
 warm-up and the exact configuration IDs of its required indicators. The
-environment must contain all of those indicator identities. Because the first
-study observation supplies the final input needed for its own result, every
-development, selection, test, and holdout window must declare at least
-`max(rule.warm_up_observations, indicator.warm_up_observations) - 1` preceding
-context rows. Plan construction rejects undersized context, so rule-level
-history or initial unavailable indicator rows cannot silently change eligible
-study membership.
+environment must contain all of those indicator identities. A multi-timeframe
+rule must also identify the source timeframe for its own warm-up. Because the
+first study observation supplies the final input needed for its own result,
+every development, selection, test, and holdout window must declare at least
+`warm_up_observations - 1` preceding rows for each indicator and rule in that
+component's source timeframe. Plan construction rejects missing or undersized
+per-source context. Consumers call `select_window_observations()` independently
+for each source chronology, preventing daily and weekly bar counts from being
+interchanged.
 
 The contract supplies observation membership only. It does not attach outcomes
 to warm-up rows or calculate indicators. Consumers continue to use the existing
@@ -146,13 +155,17 @@ folds and the holdout. It preserves:
 - every applicable outcome-label configuration;
 - execution and cost configuration when applicable.
 
-Every QF-14 family reference must match one of the environment's exact QF-13
-timeframe configuration IDs. A family member cannot be relabeled as another
-session count, intraday duration, or session policy inside a validation plan.
-Construction also recreates every compact reference from the supplied complete
-family and requires exact equality. A valid-looking but unrelated manifest ID
-therefore cannot be paired with persisted references, and the complete verified
-manifest participates in environment and plan identity.
+The configured timeframe set must exactly equal the timeframe set supplied by
+dataset provenance. Every QF-14 family reference names one exact QF-13
+timeframe; no referenced timeframe may be omitted and no unavailable timeframe
+may be added. `DatasetProvenance.from_market_dataset()` binds the legacy QF-3
+daily dataset to its canonical one-session exchange timeframe, including its
+calendar and timezone, so it cannot be relabeled as intraday or advertised as
+multiple timeframes. Family construction also recreates every compact reference
+from the supplied complete family and requires exact equality. A valid-looking
+but unrelated manifest ID therefore cannot be paired with persisted references,
+and the verified manifest or standalone timeframe participates in environment
+and plan identity.
 
 `ResearchStudyType.PREDICTION` and
 `ResearchStudyType.TRADING_BACKTEST` identify the consumer without changing the
