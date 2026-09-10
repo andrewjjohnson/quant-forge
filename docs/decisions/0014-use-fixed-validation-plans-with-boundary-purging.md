@@ -35,11 +35,15 @@ future reach. Outcome provenance is captured only from a typed component that
 exposes its actual session or elapsed-time horizon; an independent configuration
 and shorter declared horizon cannot be paired. The plan's purge horizon must
 equal the maximum outcome reach.
+
 Before an earlier partition is used, observations are removed when their label
 horizon plus explicit embargo reaches or crosses the next protected boundary.
 Exchange-session distances use the configured exchange calendar rather than
 weekdays. Warm-up observations are returned in a separate context-only field
-that is never eligible for selection.
+that is never eligible for selection. Every window must provide enough
+preceding context for the fixed environment's longest indicator warm-up; its
+first study row supplies the final observation needed for its own indicator
+value.
 
 One immutable `ResearchEnvironment` is shared across the complete plan. Its
 identity binds dataset fingerprint and QF-14 family references, QF-13
@@ -48,7 +52,9 @@ QF-35 backend identities, rule or strategy version, outcome definitions, and
 applicable execution/cost configuration. Historical implicit-native indicator
 configurations remain distinct from new explicit `native_v1` configurations.
 Trading/backtest environments require that execution/cost configuration rather
-than permitting identity-free execution defaults.
+than permitting identity-free execution defaults, and their research-rule
+reference must be typed as a trading strategy. Prediction research-rule
+references remain independently typed as prediction rules.
 
 ## Consequences
 

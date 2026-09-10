@@ -632,11 +632,14 @@ class OutcomeProvenance:
         return instance
 
 
-class _IndicatorComponent(ConfiguredComponent, Protocol):
+class IndicatorComponent(ConfiguredComponent, Protocol):
     """Configured indicator accepted by the provenance capture adapter."""
 
+    @property
+    def warm_up_observations(self) -> int: ...
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, init=False)
 class IndicatorProvenance:
     """Exact normalized indicator configuration and resolved backend provenance."""
 
@@ -646,6 +649,12 @@ class IndicatorProvenance:
     configuration_snapshot: PrimitiveMappingSnapshot
     backend_identity: IndicatorBackendIdentity | None
     legacy_native_configuration: bool
+    warm_up_observations: int
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "IndicatorProvenance must be captured from a typed indicator component"
+        )
 
     def __post_init__(self) -> None:
         _validated_text(self.name, "indicator name")
@@ -666,9 +675,19 @@ class IndicatorProvenance:
             raise ValidationPlanError(
                 "legacy-native indicator marker must be a boolean"
             )
+        warm_up = cast(object, self.warm_up_observations)
+        if isinstance(warm_up, bool) or not isinstance(warm_up, int) or warm_up < 1:
+            raise ValidationPlanError(
+                "indicator warm-up observations must be a positive integer"
+            )
+
+    @property
+    def required_context_observations(self) -> int:
+        """Return preceding rows needed before a window's first study row."""
+        return self.warm_up_observations - 1
 
     @classmethod
-    def capture(cls, indicator: _IndicatorComponent) -> "IndicatorProvenance":
+    def capture(cls, indicator: IndicatorComponent) -> "IndicatorProvenance":
         configuration = indicator.configuration()
         snapshot = PrimitiveMappingSnapshot.capture(configuration)
         configuration_id = indicator.configuration_id
@@ -684,14 +703,25 @@ class IndicatorProvenance:
             bool,
             getattr(indicator, "uses_legacy_native_configuration", False),
         )
-        return cls(
-            indicator.name,
+        warm_up = cast(object, indicator.warm_up_observations)
+        if isinstance(warm_up, bool) or not isinstance(warm_up, int) or warm_up < 1:
+            raise ValidationPlanError(
+                "captured indicator warm-up observations must be a positive integer"
+            )
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "name", indicator.name)
+        object.__setattr__(
+            instance,
+            "implementation_version",
             indicator.implementation_version,
-            configuration_id,
-            snapshot,
-            backend,
-            legacy,
         )
+        object.__setattr__(instance, "configuration_id", configuration_id)
+        object.__setattr__(instance, "configuration_snapshot", snapshot)
+        object.__setattr__(instance, "backend_identity", backend)
+        object.__setattr__(instance, "legacy_native_configuration", legacy)
+        object.__setattr__(instance, "warm_up_observations", warm_up)
+        instance.__post_init__()
+        return instance
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -705,6 +735,10 @@ class IndicatorProvenance:
                 else self.backend_identity.to_primitive()
             ),
             "legacy_native_configuration": self.legacy_native_configuration,
+            "warm_up": {
+                "observations_required_for_first_result": self.warm_up_observations,
+                "required_pre_window_context": self.required_context_observations,
+            },
         }
 
 
@@ -855,6 +889,16 @@ class ResearchEnvironment:
             raise ValidationPlanError("research dataset provenance is invalid")
         if not isinstance(cast(object, self.research_rule), ConfigurationReference):
             raise ValidationPlanError("research rule reference is invalid")
+        expected_rule_type = (
+            "prediction_rule"
+            if self.study_type is ResearchStudyType.PREDICTION
+            else "trading_strategy"
+        )
+        if self.research_rule.component_type != expected_rule_type:
+            raise ValidationPlanError(
+                f"{self.study_type.value} research requires a "
+                f"{expected_rule_type} configuration reference"
+            )
         if self.execution is not None and not isinstance(
             cast(object, self.execution), ConfigurationReference
         ):
@@ -1018,6 +1062,7 @@ class ValidationPlan:
             raise ValidationPlanError(
                 "validation purge policy does not match the plan temporal axis"
             )
+        self._validate_indicator_warm_up((*windows, self.final_holdout.window))
         self._validate_outcome_horizon(axis)
         if axis is BoundaryAxis.EXCHANGE_SESSION:
             first = cast(ExchangeSessionBoundary, windows[0].interval.start)
@@ -1044,6 +1089,24 @@ class ValidationPlan:
                 "final holdout must follow and not overlap every research window"
             )
         object.__setattr__(self, "_axis", axis)
+
+    def _validate_indicator_warm_up(
+        self,
+        windows: tuple[ValidationWindow, ...],
+    ) -> None:
+        required_context = max(
+            (
+                indicator.required_context_observations
+                for indicator in self.environment.indicators
+            ),
+            default=0,
+        )
+        for window in windows:
+            if window.warm_up_observations < required_context:
+                raise ValidationPlanError(
+                    f"validation window {window.name!r} requires at least "
+                    f"{required_context} indicator warm-up observations"
+                )
 
     def _validate_outcome_horizon(self, axis: BoundaryAxis) -> None:
         outcomes = self.environment.outcomes

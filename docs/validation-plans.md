@@ -113,6 +113,14 @@ The serialized selection explicitly records
 never enter study membership. Insufficient history fails closed instead of
 silently shortening the declared warm-up.
 
+`IndicatorProvenance.capture()` records each indicator's existing
+`warm_up_observations` contract. Because the first study observation supplies
+the final input needed for its own indicator value, every development,
+selection, test, and holdout window must declare at least
+`max(indicator.warm_up_observations) - 1` preceding context rows. Plan
+construction rejects undersized context, so initial unavailable indicator rows
+cannot silently change eligible study membership.
+
 The contract supplies observation membership only. It does not attach outcomes
 to warm-up rows or calculate indicators. Consumers continue to use the existing
 backend-neutral QuantForge indicator architecture.
@@ -147,6 +155,12 @@ partition model. Prediction environments need not define execution. Trading
 environments need not define outcomes, but must provide explicit execution and
 cost provenance so implicit fill, fee, or slippage defaults cannot alias under
 one environment identity.
+
+The semantic type of `research_rule` is also fixed by study type: prediction
+uses `prediction_rule`, while trading/backtest research uses
+`trading_strategy`. A prediction rule cannot stand in for the strategy
+provenance required to trace trades, and a trading strategy cannot be mislabeled
+as a prediction rule.
 
 `IndicatorProvenance.capture()` snapshots both the existing indicator
 configuration and its resolved QF-35 backend identity. For an historical native

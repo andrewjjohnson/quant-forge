@@ -9,10 +9,10 @@ from quantforge.prediction import (
 from quantforge.timeframes import SessionInterval, Timeframe
 from quantforge.validation import (
     ConfigurationReference,
-    ConfiguredComponent,
     DatasetProvenance,
     ExchangeSessionBoundary,
     FinalHoldout,
+    IndicatorComponent,
     IndicatorProvenance,
     OutcomeProvenance,
     PartitionRole,
@@ -33,6 +33,7 @@ def _window(
     role: PartitionRole,
     start: date,
     end: date,
+    warm_up_observations: int,
 ) -> ValidationWindow:
     return ValidationWindow(
         name,
@@ -41,6 +42,7 @@ def _window(
             ExchangeSessionBoundary(start),
             ExchangeSessionBoundary(end),
         ),
+        warm_up_observations,
     )
 
 
@@ -48,13 +50,19 @@ def test_qf11_prediction_components_bind_directly_to_validation_plan() -> None:
     strategy = OvernightGapPredictionStrategy(OvernightGapPredictionParameters())
     outcome_labeler = NextSessionOpenGapOutcomeLabeler()
     outcome = OutcomeProvenance.capture_exchange_sessions(outcome_labeler)
+    warm_up_context = (
+        max(
+            indicator.warm_up_observations for indicator in strategy.required_indicators
+        )
+        - 1
+    )
     environment = ResearchEnvironment(
         ResearchStudyType.PREDICTION,
         DatasetProvenance("a" * 64, ("qf11-fixture-dataset",)),
         (Timeframe.us_equity(SessionInterval()),),
         ConfigurationReference.capture_component("prediction_rule", strategy),
         indicators=tuple(
-            IndicatorProvenance.capture(cast(ConfiguredComponent, indicator))
+            IndicatorProvenance.capture(cast(IndicatorComponent, indicator))
             for indicator in strategy.required_indicators
         ),
         outcomes=(outcome,),
@@ -70,18 +78,21 @@ def test_qf11_prediction_components_bind_directly_to_validation_plan() -> None:
                     PartitionRole.DEVELOPMENT,
                     date(2024, 1, 2),
                     date(2024, 1, 5),
+                    warm_up_context,
                 ),
                 _window(
                     "test",
                     PartitionRole.WALK_FORWARD_TEST,
                     date(2024, 1, 9),
                     date(2024, 1, 10),
+                    warm_up_context,
                 ),
                 _window(
                     "selection",
                     PartitionRole.SELECTION,
                     date(2024, 1, 8),
                     date(2024, 1, 8),
+                    warm_up_context,
                 ),
             ),
         ),
@@ -91,6 +102,7 @@ def test_qf11_prediction_components_bind_directly_to_validation_plan() -> None:
                 PartitionRole.FINAL_HOLDOUT,
                 date(2024, 1, 11),
                 date(2024, 1, 12),
+                warm_up_context,
             ),
             "reserved QF-11 confirmation",
         ),

@@ -137,6 +137,19 @@ def _environment(
         selected_execution = _component(
             "execution_cost", "next_open_execution", slippage_bps=5
         )
+    selected_rule = rule or _component(
+        (
+            "trading_strategy"
+            if study_type is ResearchStudyType.TRADING_BACKTEST
+            else "prediction_rule"
+        ),
+        (
+            "fixture_strategy"
+            if study_type is ResearchStudyType.TRADING_BACKTEST
+            else "fixture_rule"
+        ),
+        period=3,
+    )
     return ResearchEnvironment(
         study_type=study_type,
         dataset=DatasetProvenance.from_dataset_family(FINGERPRINT, family, (DAILY_ID,)),
@@ -147,7 +160,7 @@ def _environment(
             ),
         ),
         indicators=(selected_indicator,),
-        research_rule=rule or _component("prediction_rule", "fixture_rule", period=3),
+        research_rule=selected_rule,
         outcomes=(selected_outcome,)
         if study_type is ResearchStudyType.PREDICTION
         else (),
@@ -196,7 +209,7 @@ def _session_window(
     start: str,
     end: str | None = None,
     *,
-    warm_up: int = 0,
+    warm_up: int = 2,
 ) -> ValidationWindow:
     return ValidationWindow(
         name,
@@ -592,6 +605,7 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
             _timestamp("2024-01-02T14:30:00+00:00"),
             _timestamp("2024-01-02T15:00:00+00:00"),
         ),
+        2,
     )
     selection = ValidationWindow(
         "intraday_selection",
@@ -600,7 +614,7 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
             _timestamp("2024-01-02T15:15:00+00:00"),
             _timestamp("2024-01-02T15:30:00+00:00"),
         ),
-        1,
+        2,
     )
     test = ValidationWindow(
         "intraday_test",
@@ -609,6 +623,7 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
             _timestamp("2024-01-02T15:45:00+00:00"),
             _timestamp("2024-01-02T16:00:00+00:00"),
         ),
+        2,
     )
     plan = ValidationPlan(
         "intraday_validation",
@@ -622,6 +637,7 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
                     _timestamp("2024-01-02T16:15:00+00:00"),
                     _timestamp("2024-01-02T16:30:00+00:00"),
                 ),
+                2,
             ),
             "reserved intraday interval",
         ),
@@ -856,6 +872,55 @@ def test_trading_environment_requires_execution_provenance() -> None:
 
     with pytest.raises(ValidationPlanError, match="requires execution provenance"):
         replace(environment, execution=None)
+
+
+def test_research_environment_requires_rule_type_for_study_type() -> None:
+    prediction = _environment()
+    trading = _environment(ResearchStudyType.TRADING_BACKTEST)
+
+    with pytest.raises(ValidationPlanError, match="prediction_rule"):
+        replace(
+            prediction,
+            research_rule=_component("trading_strategy", "wrong_strategy"),
+        )
+    with pytest.raises(ValidationPlanError, match="trading_strategy"):
+        replace(
+            trading,
+            research_rule=_component("prediction_rule", "wrong_rule"),
+        )
+
+
+def test_plan_rejects_undersized_indicator_warm_up_context() -> None:
+    plan = _session_plan()
+    indicator = plan.environment.indicators[0]
+    assert indicator.warm_up_observations == 3
+    assert indicator.required_context_observations == 2
+    assert indicator.to_primitive()["warm_up"] == {
+        "observations_required_for_first_result": 3,
+        "required_pre_window_context": 2,
+    }
+
+    undersized_test = replace(plan.folds[0].test, warm_up_observations=1)
+    with pytest.raises(ValidationPlanError, match="indicator warm-up observations"):
+        replace(
+            plan,
+            folds=(replace(plan.folds[0], test=undersized_test),),
+        )
+
+    undersized_holdout = replace(
+        plan.final_holdout.window,
+        warm_up_observations=1,
+    )
+    with pytest.raises(ValidationPlanError, match="indicator warm-up observations"):
+        replace(
+            plan,
+            final_holdout=replace(plan.final_holdout, window=undersized_holdout),
+        )
+
+
+def test_indicator_provenance_requires_typed_component_capture() -> None:
+    with pytest.raises(TypeError, match="typed indicator component"):
+        IndicatorProvenance()
 
 
 def test_component_configuration_is_detached_from_caller_mutation() -> None:
