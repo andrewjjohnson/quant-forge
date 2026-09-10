@@ -1,16 +1,11 @@
 """Leakage-safe membership, horizon purging, embargo, and warm-up selection."""
 
 from dataclasses import dataclass
-from datetime import timedelta
 from itertools import pairwise
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.timeframes import (
-    Timeframe,
-    TimeframeValidationError,
-    resolve_exchange_session,
-)
+from quantforge.timeframes import Timeframe
 from quantforge.validation.errors import ValidationPlanError
 from quantforge.validation.models import (
     BoundaryAxis,
@@ -114,7 +109,7 @@ def purge_partition_observations(
         raise ValidationPlanError(
             "source validation window has no observations in the supplied chronology"
         )
-    purge_cutoff = _purge_cutoff(plan, source, protected)
+    purge_cutoff = _purge_cutoff(plan, source, protected, observations)
     retained: list[ValidationBoundary] = []
     purged: list[ValidationBoundary] = []
     for observation in membership:
@@ -164,6 +159,7 @@ def _purge_cutoff(
     plan: ValidationPlan,
     source: ValidationWindow,
     protected: ValidationWindow,
+    observations: tuple[ValidationBoundary, ...],
 ) -> ValidationBoundary:
     protected_start = protected.interval.start
     if plan.axis is BoundaryAxis.TIMESTAMP:
@@ -179,14 +175,23 @@ def _purge_cutoff(
     embargo_sessions = plan.purge_policy.embargo.exchange_sessions
     assert horizon_sessions is not None
     assert embargo_sessions is not None
-    return _exchange_session_purge_cutoff(
+    separation_sessions = horizon_sessions + embargo_sessions
+    if separation_sessions == 0:
+        return protected_session
+    if not any(protected.interval.contains(item) for item in observations):
+        raise ValidationPlanError(
+            "protected validation window has no observations in the supplied chronology"
+        )
+    return _observed_session_purge_cutoff(
+        observations,
         source_start,
         protected_session,
-        horizon_sessions + embargo_sessions,
+        separation_sessions,
     )
 
 
-def _exchange_session_purge_cutoff(
+def _observed_session_purge_cutoff(
+    observations: tuple[ValidationBoundary, ...],
     source_start: ExchangeSessionBoundary,
     protected_start: ExchangeSessionBoundary,
     separation_sessions: int,
@@ -195,20 +200,23 @@ def _exchange_session_purge_cutoff(
         raise ValidationPlanError(
             "source partition must precede the protected interval"
         )
-    if separation_sessions == 0:
-        return protected_start
-    candidate = protected_start.session_date
-    remaining = separation_sessions
-    while remaining > 0 and candidate > source_start.session_date:
-        candidate -= timedelta(days=1)
-        try:
-            resolve_exchange_session(candidate, protected_start.session_policy)
-        except TimeframeValidationError:
-            continue
-        else:
-            remaining -= 1
-    cutoff = max(candidate, source_start.session_date)
-    return ExchangeSessionBoundary(cutoff, protected_start.session_policy)
+    protected_index = next(
+        (
+            index
+            for index, observation in enumerate(observations)
+            if boundary_value(observation) >= boundary_value(protected_start)
+        ),
+        None,
+    )
+    assert protected_index is not None
+    cutoff_index = protected_index - separation_sessions
+    assert cutoff_index < protected_index
+    if cutoff_index < 0:
+        return source_start
+    cutoff = cast(ExchangeSessionBoundary, observations[cutoff_index])
+    if cutoff.session_date < source_start.session_date:
+        return source_start
+    return cutoff
 
 
 @dataclass(frozen=True, slots=True)

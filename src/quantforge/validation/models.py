@@ -1359,11 +1359,10 @@ class DatasetProvenance:
     @classmethod
     def from_dataset_family(
         cls,
-        dataset_fingerprint: str,
         family: DatasetFamily,
         dataset_ids: tuple[str, ...],
     ) -> "DatasetProvenance":
-        """Capture compact references plus the exact immutable family manifest."""
+        """Capture selected artifact identity from an immutable family manifest."""
         try:
             references = tuple(
                 family.reference(dataset_id) for dataset_id in dataset_ids
@@ -1372,6 +1371,18 @@ class DatasetProvenance:
             raise ValidationPlanError(
                 "dataset IDs must be recorded in the supplied dataset family"
             ) from error
+        ordered_references = tuple(
+            sorted(references, key=lambda reference: reference.dataset_id)
+        )
+        dataset_fingerprint = configuration_identity(
+            {
+                "dataset_family_manifest_id": family.manifest_id,
+                "selected_dataset_references": [
+                    reference.to_primitive(include_feed_scope=True)
+                    for reference in ordered_references
+                ],
+            }
+        )
         return cls._create(
             dataset_fingerprint,
             dataset_ids,

@@ -8,7 +8,6 @@ from typing import cast
 
 import pytest
 
-import quantforge.validation.partitioning as validation_partitioning
 from quantforge.backtesting import (
     BacktestConfig,
     BasisPointSlippage,
@@ -33,8 +32,6 @@ from quantforge.indicators import (
 )
 from quantforge.prediction import ForwardReturnOutcomeLabeler
 from quantforge.timeframes import (
-    ExchangeSession,
-    ExchangeSessionPolicy,
     IntradayInterval,
     SessionInterval,
     Timeframe,
@@ -74,7 +71,6 @@ from quantforge.validation import (
 
 from ..helpers import make_dataset
 
-FINGERPRINT = "a" * 64
 SOURCE_ID = "qf8-source-1m"
 DAILY_ID = "qf8-derived-daily"
 WEEKLY_ID = "qf8-derived-weekly"
@@ -344,7 +340,7 @@ def _environment(
     )
     return ResearchEnvironment(
         study_type=study_type,
-        dataset=DatasetProvenance.from_dataset_family(FINGERPRINT, family, (DAILY_ID,)),
+        dataset=DatasetProvenance.from_dataset_family(family, (DAILY_ID,)),
         timeframes=(selected_timeframe,),
         aggregation_policies=(
             ConfigurationReference.capture_aggregation_policy(
@@ -490,7 +486,7 @@ def test_session_plan_serialization_is_stable_and_records_fixed_provenance() -> 
         "purpose": "one untouched final confirmation",
         "consumption": "outside_qf8_scope",
     }
-    assert plan.environment.dataset.dataset_fingerprint == FINGERPRINT
+    assert len(plan.environment.dataset.dataset_fingerprint) == 64
     assert plan.environment.dataset.family_references[0].family_id in first.decode()
     assert Timeframe.us_equity(SessionInterval()).configuration_id in first.decode()
     assert '"backend_id":"native_v1"' in first.decode()
@@ -528,8 +524,7 @@ def test_environment_identity_binds_every_required_scientific_input() -> None:
         replace(
             baseline,
             dataset=DatasetProvenance.from_dataset_family(
-                "b" * 64,
-                _family(),
+                replace(_family(), provider_name="different-provider"),
                 (DAILY_ID,),
             ),
         ),
@@ -637,7 +632,6 @@ def test_dataset_provenance_rejects_unknown_family_member() -> None:
 
     with pytest.raises(ValidationPlanError, match="recorded in the supplied"):
         DatasetProvenance.from_dataset_family(
-            FINGERPRINT,
             family,
             ("not-in-family",),
         )
@@ -645,13 +639,33 @@ def test_dataset_provenance_rejects_unknown_family_member() -> None:
 
 def test_dataset_provenance_embeds_verified_complete_family_manifest() -> None:
     family = _family()
-    provenance = DatasetProvenance.from_dataset_family(FINGERPRINT, family, (DAILY_ID,))
+    provenance = DatasetProvenance.from_dataset_family(family, (DAILY_ID,))
     primitive = provenance.to_primitive()
     dataset_family = cast(PrimitiveMapping, primitive["dataset_family"])
+    expected_fingerprint = configuration_identity(
+        {
+            "dataset_family_manifest_id": family.manifest_id,
+            "selected_dataset_references": [
+                family.reference(DAILY_ID).to_primitive(include_feed_scope=True)
+            ],
+        }
+    )
 
+    assert provenance.dataset_fingerprint == expected_fingerprint
     assert provenance.family_manifest_id == family.manifest_id
     assert dataset_family["manifest_id"] == family.manifest_id
     assert dataset_family["manifest"] == family.to_manifest()
+
+
+def test_dataset_family_fingerprint_changes_with_immutable_family_evidence() -> None:
+    family = _family()
+    changed_family = replace(family, provider_name="different-provider")
+
+    baseline = DatasetProvenance.from_dataset_family(family, (DAILY_ID,))
+    changed = DatasetProvenance.from_dataset_family(changed_family, (DAILY_ID,))
+
+    assert baseline.dataset_ids == changed.dataset_ids
+    assert baseline.dataset_fingerprint != changed.dataset_fingerprint
 
 
 def test_historical_native_indicator_is_not_silently_migrated() -> None:
@@ -728,10 +742,25 @@ def test_explicit_session_embargo_adds_separation_beyond_label_horizon() -> None
     assert with_embargo.result_id != without_embargo.result_id
 
 
-def test_exchange_session_purge_computes_one_calendar_cutoff(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_exchange_session_purge_uses_observed_label_horizon() -> None:
     plan = _session_plan(horizon_sessions=1)
+    observations = tuple(
+        _session(value)
+        for value in (
+            "2024-01-02",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+            "2024-01-09",
+        )
+    )
+
+    result = purge_development_observations(plan, 0, observations)
+
+    assert _session_dates(result.purged) == (date(2024, 1, 5),)
+
+
+def test_exchange_session_purge_rejects_missing_protected_chronology() -> None:
     observations = tuple(
         _session(value)
         for value in (
@@ -742,27 +771,36 @@ def test_exchange_session_purge_computes_one_calendar_cutoff(
             "2024-01-08",
         )
     )
-    original_resolver = validation_partitioning.resolve_exchange_session
-    calendar_lookups = 0
 
-    def counting_resolver(
-        session_date: date,
-        policy: ExchangeSessionPolicy,
-    ) -> ExchangeSession:
-        nonlocal calendar_lookups
-        calendar_lookups += 1
-        return original_resolver(session_date, policy)
+    with pytest.raises(ValidationPlanError, match="protected validation window"):
+        purge_development_observations(
+            _session_plan(horizon_sessions=1), 0, observations
+        )
 
-    monkeypatch.setattr(
-        validation_partitioning,
-        "resolve_exchange_session",
-        counting_resolver,
+
+def test_zero_session_separation_does_not_require_protected_observations() -> None:
+    observations = tuple(
+        _session(value)
+        for value in (
+            "2024-01-02",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+            "2024-01-08",
+        )
     )
 
-    result = purge_development_observations(plan, 0, observations)
+    result = purge_development_observations(
+        _session_plan(
+            horizon_sessions=0,
+            environment=_environment(ResearchStudyType.TRADING_BACKTEST),
+        ),
+        0,
+        observations,
+    )
 
-    assert _session_dates(result.purged) == (date(2024, 1, 8),)
-    assert calendar_lookups == 1
+    assert result.retained == observations
+    assert result.purged == ()
 
 
 def test_selection_and_test_labels_cannot_cross_test_or_holdout_boundaries() -> None:
@@ -845,7 +883,6 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
     environment = ResearchEnvironment(
         ResearchStudyType.PREDICTION,
         DatasetProvenance.from_dataset_family(
-            FINGERPRINT,
             family,
             (DAILY_ID, WEEKLY_ID),
         ),
@@ -998,7 +1035,6 @@ def test_rule_requires_duplicate_indicator_configuration_on_each_source() -> Non
         ResearchEnvironment(
             ResearchStudyType.PREDICTION,
             DatasetProvenance.from_dataset_family(
-                FINGERPRINT,
                 family,
                 (DAILY_ID, WEEKLY_ID),
             ),

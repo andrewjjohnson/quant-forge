@@ -58,9 +58,13 @@ consumption ledger is intentionally deferred to a later story.
   training or parameter selection;
 - `embargo` is additional separation required beyond that label reach.
 
-For exchange sessions, both values are actual configured exchange-session
-counts, not weekdays or calendar-day counts. For timestamp plans, both are exact
-elapsed durations serialized as integer microseconds.
+For exchange sessions, both values count the validated observations used by the
+session-indexed outcome component, not weekdays or synthesized calendar rows.
+Each observation must still be an actual session under the configured exchange
+calendar. This keeps purging aligned with outcome labelers that advance through
+the observed bar sequence when a dataset records a missing session. For
+timestamp plans, both values are exact elapsed durations serialized as integer
+microseconds.
 
 `purge_partition_observations()` compares an earlier partition with its next
 protected interval: development with selection/test, selection with test, and a
@@ -73,9 +77,11 @@ observation + label horizon + embargo >= protected start
 ```
 
 The equality case is purged: a label ending on the first protected observation
-has crossed the boundary. Exchange-session distance is resolved from the QF-13
-calendar, so holidays and weekends do not weaken or extend the configured
-horizon accidentally.
+has crossed the boundary. Exchange-session distance is resolved from the
+supplied validated chronology, so a missing observation cannot make an
+observed-bar label reach silently cross into the protected partition. When the
+combined horizon and embargo is positive, the chronology must include a
+protected-window observation; otherwise purging fails closed.
 
 Composite studies must configure `label_horizon` to the maximum future reach of
 all outcome configurations that influence training or selection. A trading
@@ -93,10 +99,11 @@ the maximum captured outcome horizon and rejects axis mismatches. A shorter
 unsafe purge horizon and a longer identity-equivalent over-purge cannot silently
 diverge from the fixed outcome definitions.
 
-Appending later observations cannot change historical membership. The plan,
-window boundaries, calendar policy, label reach, and embargo are fixed identity
-inputs, and observations outside the closed development interval are ignored by
-the purge result.
+Appending observations after the first protected observation cannot change
+historical membership. Correcting observations before that boundary can change
+the observed label reach and therefore the purge result; the corresponding
+dataset fingerprint also changes. The plan, window boundaries, calendar policy,
+label reach, and embargo remain fixed identity inputs.
 
 ## Indicator warm-up
 
@@ -170,7 +177,9 @@ serialization timezone is preserved in dataset metadata but is not substituted
 for exchange timezone. `DatasetProvenance` is factory-only: standalone identity
 must come from a validated `MarketDataset`, while family identity must come from
 `from_dataset_family()`. Family construction recreates every compact reference
-from the supplied complete family and requires exact equality. A valid-looking
+from the supplied complete family and requires exact equality. Its dataset
+fingerprint is derived from the exact family manifest ID plus the selected
+artifact references; callers cannot supply an unrelated hash. A valid-looking
 but unrelated fingerprint, timeframe, or manifest cannot be paired through a
 public constructor, and the verified manifest or standalone timeframe
 participates in environment and plan identity.
