@@ -13,6 +13,7 @@ from quantforge.configuration import (
     configuration_identity,
 )
 from quantforge.data import (
+    AggregationPolicy,
     DatasetFamily,
     DatasetFamilyReference,
     MarketDataset,
@@ -624,6 +625,24 @@ class ConfigurationReference:
             component.implementation_version,
             component.configuration(),
             configuration_id=component.configuration_id,
+        )
+
+    @classmethod
+    def capture_aggregation_policy(
+        cls,
+        policy: AggregationPolicy,
+    ) -> "ConfigurationReference":
+        """Capture the exact typed aggregation policy recorded by QF-14."""
+        if not isinstance(cast(object, policy), AggregationPolicy):
+            raise ValidationPlanError(
+                "aggregation provenance requires a typed aggregation policy"
+            )
+        return cls.capture(
+            "aggregation_policy",
+            policy.policy_name,
+            policy.policy_version,
+            policy.to_primitive(),
+            configuration_id=policy.configuration_id,
         )
 
     def to_primitive(self) -> PrimitiveMapping:
@@ -1476,6 +1495,23 @@ class ResearchEnvironment:
         ordered_aggregations = _ordered_unique_references(
             self.aggregation_policies, "aggregation policies"
         )
+        expected_aggregations: tuple[ConfigurationReference, ...] = ()
+        if self.dataset.dataset_family is not None:
+            selected_ids = set(self.dataset.dataset_ids)
+            if any(
+                item.dataset_id in selected_ids and not item.is_canonical_source
+                for item in self.dataset.dataset_family.datasets
+            ):
+                expected_aggregations = (
+                    ConfigurationReference.capture_aggregation_policy(
+                        self.dataset.dataset_family.aggregation_policy
+                    ),
+                )
+        if ordered_aggregations != expected_aggregations:
+            raise ValidationPlanError(
+                "research aggregation provenance must exactly match the selected "
+                "dataset lineage"
+            )
         ordered_indicators = tuple(
             sorted(
                 self.indicators,

@@ -65,7 +65,9 @@ trading strategy or prediction rule.
 The configured timeframe set must exactly equal the timeframes supported by its
 dataset provenance. The QF-3 standalone adapter captures its canonical daily
 timeframe from validated dataset metadata, while QF-14 members retain their
-manifest-bound timeframe identities.
+manifest-bound timeframe identities. If a selected family member is derived,
+the environment's aggregation reference is factory-captured from and must
+exactly match that family's typed aggregation policy.
 
 ## Consequences
 

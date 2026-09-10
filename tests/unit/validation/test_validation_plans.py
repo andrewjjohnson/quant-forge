@@ -228,7 +228,11 @@ def _backtest_provenance(slippage_bps: str = "5") -> BacktestProvenance:
     )
 
 
-def _family(target_timeframe: Timeframe | None = None) -> DatasetFamily:
+def _family(
+    target_timeframe: Timeframe | None = None,
+    *,
+    missing_constituents: str = "reject",
+) -> DatasetFamily:
     source_timeframe = Timeframe.us_equity(IntradayInterval(timedelta(minutes=1)))
     derived_timeframe = target_timeframe or Timeframe.us_equity(SessionInterval())
     return DatasetFamily(
@@ -245,7 +249,7 @@ def _family(target_timeframe: Timeframe | None = None) -> DatasetFamily:
         aggregation_policy=AggregationPolicy(
             "quantforge_session_ohlcv",
             "1",
-            {"missing_constituents": "reject"},
+            {"missing_constituents": missing_constituents},
         ),
         canonical_source_snapshot_id=SOURCE_ID,
         datasets=(
@@ -306,9 +310,13 @@ def _environment(
     outcome: OutcomeProvenance | None = None,
     execution: BacktestProvenance | None = None,
     timeframe: Timeframe | None = None,
+    aggregation_missing: str = "reject",
 ) -> ResearchEnvironment:
     selected_timeframe = timeframe or Timeframe.us_equity(SessionInterval())
-    family = _family(selected_timeframe)
+    family = _family(
+        selected_timeframe,
+        missing_constituents=aggregation_missing,
+    )
     selected_indicator_component = indicator or SimpleMovingAverage(
         SimpleMovingAverageParameters(3)
     )
@@ -339,8 +347,8 @@ def _environment(
         dataset=DatasetProvenance.from_dataset_family(FINGERPRINT, family, (DAILY_ID,)),
         timeframes=(selected_timeframe,),
         aggregation_policies=(
-            _component(
-                "aggregation_policy", "quantforge_session_ohlcv", missing="reject"
+            ConfigurationReference.capture_aggregation_policy(
+                family.aggregation_policy
             ),
         ),
         indicators=(selected_indicator,),
@@ -522,16 +530,7 @@ def test_environment_identity_binds_every_required_scientific_input() -> None:
             dataset=replace(baseline.dataset, dataset_fingerprint="b" * 64),
         ),
         _environment(timeframe=Timeframe.us_equity(SessionInterval(2))),
-        replace(
-            baseline,
-            aggregation_policies=(
-                _component(
-                    "aggregation_policy",
-                    "quantforge_session_ohlcv",
-                    missing="diagnostic",
-                ),
-            ),
-        ),
+        _environment(aggregation_missing="diagnostic"),
         _environment(indicator=explicit_native),
         _environment(
             rule=_rule(
@@ -561,11 +560,39 @@ def test_environment_rejects_timeframe_that_mismatches_family_reference() -> Non
         )
 
 
+def test_environment_binds_aggregation_to_selected_dataset_lineage() -> None:
+    environment = _environment()
+    mismatched_policy = AggregationPolicy(
+        "quantforge_session_ohlcv",
+        "1",
+        {"missing_constituents": "diagnostic"},
+    )
+
+    with pytest.raises(ValidationPlanError, match="selected dataset lineage"):
+        replace(
+            environment,
+            aggregation_policies=(
+                ConfigurationReference.capture_aggregation_policy(mismatched_policy),
+            ),
+        )
+    with pytest.raises(ValidationPlanError, match="selected dataset lineage"):
+        replace(
+            environment,
+            aggregation_policies=(
+                _component("prediction_rule", "not_an_aggregation_policy"),
+            ),
+        )
+
+
 def test_standalone_dataset_binds_its_canonical_daily_timeframe() -> None:
     dataset = make_dataset(("100", "101"))
     provenance = DatasetProvenance.from_market_dataset(dataset)
     daily = Timeframe.us_equity(SessionInterval())
-    baseline = replace(_environment(), dataset=provenance)
+    baseline = replace(
+        _environment(),
+        dataset=provenance,
+        aggregation_policies=(),
+    )
 
     assert provenance.standalone_timeframe == daily
     assert baseline.timeframes == (daily,)
@@ -810,6 +837,11 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
         ),
         (daily, weekly),
         rule,
+        aggregation_policies=(
+            ConfigurationReference.capture_aggregation_policy(
+                family.aggregation_policy
+            ),
+        ),
         indicators=(
             IndicatorProvenance.capture(
                 cast(IndicatorComponent, daily_indicator), daily
@@ -958,6 +990,11 @@ def test_rule_requires_duplicate_indicator_configuration_on_each_source() -> Non
             ),
             (daily, weekly),
             rule,
+            aggregation_policies=(
+                ConfigurationReference.capture_aggregation_policy(
+                    family.aggregation_policy
+                ),
+            ),
             indicators=(
                 IndicatorProvenance.capture(
                     cast(IndicatorComponent, shared_indicator), daily

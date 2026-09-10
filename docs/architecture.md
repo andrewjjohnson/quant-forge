@@ -490,7 +490,8 @@ Standalone daily datasets and family members are bound to their exact available
 timeframes. Multi-timeframe warm-up remains expressed and selected separately in
 each source chronology rather than comparing counts across bar frequencies;
 rules bind each required indicator configuration to every source timeframe on
-which it is declared.
+which it is declared. Aggregation provenance for derived family members must
+exactly match the typed policy embedded in the same QF-14 family.
 The contracts are neutral between prediction and trading/backtest studies and
 do not run either kind of study. See `docs/validation-plans.md`.
 

@@ -171,6 +171,13 @@ but unrelated manifest ID therefore cannot be paired with persisted references,
 and the verified manifest or standalone timeframe participates in environment
 and plan identity.
 
+Aggregation provenance is derived from the same selected dataset lineage. When
+any selected QF-14 member is derived, the environment must contain exactly the
+typed `AggregationPolicy` recorded by that family; a generic reference, changed
+policy configuration, missing policy, or additional policy is rejected.
+Standalone QF-3 datasets and selections containing only the canonical family
+source require no aggregation reference because no derivation was applied.
+
 `ResearchStudyType.PREDICTION` and
 `ResearchStudyType.TRADING_BACKTEST` identify the consumer without changing the
 partition model. Prediction environments need not define execution. Trading
