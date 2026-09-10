@@ -124,9 +124,13 @@ silently shortening the declared warm-up.
 count is expressed. The domain-specific
 `ResearchRuleProvenance.capture_prediction()` and `capture_trading()` factories
 verify the component's own canonical configuration type, then capture its own
-warm-up and the exact configuration IDs of its required indicators. The
-environment must contain all of those indicator identities. A multi-timeframe
-rule must also identify the source timeframe for its own warm-up. Because the
+warm-up and the exact configuration IDs of its required indicators. When a
+rule declares QF-12 multi-timeframe context, provenance also captures every
+required `(source timeframe, indicator configuration)` binding from that
+canonical context. The environment must contain all of those exact bindings;
+one daily instance cannot satisfy the same indicator required on weekly bars.
+A multi-timeframe rule must also identify the source timeframe for its own
+warm-up. Because the
 first study observation supplies the final input needed for its own result,
 every development, selection, test, and holdout window must declare at least
 `warm_up_observations - 1` preceding rows for each indicator and rule in that
@@ -177,7 +181,8 @@ one environment identity.
 The semantic type of `research_rule` is also fixed by study type: prediction
 uses `prediction_rule`, while trading/backtest research uses
 `trading_strategy`. Rule provenance is factory-captured from the typed component,
-including its own warm-up and required-indicator identities. A prediction rule
+including its own warm-up, required-indicator identities, and available
+multi-timeframe indicator bindings. A prediction rule
 cannot stand in for the strategy provenance required to trace trades, a trading
 strategy cannot be mislabeled as a prediction rule, and neither can silently
 depend on an indicator missing from the fixed environment.

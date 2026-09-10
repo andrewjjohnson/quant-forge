@@ -844,12 +844,36 @@ class IndicatorProvenance:
         }
 
 
-def _rule_primary_timeframe_configuration_id(
+@dataclass(frozen=True, slots=True)
+class IndicatorTimeframeBinding:
+    """One rule-required indicator configuration on one exact source timeframe."""
+
+    timeframe_configuration_id: str
+    indicator_configuration_id: str
+
+    def __post_init__(self) -> None:
+        _validated_hash(
+            self.timeframe_configuration_id,
+            "indicator binding timeframe configuration ID",
+        )
+        _validated_hash(
+            self.indicator_configuration_id,
+            "indicator binding indicator configuration ID",
+        )
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "timeframe_configuration_id": self.timeframe_configuration_id,
+            "indicator_configuration_id": self.indicator_configuration_id,
+        }
+
+
+def _rule_context_provenance(
     configuration: PrimitiveMapping,
-) -> str | None:
+) -> tuple[str | None, tuple[IndicatorTimeframeBinding, ...]]:
     context_value = cast(object, configuration.get("context_requirements"))
     if context_value is None:
-        return None
+        return None, ()
     if not isinstance(context_value, dict):
         raise ValidationPlanError("research rule context requirements are invalid")
     context = cast(PrimitiveMapping, context_value)
@@ -864,9 +888,57 @@ def _rule_primary_timeframe_configuration_id(
         raise ValidationPlanError("research rule primary timeframe is invalid")
     timeframe = cast(PrimitiveMapping, timeframe_value)
     configuration_id = cast(object, timeframe.get("configuration_id"))
-    return _validated_hash(
+    primary_timeframe_id = _validated_hash(
         configuration_id,
         "research rule primary timeframe configuration ID",
+    )
+    contextual_value = cast(object, context.get("contextual"))
+    if not isinstance(contextual_value, list):
+        raise ValidationPlanError(
+            "research rule contextual timeframe requirements are invalid"
+        )
+    requirements: tuple[object, ...] = (
+        cast(object, primary_value),
+        *cast(list[object], contextual_value),
+    )
+    bindings: set[tuple[str, str]] = set()
+    for requirement_value in requirements:
+        if not isinstance(requirement_value, dict):
+            raise ValidationPlanError("research rule timeframe requirement is invalid")
+        requirement = cast(PrimitiveMapping, requirement_value)
+        requirement_timeframe_value = cast(object, requirement.get("timeframe"))
+        indicators_value = cast(object, requirement.get("indicators"))
+        if not isinstance(requirement_timeframe_value, dict) or not isinstance(
+            indicators_value, list
+        ):
+            raise ValidationPlanError(
+                "research rule timeframe indicator requirements are invalid"
+            )
+        requirement_timeframe = cast(PrimitiveMapping, requirement_timeframe_value)
+        timeframe_id = _validated_hash(
+            cast(object, requirement_timeframe.get("configuration_id")),
+            "research rule indicator timeframe configuration ID",
+        )
+        for indicator_requirement_value in cast(list[object], indicators_value):
+            if not isinstance(indicator_requirement_value, dict):
+                raise ValidationPlanError(
+                    "research rule indicator requirement is invalid"
+                )
+            indicator_requirement = cast(PrimitiveMapping, indicator_requirement_value)
+            indicator_value = cast(object, indicator_requirement.get("indicator"))
+            if not isinstance(indicator_value, dict):
+                raise ValidationPlanError(
+                    "research rule indicator configuration is invalid"
+                )
+            indicator = cast(PrimitiveMapping, indicator_value)
+            indicator_id = _validated_hash(
+                cast(object, indicator.get("configuration_id")),
+                "research rule bound indicator configuration ID",
+            )
+            bindings.add((timeframe_id, indicator_id))
+    return primary_timeframe_id, tuple(
+        IndicatorTimeframeBinding(timeframe_id, indicator_id)
+        for timeframe_id, indicator_id in sorted(bindings)
     )
 
 
@@ -878,6 +950,7 @@ class ResearchRuleProvenance:
     warm_up_observations: int
     warm_up_timeframe_configuration_id: str | None
     required_indicator_configuration_ids: tuple[str, ...]
+    required_indicator_bindings: tuple[IndicatorTimeframeBinding, ...]
 
     def __init__(self) -> None:
         raise TypeError(
@@ -924,6 +997,35 @@ class ResearchRuleProvenance:
             raise ValidationPlanError(
                 "research rule required indicator configuration IDs must be unique "
                 "and ordered"
+            )
+        bindings_value = cast(object, self.required_indicator_bindings)
+        if not isinstance(bindings_value, tuple) or any(
+            not isinstance(item, IndicatorTimeframeBinding)
+            for item in cast(tuple[object, ...], bindings_value)
+        ):
+            raise ValidationPlanError(
+                "research rule required indicator bindings are invalid"
+            )
+        bindings = cast(tuple[IndicatorTimeframeBinding, ...], bindings_value)
+        ordered_bindings = tuple(
+            sorted(
+                set(bindings),
+                key=lambda item: (
+                    item.timeframe_configuration_id,
+                    item.indicator_configuration_id,
+                ),
+            )
+        )
+        if bindings != ordered_bindings:
+            raise ValidationPlanError(
+                "research rule required indicator bindings must be unique and ordered"
+            )
+        if self.warm_up_timeframe_configuration_id is not None and {
+            item.indicator_configuration_id for item in bindings
+        } != set(indicator_ids):
+            raise ValidationPlanError(
+                "research rule context indicator bindings must exactly match its "
+                "required indicators"
             )
 
     @property
@@ -1006,6 +1108,16 @@ class ResearchRuleProvenance:
             raise ValidationPlanError(
                 "captured research rule warm-up observations must be a positive integer"
             )
+        primary_timeframe_id, required_bindings = _rule_context_provenance(
+            configuration
+        )
+        if primary_timeframe_id is not None and {
+            item.indicator_configuration_id for item in required_bindings
+        } != set(required_ids):
+            raise ValidationPlanError(
+                "research rule context indicator bindings must exactly match its "
+                "required indicators"
+            )
         instance = object.__new__(cls)
         object.__setattr__(
             instance,
@@ -1022,13 +1134,14 @@ class ResearchRuleProvenance:
         object.__setattr__(
             instance,
             "warm_up_timeframe_configuration_id",
-            _rule_primary_timeframe_configuration_id(configuration),
+            primary_timeframe_id,
         )
         object.__setattr__(
             instance,
             "required_indicator_configuration_ids",
             required_ids,
         )
+        object.__setattr__(instance, "required_indicator_bindings", required_bindings)
         instance.__post_init__()
         return instance
 
@@ -1045,6 +1158,9 @@ class ResearchRuleProvenance:
             "required_indicator_configuration_ids": list(
                 self.required_indicator_configuration_ids
             ),
+            "required_indicator_bindings": [
+                item.to_primitive() for item in self.required_indicator_bindings
+            ],
         }
 
 
@@ -1383,16 +1499,25 @@ class ResearchEnvironment:
                 "indicator source timeframes must be configured in the research "
                 "environment"
             )
-        configured_indicator_ids = {
-            item.configuration_id for item in ordered_indicators
+        required_bindings = {
+            (
+                item.timeframe_configuration_id,
+                item.indicator_configuration_id,
+            )
+            for item in self.research_rule.required_indicator_bindings
         }
-        missing_rule_indicators = set(
-            self.research_rule.required_indicator_configuration_ids
-        ).difference(configured_indicator_ids)
+        configured_indicator_ids = {item[1] for item in indicator_bindings}
+        missing_rule_indicators = (
+            required_bindings.difference(indicator_bindings)
+            if required_bindings
+            else set(
+                self.research_rule.required_indicator_configuration_ids
+            ).difference(configured_indicator_ids)
+        )
         if missing_rule_indicators:
             raise ValidationPlanError(
-                "research environment must include every indicator required by its "
-                "rule or strategy"
+                "research environment must include every source-timeframe indicator "
+                "binding required by its rule or strategy"
             )
         rule_timeframe_id = self.research_rule.warm_up_timeframe_configuration_id
         if rule_timeframe_id is None:

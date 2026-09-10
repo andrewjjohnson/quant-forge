@@ -46,7 +46,10 @@ exact source timeframe. Every window must provide enough preceding context for
 each indicator and its typed rule or strategy in the timeframe where that
 component's count is expressed; the first study row supplies the final
 observation needed for its own result. Rule provenance also binds the exact
-configuration identities of its required indicators to the environment.
+configuration identities of its required indicators to the environment. For a
+multi-timeframe rule, that binding is the exact source-timeframe and indicator
+configuration pair, so one instance cannot satisfy the same indicator required
+on another source frequency.
 
 One immutable `ResearchEnvironment` is shared across the complete plan. Its
 identity binds dataset fingerprint and QF-14 family references, QF-13

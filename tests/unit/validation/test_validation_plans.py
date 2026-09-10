@@ -106,6 +106,7 @@ class _FixtureRule:
         warm_up_observations: int,
         configuration: PrimitiveMapping,
         primary_timeframe: Timeframe | None = None,
+        context_indicator_bindings: tuple[tuple[Timeframe, Indicator], ...] = (),
     ) -> None:
         self.name = name
         self._canonical_component_type = canonical_component_type
@@ -113,6 +114,7 @@ class _FixtureRule:
         self.warm_up_observations = warm_up_observations
         self._configuration = configuration
         self._primary_timeframe = primary_timeframe
+        self._context_indicator_bindings = context_indicator_bindings
 
     def configuration(self) -> PrimitiveMapping:
         primitive: PrimitiveMapping = {
@@ -126,13 +128,43 @@ class _FixtureRule:
             "warm_up_observations": self.warm_up_observations,
         }
         if self._primary_timeframe is not None:
-            primitive["context_requirements"] = {
-                "primary": {
+            bindings = self._context_indicator_bindings or tuple(
+                (self._primary_timeframe, indicator)
+                for indicator in self.required_indicators
+            )
+            indicators_by_timeframe: dict[str, list[Indicator]] = {}
+            timeframes_by_id: dict[str, Timeframe] = {}
+            for timeframe, indicator in bindings:
+                timeframe_id = timeframe.configuration_id
+                timeframes_by_id[timeframe_id] = timeframe
+                indicators_by_timeframe.setdefault(timeframe_id, []).append(indicator)
+
+            def requirement(timeframe: Timeframe) -> PrimitiveMapping:
+                return {
                     "timeframe": {
-                        "configuration_id": (self._primary_timeframe.configuration_id),
-                        "configuration": self._primary_timeframe.to_primitive(),
-                    }
+                        "configuration_id": timeframe.configuration_id,
+                        "configuration": timeframe.to_primitive(),
+                    },
+                    "indicators": [
+                        {
+                            "indicator": {
+                                "configuration_id": indicator.configuration_id,
+                                "configuration": indicator.configuration(),
+                            }
+                        }
+                        for indicator in indicators_by_timeframe.get(
+                            timeframe.configuration_id, []
+                        )
+                    ],
                 }
+
+            primitive["context_requirements"] = {
+                "primary": requirement(self._primary_timeframe),
+                "contextual": [
+                    requirement(timeframes_by_id[timeframe_id])
+                    for timeframe_id in sorted(timeframes_by_id)
+                    if timeframe_id != self._primary_timeframe.configuration_id
+                ],
             }
         return primitive
 
@@ -159,6 +191,7 @@ def _rule(
     *,
     warm_up_observations: int | None = None,
     primary_timeframe: Timeframe | None = None,
+    context_indicator_bindings: tuple[tuple[Timeframe, Indicator], ...] = (),
     **configuration: str | int,
 ) -> ResearchRuleProvenance:
     required_warm_up = max(
@@ -175,6 +208,7 @@ def _rule(
         required_warm_up if warm_up_observations is None else warm_up_observations,
         cast(PrimitiveMapping, dict(configuration)),
         primary_timeframe,
+        context_indicator_bindings,
     )
     if component_type == "prediction_rule":
         return ResearchRuleProvenance.capture_prediction(component)
@@ -761,6 +795,10 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
         (daily_indicator, weekly_indicator),
         warm_up_observations=3,
         primary_timeframe=daily,
+        context_indicator_bindings=(
+            (daily, daily_indicator),
+            (weekly, weekly_indicator),
+        ),
     )
     family = _multi_timeframe_family(daily, weekly)
     environment = ResearchEnvironment(
@@ -889,6 +927,44 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
     assert selected_weekly.source_timeframe_configuration_id == weekly.configuration_id
     with pytest.raises(ValidationPlanError, match="source timeframe is required"):
         select_window_observations(selection, daily_chronology)
+
+
+def test_rule_requires_duplicate_indicator_configuration_on_each_source() -> None:
+    daily = Timeframe.us_equity(SessionInterval())
+    weekly = Timeframe.us_equity(TradingWeekInterval())
+    shared_indicator = cast(
+        Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(5))
+    )
+    rule = _rule(
+        "prediction_rule",
+        "shared_multi_timeframe_rule",
+        (shared_indicator,),
+        warm_up_observations=1,
+        primary_timeframe=daily,
+        context_indicator_bindings=(
+            (daily, shared_indicator),
+            (weekly, shared_indicator),
+        ),
+    )
+    family = _multi_timeframe_family(daily, weekly)
+
+    with pytest.raises(ValidationPlanError, match="source-timeframe indicator"):
+        ResearchEnvironment(
+            ResearchStudyType.PREDICTION,
+            DatasetProvenance.from_dataset_family(
+                FINGERPRINT,
+                family,
+                (DAILY_ID, WEEKLY_ID),
+            ),
+            (daily, weekly),
+            rule,
+            indicators=(
+                IndicatorProvenance.capture(
+                    cast(IndicatorComponent, shared_indicator), daily
+                ),
+            ),
+            outcomes=(_session_outcome(1),),
+        )
 
 
 def test_appending_future_data_cannot_change_historical_membership() -> None:
@@ -1279,7 +1355,7 @@ def test_plan_binds_rule_warm_up_and_required_indicators() -> None:
         "mismatched_rule",
         (other_indicator,),
     )
-    with pytest.raises(ValidationPlanError, match="every indicator required"):
+    with pytest.raises(ValidationPlanError, match="indicator binding required"):
         _environment(rule=mismatched_rule)
 
 
