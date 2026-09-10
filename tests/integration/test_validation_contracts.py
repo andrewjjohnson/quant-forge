@@ -8,7 +8,6 @@ from quantforge.prediction import (
 )
 from quantforge.timeframes import SessionInterval, Timeframe
 from quantforge.validation import (
-    ConfigurationReference,
     DatasetProvenance,
     ExchangeSessionBoundary,
     FinalHoldout,
@@ -18,6 +17,7 @@ from quantforge.validation import (
     PartitionRole,
     PurgePolicy,
     ResearchEnvironment,
+    ResearchRuleProvenance,
     ResearchStudyType,
     TemporalOffset,
     TrainingWindowMode,
@@ -50,17 +50,12 @@ def test_qf11_prediction_components_bind_directly_to_validation_plan() -> None:
     strategy = OvernightGapPredictionStrategy(OvernightGapPredictionParameters())
     outcome_labeler = NextSessionOpenGapOutcomeLabeler()
     outcome = OutcomeProvenance.capture_exchange_sessions(outcome_labeler)
-    warm_up_context = (
-        max(
-            indicator.warm_up_observations for indicator in strategy.required_indicators
-        )
-        - 1
-    )
+    warm_up_context = strategy.warm_up_observations - 1
     environment = ResearchEnvironment(
         ResearchStudyType.PREDICTION,
         DatasetProvenance("a" * 64, ("qf11-fixture-dataset",)),
         (Timeframe.us_equity(SessionInterval()),),
-        ConfigurationReference.capture_component("prediction_rule", strategy),
+        ResearchRuleProvenance.capture("prediction_rule", strategy),
         indicators=tuple(
             IndicatorProvenance.capture(cast(IndicatorComponent, indicator))
             for indicator in strategy.required_indicators
@@ -111,6 +106,12 @@ def test_qf11_prediction_components_bind_directly_to_validation_plan() -> None:
     )
 
     assert plan.environment.research_rule.configuration_id == strategy.configuration_id
+    assert plan.environment.research_rule.warm_up_observations == (
+        strategy.warm_up_observations
+    )
+    assert set(plan.environment.research_rule.required_indicator_configuration_ids) == {
+        indicator.configuration_id for indicator in strategy.required_indicators
+    }
     assert plan.environment.outcomes[0].configuration.configuration_id == (
         outcome_labeler.configuration_id
     )

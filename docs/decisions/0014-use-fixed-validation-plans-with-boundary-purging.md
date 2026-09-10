@@ -41,9 +41,10 @@ horizon plus explicit embargo reaches or crosses the next protected boundary.
 Exchange-session distances use the configured exchange calendar rather than
 weekdays. Warm-up observations are returned in a separate context-only field
 that is never eligible for selection. Every window must provide enough
-preceding context for the fixed environment's longest indicator warm-up; its
-first study row supplies the final observation needed for its own indicator
-value.
+preceding context for both the fixed environment's longest indicator warm-up
+and its typed rule or strategy warm-up; the first study row supplies the final
+observation needed for its own result. Rule provenance also binds the exact
+configuration identities of its required indicators to the environment.
 
 One immutable `ResearchEnvironment` is shared across the complete plan. Its
 identity binds dataset fingerprint and QF-14 family references, QF-13
@@ -51,10 +52,11 @@ timeframes/session policies, aggregation policies, indicator configurations and
 QF-35 backend identities, rule or strategy version, outcome definitions, and
 applicable execution/cost configuration. Historical implicit-native indicator
 configurations remain distinct from new explicit `native_v1` configurations.
-Trading/backtest environments require that execution/cost configuration rather
-than permitting identity-free execution defaults, and their research-rule
-reference must be typed as a trading strategy. Prediction research-rule
-references remain independently typed as prediction rules.
+Trading/backtest environments factory-capture the existing complete typed
+backtest configuration rather than permitting a generic reference or
+identity-free execution defaults. Their research-rule provenance must be
+factory-captured as a trading strategy; prediction rule provenance remains
+independently typed and factory-captured as a prediction rule.
 
 ## Consequences
 

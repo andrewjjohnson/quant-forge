@@ -114,12 +114,16 @@ never enter study membership. Insufficient history fails closed instead of
 silently shortening the declared warm-up.
 
 `IndicatorProvenance.capture()` records each indicator's existing
-`warm_up_observations` contract. Because the first study observation supplies
-the final input needed for its own indicator value, every development,
-selection, test, and holdout window must declare at least
-`max(indicator.warm_up_observations) - 1` preceding context rows. Plan
-construction rejects undersized context, so initial unavailable indicator rows
-cannot silently change eligible study membership.
+`warm_up_observations` contract. `ResearchRuleProvenance.capture()` independently
+captures the prediction rule's or trading strategy's own warm-up and the exact
+configuration IDs of its required indicators. The environment must contain all
+of those indicator identities. Because the first study observation supplies the
+final input needed for its own result, every development, selection, test, and
+holdout window must declare at least
+`max(rule.warm_up_observations, indicator.warm_up_observations) - 1` preceding
+context rows. Plan construction rejects undersized context, so rule-level
+history or initial unavailable indicator rows cannot silently change eligible
+study membership.
 
 The contract supplies observation membership only. It does not attach outcomes
 to warm-up rows or calculate indicators. Consumers continue to use the existing
@@ -158,9 +162,19 @@ one environment identity.
 
 The semantic type of `research_rule` is also fixed by study type: prediction
 uses `prediction_rule`, while trading/backtest research uses
-`trading_strategy`. A prediction rule cannot stand in for the strategy
-provenance required to trace trades, and a trading strategy cannot be mislabeled
-as a prediction rule.
+`trading_strategy`. Rule provenance is factory-captured from the typed component,
+including its own warm-up and required-indicator identities. A prediction rule
+cannot stand in for the strategy provenance required to trace trades, a trading
+strategy cannot be mislabeled as a prediction rule, and neither can silently
+depend on an indicator missing from the fixed environment.
+
+Trading execution provenance is factory-captured from the existing complete
+`BacktestConfig`, not from a freely tagged generic reference. Its immutable
+snapshot includes execution timing and price, commission, transaction fees,
+slippage, sizing, rejection/accounting policies, capital, and engine/result
+versions. Consequently an unrelated configuration cannot satisfy the backtest
+environment contract, and any changed execution assumption changes the
+environment and plan identity.
 
 `IndicatorProvenance.capture()` snapshots both the existing indicator
 configuration and its resolved QF-35 backend identity. For an historical native

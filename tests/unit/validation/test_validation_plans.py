@@ -2,12 +2,19 @@ import json
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 import quantforge.validation.partitioning as validation_partitioning
+from quantforge.backtesting import (
+    BacktestConfig,
+    BasisPointSlippage,
+    ExplicitZeroFees,
+    FixedCommission,
+)
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data import (
     AdjustmentBasis,
@@ -20,6 +27,7 @@ from quantforge.data import (
 from quantforge.data.identity import canonical_json_bytes
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
+    Indicator,
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
 )
@@ -32,15 +40,18 @@ from quantforge.timeframes import (
     Timeframe,
 )
 from quantforge.validation import (
+    BacktestProvenance,
     ConfigurationReference,
     DatasetProvenance,
     ExchangeSessionBoundary,
     FinalHoldout,
+    IndicatorComponent,
     IndicatorProvenance,
     OutcomeProvenance,
     PartitionRole,
     PurgePolicy,
     ResearchEnvironment,
+    ResearchRuleProvenance,
     ResearchStudyType,
     TemporalOffset,
     TimestampBoundary,
@@ -77,6 +88,82 @@ def _component(
         **configuration,
     }
     return ConfigurationReference.capture(component_type, name, version, primitive)
+
+
+class _FixtureRule:
+    implementation_version = "1"
+
+    def __init__(
+        self,
+        name: str,
+        required_indicators: tuple[Indicator, ...],
+        warm_up_observations: int,
+        configuration: PrimitiveMapping,
+    ) -> None:
+        self.name = name
+        self.required_indicators = required_indicators
+        self.warm_up_observations = warm_up_observations
+        self._configuration = configuration
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component": self.name,
+            "implementation_version": self.implementation_version,
+            "parameters": dict(self._configuration),
+            "required_indicators": [
+                indicator.configuration() for indicator in self.required_indicators
+            ],
+            "warm_up_observations": self.warm_up_observations,
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+
+class _IncompleteBacktestConfiguration:
+    engine_version = "4"
+    result_schema_version = "3"
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "engine_version": self.engine_version,
+            "result_schema_version": self.result_schema_version,
+        }
+
+
+def _rule(
+    component_type: str,
+    name: str,
+    required_indicators: tuple[Indicator, ...],
+    *,
+    warm_up_observations: int | None = None,
+    **configuration: str | int,
+) -> ResearchRuleProvenance:
+    required_warm_up = max(
+        (indicator.warm_up_observations for indicator in required_indicators),
+        default=1,
+    )
+    return ResearchRuleProvenance.capture(
+        component_type,
+        _FixtureRule(
+            name,
+            required_indicators,
+            required_warm_up if warm_up_observations is None else warm_up_observations,
+            cast(PrimitiveMapping, dict(configuration)),
+        ),
+    )
+
+
+def _backtest_provenance(slippage_bps: str = "5") -> BacktestProvenance:
+    return BacktestProvenance.capture(
+        BacktestConfig(
+            Decimal("100000"),
+            FixedCommission(Decimal(0)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(slippage_bps)),
+        )
+    )
 
 
 def _family(target_timeframe: Timeframe | None = None) -> DatasetFamily:
@@ -120,24 +207,25 @@ def _family(target_timeframe: Timeframe | None = None) -> DatasetFamily:
 def _environment(
     study_type: ResearchStudyType = ResearchStudyType.PREDICTION,
     *,
-    indicator: IndicatorProvenance | None = None,
-    rule: ConfigurationReference | None = None,
+    indicator: Indicator | None = None,
+    rule: ResearchRuleProvenance | None = None,
     outcome: OutcomeProvenance | None = None,
-    execution: ConfigurationReference | None = None,
+    execution: BacktestProvenance | None = None,
     timeframe: Timeframe | None = None,
 ) -> ResearchEnvironment:
     selected_timeframe = timeframe or Timeframe.us_equity(SessionInterval())
     family = _family(selected_timeframe)
-    selected_indicator = indicator or IndicatorProvenance.capture(
-        SimpleMovingAverage(SimpleMovingAverageParameters(3))
+    selected_indicator_component = indicator or SimpleMovingAverage(
+        SimpleMovingAverageParameters(3)
+    )
+    selected_indicator = IndicatorProvenance.capture(
+        cast(IndicatorComponent, selected_indicator_component)
     )
     selected_outcome = outcome or _session_outcome(1)
     selected_execution = execution
     if study_type is ResearchStudyType.TRADING_BACKTEST and selected_execution is None:
-        selected_execution = _component(
-            "execution_cost", "next_open_execution", slippage_bps=5
-        )
-    selected_rule = rule or _component(
+        selected_execution = _backtest_provenance()
+    selected_rule = rule or _rule(
         (
             "trading_strategy"
             if study_type is ResearchStudyType.TRADING_BACKTEST
@@ -148,6 +236,7 @@ def _environment(
             if study_type is ResearchStudyType.TRADING_BACKTEST
             else "fixture_rule"
         ),
+        (selected_indicator_component,),
         period=3,
     )
     return ResearchEnvironment(
@@ -325,11 +414,12 @@ def test_manifest_validation_rejects_identity_mismatch_and_noncanonical_cache() 
 
 def test_environment_identity_binds_every_required_scientific_input() -> None:
     baseline = _environment()
-    explicit_native = IndicatorProvenance.capture(
-        SimpleMovingAverage(
-            SimpleMovingAverageParameters(3),
-            backend_id=NATIVE_INDICATOR_BACKEND,
-        )
+    explicit_native = SimpleMovingAverage(
+        SimpleMovingAverageParameters(3),
+        backend_id=NATIVE_INDICATOR_BACKEND,
+    )
+    rule_indicator = cast(
+        Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(3))
     )
     changes = (
         replace(
@@ -348,13 +438,18 @@ def test_environment_identity_binds_every_required_scientific_input() -> None:
             ),
         ),
         _environment(indicator=explicit_native),
-        _environment(rule=_component("prediction_rule", "fixture_rule", period=4)),
+        _environment(
+            rule=_rule(
+                "prediction_rule",
+                "fixture_rule",
+                (rule_indicator,),
+                period=4,
+            )
+        ),
         _environment(outcome=_session_outcome(2)),
         replace(
             baseline,
-            execution=_component(
-                "execution_cost", "hypothetical_cost_overlay", slippage_bps=5
-            ),
+            execution=_backtest_provenance("10"),
         ),
     )
 
@@ -404,15 +499,13 @@ def test_dataset_provenance_embeds_verified_complete_family_manifest() -> None:
 
 
 def test_historical_native_indicator_is_not_silently_migrated() -> None:
-    legacy = IndicatorProvenance.capture(
-        SimpleMovingAverage(SimpleMovingAverageParameters(3))
+    legacy_component = SimpleMovingAverage(SimpleMovingAverageParameters(3))
+    explicit_component = SimpleMovingAverage(
+        SimpleMovingAverageParameters(3),
+        backend_id=NATIVE_INDICATOR_BACKEND,
     )
-    explicit = IndicatorProvenance.capture(
-        SimpleMovingAverage(
-            SimpleMovingAverageParameters(3),
-            backend_id=NATIVE_INDICATOR_BACKEND,
-        )
-    )
+    legacy = IndicatorProvenance.capture(legacy_component)
+    explicit = IndicatorProvenance.capture(explicit_component)
 
     assert legacy.backend_identity == explicit.backend_identity
     assert legacy.legacy_native_configuration is True
@@ -422,8 +515,10 @@ def test_historical_native_indicator_is_not_silently_migrated() -> None:
     explicit_configuration = explicit.configuration_snapshot.to_primitive()
     explicit_backend = cast(PrimitiveMapping, explicit_configuration["backend"])
     assert explicit_backend["backend_id"] == NATIVE_INDICATOR_BACKEND
-    assert _session_plan(environment=_environment(indicator=legacy)).plan_id != (
-        _session_plan(environment=_environment(indicator=explicit)).plan_id
+    assert _session_plan(
+        environment=_environment(indicator=legacy_component)
+    ).plan_id != (
+        _session_plan(environment=_environment(indicator=explicit_component)).plan_id
     )
 
 
@@ -877,16 +972,21 @@ def test_trading_environment_requires_execution_provenance() -> None:
 def test_research_environment_requires_rule_type_for_study_type() -> None:
     prediction = _environment()
     trading = _environment(ResearchStudyType.TRADING_BACKTEST)
+    indicator = cast(Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(3)))
 
     with pytest.raises(ValidationPlanError, match="prediction_rule"):
         replace(
             prediction,
-            research_rule=_component("trading_strategy", "wrong_strategy"),
+            research_rule=_rule(
+                "trading_strategy",
+                "wrong_strategy",
+                (indicator,),
+            ),
         )
     with pytest.raises(ValidationPlanError, match="trading_strategy"):
         replace(
             trading,
-            research_rule=_component("prediction_rule", "wrong_rule"),
+            research_rule=_rule("prediction_rule", "wrong_rule", (indicator,)),
         )
 
 
@@ -901,7 +1001,7 @@ def test_plan_rejects_undersized_indicator_warm_up_context() -> None:
     }
 
     undersized_test = replace(plan.folds[0].test, warm_up_observations=1)
-    with pytest.raises(ValidationPlanError, match="indicator warm-up observations"):
+    with pytest.raises(ValidationPlanError, match="research warm-up observations"):
         replace(
             plan,
             folds=(replace(plan.folds[0], test=undersized_test),),
@@ -911,7 +1011,7 @@ def test_plan_rejects_undersized_indicator_warm_up_context() -> None:
         plan.final_holdout.window,
         warm_up_observations=1,
     )
-    with pytest.raises(ValidationPlanError, match="indicator warm-up observations"):
+    with pytest.raises(ValidationPlanError, match="research warm-up observations"):
         replace(
             plan,
             final_holdout=replace(plan.final_holdout, window=undersized_holdout),
@@ -921,6 +1021,76 @@ def test_plan_rejects_undersized_indicator_warm_up_context() -> None:
 def test_indicator_provenance_requires_typed_component_capture() -> None:
     with pytest.raises(TypeError, match="typed indicator component"):
         IndicatorProvenance()
+
+
+def test_plan_binds_rule_warm_up_and_required_indicators() -> None:
+    required_indicator = cast(
+        Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(3))
+    )
+    rule = _rule(
+        "prediction_rule",
+        "history_dependent_rule",
+        (required_indicator,),
+        warm_up_observations=4,
+    )
+    environment = _environment(rule=rule)
+
+    assert rule.required_context_observations == 3
+    assert rule.to_primitive()["warm_up"] == {
+        "observations_required_for_first_result": 4,
+        "required_pre_window_context": 3,
+    }
+    with pytest.raises(ValidationPlanError, match="3 research warm-up observations"):
+        _session_plan(environment=environment)
+
+    other_indicator = cast(
+        Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(4))
+    )
+    mismatched_rule = _rule(
+        "prediction_rule",
+        "mismatched_rule",
+        (other_indicator,),
+    )
+    with pytest.raises(ValidationPlanError, match="every indicator required"):
+        _environment(rule=mismatched_rule)
+
+
+def test_rule_and_backtest_provenance_require_typed_capture() -> None:
+    with pytest.raises(TypeError, match="typed rule or strategy"):
+        ResearchRuleProvenance()
+    with pytest.raises(TypeError, match="typed backtest configuration"):
+        BacktestProvenance()
+
+
+def test_trading_environment_rejects_generic_execution_reference() -> None:
+    environment = _environment(ResearchStudyType.TRADING_BACKTEST)
+    generic_reference = _component(
+        "prediction_rule",
+        "not_execution_provenance",
+    )
+
+    with pytest.raises(ValidationPlanError, match="complete backtest configuration"):
+        replace(
+            environment,
+            execution=cast(BacktestProvenance, generic_reference),
+        )
+
+
+def test_backtest_provenance_captures_complete_execution_configuration() -> None:
+    provenance = _backtest_provenance()
+    snapshot = provenance.configuration.configuration_snapshot.to_primitive()
+
+    assert provenance.configuration.component_type == "backtest_configuration"
+    assert {
+        "commission",
+        "execution",
+        "fees",
+        "sizing",
+        "slippage",
+        "split_policy",
+    }.issubset(snapshot)
+    with pytest.raises(ValidationPlanError, match="missing required provenance"):
+        BacktestProvenance.capture(_IncompleteBacktestConfiguration())
 
 
 def test_component_configuration_is_detached_from_caller_mutation() -> None:

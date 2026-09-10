@@ -481,8 +481,9 @@ QF-8 implements the shared validation-plan boundary in
 `quantforge.validation`. It defines deterministic exchange-session or timestamp
 windows for development, optional selection, walk-forward test, and a reserved
 final holdout. One fixed research environment binds dataset-family/fingerprint,
-timeframe/session/aggregation, indicator/backend, rule or strategy, outcome,
-and applicable execution/cost provenance across every window. Horizon-aware
+timeframe/session/aggregation, indicator/backend, typed rule or strategy plus
+its warm-up/indicator requirements, outcome, and complete typed backtest
+configuration when applicable across every window. Horizon-aware
 purging, explicit embargo, and structurally non-selecting indicator warm-up
 context prevent protected observations from entering training or selection.
 The contracts are neutral between prediction and trading/backtest studies and

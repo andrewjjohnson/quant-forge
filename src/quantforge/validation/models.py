@@ -18,7 +18,7 @@ from quantforge.data import (
     MarketDataset,
     validate_market_dataset,
 )
-from quantforge.indicators import IndicatorBackendIdentity
+from quantforge.indicators import Indicator, IndicatorBackendIdentity
 from quantforge.timeframes import (
     DEFAULT_US_EQUITY_SESSION_POLICY,
     ExchangeSessionPolicy,
@@ -639,6 +639,28 @@ class IndicatorComponent(ConfiguredComponent, Protocol):
     def warm_up_observations(self) -> int: ...
 
 
+class ResearchRuleComponent(ConfiguredComponent, Protocol):
+    """Configured prediction rule or trading strategy with causal history needs."""
+
+    @property
+    def required_indicators(self) -> tuple[Indicator, ...]: ...
+
+    @property
+    def warm_up_observations(self) -> int: ...
+
+
+class BacktestConfigurationComponent(Protocol):
+    """Existing complete backtest configuration accepted for provenance capture."""
+
+    @property
+    def engine_version(self) -> str: ...
+
+    @property
+    def result_schema_version(self) -> str: ...
+
+    def to_primitive(self) -> PrimitiveMapping: ...
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class IndicatorProvenance:
     """Exact normalized indicator configuration and resolved backend provenance."""
@@ -740,6 +762,230 @@ class IndicatorProvenance:
                 "required_pre_window_context": self.required_context_observations,
             },
         }
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ResearchRuleProvenance:
+    """Rule or strategy configuration bound to its causal history requirements."""
+
+    configuration: ConfigurationReference
+    warm_up_observations: int
+    required_indicator_configuration_ids: tuple[str, ...]
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "ResearchRuleProvenance must be captured from a typed rule or strategy"
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(cast(object, self.configuration), ConfigurationReference):
+            raise ValidationPlanError(
+                "research rule configuration reference is invalid"
+            )
+        if self.configuration.component_type not in {
+            "prediction_rule",
+            "trading_strategy",
+        }:
+            raise ValidationPlanError("research rule semantic type is invalid")
+        warm_up = cast(object, self.warm_up_observations)
+        if isinstance(warm_up, bool) or not isinstance(warm_up, int) or warm_up < 1:
+            raise ValidationPlanError(
+                "research rule warm-up observations must be a positive integer"
+            )
+        indicator_ids_value = cast(object, self.required_indicator_configuration_ids)
+        if not isinstance(indicator_ids_value, tuple):
+            raise ValidationPlanError(
+                "research rule required indicator configuration IDs are invalid"
+            )
+        untyped_indicator_ids = cast(tuple[object, ...], indicator_ids_value)
+        if any(not isinstance(item, str) for item in untyped_indicator_ids):
+            raise ValidationPlanError(
+                "research rule required indicator configuration IDs are invalid"
+            )
+        indicator_ids = cast(tuple[str, ...], indicator_ids_value)
+        for configuration_id in indicator_ids:
+            _validated_hash(
+                configuration_id,
+                "research rule required indicator configuration ID",
+            )
+        if tuple(sorted(set(indicator_ids))) != indicator_ids:
+            raise ValidationPlanError(
+                "research rule required indicator configuration IDs must be unique "
+                "and ordered"
+            )
+
+    @property
+    def component_type(self) -> str:
+        return self.configuration.component_type
+
+    @property
+    def configuration_id(self) -> str:
+        return self.configuration.configuration_id
+
+    @property
+    def implementation_version(self) -> str:
+        return self.configuration.implementation_version
+
+    @property
+    def required_context_observations(self) -> int:
+        """Return preceding rows needed before a window's first study row."""
+        return self.warm_up_observations - 1
+
+    @classmethod
+    def capture(
+        cls,
+        component_type: str,
+        rule: ResearchRuleComponent,
+    ) -> "ResearchRuleProvenance":
+        if component_type not in {"prediction_rule", "trading_strategy"}:
+            raise ValidationPlanError("research rule semantic type is invalid")
+        required_indicators_value = cast(object, rule.required_indicators)
+        if not isinstance(required_indicators_value, tuple):
+            raise ValidationPlanError(
+                "research rule required indicators must be an immutable tuple"
+            )
+        required_indicators = cast(tuple[Indicator, ...], required_indicators_value)
+        captured_indicators = tuple(
+            IndicatorProvenance.capture(cast(IndicatorComponent, indicator))
+            for indicator in required_indicators
+        )
+        required_ids = tuple(
+            sorted(indicator.configuration_id for indicator in captured_indicators)
+        )
+        if len(set(required_ids)) != len(required_ids):
+            raise ValidationPlanError(
+                "research rule required indicators must be unique"
+            )
+        warm_up = cast(object, rule.warm_up_observations)
+        if isinstance(warm_up, bool) or not isinstance(warm_up, int) or warm_up < 1:
+            raise ValidationPlanError(
+                "captured research rule warm-up observations must be a positive integer"
+            )
+        maximum_indicator_warm_up = max(
+            (indicator.warm_up_observations for indicator in captured_indicators),
+            default=1,
+        )
+        if warm_up < maximum_indicator_warm_up:
+            raise ValidationPlanError(
+                "research rule warm-up cannot be shorter than a required indicator"
+            )
+        instance = object.__new__(cls)
+        object.__setattr__(
+            instance,
+            "configuration",
+            ConfigurationReference.capture_component(component_type, rule),
+        )
+        object.__setattr__(instance, "warm_up_observations", warm_up)
+        object.__setattr__(
+            instance,
+            "required_indicator_configuration_ids",
+            required_ids,
+        )
+        instance.__post_init__()
+        return instance
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "configuration": self.configuration.to_primitive(),
+            "warm_up": {
+                "observations_required_for_first_result": self.warm_up_observations,
+                "required_pre_window_context": self.required_context_observations,
+            },
+            "required_indicator_configuration_ids": list(
+                self.required_indicator_configuration_ids
+            ),
+        }
+
+
+_REQUIRED_BACKTEST_CONFIGURATION_FIELDS = frozenset(
+    {
+        "annual_risk_free_rate",
+        "annualization_factor",
+        "arithmetic",
+        "commission",
+        "dividend_credit_timing",
+        "dividend_entitlement",
+        "dividend_policy",
+        "engine_version",
+        "execution",
+        "fees",
+        "forced_liquidation",
+        "initial_capital",
+        "long_only",
+        "result_schema_version",
+        "sizing",
+        "slippage",
+        "split_policy",
+        "trade_dividend_attribution",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class BacktestProvenance:
+    """Complete typed execution, cost, sizing, and accounting provenance."""
+
+    configuration: ConfigurationReference
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "BacktestProvenance must be captured from a typed backtest configuration"
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(cast(object, self.configuration), ConfigurationReference):
+            raise ValidationPlanError("backtest configuration reference is invalid")
+        if self.configuration.component_type != "backtest_configuration":
+            raise ValidationPlanError("backtest provenance semantic type is invalid")
+
+    @property
+    def configuration_id(self) -> str:
+        return self.configuration.configuration_id
+
+    @classmethod
+    def capture(
+        cls,
+        configuration: BacktestConfigurationComponent,
+    ) -> "BacktestProvenance":
+        engine_version = _validated_text(
+            cast(object, configuration.engine_version),
+            "backtest engine version",
+        )
+        result_schema_version = _validated_text(
+            cast(object, configuration.result_schema_version),
+            "backtest result schema version",
+        )
+        primitive = configuration.to_primitive()
+        missing_fields = _REQUIRED_BACKTEST_CONFIGURATION_FIELDS.difference(primitive)
+        if missing_fields:
+            raise ValidationPlanError(
+                "backtest configuration is missing required provenance fields: "
+                + ", ".join(sorted(missing_fields))
+            )
+        if primitive.get("engine_version") != engine_version:
+            raise ValidationPlanError(
+                "backtest configuration engine version does not match its provenance"
+            )
+        if primitive.get("result_schema_version") != result_schema_version:
+            raise ValidationPlanError(
+                "backtest result schema version does not match its provenance"
+            )
+        instance = object.__new__(cls)
+        object.__setattr__(
+            instance,
+            "configuration",
+            ConfigurationReference.capture(
+                "backtest_configuration",
+                "quantforge_backtest",
+                engine_version,
+                primitive,
+            ),
+        )
+        instance.__post_init__()
+        return instance
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return self.configuration.to_primitive()
 
 
 @dataclass(frozen=True, slots=True)
@@ -875,11 +1121,11 @@ class ResearchEnvironment:
     study_type: ResearchStudyType
     dataset: DatasetProvenance
     timeframes: tuple[Timeframe, ...]
-    research_rule: ConfigurationReference
+    research_rule: ResearchRuleProvenance
     aggregation_policies: tuple[ConfigurationReference, ...] = ()
     indicators: tuple[IndicatorProvenance, ...] = ()
     outcomes: tuple[OutcomeProvenance, ...] = ()
-    execution: ConfigurationReference | None = None
+    execution: BacktestProvenance | None = None
     schema_version: str = RESEARCH_ENVIRONMENT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -887,8 +1133,8 @@ class ResearchEnvironment:
             raise ValidationPlanError("research study type is invalid")
         if not isinstance(cast(object, self.dataset), DatasetProvenance):
             raise ValidationPlanError("research dataset provenance is invalid")
-        if not isinstance(cast(object, self.research_rule), ConfigurationReference):
-            raise ValidationPlanError("research rule reference is invalid")
+        if not isinstance(cast(object, self.research_rule), ResearchRuleProvenance):
+            raise ValidationPlanError("research rule provenance is invalid")
         expected_rule_type = (
             "prediction_rule"
             if self.study_type is ResearchStudyType.PREDICTION
@@ -900,9 +1146,12 @@ class ResearchEnvironment:
                 f"{expected_rule_type} configuration reference"
             )
         if self.execution is not None and not isinstance(
-            cast(object, self.execution), ConfigurationReference
+            cast(object, self.execution), BacktestProvenance
         ):
-            raise ValidationPlanError("research execution reference is invalid")
+            raise ValidationPlanError(
+                "research execution provenance must capture a complete backtest "
+                "configuration"
+            )
         if (
             self.study_type is ResearchStudyType.TRADING_BACKTEST
             and self.execution is None
@@ -944,6 +1193,17 @@ class ResearchEnvironment:
             ordered_indicators
         ):
             raise ValidationPlanError("research indicators must be unique")
+        configured_indicator_ids = {
+            item.configuration_id for item in ordered_indicators
+        }
+        missing_rule_indicators = set(
+            self.research_rule.required_indicator_configuration_ids
+        ).difference(configured_indicator_ids)
+        if missing_rule_indicators:
+            raise ValidationPlanError(
+                "research environment must include every indicator required by its "
+                "rule or strategy"
+            )
         if any(
             not isinstance(item, OutcomeProvenance)
             for item in cast(tuple[object, ...], self.outcomes)
@@ -1062,7 +1322,7 @@ class ValidationPlan:
             raise ValidationPlanError(
                 "validation purge policy does not match the plan temporal axis"
             )
-        self._validate_indicator_warm_up((*windows, self.final_holdout.window))
+        self._validate_research_warm_up((*windows, self.final_holdout.window))
         self._validate_outcome_horizon(axis)
         if axis is BoundaryAxis.EXCHANGE_SESSION:
             first = cast(ExchangeSessionBoundary, windows[0].interval.start)
@@ -1090,22 +1350,25 @@ class ValidationPlan:
             )
         object.__setattr__(self, "_axis", axis)
 
-    def _validate_indicator_warm_up(
+    def _validate_research_warm_up(
         self,
         windows: tuple[ValidationWindow, ...],
     ) -> None:
         required_context = max(
-            (
-                indicator.required_context_observations
-                for indicator in self.environment.indicators
+            self.environment.research_rule.required_context_observations,
+            max(
+                (
+                    indicator.required_context_observations
+                    for indicator in self.environment.indicators
+                ),
+                default=0,
             ),
-            default=0,
         )
         for window in windows:
             if window.warm_up_observations < required_context:
                 raise ValidationPlanError(
                     f"validation window {window.name!r} requires at least "
-                    f"{required_context} indicator warm-up observations"
+                    f"{required_context} research warm-up observations"
                 )
 
     def _validate_outcome_horizon(self, axis: BoundaryAxis) -> None:
