@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from itertools import pairwise
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from quantforge.configuration import (
     Primitive,
@@ -26,6 +26,9 @@ from quantforge.timeframes import (
     resolve_exchange_session,
 )
 from quantforge.validation.errors import ValidationPlanError
+
+if TYPE_CHECKING:
+    from quantforge.backtesting import BacktestConfig
 
 VALIDATION_PLAN_SCHEMA_VERSION = "1"
 VALIDATION_WINDOW_SCHEMA_VERSION = "1"
@@ -649,18 +652,6 @@ class ResearchRuleComponent(ConfiguredComponent, Protocol):
     def warm_up_observations(self) -> int: ...
 
 
-class BacktestConfigurationComponent(Protocol):
-    """Existing complete backtest configuration accepted for provenance capture."""
-
-    @property
-    def engine_version(self) -> str: ...
-
-    @property
-    def result_schema_version(self) -> str: ...
-
-    def to_primitive(self) -> PrimitiveMapping: ...
-
-
 @dataclass(frozen=True, slots=True, init=False)
 class IndicatorProvenance:
     """Exact normalized indicator configuration and resolved backend provenance."""
@@ -832,13 +823,34 @@ class ResearchRuleProvenance:
         return self.warm_up_observations - 1
 
     @classmethod
-    def capture(
+    def capture_prediction(
         cls,
-        component_type: str,
         rule: ResearchRuleComponent,
     ) -> "ResearchRuleProvenance":
-        if component_type not in {"prediction_rule", "trading_strategy"}:
-            raise ValidationPlanError("research rule semantic type is invalid")
+        """Capture a component that identifies itself as a prediction strategy."""
+        return cls._capture("prediction_rule", "prediction_strategy", rule)
+
+    @classmethod
+    def capture_trading(
+        cls,
+        strategy: ResearchRuleComponent,
+    ) -> "ResearchRuleProvenance":
+        """Capture a component that identifies itself as a trading strategy."""
+        return cls._capture("trading_strategy", "strategy", strategy)
+
+    @classmethod
+    def _capture(
+        cls,
+        component_type: str,
+        configured_component_type: str,
+        rule: ResearchRuleComponent,
+    ) -> "ResearchRuleProvenance":
+        configuration = rule.configuration()
+        if configuration.get("component_type") != configured_component_type:
+            raise ValidationPlanError(
+                f"{component_type} provenance requires a component whose canonical "
+                f"configuration type is {configured_component_type!r}"
+            )
         required_indicators_value = cast(object, rule.required_indicators)
         if not isinstance(required_indicators_value, tuple):
             raise ValidationPlanError(
@@ -873,7 +885,13 @@ class ResearchRuleProvenance:
         object.__setattr__(
             instance,
             "configuration",
-            ConfigurationReference.capture_component(component_type, rule),
+            ConfigurationReference.capture(
+                component_type,
+                rule.name,
+                rule.implementation_version,
+                configuration,
+                configuration_id=rule.configuration_id,
+            ),
         )
         object.__setattr__(instance, "warm_up_observations", warm_up)
         object.__setattr__(
@@ -895,30 +913,6 @@ class ResearchRuleProvenance:
                 self.required_indicator_configuration_ids
             ),
         }
-
-
-_REQUIRED_BACKTEST_CONFIGURATION_FIELDS = frozenset(
-    {
-        "annual_risk_free_rate",
-        "annualization_factor",
-        "arithmetic",
-        "commission",
-        "dividend_credit_timing",
-        "dividend_entitlement",
-        "dividend_policy",
-        "engine_version",
-        "execution",
-        "fees",
-        "forced_liquidation",
-        "initial_capital",
-        "long_only",
-        "result_schema_version",
-        "sizing",
-        "slippage",
-        "split_policy",
-        "trade_dividend_attribution",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -945,8 +939,14 @@ class BacktestProvenance:
     @classmethod
     def capture(
         cls,
-        configuration: BacktestConfigurationComponent,
+        configuration: "BacktestConfig",
     ) -> "BacktestProvenance":
+        from quantforge.backtesting import BacktestConfig
+
+        if type(configuration) is not BacktestConfig:
+            raise ValidationPlanError(
+                "backtest provenance requires an existing validated BacktestConfig"
+            )
         engine_version = _validated_text(
             cast(object, configuration.engine_version),
             "backtest engine version",
@@ -956,12 +956,6 @@ class BacktestProvenance:
             "backtest result schema version",
         )
         primitive = configuration.to_primitive()
-        missing_fields = _REQUIRED_BACKTEST_CONFIGURATION_FIELDS.difference(primitive)
-        if missing_fields:
-            raise ValidationPlanError(
-                "backtest configuration is missing required provenance fields: "
-                + ", ".join(sorted(missing_fields))
-            )
         if primitive.get("engine_version") != engine_version:
             raise ValidationPlanError(
                 "backtest configuration engine version does not match its provenance"

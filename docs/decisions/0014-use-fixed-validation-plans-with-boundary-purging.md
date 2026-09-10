@@ -52,11 +52,11 @@ timeframes/session policies, aggregation policies, indicator configurations and
 QF-35 backend identities, rule or strategy version, outcome definitions, and
 applicable execution/cost configuration. Historical implicit-native indicator
 configurations remain distinct from new explicit `native_v1` configurations.
-Trading/backtest environments factory-capture the existing complete typed
-backtest configuration rather than permitting a generic reference or
-identity-free execution defaults. Their research-rule provenance must be
-factory-captured as a trading strategy; prediction rule provenance remains
-independently typed and factory-captured as a prediction rule.
+Trading/backtest environments factory-capture only the existing validated
+`BacktestConfig` rather than permitting a structural lookalike, generic
+reference, or identity-free execution defaults. Domain-specific rule-provenance
+factories verify the component's own canonical type before capturing it as a
+trading strategy or prediction rule.
 
 ## Consequences
 

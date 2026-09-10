@@ -96,18 +96,21 @@ class _FixtureRule:
     def __init__(
         self,
         name: str,
+        canonical_component_type: str,
         required_indicators: tuple[Indicator, ...],
         warm_up_observations: int,
         configuration: PrimitiveMapping,
     ) -> None:
         self.name = name
+        self._canonical_component_type = canonical_component_type
         self.required_indicators = required_indicators
         self.warm_up_observations = warm_up_observations
         self._configuration = configuration
 
     def configuration(self) -> PrimitiveMapping:
         return {
-            "component": self.name,
+            "component_type": self._canonical_component_type,
+            "component_name": self.name,
             "implementation_version": self.implementation_version,
             "parameters": dict(self._configuration),
             "required_indicators": [
@@ -144,15 +147,21 @@ def _rule(
         (indicator.warm_up_observations for indicator in required_indicators),
         default=1,
     )
-    return ResearchRuleProvenance.capture(
-        component_type,
-        _FixtureRule(
-            name,
-            required_indicators,
-            required_warm_up if warm_up_observations is None else warm_up_observations,
-            cast(PrimitiveMapping, dict(configuration)),
-        ),
+    canonical_component_type = (
+        "prediction_strategy" if component_type == "prediction_rule" else "strategy"
     )
+    component = _FixtureRule(
+        name,
+        canonical_component_type,
+        required_indicators,
+        required_warm_up if warm_up_observations is None else warm_up_observations,
+        cast(PrimitiveMapping, dict(configuration)),
+    )
+    if component_type == "prediction_rule":
+        return ResearchRuleProvenance.capture_prediction(component)
+    if component_type == "trading_strategy":
+        return ResearchRuleProvenance.capture_trading(component)
+    raise AssertionError(f"unsupported fixture research rule type: {component_type}")
 
 
 def _backtest_provenance(slippage_bps: str = "5") -> BacktestProvenance:
@@ -1062,6 +1071,20 @@ def test_rule_and_backtest_provenance_require_typed_capture() -> None:
         BacktestProvenance()
 
 
+def test_rule_provenance_derives_semantic_type_from_component() -> None:
+    indicator = cast(Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(3)))
+    prediction_rule = _FixtureRule(
+        "prediction_rule",
+        "prediction_strategy",
+        (indicator,),
+        indicator.warm_up_observations,
+        {},
+    )
+
+    with pytest.raises(ValidationPlanError, match="canonical configuration type"):
+        ResearchRuleProvenance.capture_trading(prediction_rule)
+
+
 def test_trading_environment_rejects_generic_execution_reference() -> None:
     environment = _environment(ResearchStudyType.TRADING_BACKTEST)
     generic_reference = _component(
@@ -1089,8 +1112,10 @@ def test_backtest_provenance_captures_complete_execution_configuration() -> None
         "slippage",
         "split_policy",
     }.issubset(snapshot)
-    with pytest.raises(ValidationPlanError, match="missing required provenance"):
-        BacktestProvenance.capture(_IncompleteBacktestConfiguration())
+    with pytest.raises(ValidationPlanError, match="validated BacktestConfig"):
+        BacktestProvenance.capture(
+            cast(BacktestConfig, _IncompleteBacktestConfiguration())
+        )
 
 
 def test_component_configuration_is_detached_from_caller_mutation() -> None:

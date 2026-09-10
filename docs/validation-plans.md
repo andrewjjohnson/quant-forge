@@ -114,12 +114,13 @@ never enter study membership. Insufficient history fails closed instead of
 silently shortening the declared warm-up.
 
 `IndicatorProvenance.capture()` records each indicator's existing
-`warm_up_observations` contract. `ResearchRuleProvenance.capture()` independently
-captures the prediction rule's or trading strategy's own warm-up and the exact
-configuration IDs of its required indicators. The environment must contain all
-of those indicator identities. Because the first study observation supplies the
-final input needed for its own result, every development, selection, test, and
-holdout window must declare at least
+`warm_up_observations` contract. The domain-specific
+`ResearchRuleProvenance.capture_prediction()` and `capture_trading()` factories
+verify the component's own canonical configuration type, then capture its own
+warm-up and the exact configuration IDs of its required indicators. The
+environment must contain all of those indicator identities. Because the first
+study observation supplies the final input needed for its own result, every
+development, selection, test, and holdout window must declare at least
 `max(rule.warm_up_observations, indicator.warm_up_observations) - 1` preceding
 context rows. Plan construction rejects undersized context, so rule-level
 history or initial unavailable indicator rows cannot silently change eligible
@@ -168,8 +169,9 @@ cannot stand in for the strategy provenance required to trace trades, a trading
 strategy cannot be mislabeled as a prediction rule, and neither can silently
 depend on an indicator missing from the fixed environment.
 
-Trading execution provenance is factory-captured from the existing complete
-`BacktestConfig`, not from a freely tagged generic reference. Its immutable
+Trading execution provenance accepts and factory-captures only an existing
+validated `BacktestConfig`, not a structural lookalike or freely tagged generic
+reference. Its immutable
 snapshot includes execution timing and price, commission, transaction fees,
 slippage, sizing, rejection/accounting policies, capital, and engine/result
 versions. Consequently an unrelated configuration cannot satisfy the backtest

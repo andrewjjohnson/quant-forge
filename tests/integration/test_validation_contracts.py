@@ -55,7 +55,7 @@ def test_qf11_prediction_components_bind_directly_to_validation_plan() -> None:
         ResearchStudyType.PREDICTION,
         DatasetProvenance("a" * 64, ("qf11-fixture-dataset",)),
         (Timeframe.us_equity(SessionInterval()),),
-        ResearchRuleProvenance.capture("prediction_rule", strategy),
+        ResearchRuleProvenance.capture_prediction(strategy),
         indicators=tuple(
             IndicatorProvenance.capture(cast(IndicatorComponent, indicator))
             for indicator in strategy.required_indicators
