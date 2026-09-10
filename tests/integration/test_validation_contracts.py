@@ -26,6 +26,7 @@ from quantforge.validation import (
     ValidationPlan,
     ValidationWindow,
 )
+from tests.unit.helpers import make_dataset
 
 
 def _window(
@@ -52,13 +53,10 @@ def test_qf11_prediction_components_bind_directly_to_validation_plan() -> None:
     outcome = OutcomeProvenance.capture_exchange_sessions(outcome_labeler)
     warm_up_context = strategy.warm_up_observations - 1
     timeframe = Timeframe.us_equity(SessionInterval())
+    dataset = make_dataset(("100", "101"))
     environment = ResearchEnvironment(
         ResearchStudyType.PREDICTION,
-        DatasetProvenance(
-            "a" * 64,
-            ("qf11-fixture-dataset",),
-            standalone_timeframe=timeframe,
-        ),
+        DatasetProvenance.from_market_dataset(dataset),
         (timeframe,),
         ResearchRuleProvenance.capture_prediction(strategy),
         indicators=tuple(

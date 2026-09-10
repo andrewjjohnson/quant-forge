@@ -492,6 +492,9 @@ each source chronology rather than comparing counts across bar frequencies;
 rules bind each required indicator configuration to every source timeframe on
 which it is declared. Aggregation provenance for derived family members must
 exactly match the typed policy embedded in the same QF-14 family.
+Standalone provenance is factory-captured from a validated dataset, and its
+exchange timezone is resolved from the exchange calendar independently of the
+provider serialization timezone.
 The contracts are neutral between prediction and trading/backtest studies and
 do not run either kind of study. See `docs/validation-plans.md`.
 

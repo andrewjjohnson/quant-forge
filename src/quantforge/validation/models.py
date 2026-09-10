@@ -27,6 +27,7 @@ from quantforge.timeframes import (
     Timeframe,
     TimeframeValidationError,
     resolve_exchange_session,
+    resolve_exchange_timezone_name,
 )
 from quantforge.validation.errors import ValidationPlanError
 
@@ -1250,7 +1251,7 @@ class BacktestProvenance:
         return self.configuration.to_primitive()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class DatasetProvenance:
     """Fixed dataset fingerprint plus optional verified QF-14 family bindings."""
 
@@ -1259,6 +1260,11 @@ class DatasetProvenance:
     family_references: tuple[DatasetFamilyReference, ...] = ()
     dataset_family: DatasetFamily | None = None
     standalone_timeframe: Timeframe | None = None
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "DatasetProvenance must be captured from a MarketDataset or DatasetFamily"
+        )
 
     def __post_init__(self) -> None:
         _validated_hash(self.dataset_fingerprint, "dataset fingerprint")
@@ -1331,17 +1337,8 @@ class DatasetProvenance:
     def from_market_dataset(cls, dataset: MarketDataset) -> "DatasetProvenance":
         """Capture one validated QF-3 dataset without retrofitting QF-14 identity."""
         validate_market_dataset(dataset)
-        timezone_name = (
-            DEFAULT_US_EQUITY_SESSION_POLICY.timezone_name
-            if dataset.metadata.calendar
-            == DEFAULT_US_EQUITY_SESSION_POLICY.calendar_name
-            else dataset.metadata.provider_timezone
-        )
-        if timezone_name is None:
-            raise ValidationPlanError(
-                "standalone dataset timeframe requires the exchange timezone"
-            )
         try:
+            timezone_name = resolve_exchange_timezone_name(dataset.metadata.calendar)
             timeframe = Timeframe(
                 SessionInterval(),
                 ExchangeSessionPolicy(
@@ -1353,7 +1350,7 @@ class DatasetProvenance:
             raise ValidationPlanError(
                 "standalone dataset metadata cannot define a canonical timeframe"
             ) from error
-        return cls(
+        return cls._create(
             dataset.metadata.data_sha256,
             (dataset.metadata.dataset_id,),
             standalone_timeframe=timeframe,
@@ -1367,12 +1364,38 @@ class DatasetProvenance:
         dataset_ids: tuple[str, ...],
     ) -> "DatasetProvenance":
         """Capture compact references plus the exact immutable family manifest."""
-        return cls(
+        try:
+            references = tuple(
+                family.reference(dataset_id) for dataset_id in dataset_ids
+            )
+        except ValueError as error:
+            raise ValidationPlanError(
+                "dataset IDs must be recorded in the supplied dataset family"
+            ) from error
+        return cls._create(
             dataset_fingerprint,
             dataset_ids,
-            tuple(family.reference(dataset_id) for dataset_id in dataset_ids),
+            references,
             family,
         )
+
+    @classmethod
+    def _create(
+        cls,
+        dataset_fingerprint: str,
+        dataset_ids: tuple[str, ...],
+        family_references: tuple[DatasetFamilyReference, ...] = (),
+        dataset_family: DatasetFamily | None = None,
+        standalone_timeframe: Timeframe | None = None,
+    ) -> "DatasetProvenance":
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "dataset_fingerprint", dataset_fingerprint)
+        object.__setattr__(instance, "dataset_ids", dataset_ids)
+        object.__setattr__(instance, "family_references", family_references)
+        object.__setattr__(instance, "dataset_family", dataset_family)
+        object.__setattr__(instance, "standalone_timeframe", standalone_timeframe)
+        instance.__post_init__()
+        return instance
 
     def to_primitive(self) -> PrimitiveMapping:
         references = cast(

@@ -71,6 +71,11 @@ across daylight-saving transitions while their UTC offsets change. Early closes
 use the schedule's actual close. Weekends and exchange holidays are rejected as
 sessions rather than classified as missing observations.
 
+`resolve_exchange_timezone_name()` returns the authoritative IANA timezone from
+the configured exchange calendar. Consumers deriving session semantics from
+provider-neutral data use this resolver rather than treating a provider's
+serialization timezone as the exchange timezone.
+
 Extended-hours scope is a separate identity-bearing policy. Because extended
 hours are not uniform across venues and feeds, it requires explicit same-day
 local start and end times. QF-13 does not choose an extended-hours default or

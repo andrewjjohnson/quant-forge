@@ -527,7 +527,11 @@ def test_environment_identity_binds_every_required_scientific_input() -> None:
     changes = (
         replace(
             baseline,
-            dataset=replace(baseline.dataset, dataset_fingerprint="b" * 64),
+            dataset=DatasetProvenance.from_dataset_family(
+                "b" * 64,
+                _family(),
+                (DAILY_ID,),
+            ),
         ),
         _environment(timeframe=Timeframe.us_equity(SessionInterval(2))),
         _environment(aggregation_missing="diagnostic"),
@@ -594,6 +598,8 @@ def test_standalone_dataset_binds_its_canonical_daily_timeframe() -> None:
         aggregation_policies=(),
     )
 
+    assert provenance.dataset_fingerprint == dataset.metadata.data_sha256
+    assert provenance.dataset_ids == (dataset.metadata.dataset_id,)
     assert provenance.standalone_timeframe == daily
     assert baseline.timeframes == (daily,)
     with pytest.raises(ValidationPlanError, match="exactly match dataset provenance"):
@@ -608,24 +614,32 @@ def test_standalone_dataset_binds_its_canonical_daily_timeframe() -> None:
         )
 
 
-def test_dataset_provenance_requires_manifest_bound_family_references() -> None:
+def test_standalone_dataset_uses_exchange_not_provider_timezone() -> None:
+    dataset = make_dataset(("100", "101"), calendar="XLON")
+
+    provenance = DatasetProvenance.from_market_dataset(dataset)
+
+    assert dataset.metadata.provider_timezone == "America/New_York"
+    assert provenance.standalone_timeframe is not None
+    assert provenance.standalone_timeframe.session_policy.calendar_name == "XLON"
+    assert (
+        provenance.standalone_timeframe.session_policy.timezone_name == "Europe/London"
+    )
+
+
+def test_dataset_provenance_requires_typed_factory_capture() -> None:
+    with pytest.raises(TypeError, match="captured from a MarketDataset"):
+        DatasetProvenance()
+
+
+def test_dataset_provenance_rejects_unknown_family_member() -> None:
     family = _family()
-    references = (family.reference(DAILY_ID),)
 
-    with pytest.raises(ValidationPlanError, match="complete dataset family"):
-        DatasetProvenance(FINGERPRINT, (DAILY_ID,), references)
-
-
-def test_dataset_provenance_rejects_unrelated_family_manifest() -> None:
-    family = _family()
-    unrelated_family = replace(family, provider_name="unrelated-provider")
-
-    with pytest.raises(ValidationPlanError, match="supplied family manifest"):
-        DatasetProvenance(
+    with pytest.raises(ValidationPlanError, match="recorded in the supplied"):
+        DatasetProvenance.from_dataset_family(
             FINGERPRINT,
-            (DAILY_ID,),
-            (family.reference(DAILY_ID),),
-            unrelated_family,
+            family,
+            ("not-in-family",),
         )
 
 

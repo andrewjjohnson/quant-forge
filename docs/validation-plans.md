@@ -164,12 +164,16 @@ dataset provenance. Every QF-14 family reference names one exact QF-13
 timeframe; no referenced timeframe may be omitted and no unavailable timeframe
 may be added. `DatasetProvenance.from_market_dataset()` binds the legacy QF-3
 daily dataset to its canonical one-session exchange timeframe, including its
-calendar and timezone, so it cannot be relabeled as intraday or advertised as
-multiple timeframes. Family construction also recreates every compact reference
+calendar and the calendar's authoritative exchange timezone, so it cannot be
+relabeled as intraday or advertised as multiple timeframes. The provider's
+serialization timezone is preserved in dataset metadata but is not substituted
+for exchange timezone. `DatasetProvenance` is factory-only: standalone identity
+must come from a validated `MarketDataset`, while family identity must come from
+`from_dataset_family()`. Family construction recreates every compact reference
 from the supplied complete family and requires exact equality. A valid-looking
-but unrelated manifest ID therefore cannot be paired with persisted references,
-and the verified manifest or standalone timeframe participates in environment
-and plan identity.
+but unrelated fingerprint, timeframe, or manifest cannot be paired through a
+public constructor, and the verified manifest or standalone timeframe
+participates in environment and plan identity.
 
 Aggregation provenance is derived from the same selected dataset lineage. When
 any selected QF-14 member is derived, the environment must contain exactly the

@@ -64,8 +64,9 @@ factories verify the component's own canonical type before capturing it as a
 trading strategy or prediction rule.
 The configured timeframe set must exactly equal the timeframes supported by its
 dataset provenance. The QF-3 standalone adapter captures its canonical daily
-timeframe from validated dataset metadata, while QF-14 members retain their
-manifest-bound timeframe identities. If a selected family member is derived,
+timeframe only from a validated dataset and resolves exchange timezone from its
+calendar rather than provider serialization metadata. QF-14 members retain
+their manifest-bound timeframe identities. If a selected family member is derived,
 the environment's aggregation reference is factory-captured from and must
 exactly match that family's typed aggregation policy.
 
