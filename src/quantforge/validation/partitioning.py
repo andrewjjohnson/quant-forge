@@ -45,6 +45,18 @@ def _boundary_primitive(boundary: ValidationBoundary) -> PrimitiveMapping:
     return boundary.to_primitive()
 
 
+def _validate_result_collection(
+    observations: tuple[ValidationBoundary, ...], field_name: str
+) -> None:
+    if not isinstance(cast(object, observations), tuple) or any(
+        not isinstance(item, (ExchangeSessionBoundary, TimestampBoundary))
+        for item in cast(tuple[object, ...], observations)
+    ):
+        raise ValidationPlanError(
+            f"{field_name} must be a tuple of validation boundaries"
+        )
+
+
 def _validate_window_coverage(
     window: ValidationWindow, observations: tuple[ValidationBoundary, ...]
 ) -> None:
@@ -154,6 +166,10 @@ class PurgedPartitionObservations:
     purged: tuple[ValidationBoundary, ...]
     source_dataset_id: str
     source_timeframe_configuration_id: str
+
+    def __post_init__(self) -> None:
+        _validate_result_collection(self.retained, "retained")
+        _validate_result_collection(self.purged, "purged")
 
     def _identity_primitive(self) -> PrimitiveMapping:
         return {
@@ -348,6 +364,10 @@ class WindowObservationSelection:
     source_dataset_id: str
     source_timeframe_configuration_id: str
     source_family_manifest_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_result_collection(self.warm_up_context, "warm_up_context")
+        _validate_result_collection(self.study_observations, "study_observations")
 
     def _identity_primitive(self) -> PrimitiveMapping:
         return {

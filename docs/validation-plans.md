@@ -338,6 +338,14 @@ Schema version 1 defines deterministic SHA-256 identities for:
 - purged development membership;
 - warm-up/study observation selections.
 
+The exported `PurgedPartitionObservations` and `WindowObservationSelection`
+records require tuples of typed, immutable validation boundaries for `retained`,
+`purged`, `warm_up_context`, and `study_observations`, including when constructed
+directly. Lists and untyped/mutable tuple members are rejected; empty tuples
+remain valid. Callers loading collections must explicitly capture `tuple(keys)`
+so later source-list edits cannot change membership or result identities.
+Existing valid tuple-based result serialization is unchanged.
+
 `serialize_validation_plan()` writes the complete manifest with QuantForge's
 canonical sorted compact JSON policy. Scientific timestamps are UTC, durations
 are integer microseconds, exchange sessions are ISO dates, and set-like
