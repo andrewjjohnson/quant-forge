@@ -556,8 +556,11 @@ class PurgePolicy:
 class ConfiguredComponent(Protocol):
     """Existing QuantForge component with stable versioned configuration."""
 
-    name: str
-    implementation_version: str
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def implementation_version(self) -> str: ...
 
     @property
     def configuration_id(self) -> str: ...
@@ -568,13 +571,15 @@ class ConfiguredComponent(Protocol):
 class SessionOutcomeComponent(ConfiguredComponent, Protocol):
     """Existing outcome component with an exchange-session future horizon."""
 
-    required_future_sessions: int
+    @property
+    def required_future_sessions(self) -> int: ...
 
 
 class TimestampOutcomeComponent(ConfiguredComponent, Protocol):
     """Existing outcome component with an exact elapsed future horizon."""
 
-    required_future_duration: timedelta
+    @property
+    def required_future_duration(self) -> timedelta: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1556,6 +1561,7 @@ class ResearchEnvironment:
     outcomes: tuple[OutcomeProvenance, ...] = ()
     execution: BacktestProvenance | None = None
     schema_version: str = RESEARCH_ENVIRONMENT_SCHEMA_VERSION
+    prediction_dataset: DatasetProvenance | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(cast(object, self.study_type), ResearchStudyType):
@@ -1564,6 +1570,38 @@ class ResearchEnvironment:
             raise ValidationPlanError("research dataset provenance is invalid")
         if not isinstance(cast(object, self.research_rule), ResearchRuleProvenance):
             raise ValidationPlanError("research rule provenance is invalid")
+        if self.prediction_dataset is not None:
+            if (
+                self.study_type is not ResearchStudyType.PREDICTION
+                or not isinstance(
+                    cast(object, self.prediction_dataset), DatasetProvenance
+                )
+                or self.prediction_dataset.market_data_metadata is None
+                or self.dataset.dataset_family is None
+            ):
+                raise ValidationPlanError(
+                    "prediction dataset requires standalone provenance "
+                    "alongside a prediction context family"
+                )
+            from quantforge.data import AdjustmentBasis
+
+            metadata = self.prediction_dataset.market_data_metadata
+            family = self.dataset.dataset_family
+            basis = AdjustmentBasis(
+                metadata.adjustment_mode,
+                metadata.ohlc_basis,
+                metadata.volume_basis,
+                metadata.corporate_action_policy,
+                metadata.adjusted_fields_used,
+            )
+            if (
+                metadata.canonical_symbol != family.canonical_symbol
+                or basis != family.adjustment_basis
+            ):
+                raise ValidationPlanError(
+                    "prediction dataset symbol and adjustment basis "
+                    "must match context family"
+                )
         expected_rule_type = (
             "prediction_rule"
             if self.study_type is ResearchStudyType.PREDICTION
@@ -1623,6 +1661,16 @@ class ResearchEnvironment:
         ordered_timeframes = tuple(
             sorted(self.timeframes, key=lambda item: item.configuration_id)
         )
+        if self.prediction_dataset is not None:
+            assert self.prediction_dataset.standalone_timeframe is not None
+            if any(
+                timeframe.session_policy
+                != self.prediction_dataset.standalone_timeframe.session_policy
+                for timeframe in ordered_timeframes
+            ):
+                raise ValidationPlanError(
+                    "prediction dataset and context must share exchange-session policy"
+                )
         if len({item.configuration_id for item in ordered_timeframes}) != len(
             ordered_timeframes
         ):
@@ -1745,7 +1793,20 @@ class ResearchEnvironment:
             )
         if (
             self.study_type is ResearchStudyType.PREDICTION
-            and self.dataset.market_data_metadata is not None
+            and self.research_rule.warm_up_timeframe_configuration_id is not None
+            and any(
+                item.future_horizon.axis is BoundaryAxis.EXCHANGE_SESSION
+                for item in ordered_outcomes
+            )
+            and self.prediction_dataset is None
+        ):
+            raise ValidationPlanError(
+                "session-outcome context research requires "
+                "a separate prediction dataset"
+            )
+        if (
+            self.study_type is ResearchStudyType.PREDICTION
+            and self.outcome_dataset.market_data_metadata is not None
         ):
             from quantforge.prediction.errors import InvalidPredictionDataError
             from quantforge.prediction.feature_outcomes import (
@@ -1760,7 +1821,7 @@ class ResearchEnvironment:
                 if outcome.requires_multi_session_price_basis:
                     try:
                         validate_multi_session_price_basis_metadata(
-                            self.dataset.market_data_metadata
+                            self.outcome_dataset.market_data_metadata
                         )
                     except InvalidPredictionDataError as error:
                         raise ValidationPlanError(
@@ -1777,7 +1838,7 @@ class ResearchEnvironment:
                 ):
                     try:
                         validate_overnight_gap_dataset_metadata(
-                            self.dataset.market_data_metadata
+                            self.outcome_dataset.market_data_metadata
                         )
                     except InvalidPredictionDataError as error:
                         raise ValidationPlanError(
@@ -1792,8 +1853,13 @@ class ResearchEnvironment:
         object.__setattr__(self, "indicators", ordered_indicators)
         object.__setattr__(self, "outcomes", ordered_outcomes)
 
+    @property
+    def outcome_dataset(self) -> DatasetProvenance:
+        """Dataset owning observation membership and labels, not context bars."""
+        return self.prediction_dataset or self.dataset
+
     def _identity_primitive(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "schema_version": self.schema_version,
             "study_type": self.study_type.value,
             "dataset": self.dataset.to_primitive(),
@@ -1814,6 +1880,9 @@ class ResearchEnvironment:
                 None if self.execution is None else self.execution.to_primitive()
             ),
         }
+        if self.prediction_dataset is not None:
+            primitive["prediction_dataset"] = self.prediction_dataset.to_primitive()
+        return primitive
 
     @property
     def environment_id(self) -> str:
@@ -1887,9 +1956,21 @@ class ValidationPlan:
             raise ValidationPlanError(
                 "validation purge policy does not match the plan temporal axis"
             )
-        if axis is BoundaryAxis.EXCHANGE_SESSION and any(
-            isinstance(timeframe.interval, IntradayInterval)
-            for timeframe in self.environment.timeframes
+        if (
+            self.environment.prediction_dataset is not None
+            and axis is not BoundaryAxis.EXCHANGE_SESSION
+        ):
+            raise ValidationPlanError(
+                "separate QF-3 prediction datasets require "
+                "observed-session validation boundaries"
+            )
+        if (
+            axis is BoundaryAxis.EXCHANGE_SESSION
+            and self.environment.prediction_dataset is None
+            and any(
+                isinstance(timeframe.interval, IntradayInterval)
+                for timeframe in self.environment.timeframes
+            )
         ):
             raise ValidationPlanError(
                 "intraday source observations require timestamp validation boundaries"
@@ -1945,6 +2026,13 @@ class ValidationPlan:
             required_context[rule_timeframe_id],
             self.environment.research_rule.required_context_observations,
         )
+        if self.environment.prediction_dataset is not None:
+            timeframe = self.environment.prediction_dataset.standalone_timeframe
+            assert timeframe is not None
+            required_context[timeframe.configuration_id] = max(
+                required_context.get(timeframe.configuration_id, 0),
+                self.environment.research_rule.required_context_observations,
+            )
         for window in windows:
             if len(required_context) == 1 and not window.warm_up_by_timeframe:
                 timeframe_id, required = next(iter(required_context.items()))

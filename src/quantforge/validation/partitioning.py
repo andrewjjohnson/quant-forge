@@ -80,7 +80,7 @@ def _validate_result_chronology(
         _validate_observations(chronology, chronology[0])
 
 
-def _validate_source_observations(
+def validate_source_observations(
     observations: tuple[ValidationBoundary, ...],
     reference: ValidationBoundary,
     source: MarketDataset | TimeframeBarSeries,
@@ -97,7 +97,7 @@ def _validate_source_observations(
         assert provenance.standalone_timeframe is not None
         timeframe = provenance.standalone_timeframe
         dataset_id = source_value.metadata.dataset_id
-        if plan is not None and provenance != plan.environment.dataset:
+        if plan is not None and provenance != plan.environment.outcome_dataset:
             raise ValidationPlanError("observation source does not match plan dataset")
         if reference.axis is BoundaryAxis.EXCHANGE_SESSION:
             keys = tuple(
@@ -118,7 +118,8 @@ def _validate_source_observations(
         dataset_id = source_value.dataset_reference.dataset_id
         manifest_id = source_value.dataset_family_manifest_id
         if plan is not None and (
-            source_value.dataset_reference
+            plan.environment.prediction_dataset is not None
+            or source_value.dataset_reference
             not in plan.environment.dataset.family_references
             or manifest_id != plan.environment.dataset.family_manifest_id
         ):
@@ -148,9 +149,15 @@ def _validate_source_observations(
             "observations require a validated dataset or timeframe series"
         )
     if plan is not None:
+        outcome_timeframe = plan.environment.outcome_dataset.standalone_timeframe
         rule_timeframe_id = (
-            plan.environment.research_rule.warm_up_timeframe_configuration_id
-            or plan.environment.timeframes[0].configuration_id
+            outcome_timeframe.configuration_id
+            if plan.environment.prediction_dataset is not None
+            and outcome_timeframe is not None
+            else (
+                plan.environment.research_rule.warm_up_timeframe_configuration_id
+                or plan.environment.timeframes[0].configuration_id
+            )
         )
         if timeframe.configuration_id != rule_timeframe_id:
             raise ValidationPlanError(
@@ -242,7 +249,7 @@ def purge_partition_observations(
     except IndexError as error:
         raise ValidationPlanError("validation fold index is out of range") from error
     source_window, protected = _source_and_protected_windows(plan, index, source_role)
-    dataset_id, timeframe, _ = _validate_source_observations(
+    dataset_id, timeframe, _ = validate_source_observations(
         observations, source_window.interval.start, source, plan=plan
     )
     membership = tuple(
@@ -418,7 +425,7 @@ def select_window_observations(
     An explicit source_timeframe must match the artifact, not merely the window's
     boundary axis. The result preserves the source dataset and timeframe IDs.
     """
-    dataset_id, timeframe, manifest_id = _validate_source_observations(
+    dataset_id, timeframe, manifest_id = validate_source_observations(
         observations, window.interval.start, source
     )
     if source_timeframe is not None and source_timeframe != timeframe:

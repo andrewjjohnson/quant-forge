@@ -76,6 +76,12 @@ configured evaluator. The original QF-11 study supplies the concrete
 next-session-open gap label and directional evaluator. Prediction studies never
 create orders, fills, or portfolio results. See `docs/prediction-analysis.md`.
 
+QF-8 represents contextual predictions with both their standalone daily
+prediction/outcome dataset and their feature context family. Session-based
+outcome membership/purging is independent of timestamped context selection;
+both inputs participate in fixed validation-plan identity. It reuses QF-20/QF-28
+alignment and QF-11 outcome contracts without executing them while planning.
+
 QF-32 adds deterministic finite parameter comparison above that prediction
 branch. It reuses QF-6 search-space, constraint, persistence/resume, ranking,
 and neighborhood-stability concepts, but executes QF-11/QF-28 studies directly

@@ -1078,6 +1078,9 @@ def test_context_feed_scope_matches_selected_family_and_survives_capture(
         DatasetProvenance.from_dataset_family(family, (SOURCE_ID, DAILY_ID)),
         (primary, daily),
         provenance,
+        prediction_dataset=DatasetProvenance.from_market_dataset(
+            make_dataset(("100", "101"))
+        ),
         aggregation_policies=(
             ConfigurationReference.capture_aggregation_policy(
                 family.aggregation_policy
@@ -1645,6 +1648,9 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
         ),
         (daily, weekly),
         rule,
+        prediction_dataset=DatasetProvenance.from_market_dataset(
+            make_dataset(("100", "101"))
+        ),
         aggregation_policies=(
             ConfigurationReference.capture_aggregation_policy(
                 family.aggregation_policy
@@ -1770,7 +1776,7 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
     assert len(selected_weekly.warm_up_context) == 4
     assert selected_daily.source_timeframe_configuration_id == daily.configuration_id
     assert selected_weekly.source_timeframe_configuration_id == weekly.configuration_id
-    with pytest.raises(ValidationPlanError, match="research rule source timeframe"):
+    with pytest.raises(ValidationPlanError, match="does not match plan dataset"):
         purge_development_observations(
             plan,
             0,
@@ -1867,6 +1873,9 @@ def test_session_plan_rejects_selected_intraday_sources(
         family = _multi_timeframe_family(intraday, daily)
         environment = replace(
             environment,
+            outcomes=(_timestamp_outcome(timedelta(minutes=5)),)
+            if study_type is ResearchStudyType.PREDICTION
+            else (),
             dataset=DatasetProvenance.from_dataset_family(
                 family, (DAILY_ID, WEEKLY_ID)
             ),

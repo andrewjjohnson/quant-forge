@@ -1,5 +1,9 @@
 """Study-neutral chronological validation and leakage controls."""
 
+from quantforge.validation.context import (
+    PredictionContextObservationSelection,
+    select_prediction_context_observations,
+)
 from quantforge.validation.errors import (
     ValidationPlanError,
     ValidationPlanIdentityError,
@@ -65,6 +69,7 @@ __all__ = [
     "IndicatorTimeframeBinding",
     "OutcomeProvenance",
     "PartitionRole",
+    "PredictionContextObservationSelection",
     "PurgePolicy",
     "PurgedPartitionObservations",
     "ResearchEnvironment",
@@ -87,6 +92,7 @@ __all__ = [
     "WindowObservationSelection",
     "purge_development_observations",
     "purge_partition_observations",
+    "select_prediction_context_observations",
     "select_window_observations",
     "serialize_validation_plan",
     "validate_validation_plan_manifest",

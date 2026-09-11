@@ -39,15 +39,15 @@ timeframe when the plan is session-indexed. This prevents a validation interval
 from being described as XNYS regular sessions while its inputs use another
 calendar, timezone, or session scope.
 
-A plan containing any selected intraday source must use timestamp boundaries.
-Session-date keys cannot represent multiple bars within one session, so a
-session-axis plan containing an `IntradayInterval` fails construction, including
-mixed intraday/daily plans and zero-warm-up sources. Warm-up selection also
-rejects an explicitly supplied intraday source for a session-axis window.
-Consumers must use timestamp keys for each intraday bar and timestamp-axis
-horizons/embargo; QF-8 does not convert between source and window axes. A family
-may still record intraday ancestors when only daily/weekly members are selected
-for a session-axis plan.
+A single-input plan containing selected intraday sources requires timestamp
+boundaries. Session keys never stand in for individual intraday bars. The
+explicit two-input prediction contract is different: its session-indexed QF-3
+prediction dataset owns study membership and observed-session outcome horizons,
+while the context family supplies timestamped feature bars. Such plans use
+session boundaries and `select_prediction_context_observations()` for context;
+there is no conversion of an outcome session into an assumed 24-hour duration.
+The ordinary `select_window_observations()` still rejects intraday bars on a
+session-key window. Family lineage alone cannot opt into the two-input contract.
 
 ## Folds and final holdout
 
@@ -115,9 +115,11 @@ Both purge helpers require keyword-only `source=`, containing either a QF-3
 `MarketDataset` or an existing validated `TimeframeBarSeries`. QF-3 sources are
 fully validated and their captured provenance must equal the plan's standalone
 provenance. Family series must match an exact selected dataset reference and
-the plan's full family manifest ID. Purging uses the rule's captured source
-timeframe (the sole configured timeframe when no explicit source is needed),
-not an arbitrary contextual series.
+the plan's full family manifest ID. For two-input predictions, purging requires
+the separately captured prediction dataset and its daily chronology, not a
+family-derived daily or intraday series. Other plans use the rule's captured
+source timeframe (the sole configured timeframe when no explicit source is
+needed), not an arbitrary contextual series.
 
 Observation keys must be an exact prefix of that artifact's completed-bar
 chronology. Synthesized calendar sessions, skipped observations, changed
@@ -210,7 +212,60 @@ The contract supplies observation membership only. It does not attach outcomes
 to warm-up rows or calculate indicators. Consumers continue to use the existing
 backend-neutral QuantForge indicator architecture.
 
+### Two-input prediction context
+
+`select_prediction_context_observations(plan, window, source=series, as_of=...)`
+selects feature context for an explicit `TimestampBoundary` decision within a
+session window. The window must belong to the plan and the source must match a
+selected artifact and the full context-family manifest. The decision must be
+inside an actual exchange session (including its early-close schedule), inside
+the window, and on an observed session of the captured prediction dataset.
+
+The helper preserves UTC bar-end keys and exposes only completed bars ending
+at or before `as_of`. It separates bars before the window's first session open
+from bars completed inside the window. Unlike outcome membership, a contextual
+weekly source need not have a bar at each session-window endpoint. When no bar
+has yet completed inside the window, the prior context includes the declared
+warm-up count plus one anchor bar for the current indicator input. Insufficient
+history fails closed. Developing bars are not accepted by this completed-source
+membership helper; the existing QF-21/QF-28 provider remains responsible for any
+declared developing-as-of feature evaluation, decision alignment, and staleness.
+
+`PredictionContextObservationSelection` wraps the existing immutable
+`WindowObservationSelection` and binds the plan ID and decision timestamp in
+its version-1 canonical identity. Its nested `study_observations` are feature
+source bars, not prediction/label rows; the wrapper explicitly serializes
+`context_only=true` and `eligible_for_outcome_selection=false`. It never computes
+indicators, labels, or source bars. Supplying additional future completed bars
+from the same fixed artifact cannot change a historical context selection.
+
+Warm-up requirements cover the union of context timeframes and the prediction
+dataset's daily timeframe. The runner's daily observation warm-up is enforced in
+addition to the rule's primary-source requirement; if daily context shares that
+timeframe, the count is the maximum required by either role. Counts are shared
+units, not shared data identity: each selection still verifies its own artifact.
+
 ## Fixed research environment and provenance
+
+For a prediction rule declaring context and session-based outcomes,
+`ResearchEnvironment.prediction_dataset` is required alongside family-backed
+`dataset`. Both reuse `DatasetProvenance`: the former is captured from the
+validated QF-3 `MarketDataset` passed to `run_prediction_study()`, while the
+latter captures the selected context-family artifacts. They need not have the
+same dataset ID or provider. They must agree on canonical symbol, full adjustment
+basis, and exchange-session policy. Existing outcome price-basis checks apply to
+the prediction dataset. `outcome_dataset` exposes the authoritative membership
+and label input, falling back to `dataset` for single-input plans. Backtests
+cannot supply the prediction-only second input.
+
+The extra input is serialized with its validated metadata and fingerprint in
+the environment and plan identities. Changing either input invalidates cache
+reuse. Old context/session-outcome environments lacking the prediction input
+are rejected, not silently upgraded. Single-input serialization is unchanged
+because the absent field is omitted. Context `timeframes` still describe exactly
+the selected family sources; a separate prediction dataset is not relabeled as
+a member of that family. No QF-11 study, outcome, indicator, or historical native
+configuration is migrated.
 
 Every `ValidationPlan` owns exactly one `ResearchEnvironment`, shared by all
 folds and the holdout. It preserves:

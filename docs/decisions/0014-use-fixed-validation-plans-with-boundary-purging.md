@@ -26,12 +26,13 @@ to UTC or actual exchange sessions under one QF-13 session policy. Partition
 intervals are closed and inclusive because their boundaries identify discrete
 observation membership, not continuous execution time.
 
-Any selected intraday source requires a timestamp-axis plan. A session date
-cannot identify multiple intraday bars, so accepting such a source in a
-session-axis plan would promise warm-up observations that cannot be represented.
-Plan construction and explicit intraday warm-up selection reject that mismatch.
-This checks selected sources, not unselected intraday ancestors in family
-lineage. Cross-axis source-key conversion is not part of this contract.
+Single-input intraday studies require timestamp-axis plans. QF-28 predictions
+instead consume two independent inputs: a daily prediction/outcome dataset and
+an intraday/contextual family. These plans explicitly capture both inputs and
+use the prediction dataset's observed sessions for partitioning and purging.
+Context bars retain timestamp keys and are selected through a separate
+plan-bound as-of context helper. No session horizon is approximated as an elapsed
+duration, and intraday keys never substitute for outcome observations.
 
 Explicit folds contain development, optional selection, and test windows.
 Expanding and rolling progression rules are validated from those fixed windows.
@@ -117,18 +118,31 @@ callback, session indexing, or label computation is introduced into planning.
 
 ## Consequences
 
+The two-input correction binds a standalone `prediction_dataset` alongside the
+context family, validates their symbol/adjustment/session compatibility, and
+routes label compatibility and purging to the prediction dataset. Missing or
+changed prediction provenance cannot reuse earlier family-only plan identities.
+Single-input identities remain unchanged. A schema-version-1 context-selection
+wrapper reuses existing source membership records while binding the plan and
+decision timestamp and explicitly prohibiting outcome selection. The context
+helper enforces observed prediction sessions, exchange hours/early closes,
+completed-only as-of visibility, and source-specific historical context. Slower
+context sources may have no newly completed bar within a session window and
+then retain an extra preceding anchor. QF-20/QF-28 still own alignment, staleness,
+and feature computation; QF-8 does not orchestrate studies or consume holdout.
+
 Partition helpers require existing validated QF-3 datasets or QF-20
 `TimeframeBarSeries` as chronology evidence. Bare observation keys cannot prove
 which sessions are actually observed or which timeframe's warm-up units they
 represent. Keys must be an exact prefix of completed source bars, using UTC bar
 ends on the timestamp axis and final constituent sessions on the session axis.
 Purging additionally binds the exact selected artifact, full family manifest
-where applicable, and rule source timeframe to the plan. Warm-up checks the
+where applicable, and outcome source timeframe to the plan. Warm-up checks the
 selected timeframe against its artifact. Results preserve source identities;
 no independent fingerprint attestation or new artifact framework is introduced.
 
 Both inclusive source-window endpoints must occur in the verified chronology
-before purging or selection returns membership, including zero-horizon trading
+before purging or ordinary study selection returns membership, including zero-horizon trading
 plans. A prefix ending inside the window is incomplete and cannot be returned
 under the full window identity. Prefixes extending beyond a fully covered
 window retain the existing deterministic membership and identity behavior.
