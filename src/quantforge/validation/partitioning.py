@@ -5,10 +5,12 @@ from itertools import pairwise
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.timeframes import Timeframe
+from quantforge.data import AggregatedSessionBar, MarketDataset, TimeframeBarSeries
+from quantforge.timeframes import Timeframe, resolve_exchange_session
 from quantforge.validation.errors import ValidationPlanError
 from quantforge.validation.models import (
     BoundaryAxis,
+    DatasetProvenance,
     ExchangeSessionBoundary,
     PartitionRole,
     TimestampBoundary,
@@ -43,6 +45,90 @@ def _boundary_primitive(boundary: ValidationBoundary) -> PrimitiveMapping:
     return boundary.to_primitive()
 
 
+def _validate_source_observations(
+    observations: tuple[ValidationBoundary, ...],
+    reference: ValidationBoundary,
+    source: MarketDataset | TimeframeBarSeries,
+    *,
+    plan: ValidationPlan | None = None,
+) -> tuple[str, Timeframe, str | None]:
+    """Verify a prefix of an artifact's completed-bar chronology, never infer it."""
+    _validate_observations(observations, reference)
+    source_value = cast(object, source)
+    keys: tuple[ValidationBoundary, ...]
+    manifest_id: str | None = None
+    if isinstance(source_value, MarketDataset):
+        provenance = DatasetProvenance.from_market_dataset(source_value)
+        assert provenance.standalone_timeframe is not None
+        timeframe = provenance.standalone_timeframe
+        dataset_id = source_value.metadata.dataset_id
+        if plan is not None and provenance != plan.environment.dataset:
+            raise ValidationPlanError("observation source does not match plan dataset")
+        if reference.axis is BoundaryAxis.EXCHANGE_SESSION:
+            keys = tuple(
+                ExchangeSessionBoundary(bar.session_date, timeframe.session_policy)
+                for bar in source_value.bars
+            )
+        else:
+            keys = tuple(
+                TimestampBoundary(
+                    resolve_exchange_session(
+                        bar.session_date, timeframe.session_policy
+                    ).close_timestamp
+                )
+                for bar in source_value.bars
+            )
+    elif isinstance(source_value, TimeframeBarSeries):
+        timeframe = source_value.timeframe
+        dataset_id = source_value.dataset_reference.dataset_id
+        manifest_id = source_value.dataset_family_manifest_id
+        if plan is not None and (
+            source_value.dataset_reference
+            not in plan.environment.dataset.family_references
+            or manifest_id != plan.environment.dataset.family_manifest_id
+        ):
+            raise ValidationPlanError("observation source does not match plan dataset")
+        if any(not bar.complete for bar in source_value.bars):
+            raise ValidationPlanError("validation chronology requires completed bars")
+        if reference.axis is BoundaryAxis.EXCHANGE_SESSION:
+            if any(
+                not isinstance(bar, AggregatedSessionBar) for bar in source_value.bars
+            ):
+                raise ValidationPlanError(
+                    "intraday observations require timestamp boundaries"
+                )
+            keys = tuple(
+                ExchangeSessionBoundary(
+                    cast(AggregatedSessionBar, bar).session_dates[-1],
+                    timeframe.session_policy,
+                )
+                for bar in source_value.bars
+            )
+        else:
+            keys = tuple(
+                TimestampBoundary(bar.end_timestamp) for bar in source_value.bars
+            )
+    else:
+        raise ValidationPlanError(
+            "observations require a validated dataset or timeframe series"
+        )
+    if plan is not None:
+        rule_timeframe_id = (
+            plan.environment.research_rule.warm_up_timeframe_configuration_id
+            or plan.environment.timeframes[0].configuration_id
+        )
+        if timeframe.configuration_id != rule_timeframe_id:
+            raise ValidationPlanError(
+                "purge observations must use the research rule source timeframe"
+            )
+    _validate_observations(keys, reference)
+    if len(observations) > len(keys) or observations != keys[: len(observations)]:
+        raise ValidationPlanError(
+            "observations must be an exact prefix of the source bar chronology"
+        )
+    return dataset_id, timeframe, manifest_id
+
+
 @dataclass(frozen=True, slots=True)
 class PurgedPartitionObservations:
     """Deterministic earlier-partition membership after purging and embargo."""
@@ -53,6 +139,8 @@ class PurgedPartitionObservations:
     protected_window_id: str
     retained: tuple[ValidationBoundary, ...]
     purged: tuple[ValidationBoundary, ...]
+    source_dataset_id: str
+    source_timeframe_configuration_id: str
 
     def _identity_primitive(self) -> PrimitiveMapping:
         return {
@@ -60,6 +148,8 @@ class PurgedPartitionObservations:
             "fold_id": self.fold_id,
             "source_window_id": self.source_window_id,
             "protected_window_id": self.protected_window_id,
+            "source_dataset_id": self.source_dataset_id,
+            "source_timeframe_configuration_id": self.source_timeframe_configuration_id,
             "retained": [_boundary_primitive(item) for item in self.retained],
             "purged": [_boundary_primitive(item) for item in self.purged],
         }
@@ -76,13 +166,16 @@ def purge_development_observations(
     plan: ValidationPlan,
     fold_index: int,
     observations: tuple[ValidationBoundary, ...],
+    *,
+    source: MarketDataset | TimeframeBarSeries,
 ) -> PurgedPartitionObservations:
-    """Purge development rows whose label reach enters the next protected window."""
+    """Purge a prefix of the plan-bound source artifact's completed observations."""
     return purge_partition_observations(
         plan,
         fold_index,
         PartitionRole.DEVELOPMENT,
         observations,
+        source=source,
     )
 
 
@@ -91,8 +184,14 @@ def purge_partition_observations(
     fold_index: int,
     source_role: PartitionRole,
     observations: tuple[ValidationBoundary, ...],
+    *,
+    source: MarketDataset | TimeframeBarSeries,
 ) -> PurgedPartitionObservations:
-    """Purge one fold partition before its next protected interval."""
+    """Purge one partition using keys verified against the plan-bound source.
+
+    Observations must be an exact prefix of source bar ends (timestamps) or
+    final constituent sessions (session keys). A new artifact needs a new plan.
+    """
     index = cast(object, fold_index)
     if isinstance(index, bool) or not isinstance(index, int) or index < 0:
         raise ValidationPlanError(
@@ -102,14 +201,18 @@ def purge_partition_observations(
         fold = plan.folds[index]
     except IndexError as error:
         raise ValidationPlanError("validation fold index is out of range") from error
-    source, protected = _source_and_protected_windows(plan, index, source_role)
-    _validate_observations(observations, source.interval.start)
-    membership = tuple(item for item in observations if source.interval.contains(item))
+    source_window, protected = _source_and_protected_windows(plan, index, source_role)
+    dataset_id, timeframe, _ = _validate_source_observations(
+        observations, source_window.interval.start, source, plan=plan
+    )
+    membership = tuple(
+        item for item in observations if source_window.interval.contains(item)
+    )
     if not membership:
         raise ValidationPlanError(
             "source validation window has no observations in the supplied chronology"
         )
-    purge_cutoff = _purge_cutoff(plan, source, protected, observations)
+    purge_cutoff = _purge_cutoff(plan, source_window, protected, observations)
     retained: list[ValidationBoundary] = []
     purged: list[ValidationBoundary] = []
     for observation in membership:
@@ -122,10 +225,12 @@ def purge_partition_observations(
     return PurgedPartitionObservations(
         plan.plan_id,
         fold.fold_id,
-        source.window_id,
+        source_window.window_id,
         protected.window_id,
         tuple(retained),
         tuple(purged),
+        dataset_id,
+        timeframe.configuration_id,
     )
 
 
@@ -226,11 +331,15 @@ class WindowObservationSelection:
     window_id: str
     warm_up_context: tuple[ValidationBoundary, ...]
     study_observations: tuple[ValidationBoundary, ...]
-    source_timeframe_configuration_id: str | None = None
+    source_dataset_id: str
+    source_timeframe_configuration_id: str
+    source_family_manifest_id: str | None = None
 
     def _identity_primitive(self) -> PrimitiveMapping:
         return {
             "window_id": self.window_id,
+            "source_dataset_id": self.source_dataset_id,
+            "source_family_manifest_id": self.source_family_manifest_id,
             "source_timeframe_configuration_id": (
                 self.source_timeframe_configuration_id
             ),
@@ -255,10 +364,21 @@ def select_window_observations(
     window: ValidationWindow,
     observations: tuple[ValidationBoundary, ...],
     *,
+    source: MarketDataset | TimeframeBarSeries,
     source_timeframe: Timeframe | None = None,
 ) -> WindowObservationSelection:
-    """Select membership and source-timeframe-specific preceding context."""
-    _validate_observations(observations, window.interval.start)
+    """Select preceding context and membership from a verified artifact prefix.
+
+    An explicit source_timeframe must match the artifact, not merely the window's
+    boundary axis. The result preserves the source dataset and timeframe IDs.
+    """
+    dataset_id, timeframe, manifest_id = _validate_source_observations(
+        observations, window.interval.start, source
+    )
+    if source_timeframe is not None and source_timeframe != timeframe:
+        raise ValidationPlanError(
+            "selected source timeframe does not match observation artifact"
+        )
     warm_up_observations = window.warm_up_observations_for(source_timeframe)
     study_indexes = tuple(
         index
@@ -285,5 +405,7 @@ def select_window_observations(
         window.window_id,
         warm_up,
         study,
-        None if source_timeframe is None else source_timeframe.configuration_id,
+        dataset_id,
+        timeframe.configuration_id,
+        manifest_id,
     )

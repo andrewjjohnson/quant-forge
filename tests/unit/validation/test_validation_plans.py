@@ -24,10 +24,12 @@ from quantforge.data import (
     DatasetLineage,
     FeedScope,
     MarketDataset,
+    TimeframeBarSeries,
 )
 from quantforge.data import (
     ValidationError as MarketDataValidationError,
 )
+from quantforge.data.calendar import expected_sessions
 from quantforge.data.identity import canonical_json_bytes
 from quantforge.indicators import (
     NATIVE_INDICATOR_BACKEND,
@@ -41,10 +43,13 @@ from quantforge.prediction import (
     PredictionTimeframeRequirement,
 )
 from quantforge.timeframes import (
+    BarCompletion,
+    DevelopingBarExposure,
     IntradayInterval,
     SessionInterval,
     Timeframe,
     TradingWeekInterval,
+    resolve_exchange_session,
 )
 from quantforge.validation import (
     BacktestProvenance,
@@ -78,6 +83,10 @@ from quantforge.validation import (
     validate_validation_plan_manifest,
 )
 
+from ..data.test_multi_timeframe import (
+    _intraday_bar,  # pyright: ignore[reportPrivateUsage]
+    _session_bar,  # pyright: ignore[reportPrivateUsage]
+)
 from ..helpers import make_dataset
 from ..prediction.test_multi_timeframe_study import FixtureMultiTimeframeRule
 
@@ -405,6 +414,75 @@ def _timestamp_outcome(horizon: timedelta) -> OutcomeProvenance:
 
 def _session(value: str) -> ExchangeSessionBoundary:
     return ExchangeSessionBoundary(date.fromisoformat(value))
+
+
+def _session_source(observations: tuple[ValidationBoundary, ...]) -> MarketDataset:
+    sessions = tuple(
+        cast(ExchangeSessionBoundary, item).session_date for item in observations
+    )
+    return make_dataset(
+        tuple("100" for _ in sessions),
+        sessions=sessions,
+        missing_sessions=tuple(
+            session
+            for session in expected_sessions(sessions[0], sessions[-1])
+            if session not in sessions
+        ),
+    )
+
+
+def _bind_session_source(
+    plan: ValidationPlan, observations: tuple[ValidationBoundary, ...]
+) -> tuple[ValidationPlan, MarketDataset]:
+    source = _session_source(observations)
+    return replace(
+        plan,
+        environment=replace(
+            plan.environment,
+            dataset=DatasetProvenance.from_market_dataset(source),
+            aggregation_policies=(),
+        ),
+    ), source
+
+
+def _series_source(
+    family: DatasetFamily,
+    dataset_id: str,
+    observations: tuple[ValidationBoundary, ...],
+) -> TimeframeBarSeries:
+    """Isolated partition fixtures; public artifact capture is tested separately."""
+    timeframe = next(
+        item.timeframe for item in family.datasets if item.dataset_id == dataset_id
+    )
+    interval = timeframe.interval
+    if isinstance(interval, IntradayInterval):
+        bars = tuple(
+            _intraday_bar(
+                timeframe,
+                cast(TimestampBoundary, item).timestamp - interval.nominal_duration,
+                cast(TimestampBoundary, item).timestamp,
+            )
+            for item in observations
+        )
+    else:
+        session_dates = tuple(
+            cast(ExchangeSessionBoundary, item).session_date for item in observations
+        )
+        bars = tuple(
+            _session_bar(
+                timeframe,
+                session - timedelta(days=session.weekday())
+                if isinstance(interval, TradingWeekInterval)
+                else session,
+            )
+            for session in session_dates
+        )
+    return TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
+        family.reference(dataset_id),
+        timeframe,
+        bars,
+        dataset_family_manifest_id=family.manifest_id,
+    )
 
 
 def _session_window(
@@ -949,7 +1027,8 @@ def test_prediction_fixture_purges_future_labels_at_protected_boundary() -> None
     observation_values = cast(list[str], fixture["observations"])
     observations = tuple(_session(value) for value in observation_values)
 
-    result = purge_development_observations(plan, 0, observations)
+    plan, source = _bind_session_source(plan, observations)
+    result = purge_development_observations(plan, 0, observations, source=source)
 
     assert _session_dates(result.retained) == tuple(
         date.fromisoformat(value)
@@ -977,11 +1056,17 @@ def test_explicit_session_embargo_adds_separation_beyond_label_horizon() -> None
         )
     )
 
+    baseline, source = _bind_session_source(
+        _session_plan(horizon_sessions=1), observations
+    )
+    embargo_plan, _ = _bind_session_source(
+        _session_plan(horizon_sessions=1, embargo_sessions=1), observations
+    )
     without_embargo = purge_development_observations(
-        _session_plan(horizon_sessions=1), 0, observations
+        baseline, 0, observations, source=source
     )
     with_embargo = purge_development_observations(
-        _session_plan(horizon_sessions=1, embargo_sessions=1), 0, observations
+        embargo_plan, 0, observations, source=source
     )
 
     assert _session_dates(without_embargo.purged) == (date(2024, 1, 8),)
@@ -1005,9 +1090,122 @@ def test_exchange_session_purge_uses_observed_label_horizon() -> None:
         )
     )
 
-    result = purge_development_observations(plan, 0, observations)
+    plan, source = _bind_session_source(plan, observations)
+    result = purge_development_observations(plan, 0, observations, source=source)
 
     assert _session_dates(result.purged) == (date(2024, 1, 5),)
+
+
+def test_purge_rejects_calendar_expansion_of_missing_session_dataset() -> None:
+    observations = tuple(
+        _session(value)
+        for value in (
+            "2024-01-02",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-08",
+            "2024-01-09",
+        )
+    )
+    template = _session_plan()
+    fold = replace(
+        template.folds[0],
+        development=_session_window(
+            "development", PartitionRole.DEVELOPMENT, "2024-01-02", "2024-01-04"
+        ),
+        selection=_session_window("selection", PartitionRole.SELECTION, "2024-01-08"),
+    )
+    plan, source = _bind_session_source(replace(template, folds=(fold,)), observations)
+    result = purge_development_observations(plan, 0, observations, source=source)
+    assert _session_dates(result.purged) == (date(2024, 1, 4),)
+    assert result.to_primitive()["source_dataset_id"] == source.metadata.dataset_id
+    expanded = (*observations[:3], _session("2024-01-05"), *observations[3:])
+    with pytest.raises(ValidationPlanError, match="exact prefix"):
+        purge_development_observations(plan, 0, expanded, source=source)
+    # A genuinely different, complete dataset cannot certify this plan either.
+    with pytest.raises(ValidationPlanError, match="does not match plan dataset"):
+        purge_development_observations(
+            plan, 0, expanded, source=_session_source(expanded)
+        )
+    with pytest.raises(ValidationPlanError, match="exact prefix"):
+        purge_development_observations(plan, 0, observations[1:], source=source)
+    forged = replace(source, bars=source.bars[:2] + source.bars[3:])
+    with pytest.raises(MarketDataValidationError):
+        purge_development_observations(plan, 0, observations, source=forged)
+
+
+def test_warm_up_rejects_intraday_keys_as_weekly_context() -> None:
+    intraday = Timeframe.us_equity(IntradayInterval(timedelta(minutes=5)))
+    weekly = Timeframe.us_equity(TradingWeekInterval())
+    keys = tuple(
+        TimestampBoundary(
+            datetime(2024, 1, 12, 15, tzinfo=UTC) + timedelta(minutes=5 * i)
+        )
+        for i in range(20)
+    )
+    family = _multi_timeframe_family(intraday, weekly)
+    source = _series_source(family, DAILY_ID, keys)
+    window = ValidationWindow(
+        "weekly_selection",
+        PartitionRole.SELECTION,
+        ValidationInterval(keys[-1], keys[-1]),
+        warm_up_by_timeframe=(TimeframeWarmUpRequirement(weekly, 19),),
+    )
+    with pytest.raises(ValidationPlanError, match="timeframe does not match"):
+        select_window_observations(window, keys, source=source, source_timeframe=weekly)
+    # Relabeling the keys as daily/weekly requires real source-bar evidence.
+    weekly_source = _series_source(family, WEEKLY_ID, (_session("2024-01-12"),))
+    with pytest.raises(ValidationPlanError, match="exact prefix"):
+        select_window_observations(
+            window, keys, source=weekly_source, source_timeframe=weekly
+        )
+    with pytest.raises(
+        ValidationPlanError, match="validated dataset or timeframe series"
+    ):
+        select_window_observations(
+            window,
+            keys,
+            source=cast(TimeframeBarSeries, object()),
+            source_timeframe=weekly,
+        )
+
+
+def test_purge_rejects_unselected_family_artifact_and_changed_manifest() -> None:
+    intraday = Timeframe.us_equity(IntradayInterval(timedelta(minutes=5)))
+    # Reuse the timestamp plan fixture's environment semantics without executing it.
+    daily_keys = (
+        _session("2024-01-02"),
+        _session("2024-01-03"),
+        _session("2024-01-04"),
+        _session("2024-01-05"),
+        _session("2024-01-08"),
+        _session("2024-01-09"),
+    )
+    family = _family()
+    source = _series_source(family, DAILY_ID, daily_keys)
+    plan = _session_plan()
+    accepted = purge_development_observations(plan, 0, daily_keys, source=source)
+    assert (
+        accepted.source_timeframe_configuration_id == source.timeframe.configuration_id
+    )
+    changed_family = replace(family, provider_name="other-provider")
+    with pytest.raises(ValidationPlanError, match="does not match plan dataset"):
+        purge_development_observations(
+            plan,
+            0,
+            daily_keys,
+            source=_series_source(changed_family, DAILY_ID, daily_keys),
+        )
+    expanded_family = _multi_timeframe_family(
+        Timeframe.us_equity(SessionInterval()), intraday
+    )
+    with pytest.raises(ValidationPlanError, match="does not match plan dataset"):
+        purge_development_observations(
+            plan,
+            0,
+            daily_keys,
+            source=_series_source(expanded_family, DAILY_ID, daily_keys),
+        )
 
 
 def test_exchange_session_purge_rejects_missing_protected_chronology() -> None:
@@ -1022,10 +1220,9 @@ def test_exchange_session_purge_rejects_missing_protected_chronology() -> None:
         )
     )
 
+    plan, source = _bind_session_source(_session_plan(horizon_sessions=1), observations)
     with pytest.raises(ValidationPlanError, match="protected validation window"):
-        purge_development_observations(
-            _session_plan(horizon_sessions=1), 0, observations
-        )
+        purge_development_observations(plan, 0, observations, source=source)
 
 
 def test_zero_session_separation_does_not_require_protected_observations() -> None:
@@ -1040,14 +1237,14 @@ def test_zero_session_separation_does_not_require_protected_observations() -> No
         )
     )
 
-    result = purge_development_observations(
+    plan, source = _bind_session_source(
         _session_plan(
             horizon_sessions=0,
             environment=_environment(ResearchStudyType.TRADING_BACKTEST),
         ),
-        0,
         observations,
     )
+    result = purge_development_observations(plan, 0, observations, source=source)
 
     assert result.retained == observations
     assert result.purged == ()
@@ -1061,17 +1258,20 @@ def test_selection_and_test_labels_cannot_cross_test_or_holdout_boundaries() -> 
         _session("2024-01-11"),
     )
 
+    plan, source = _bind_session_source(plan, observations)
     selection = purge_partition_observations(
         plan,
         0,
         PartitionRole.SELECTION,
         observations,
+        source=source,
     )
     test = purge_partition_observations(
         plan,
         0,
         PartitionRole.WALK_FORWARD_TEST,
         observations,
+        source=source,
     )
 
     assert selection.retained == ()
@@ -1098,7 +1298,9 @@ def test_warm_up_context_precedes_and_is_excluded_from_protected_membership() ->
 
     selection = plan.folds[0].selection
     assert selection is not None
-    selected = select_window_observations(selection, observations)
+    selected = select_window_observations(
+        selection, observations, source=_session_source(observations)
+    )
 
     assert _session_dates(selected.warm_up_context) == (
         date(2024, 1, 5),
@@ -1159,25 +1361,25 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
             "development_1",
             PartitionRole.DEVELOPMENT,
             "2024-01-02",
-            "2024-01-08",
+            "2024-01-11",
         ),
         _session_window(
             "test_1",
             PartitionRole.WALK_FORWARD_TEST,
-            "2024-01-10",
+            "2024-01-16",
         ),
         _session_window(
             "selection_1",
             PartitionRole.SELECTION,
-            "2024-01-09",
+            "2024-01-12",
         ),
     )
     scalar_holdout = FinalHoldout(
         _session_window(
             "reserved_holdout",
             PartitionRole.FINAL_HOLDOUT,
-            "2024-01-11",
-            "2024-01-12",
+            "2024-01-17",
+            "2024-01-18",
         ),
         "untouched",
     )
@@ -1230,16 +1432,19 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
             "2024-01-05",
             "2024-01-08",
             "2024-01-09",
+            "2024-01-10",
+            "2024-01-11",
+            "2024-01-12",
         )
     )
     weekly_chronology = tuple(
         _session(item)
         for item in (
-            "2023-12-11",
-            "2023-12-18",
-            "2023-12-26",
-            "2024-01-02",
-            "2024-01-09",
+            "2023-12-15",
+            "2023-12-22",
+            "2023-12-29",
+            "2024-01-05",
+            "2024-01-12",
         )
     )
 
@@ -1247,19 +1452,32 @@ def test_multi_timeframe_warm_up_is_validated_and_selected_per_source() -> None:
         selection,
         daily_chronology,
         source_timeframe=daily,
+        source=_series_source(family, DAILY_ID, daily_chronology),
     )
     selected_weekly = select_window_observations(
         selection,
         weekly_chronology,
         source_timeframe=weekly,
+        source=_series_source(family, WEEKLY_ID, weekly_chronology),
     )
 
     assert len(selected_daily.warm_up_context) == 2
     assert len(selected_weekly.warm_up_context) == 4
     assert selected_daily.source_timeframe_configuration_id == daily.configuration_id
     assert selected_weekly.source_timeframe_configuration_id == weekly.configuration_id
+    with pytest.raises(ValidationPlanError, match="research rule source timeframe"):
+        purge_development_observations(
+            plan,
+            0,
+            weekly_chronology,
+            source=_series_source(family, WEEKLY_ID, weekly_chronology),
+        )
     with pytest.raises(ValidationPlanError, match="source timeframe is required"):
-        select_window_observations(selection, daily_chronology)
+        select_window_observations(
+            selection,
+            daily_chronology,
+            source=_series_source(family, DAILY_ID, daily_chronology),
+        )
 
 
 def test_rule_requires_duplicate_indicator_configuration_on_each_source() -> None:
@@ -1319,8 +1537,11 @@ def test_appending_future_data_cannot_change_historical_membership() -> None:
     )
     future = (_session("2024-01-10"), _session("2024-01-11"))
 
-    original = purge_development_observations(plan, 0, history)
-    appended = purge_development_observations(plan, 0, (*history, *future))
+    plan, source = _bind_session_source(plan, (*history, *future))
+    original = purge_development_observations(plan, 0, history, source=source)
+    appended = purge_development_observations(
+        plan, 0, (*history, *future), source=source
+    )
 
     assert appended.retained == original.retained
     assert appended.purged == original.purged
@@ -1407,7 +1628,12 @@ def test_session_window_cannot_select_intraday_bars_as_session_keys(
         )
     with pytest.raises(ValidationPlanError, match="require timestamp"):
         select_window_observations(
-            window, (_session("2024-01-09"),), source_timeframe=intraday
+            window,
+            (_session("2024-01-09"),),
+            source_timeframe=intraday,
+            source=_series_source(
+                _family(intraday), DAILY_ID, (_timestamp("2024-01-09T15:00:00+00:00"),)
+            ),
         )
 
 
@@ -1469,17 +1695,18 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
     observations = tuple(
         _timestamp(value)
         for value in (
-            "2024-01-02T09:30:00-05:00",
+            "2024-01-02T09:35:00-05:00",
             "2024-01-02T09:45:00-05:00",
             "2024-01-02T10:00:00-05:00",
             "2024-01-02T10:15:00-05:00",
         )
     )
 
-    purged = purge_development_observations(plan, 0, observations)
+    source = _series_source(_family(timeframe), DAILY_ID, observations)
+    purged = purge_development_observations(plan, 0, observations, source=source)
 
     assert _timestamps(purged.retained) == (
-        datetime(2024, 1, 2, 14, 30, tzinfo=UTC),
+        datetime(2024, 1, 2, 14, 35, tzinfo=UTC),
         datetime(2024, 1, 2, 14, 45, tzinfo=UTC),
     )
     assert _timestamps(purged.purged) == (datetime(2024, 1, 2, 15, 0, tzinfo=UTC),)
@@ -1494,16 +1721,25 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
         warm_up_observations=0,
         warm_up_by_timeframe=(TimeframeWarmUpRequirement(timeframe, 2),),
     )
+    complete_observations = (
+        *source_observations,
+        _timestamp("2024-01-02T16:00:00+00:00"),
+    )
+    warm_up_source = _series_source(_family(timeframe), DAILY_ID, complete_observations)
     selected = select_window_observations(
-        source_window, source_observations, source_timeframe=timeframe
+        source_window,
+        source_observations,
+        source_timeframe=timeframe,
+        source=warm_up_source,
     )
     assert selected.warm_up_context == source_observations[:2]
     assert selected.study_observations == source_observations[2:]
     assert selected.source_timeframe_configuration_id == timeframe.configuration_id
     appended = select_window_observations(
         source_window,
-        (*source_observations, _timestamp("2024-01-02T16:00:00+00:00")),
+        complete_observations,
         source_timeframe=timeframe,
+        source=warm_up_source,
     )
     assert appended.selection_id == selected.selection_id
 
@@ -1547,7 +1783,8 @@ def test_backtest_fixture_uses_same_contract_without_prediction_results() -> Non
         _session(value) for value in cast(list[str], fixture["observations"])
     )
 
-    result = purge_development_observations(plan, 0, observations)
+    plan, source = _bind_session_source(plan, observations)
+    result = purge_development_observations(plan, 0, observations, source=source)
 
     assert result.purged == ()
     assert _session_dates(result.retained) == tuple(
@@ -1712,7 +1949,69 @@ def test_warm_up_fails_closed_when_history_is_insufficient() -> None:
         select_window_observations(
             window,
             (_session("2024-01-08"), _session("2024-01-09")),
+            source=_session_source((_session("2024-01-08"), _session("2024-01-09"))),
         )
+
+
+def test_warm_up_identity_preserves_source_even_when_observation_keys_match() -> None:
+    observations = (_session("2024-01-08"), _session("2024-01-09"))
+    source = _session_source(observations)
+    other = make_dataset(("101", "102"), sessions=_session_dates(observations))
+    window = _session_window(
+        "selection", PartitionRole.SELECTION, "2024-01-09", warm_up=1
+    )
+    first = select_window_observations(window, observations, source=source)
+    second = select_window_observations(window, observations, source=other)
+    assert first.warm_up_context == second.warm_up_context
+    assert first.study_observations == second.study_observations
+    assert first.source_dataset_id != second.source_dataset_id
+    assert first.selection_id != second.selection_id
+
+
+def test_standalone_timestamp_keys_require_actual_bar_close() -> None:
+    sessions = (_session("2024-01-08"), _session("2024-01-09"))
+    source = _session_source(sessions)
+    keys = tuple(
+        TimestampBoundary(resolve_exchange_session(item.session_date).close_timestamp)
+        for item in sessions
+    )
+    window = ValidationWindow(
+        "selection", PartitionRole.SELECTION, ValidationInterval(keys[1], keys[1]), 1
+    )
+    selected = select_window_observations(window, keys, source=source)
+    assert selected.warm_up_context == keys[:1]
+    open_keys = tuple(
+        TimestampBoundary(resolve_exchange_session(item.session_date).open_timestamp)
+        for item in sessions
+    )
+    with pytest.raises(ValidationPlanError, match="exact prefix"):
+        select_window_observations(window, open_keys, source=source)
+
+
+def test_warm_up_rejects_developing_source_bars() -> None:
+    timeframe = replace(
+        Timeframe.us_equity(IntradayInterval(timedelta(minutes=5))),
+        developing_bar_exposure=DevelopingBarExposure.INCLUDE,
+    )
+    family = _family(timeframe)
+    bar = _intraday_bar(
+        timeframe,
+        datetime(2024, 1, 9, 15, tzinfo=UTC),
+        datetime(2024, 1, 9, 15, 3, tzinfo=UTC),
+        BarCompletion.DEVELOPING,
+    )
+    source = TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
+        family.reference(DAILY_ID),
+        timeframe,
+        (bar,),
+        dataset_family_manifest_id=family.manifest_id,
+    )
+    key = TimestampBoundary(bar.end_timestamp)
+    window = ValidationWindow(
+        "selection", PartitionRole.SELECTION, ValidationInterval(key, key)
+    )
+    with pytest.raises(ValidationPlanError, match="requires completed bars"):
+        select_window_observations(window, (key,), source=source)
 
 
 def test_component_reference_rejects_declared_identity_mismatch() -> None:

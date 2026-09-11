@@ -101,6 +101,16 @@ the full dataset before executing; plan construction performs no backtest.
 
 ## Consequences
 
+Partition helpers require existing validated QF-3 datasets or QF-20
+`TimeframeBarSeries` as chronology evidence. Bare observation keys cannot prove
+which sessions are actually observed or which timeframe's warm-up units they
+represent. Keys must be an exact prefix of completed source bars, using UTC bar
+ends on the timestamp axis and final constituent sessions on the session axis.
+Purging additionally binds the exact selected artifact, full family manifest
+where applicable, and rule source timeframe to the plan. Warm-up checks the
+selected timeframe against its artifact. Results preserve source identities;
+no independent fingerprint attestation or new artifact framework is introduced.
+
 Prediction and trading/backtest studies can share leakage controls without
 sharing prediction metrics, orders, trades, portfolio state, or equity curves.
 Changing any scientific environment field, boundary, horizon, embargo, warm-up,

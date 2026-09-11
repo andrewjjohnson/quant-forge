@@ -1,6 +1,12 @@
 from datetime import date
+from pathlib import Path
 from typing import cast
 
+from quantforge.data import (
+    SessionAggregationPolicy,
+    TimeframeBarSeries,
+    aggregate_session_dataset,
+)
 from quantforge.prediction import (
     NextSessionOpenGapOutcomeLabeler,
     OvernightGapPredictionParameters,
@@ -20,13 +26,70 @@ from quantforge.validation import (
     ResearchRuleProvenance,
     ResearchStudyType,
     TemporalOffset,
+    TimestampBoundary,
     TrainingWindowMode,
     ValidationFold,
     ValidationInterval,
     ValidationPlan,
     ValidationWindow,
+    select_window_observations,
+)
+from tests.unit.data.test_multi_timeframe import (
+    _family,  # pyright: ignore[reportPrivateUsage]
+    _persisted_source_dataset,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.unit.helpers import make_dataset
+
+
+def test_warm_up_consumes_existing_validated_source_and_derived_artifacts(
+    tmp_path: Path,
+) -> None:
+    dataset, cache = _persisted_source_dataset(tmp_path)
+    family = _family(source_dataset_id=dataset.metadata.dataset_id)
+    series = TimeframeBarSeries.from_source_dataset(dataset, family=family, cache=cache)
+    keys = tuple(TimestampBoundary(bar.end_timestamp) for bar in series.bars)
+    window = ValidationWindow(
+        "intraday_selection",
+        PartitionRole.SELECTION,
+        ValidationInterval(keys[19], keys[19]),
+        19,
+    )
+    selected = select_window_observations(
+        window, keys[:20], source=series, source_timeframe=series.timeframe
+    )
+    assert selected.warm_up_context == keys[:19]
+    assert selected.study_observations == (keys[19],)
+    assert selected.source_dataset_id == dataset.metadata.dataset_id
+    assert selected.source_family_manifest_id == family.manifest_id
+    assert (
+        select_window_observations(
+            window, keys, source=series, source_timeframe=series.timeframe
+        ).selection_id
+        == selected.selection_id
+    )
+
+    daily = Timeframe.us_equity(SessionInterval())
+    derived = aggregate_session_dataset(
+        dataset, daily, policy=SessionAggregationPolicy()
+    )
+    daily_series = TimeframeBarSeries.from_aggregated_session_dataset(derived)
+    for boundary in (
+        ExchangeSessionBoundary(derived.bars[0].session_dates[-1]),
+        TimestampBoundary(derived.bars[0].end_timestamp),
+    ):
+        daily_window = ValidationWindow(
+            "daily_selection",
+            PartitionRole.SELECTION,
+            ValidationInterval(boundary, boundary),
+        )
+        daily_selection = select_window_observations(
+            daily_window, (boundary,), source=daily_series, source_timeframe=daily
+        )
+        assert daily_selection.source_dataset_id == derived.metadata.dataset_id
+        assert (
+            daily_selection.source_timeframe_configuration_id == daily.configuration_id
+        )
+        assert daily_selection.study_observations == (boundary,)
 
 
 def _window(

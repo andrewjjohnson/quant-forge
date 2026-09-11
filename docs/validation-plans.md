@@ -100,6 +100,29 @@ observed-bar label reach silently cross into the protected partition. When the
 combined horizon and embargo is positive, the chronology must include a
 protected-window observation; otherwise purging fails closed.
 
+Both purge helpers require keyword-only `source=`, containing either a QF-3
+`MarketDataset` or an existing validated `TimeframeBarSeries`. QF-3 sources are
+fully validated and their captured provenance must equal the plan's standalone
+provenance. Family series must match an exact selected dataset reference and
+the plan's full family manifest ID. Purging uses the rule's captured source
+timeframe (the sole configured timeframe when no explicit source is needed),
+not an arbitrary contextual series.
+
+Observation keys must be an exact prefix of that artifact's completed-bar
+chronology. Synthesized calendar sessions, skipped observations, changed
+datasets, and independently supplied fingerprints cannot certify a cutoff.
+Timestamp keys are bar-end UTC timestamps, including actual exchange close for
+QF-3 daily bars. Session keys are QF-3 session dates or the final constituent
+session of a completed daily/weekly aggregate. Intraday sources require
+timestamps; developing bars are rejected. These are membership keys derived
+from existing bars, with no indicator, label, or bar recomputation.
+
+Supplying a longer prefix of the same fixed artifact after the first protected
+observation preserves earlier membership and result identity. A new artifact
+with additional bars is a new provenance input and requires a corresponding
+plan; it cannot be substituted under the old plan ID. Purge results record the
+verified source dataset and timeframe IDs alongside the plan/window identities.
+
 Composite studies must configure `label_horizon` to the maximum future reach of
 all outcome configurations that influence training or selection. A trading
 study with no forward observation label uses a zero horizon. This does not make
@@ -137,6 +160,15 @@ uses timeframe-specific warm-up and returns two structurally separate tuples:
   calculate causal indicators;
 - `study_observations` contains the observations eligible for that window's
   training, selection, test, or holdout role.
+
+Selection also requires `source=` and verifies an exact prefix of its completed
+bar chronology using the same rules as purging. Any supplied `source_timeframe`
+must equal the artifact's actual timeframe before its warm-up count is applied;
+five-minute keys cannot supply a weekly warm-up. Result serialization always
+records the verified source dataset/timeframe IDs and, for family series, the
+full family manifest ID. A standalone window does not own a research environment:
+selection certifies the supplied artifact and timeframe, while a plan consumer
+must choose that artifact from its fixed environment.
 
 The serialized selection explicitly records
 `warm_up_eligible_for_selection=false`. Warm-up rows must precede the window and
@@ -305,6 +337,12 @@ Persistence or cache consumers must call
 invalid JSON, non-canonical bytes, a changed plan ID, or any content that differs
 from the current fixed plan. QF-8 defines this validation boundary but does not
 introduce a separate persistence store.
+
+The required artifact argument tightens the pre-release QF-8 helper API. Purge
+and selection results now include verified source identity fields, so their
+canonical identities differ from earlier unbound results; no prior result is
+migrated or certified retrospectively. Validation-plan serialization itself is
+unchanged by this guard.
 
 Changing any dataset family or fingerprint, timeframe/session or aggregation
 policy, indicator configuration/backend/version, rule/strategy, outcome,
