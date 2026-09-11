@@ -111,6 +111,12 @@ where applicable, and rule source timeframe to the plan. Warm-up checks the
 selected timeframe against its artifact. Results preserve source identities;
 no independent fingerprint attestation or new artifact framework is introduced.
 
+Both inclusive source-window endpoints must occur in the verified chronology
+before purging or selection returns membership, including zero-horizon trading
+plans. A prefix ending inside the window is incomplete and cannot be returned
+under the full window identity. Prefixes extending beyond a fully covered
+window retain the existing deterministic membership and identity behavior.
+
 Prediction and trading/backtest studies can share leakage controls without
 sharing prediction metrics, orders, trades, portfolio state, or equity curves.
 Changing any scientific environment field, boundary, horizon, embargo, warm-up,

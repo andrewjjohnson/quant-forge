@@ -1079,6 +1079,23 @@ def test_explicit_session_embargo_adds_separation_beyond_label_horizon() -> None
 
 def test_exchange_session_purge_uses_observed_label_horizon() -> None:
     plan = _session_plan(horizon_sessions=1)
+    # The missing session is between this window's final observed key and
+    # the protected window, not an absent endpoint of the source window.
+    fold = plan.folds[0]
+    plan = replace(
+        plan,
+        folds=(
+            replace(
+                fold,
+                development=replace(
+                    fold.development,
+                    interval=replace(
+                        fold.development.interval, end=_session("2024-01-05")
+                    ),
+                ),
+            ),
+        ),
+    )
     observations = tuple(
         _session(value)
         for value in (
@@ -1248,6 +1265,117 @@ def test_zero_session_separation_does_not_require_protected_observations() -> No
 
     assert result.retained == observations
     assert result.purged == ()
+
+
+@pytest.mark.parametrize("axis", ["session", "timestamp"])
+@pytest.mark.parametrize("missing_boundary", ["start", "end"])
+@pytest.mark.parametrize("consumer", ["purge", "selection"])
+def test_partial_window_membership_is_rejected(
+    axis: str,
+    missing_boundary: str,
+    consumer: str,
+) -> None:
+    timeframe = Timeframe.us_equity(
+        SessionInterval()
+        if axis == "session"
+        else IntradayInterval(timedelta(minutes=5))
+    )
+    keys: tuple[ValidationBoundary, ...] = (
+        tuple(
+            _session(item)
+            for item in (
+                "2024-01-02",
+                "2024-01-03",
+                "2024-01-04",
+                "2024-01-05",
+                "2024-01-08",
+            )
+        )
+        if axis == "session"
+        else tuple(
+            TimestampBoundary(
+                datetime(2024, 1, 2, 15, tzinfo=UTC) + timedelta(minutes=5 * i)
+            )
+            for i in range(5)
+        )
+    )
+    environment = _environment(ResearchStudyType.TRADING_BACKTEST, timeframe=timeframe)
+    window = ValidationWindow(
+        "development",
+        PartitionRole.DEVELOPMENT,
+        ValidationInterval(keys[0], keys[2]),
+        2,
+    )
+    plan = ValidationPlan(
+        "complete_membership",
+        environment,
+        (
+            ValidationFold(
+                "fold",
+                window,
+                ValidationWindow(
+                    "test",
+                    PartitionRole.WALK_FORWARD_TEST,
+                    ValidationInterval(keys[3], keys[3]),
+                    2,
+                ),
+            ),
+        ),
+        FinalHoldout(
+            ValidationWindow(
+                "holdout",
+                PartitionRole.FINAL_HOLDOUT,
+                ValidationInterval(keys[4], keys[4]),
+                2,
+            ),
+            "reserved",
+        ),
+        PurgePolicy(
+            TemporalOffset.sessions(0)
+            if axis == "session"
+            else TemporalOffset.duration(timedelta(0)),
+            TemporalOffset.sessions(0)
+            if axis == "session"
+            else TemporalOffset.duration(timedelta(0)),
+        ),
+        TrainingWindowMode.EXPANDING,
+    )
+    source_keys = keys[1:] if missing_boundary == "start" else keys
+    source: MarketDataset | TimeframeBarSeries
+    if axis == "session":
+        plan, source = _bind_session_source(plan, source_keys)
+    else:
+        source = _series_source(_family(timeframe), DAILY_ID, source_keys)
+    observations = source_keys if missing_boundary == "start" else keys[:2]
+    if consumer == "purge":
+        with pytest.raises(ValidationPlanError, match="both window boundaries"):
+            purge_development_observations(plan, 0, observations, source=source)
+    else:
+        with pytest.raises(ValidationPlanError, match="both window boundaries"):
+            select_window_observations(
+                replace(window, warm_up_observations=0),
+                observations,
+                source=source,
+                source_timeframe=timeframe,
+            )
+    if missing_boundary == "end":
+        # Complete source membership does not require the later test/holdout
+        # keys for a zero-horizon purge or a standalone selection.
+        if consumer == "purge":
+            completed = purge_development_observations(plan, 0, keys[:3], source=source)
+            extended = purge_development_observations(plan, 0, keys, source=source)
+            assert completed.retained == keys[:3]
+            assert completed.result_id == extended.result_id
+        else:
+            selected_window = replace(window, warm_up_observations=0)
+            completed_selection = select_window_observations(
+                selected_window, keys[:3], source=source, source_timeframe=timeframe
+            )
+            extended_selection = select_window_observations(
+                selected_window, keys, source=source, source_timeframe=timeframe
+            )
+            assert completed_selection.study_observations == keys[:3]
+            assert completed_selection.selection_id == extended_selection.selection_id
 
 
 def test_selection_and_test_labels_cannot_cross_test_or_holdout_boundaries() -> None:
@@ -1647,7 +1775,7 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
         "intraday_development",
         PartitionRole.DEVELOPMENT,
         ValidationInterval(
-            _timestamp("2024-01-02T14:30:00+00:00"),
+            _timestamp("2024-01-02T14:35:00+00:00"),
             _timestamp("2024-01-02T15:00:00+00:00"),
         ),
         2,
@@ -1714,7 +1842,7 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
     # Distinct intraday keys in the same session supply exact prior-bar context.
     source_observations = tuple(
         _timestamp(f"2024-01-02T{clock_time}:00+00:00")
-        for clock_time in ("15:05", "15:10", "15:15", "15:20")
+        for clock_time in ("15:05", "15:10", "15:15", "15:20", "15:30")
     )
     source_window = replace(
         selection,

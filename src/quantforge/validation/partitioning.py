@@ -45,6 +45,19 @@ def _boundary_primitive(boundary: ValidationBoundary) -> PrimitiveMapping:
     return boundary.to_primitive()
 
 
+def _validate_window_coverage(
+    window: ValidationWindow, observations: tuple[ValidationBoundary, ...]
+) -> None:
+    if (
+        window.interval.start not in observations
+        or window.interval.end not in observations
+    ):
+        raise ValidationPlanError(
+            "verified chronology must contain both window boundaries before "
+            "returning membership"
+        )
+
+
 def _validate_source_observations(
     observations: tuple[ValidationBoundary, ...],
     reference: ValidationBoundary,
@@ -212,6 +225,7 @@ def purge_partition_observations(
         raise ValidationPlanError(
             "source validation window has no observations in the supplied chronology"
         )
+    _validate_window_coverage(source_window, membership)
     purge_cutoff = _purge_cutoff(plan, source_window, protected, observations)
     retained: list[ValidationBoundary] = []
     purged: list[ValidationBoundary] = []
@@ -389,6 +403,7 @@ def select_window_observations(
         raise ValidationPlanError(
             "validation window has no observations in the supplied chronology"
         )
+    _validate_window_coverage(window, observations)
     first_index = study_indexes[0]
     warm_up_start = first_index - warm_up_observations
     if warm_up_start < 0:

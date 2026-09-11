@@ -23,6 +23,17 @@ observation membership keys, not wall-clock availability claims. Session and
 timestamp boundaries cannot be mixed, and session policies cannot change within
 a plan.
 
+Before a partition helper returns membership, both inclusive window endpoints
+must occur in its artifact-verified observation chronology. An exact source
+prefix ending inside the window, or a source missing either endpoint, fails
+closed instead of producing partial membership under the full window identity.
+This applies to purge source windows even with zero horizon/embargo and to
+warm-up/study selection. It does not require later protected-window observations
+for zero separation, nor change the existing positive-separation purge guard.
+After both endpoints are present, extending the same source prefix beyond the
+window preserves membership and result identity. Multi-timeframe consumers must
+choose endpoints available on each selected source chronology.
+
 All plan windows use the same QF-13 session policy as every configured research
 timeframe when the plan is session-indexed. This prevents a validation interval
 from being described as XNYS regular sessions while its inputs use another
