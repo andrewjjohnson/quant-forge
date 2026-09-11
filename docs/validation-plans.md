@@ -50,6 +50,13 @@ Within a fold, development must finish before selection, and selection must
 finish before test. Without selection, development must finish before test.
 Test windows across folds are strictly chronological and disjoint.
 
+`ValidationPlan.folds` must be a non-empty tuple of validated `ValidationFold`
+objects. Mutable lists and other collection types are rejected at construction;
+configuration loaders must explicitly capture `tuple(folds)` first. Later edits
+to the source list cannot add unvalidated windows, change the plan's temporal
+axis, or alter its identity and serialized manifest. Existing tuple-based plans
+retain their schema and identities.
+
 `TrainingWindowMode.EXPANDING` requires later development windows to keep the
 same start and advance their end. `TrainingWindowMode.ROLLING` requires both
 start and end to advance. The windows are explicit definitions; QF-8 does not

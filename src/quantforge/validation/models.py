@@ -1784,6 +1784,8 @@ class ValidationPlan:
 
     def __post_init__(self) -> None:
         _validated_text(self.name, "validation plan name")
+        if not isinstance(cast(object, self.folds), tuple):
+            raise ValidationPlanError("validation plan folds must be a tuple")
         if not self.folds or any(
             not isinstance(item, ValidationFold)
             for item in cast(tuple[object, ...], self.folds)

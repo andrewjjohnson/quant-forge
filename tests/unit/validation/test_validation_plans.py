@@ -1560,6 +1560,54 @@ def test_backtest_fixture_uses_same_contract_without_prediction_results() -> Non
     assert "prediction_metric" not in serialize_validation_plan(plan).decode()
 
 
+@pytest.mark.parametrize("study_type", list(ResearchStudyType))
+def test_plan_rejects_caller_owned_fold_list(study_type: ResearchStudyType) -> None:
+    plan = _session_plan(
+        environment=_environment(study_type),
+        horizon_sessions=1 if study_type is ResearchStudyType.PREDICTION else 0,
+    )
+    caller_folds = list(plan.folds)
+    with pytest.raises(ValidationPlanError, match="folds must be a tuple"):
+        replace(plan, folds=cast(tuple[ValidationFold, ...], caller_folds))
+
+
+@pytest.mark.parametrize("study_type", list(ResearchStudyType))
+def test_explicit_fold_tuple_detaches_mutable_input(
+    study_type: ResearchStudyType,
+) -> None:
+    baseline = _session_plan(
+        environment=_environment(study_type),
+        horizon_sessions=1 if study_type is ResearchStudyType.PREDICTION else 0,
+    )
+    caller_folds = list(baseline.folds)
+    plan = replace(baseline, folds=tuple(caller_folds))
+    content = serialize_validation_plan(plan)
+    overlapping_fold = replace(
+        baseline.folds[0],
+        test=_session_window(
+            "overlapping_test", PartitionRole.WALK_FORWARD_TEST, "2024-01-11"
+        ),
+    )
+    caller_folds.append(overlapping_fold)
+    caller_folds.pop(0)
+    # The same replacement would overlap the reserved holdout if accepted.
+    with pytest.raises(ValidationPlanError, match="final holdout"):
+        replace(plan, folds=tuple(caller_folds))
+    assert plan.folds == baseline.folds
+    assert plan.axis is baseline.axis
+    assert plan.plan_id == baseline.plan_id
+    assert serialize_validation_plan(plan) == content
+    caller_folds.clear()
+    assert plan.folds == baseline.folds
+    assert validate_validation_plan_manifest(plan, content) == plan.to_manifest()
+
+
+@pytest.mark.parametrize("folds", [(), (object(),)])
+def test_plan_rejects_empty_or_invalid_fold_tuple(folds: tuple[object, ...]) -> None:
+    with pytest.raises(ValidationPlanError, match="requires explicit folds"):
+        replace(_session_plan(), folds=cast(tuple[ValidationFold, ...], folds))
+
+
 def test_explicit_folds_represent_expanding_and_rolling_progression() -> None:
     first = ValidationFold(
         "fold_1",
