@@ -41,6 +41,8 @@ from quantforge.prediction import (
     ExcursionOutcomeLabeler,
     ForwardReturnOutcomeLabeler,
     NextSessionOpenGapOutcomeLabeler,
+    OvernightGapPredictionParameters,
+    OvernightGapPredictionStrategy,
     PredictionContextRequirements,
     PredictionTimeframeRequirement,
     TargetStopOutcomeLabeler,
@@ -1044,6 +1046,41 @@ def test_standalone_multi_session_price_basis_preserves_support_and_provenance(
 def test_dataset_provenance_requires_typed_factory_capture() -> None:
     with pytest.raises(TypeError, match="captured from a MarketDataset"):
         DatasetProvenance()
+
+
+@pytest.mark.parametrize(
+    "timeframe",
+    [
+        Timeframe.us_equity(SessionInterval()),
+        Timeframe.us_equity(IntradayInterval(timedelta(minutes=5))),
+    ],
+    ids=["daily_family", "intraday_family"],
+)
+def test_plain_prediction_rule_cannot_claim_a_separate_context_dataset(
+    timeframe: Timeframe,
+) -> None:
+    strategy = OvernightGapPredictionStrategy(OvernightGapPredictionParameters())
+    rule = ResearchRuleProvenance.capture_prediction(strategy)
+    assert rule.warm_up_timeframe_configuration_id is None
+    assert (
+        "context_requirements"
+        not in rule.configuration.configuration_snapshot.to_primitive()
+    )
+    environment = replace(
+        _environment(timeframe=timeframe),
+        research_rule=rule,
+        indicators=tuple(
+            IndicatorProvenance.capture(cast(IndicatorComponent, indicator), timeframe)
+            for indicator in strategy.required_indicators
+        ),
+    )
+    with pytest.raises(ValidationPlanError, match="captured context requirements"):
+        replace(
+            environment,
+            prediction_dataset=DatasetProvenance.from_market_dataset(
+                make_dataset(("100", "101"))
+            ),
+        )
 
 
 @pytest.mark.parametrize(

@@ -258,6 +258,13 @@ the prediction dataset. `outcome_dataset` exposes the authoritative membership
 and label input, falling back to `dataset` for single-input plans. Backtests
 cannot supply the prediction-only second input.
 
+The converse is enforced too: supplying `prediction_dataset` requires a rule
+with captured context requirements, identified by its factory-derived primary
+source timeframe. A plain prediction rule executes on the standalone QF-3
+dataset and cannot claim a second family input or its warm-up chronology. The
+guard reads immutable rule provenance, not a later component callback, and does
+not change the serialization or identity of accepted environments.
+
 The extra input is serialized with its validated metadata and fingerprint in
 the environment and plan identities. Changing either input invalidates cache
 reuse. Old context/session-outcome environments lacking the prediction input

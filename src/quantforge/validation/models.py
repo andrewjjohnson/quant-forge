@@ -1571,6 +1571,13 @@ class ResearchEnvironment:
         if not isinstance(cast(object, self.research_rule), ResearchRuleProvenance):
             raise ValidationPlanError("research rule provenance is invalid")
         if self.prediction_dataset is not None:
+            # Rule capture derives this field only from validated, snapshotted
+            # context requirements. Plain rules execute on the QF-3 dataset.
+            if self.research_rule.warm_up_timeframe_configuration_id is None:
+                raise ValidationPlanError(
+                    "a separate prediction dataset requires a rule with "
+                    "captured context requirements"
+                )
             if (
                 self.study_type is not ResearchStudyType.PREDICTION
                 or not isinstance(
