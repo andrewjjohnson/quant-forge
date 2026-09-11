@@ -269,6 +269,18 @@ provenance retains its existing QF-14 metadata; it does not supply QF-3 bars or
 action records and does not certify an executable QF-5 dataset. Execution still
 validates the actual artifacts when a consumer runs a study.
 
+Standalone prediction environments also enforce the gap outcome's captured
+`stock_split_label_policy: reject_raw_unadjusted_split_datasets`. They reuse
+`validate_overnight_gap_dataset_metadata()` from the existing gap outcome module
+to reject raw, unadjusted datasets containing splits. Adjusted datasets and
+raw datasets without splits (including cash-dividend datasets) retain the gap
+labeler's existing support. This reads only the immutable configuration and
+validated metadata already included in plan identity; it adds no provenance
+fields or identity changes for accepted plans. Planning never invokes an
+outcome's `validate_dataset()` or `label()` callback. This specific static policy
+check is not a general compatibility guarantee for custom outcomes or family-only
+provenance: full outcome validation still runs after predictions are fixed.
+
 The added standalone metadata is part of the QF-8 manifest and plan identity;
 earlier manifests without it fail exact cache validation and are not migrated.
 

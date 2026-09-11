@@ -39,6 +39,7 @@ from quantforge.indicators import (
 )
 from quantforge.prediction import (
     ForwardReturnOutcomeLabeler,
+    NextSessionOpenGapOutcomeLabeler,
     PredictionContextRequirements,
     PredictionTimeframeRequirement,
 )
@@ -862,6 +863,63 @@ def test_standalone_capture_rejects_forged_action_metadata() -> None:
     forged = replace(dataset, metadata=replace(dataset.metadata, dividend_count=0))
     with pytest.raises(MarketDataValidationError, match="counts or sessions"):
         DatasetProvenance.from_market_dataset(forged)
+
+
+def test_standalone_gap_outcome_rejects_raw_split_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = make_dataset(("100", "50"), splits=((date(2024, 7, 2), "2"),))
+    labeler = NextSessionOpenGapOutcomeLabeler()
+    outcome = OutcomeProvenance.capture_exchange_sessions(labeler)
+
+    # The captured policy stays authoritative even if the component changes.
+    def changed_configuration() -> dict[str, object]:
+        return {}
+
+    monkeypatch.setattr(labeler, "configuration", changed_configuration)
+    environment = _environment(outcome=outcome)
+    with pytest.raises(ValidationPlanError, match="mechanical split"):
+        replace(
+            environment,
+            dataset=DatasetProvenance.from_market_dataset(dataset),
+            aggregation_policies=(),
+        )
+
+
+@pytest.mark.parametrize(
+    "dataset",
+    [
+        make_dataset(("100", "101")),
+        make_dataset(("100", "101"), dividends=((date(2024, 7, 2), "1"),)),
+        make_dataset(
+            ("100", "101"),
+            adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+            splits=((date(2024, 7, 2), "2"),),
+        ),
+    ],
+)
+def test_standalone_gap_metadata_check_preserves_supported_datasets(
+    dataset: MarketDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    labeler = NextSessionOpenGapOutcomeLabeler()
+    labeler.validate_dataset(dataset)
+    outcome = OutcomeProvenance.capture_exchange_sessions(labeler)
+
+    def forbidden_callback(*args: object, **kwargs: object) -> None:
+        raise AssertionError("outcome callbacks must not run while planning")
+
+    monkeypatch.setattr(labeler, "validate_dataset", forbidden_callback)
+    monkeypatch.setattr(labeler, "label", forbidden_callback)
+    environment = replace(
+        _environment(outcome=outcome),
+        dataset=DatasetProvenance.from_market_dataset(dataset),
+        aggregation_policies=(),
+    )
+    plan = _session_plan(environment=environment)
+    manifest = serialize_validation_plan(plan)
+    assert validate_validation_plan_manifest(plan, manifest) == plan.to_manifest()
+    assert b"reject_raw_unadjusted_split_datasets" in manifest
 
 
 def test_dataset_provenance_requires_typed_factory_capture() -> None:

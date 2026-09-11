@@ -1715,6 +1715,34 @@ class ResearchEnvironment:
             raise ValidationPlanError(
                 "prediction research requires outcome configuration provenance"
             )
+        if (
+            self.study_type is ResearchStudyType.PREDICTION
+            and self.dataset.market_data_metadata is not None
+        ):
+            from quantforge.prediction.errors import InvalidPredictionDataError
+            from quantforge.prediction.outcomes.overnight_gap import (
+                RAW_SPLIT_LABEL_POLICY,
+                validate_overnight_gap_dataset_metadata,
+            )
+
+            for outcome in ordered_outcomes:
+                configuration = (
+                    outcome.configuration.configuration_snapshot.to_primitive()
+                )
+                parameters = configuration.get("parameters")
+                if (
+                    isinstance(parameters, dict)
+                    and parameters.get("stock_split_label_policy")
+                    == RAW_SPLIT_LABEL_POLICY
+                ):
+                    try:
+                        validate_overnight_gap_dataset_metadata(
+                            self.dataset.market_data_metadata
+                        )
+                    except InvalidPredictionDataError as error:
+                        raise ValidationPlanError(
+                            f"outcome is incompatible with standalone dataset: {error}"
+                        ) from error
         if self.schema_version != RESEARCH_ENVIRONMENT_SCHEMA_VERSION:
             raise ValidationPlanError(
                 "research environment schema version is unsupported"

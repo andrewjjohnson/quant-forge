@@ -99,6 +99,13 @@ not automatically accepted for raw-price backtest accounting. Family-only
 lineage does not certify QF-3 execution artifacts. The runner still validates
 the full dataset before executing; plan construction performs no backtest.
 
+For standalone prediction environments, the captured gap raw-split policy is
+checked against this same immutable metadata through the existing outcome
+module's pure metadata validator. No labeler callback is invoked during planning:
+future-bearing, potentially stateful outcome validation stays after predictions
+are fixed. This enforces the explicit serialized policy without adding a generic
+outcome compatibility framework or changing accepted plan identities.
+
 ## Consequences
 
 Partition helpers require existing validated QF-3 datasets or QF-20

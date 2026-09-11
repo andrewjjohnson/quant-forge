@@ -10,7 +10,7 @@ from quantforge.configuration import (
     decimal_to_primitive,
 )
 from quantforge.data.calendar import next_session_after
-from quantforge.data.models import AdjustmentMode, MarketDataset
+from quantforge.data.models import AdjustmentMode, DatasetMetadata, MarketDataset
 from quantforge.prediction._arithmetic import (
     DECIMAL_CAPITALS,
     DECIMAL_CLAMP,
@@ -32,6 +32,24 @@ from quantforge.prediction.errors import (
     InvalidPredictionOutputError,
 )
 from quantforge.prediction.models import PredictionDirection, PredictionSignal
+
+RAW_SPLIT_LABEL_POLICY = "reject_raw_unadjusted_split_datasets"
+
+
+def validate_overnight_gap_dataset_metadata(metadata: DatasetMetadata) -> None:
+    """Check the declared gap price-basis policy without calling a labeler.
+
+    Metadata must already be bound to a validated QF-3 dataset. This static check
+    does not replace post-prediction outcome validation or compute any labels.
+    """
+    if (
+        metadata.adjustment_mode is AdjustmentMode.UNADJUSTED
+        and metadata.split_count > 0
+    ):
+        raise InvalidPredictionDataError(
+            "raw unadjusted datasets containing stock splits are unsupported "
+            "because a mechanical split must not be labeled as an overnight gap"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,22 +120,14 @@ class NextSessionOpenGapOutcomeLabeler:
                 "future_sessions": self.required_future_sessions,
                 "outcome_field": "open",
                 "reference_field": "close",
-                "stock_split_label_policy": ("reject_raw_unadjusted_split_datasets"),
+                "stock_split_label_policy": RAW_SPLIT_LABEL_POLICY,
             },
             "required_market_fields": list(self.required_market_fields),
             "result_schema_version": self.result_schema_version,
         }
 
     def validate_dataset(self, dataset: MarketDataset) -> None:
-        metadata = dataset.metadata
-        if (
-            metadata.adjustment_mode is AdjustmentMode.UNADJUSTED
-            and metadata.split_count > 0
-        ):
-            raise InvalidPredictionDataError(
-                "raw unadjusted datasets containing stock splits are unsupported "
-                "because a mechanical split must not be labeled as an overnight gap"
-            )
+        validate_overnight_gap_dataset_metadata(dataset.metadata)
 
     def label(
         self, dataset: MarketDataset, signal_session: date
@@ -169,7 +179,7 @@ class NextSessionOpenGapOutcomeLabeler:
             "cash_dividend_label_policy": (
                 "observed_underlying_price_gap_includes_ex_dividend_effect"
             ),
-            "stock_split_label_policy": "reject_raw_unadjusted_split_datasets",
+            "stock_split_label_policy": RAW_SPLIT_LABEL_POLICY,
             "label_arithmetic": {
                 "decimal_precision": DECIMAL_PRECISION,
                 "rounding": DECIMAL_ROUNDING,
