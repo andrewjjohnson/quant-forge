@@ -669,10 +669,15 @@ class ConfigurationReference:
 
 @dataclass(frozen=True, slots=True, init=False)
 class OutcomeProvenance:
-    """One outcome configuration bound to its component's future reach."""
+    """Capture future reach and built-in multi-session price-basis requirements.
+
+    The typed adapter snapshots static requirements without retaining or calling
+    dataset/label callbacks. It does not certify arbitrary custom outcomes.
+    """
 
     configuration: ConfigurationReference
     future_horizon: TemporalOffset
+    requires_multi_session_price_basis: bool
 
     def __init__(self) -> None:
         raise TypeError(
@@ -684,16 +689,21 @@ class OutcomeProvenance:
             raise ValidationPlanError("outcome configuration reference is invalid")
         if not isinstance(cast(object, self.future_horizon), TemporalOffset):
             raise ValidationPlanError("outcome future horizon is invalid")
+        if type(self.requires_multi_session_price_basis) is not bool:
+            raise ValidationPlanError("outcome price-basis requirement is invalid")
 
     @property
     def configuration_id(self) -> str:
         return self.configuration.configuration_id
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "configuration": self.configuration.to_primitive(),
             "future_horizon": self.future_horizon.to_primitive(),
         }
+        if self.requires_multi_session_price_basis:
+            primitive["requires_multi_session_price_basis"] = True
+        return primitive
 
     @classmethod
     def capture_exchange_sessions(
@@ -730,6 +740,12 @@ class OutcomeProvenance:
         outcome: ConfiguredComponent,
         future_horizon: TemporalOffset,
     ) -> "OutcomeProvenance":
+        from quantforge.prediction.feature_outcomes import (
+            ExcursionOutcomeLabeler,
+            ForwardReturnOutcomeLabeler,
+            TargetStopOutcomeLabeler,
+        )
+
         instance = object.__new__(cls)
         object.__setattr__(
             instance,
@@ -737,6 +753,18 @@ class OutcomeProvenance:
             ConfigurationReference.capture_component("outcome_labeler", outcome),
         )
         object.__setattr__(instance, "future_horizon", future_horizon)
+        object.__setattr__(
+            instance,
+            "requires_multi_session_price_basis",
+            isinstance(
+                outcome,
+                (
+                    ForwardReturnOutcomeLabeler,
+                    ExcursionOutcomeLabeler,
+                    TargetStopOutcomeLabeler,
+                ),
+            ),
+        )
         instance.__post_init__()
         return instance
 
@@ -1720,12 +1748,24 @@ class ResearchEnvironment:
             and self.dataset.market_data_metadata is not None
         ):
             from quantforge.prediction.errors import InvalidPredictionDataError
+            from quantforge.prediction.feature_outcomes import (
+                validate_multi_session_price_basis_metadata,
+            )
             from quantforge.prediction.outcomes.overnight_gap import (
                 RAW_SPLIT_LABEL_POLICY,
                 validate_overnight_gap_dataset_metadata,
             )
 
             for outcome in ordered_outcomes:
+                if outcome.requires_multi_session_price_basis:
+                    try:
+                        validate_multi_session_price_basis_metadata(
+                            self.dataset.market_data_metadata
+                        )
+                    except InvalidPredictionDataError as error:
+                        raise ValidationPlanError(
+                            f"outcome is incompatible with standalone dataset: {error}"
+                        ) from error
                 configuration = (
                     outcome.configuration.configuration_snapshot.to_primitive()
                 )

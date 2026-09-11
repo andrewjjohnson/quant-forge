@@ -106,6 +106,15 @@ future-bearing, potentially stateful outcome validation stays after predictions
 are fixed. This enforces the explicit serialized policy without adding a generic
 outcome compatibility framework or changing accepted plan identities.
 
+The typed outcome adapter additionally captures the existing multi-session
+price-basis requirement for forward-return, excursion, and target/stop labelers.
+The environment and runtime labelers share their metadata-only rule: raw prices
+require complete actions and no splits, while adjusted prices retain their
+existing support. This captured requirement changes affected QF-8 plan identities
+and prevents reuse of earlier manifests lacking the check; underlying outcome
+configurations and historical study artifacts remain unchanged. No stateful
+callback, session indexing, or label computation is introduced into planning.
+
 ## Consequences
 
 Partition helpers require existing validated QF-3 datasets or QF-20

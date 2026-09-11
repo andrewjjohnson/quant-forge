@@ -281,6 +281,25 @@ outcome's `validate_dataset()` or `label()` callback. This specific static polic
 check is not a general compatibility guarantee for custom outcomes or family-only
 provenance: full outcome validation still runs after predictions are fixed.
 
+For `ForwardReturnOutcomeLabeler`, `ExcursionOutcomeLabeler`, and
+`TargetStopOutcomeLabeler` (including subclasses), `OutcomeProvenance` also
+factory-captures `requires_multi_session_price_basis=True` from the typed
+component, without relying on a configuration marker or retaining the component.
+Standalone environments reuse `validate_multi_session_price_basis_metadata()`
+from `quantforge.prediction.feature_outcomes`: raw unadjusted prices require
+complete corporate-action provenance and no recorded splits. Cash dividends
+remain supported, and adjusted datasets retain support even with incomplete raw
+action records. This deliberately preserves the gap outcome's less restrictive
+completeness policy rather than applying one price rule to every outcome.
+
+The true requirement is serialized in outcome provenance and changes affected
+QF-8 environment/plan identities. Earlier manifests missing it or weakening it
+fail exact cache validation; no historical plans are migrated. For other outcome
+types the false flag is omitted, preserving their existing serialization. The
+underlying outcome configurations, QF-11 study IDs, and label arithmetic are
+unchanged. Custom compatibility and family-only execution checks remain deferred
+to runtime; planning invokes neither labelers nor their session-index builders.
+
 The added standalone metadata is part of the QF-8 manifest and plan identity;
 earlier manifests without it fail exact cache validation and are not migrated.
 

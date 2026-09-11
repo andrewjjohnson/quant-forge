@@ -38,10 +38,12 @@ from quantforge.indicators import (
     SimpleMovingAverageParameters,
 )
 from quantforge.prediction import (
+    ExcursionOutcomeLabeler,
     ForwardReturnOutcomeLabeler,
     NextSessionOpenGapOutcomeLabeler,
     PredictionContextRequirements,
     PredictionTimeframeRequirement,
+    TargetStopOutcomeLabeler,
 )
 from quantforge.timeframes import (
     BarCompletion,
@@ -792,7 +794,15 @@ def test_standalone_accounting_compatibility_is_trading_only(
 ) -> None:
     dataset = build_dataset()
     provenance = DatasetProvenance.from_market_dataset(dataset)
-    prediction = replace(_environment(), dataset=provenance, aggregation_policies=())
+    # Gap outcomes permit incomplete action provenance when no split is recorded;
+    # multi-session outcomes deliberately impose a stricter price-basis contract.
+    labeler = NextSessionOpenGapOutcomeLabeler()
+    labeler.validate_dataset(dataset)
+    prediction = replace(
+        _environment(outcome=OutcomeProvenance.capture_exchange_sessions(labeler)),
+        dataset=provenance,
+        aggregation_policies=(),
+    )
     assert prediction.dataset.market_data_metadata == dataset.metadata
     with pytest.raises(ValidationPlanError, match=error_message):
         replace(
@@ -920,6 +930,115 @@ def test_standalone_gap_metadata_check_preserves_supported_datasets(
     manifest = serialize_validation_plan(plan)
     assert validate_validation_plan_manifest(plan, manifest) == plan.to_manifest()
     assert b"reject_raw_unadjusted_split_datasets" in manifest
+    assert outcome.requires_multi_session_price_basis is False
+    assert "requires_multi_session_price_basis" not in outcome.to_primitive()
+
+
+@pytest.fixture(params=("forward_return", "excursion", "target_stop"))
+def multi_session_labeler(
+    request: pytest.FixtureRequest,
+) -> ForwardReturnOutcomeLabeler | ExcursionOutcomeLabeler | TargetStopOutcomeLabeler:
+    if request.param == "forward_return":
+        return ForwardReturnOutcomeLabeler(1)
+    if request.param == "excursion":
+        return ExcursionOutcomeLabeler(1)
+    return TargetStopOutcomeLabeler(1, Decimal("0.1"), Decimal("0.05"))
+
+
+@pytest.mark.parametrize(
+    "dataset",
+    [
+        make_dataset(("100", "50"), splits=((date(2024, 7, 2), "2"),)),
+        make_dataset(("100", "101"), corporate_actions_complete=False),
+    ],
+    ids=("raw_split", "incomplete_raw_actions"),
+)
+def test_standalone_multi_session_outcome_rejects_incompatible_price_basis(
+    multi_session_labeler: (
+        ForwardReturnOutcomeLabeler | ExcursionOutcomeLabeler | TargetStopOutcomeLabeler
+    ),
+    dataset: MarketDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quantforge.prediction.errors import InvalidPredictionDataError
+
+    with pytest.raises(InvalidPredictionDataError, match="raw unadjusted"):
+        multi_session_labeler.validate_dataset(dataset)
+    outcome = OutcomeProvenance.capture_exchange_sessions(multi_session_labeler)
+
+    def forbidden_callback(*args: object, **kwargs: object) -> None:
+        raise AssertionError("outcome callbacks must not run while planning")
+
+    monkeypatch.setattr(multi_session_labeler, "validate_dataset", forbidden_callback)
+    monkeypatch.setattr(multi_session_labeler, "label", forbidden_callback)
+    monkeypatch.setattr(multi_session_labeler, "configuration", forbidden_callback)
+    with pytest.raises(ValidationPlanError, match="raw unadjusted"):
+        replace(
+            _environment(outcome=outcome),
+            dataset=DatasetProvenance.from_market_dataset(dataset),
+            aggregation_policies=(),
+        )
+
+
+@pytest.mark.parametrize(
+    "dataset",
+    [
+        make_dataset(("100", "101")),
+        make_dataset(("100", "101"), dividends=((date(2024, 7, 2), "1"),)),
+        make_dataset(
+            ("100", "101"),
+            adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+            splits=((date(2024, 7, 2), "2"),),
+        ),
+        make_dataset(
+            ("100", "101"),
+            adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+            corporate_actions_complete=False,
+        ),
+    ],
+    ids=("raw", "cash_dividend", "adjusted_split", "incomplete_adjusted_actions"),
+)
+def test_standalone_multi_session_price_basis_preserves_support_and_provenance(
+    multi_session_labeler: (
+        ForwardReturnOutcomeLabeler | ExcursionOutcomeLabeler | TargetStopOutcomeLabeler
+    ),
+    dataset: MarketDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    multi_session_labeler.validate_dataset(dataset)
+    configuration = multi_session_labeler.configuration()
+    outcome = OutcomeProvenance.capture_exchange_sessions(multi_session_labeler)
+    assert outcome.configuration_id == configuration_identity(configuration)
+    assert outcome.configuration.configuration_snapshot.to_primitive() == configuration
+    assert outcome.requires_multi_session_price_basis is True
+
+    def forbidden_callback(*args: object, **kwargs: object) -> None:
+        raise AssertionError("outcome callbacks must not run while planning")
+
+    monkeypatch.setattr(
+        type(multi_session_labeler), "validate_dataset", forbidden_callback
+    )
+    monkeypatch.setattr(type(multi_session_labeler), "label", forbidden_callback)
+    monkeypatch.setattr(multi_session_labeler, "configuration", forbidden_callback)
+    environment = replace(
+        _environment(outcome=outcome),
+        dataset=DatasetProvenance.from_market_dataset(dataset),
+        aggregation_policies=(),
+    )
+    plan = _session_plan(environment=environment)
+    manifest = serialize_validation_plan(plan)
+    assert validate_validation_plan_manifest(plan, manifest) == plan.to_manifest()
+    # Missing or weakened captured policy must not permit legacy cache reuse.
+    persisted = json.loads(manifest)
+    persisted_outcome = persisted["environment"]["outcomes"][0]
+    assert persisted_outcome["requires_multi_session_price_basis"] is True
+    persisted_outcome["requires_multi_session_price_basis"] = False
+    with pytest.raises(ValidationPlanIdentityError):
+        validate_validation_plan_manifest(plan, json.dumps(persisted).encode())
+    del persisted_outcome["requires_multi_session_price_basis"]
+    with pytest.raises(ValidationPlanIdentityError):
+        validate_validation_plan_manifest(plan, json.dumps(persisted).encode())
+    assert serialize_validation_plan(plan) == manifest
 
 
 def test_dataset_provenance_requires_typed_factory_capture() -> None:
