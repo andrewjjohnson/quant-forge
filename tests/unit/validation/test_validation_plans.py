@@ -1169,6 +1169,90 @@ def test_appending_future_data_cannot_change_historical_membership() -> None:
     assert appended.result_id == original.result_id
 
 
+@pytest.mark.parametrize("study_type", list(ResearchStudyType))
+@pytest.mark.parametrize("include_daily", [False, True])
+def test_session_plan_rejects_selected_intraday_sources(
+    study_type: ResearchStudyType,
+    include_daily: bool,
+) -> None:
+    intraday = Timeframe.us_equity(IntradayInterval(timedelta(minutes=5)))
+    indicator = cast(Indicator, SimpleMovingAverage(SimpleMovingAverageParameters(1)))
+    environment = _environment(study_type, timeframe=intraday, indicator=indicator)
+    if include_daily:
+        daily = Timeframe.us_equity(SessionInterval())
+        family = _multi_timeframe_family(intraday, daily)
+        environment = replace(
+            environment,
+            dataset=DatasetProvenance.from_dataset_family(
+                family, (DAILY_ID, WEEKLY_ID)
+            ),
+            timeframes=(intraday, daily),
+            research_rule=_rule(
+                environment.research_rule.component_type,
+                "intraday_rule",
+                (indicator,),
+                primary_timeframe=intraday,
+            ),
+        )
+    template = _session_plan()
+
+    def without_warm_up(window: ValidationWindow) -> ValidationWindow:
+        return replace(
+            window,
+            warm_up_observations=0,
+            warm_up_by_timeframe=tuple(
+                TimeframeWarmUpRequirement(timeframe, 0)
+                for timeframe in environment.timeframes
+            )
+            if include_daily
+            else (),
+        )
+
+    fold = template.folds[0]
+    with pytest.raises(ValidationPlanError, match="require timestamp"):
+        replace(
+            template,
+            environment=environment,
+            folds=(
+                replace(
+                    fold,
+                    development=without_warm_up(fold.development),
+                    selection=without_warm_up(cast(ValidationWindow, fold.selection)),
+                    test=without_warm_up(fold.test),
+                ),
+            ),
+            final_holdout=replace(
+                template.final_holdout,
+                window=without_warm_up(template.final_holdout.window),
+            ),
+            purge_policy=PurgePolicy(
+                TemporalOffset.sessions(
+                    1 if study_type is ResearchStudyType.PREDICTION else 0
+                ),
+                TemporalOffset.sessions(0),
+            ),
+        )
+
+
+@pytest.mark.parametrize("source_specific", [False, True])
+def test_session_window_cannot_select_intraday_bars_as_session_keys(
+    source_specific: bool,
+) -> None:
+    intraday = Timeframe.us_equity(IntradayInterval(timedelta(minutes=5)))
+    window = _session_window(
+        "selection", PartitionRole.SELECTION, "2024-01-09", warm_up=0
+    )
+    if source_specific:
+        window = replace(
+            window,
+            warm_up_by_timeframe=(TimeframeWarmUpRequirement(intraday, 0),),
+        )
+    with pytest.raises(ValidationPlanError, match="require timestamp"):
+        select_window_observations(
+            window, (_session("2024-01-09"),), source_timeframe=intraday
+        )
+
+
 def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
     timeframe = Timeframe.us_equity(IntradayInterval(timedelta(minutes=5)))
     environment = _environment(
@@ -1241,6 +1325,29 @@ def test_intraday_timestamp_horizon_and_embargo_are_exact() -> None:
         datetime(2024, 1, 2, 14, 45, tzinfo=UTC),
     )
     assert _timestamps(purged.purged) == (datetime(2024, 1, 2, 15, 0, tzinfo=UTC),)
+
+    # Distinct intraday keys in the same session supply exact prior-bar context.
+    source_observations = tuple(
+        _timestamp(f"2024-01-02T{clock_time}:00+00:00")
+        for clock_time in ("15:05", "15:10", "15:15", "15:20")
+    )
+    source_window = replace(
+        selection,
+        warm_up_observations=0,
+        warm_up_by_timeframe=(TimeframeWarmUpRequirement(timeframe, 2),),
+    )
+    selected = select_window_observations(
+        source_window, source_observations, source_timeframe=timeframe
+    )
+    assert selected.warm_up_context == source_observations[:2]
+    assert selected.study_observations == source_observations[2:]
+    assert selected.source_timeframe_configuration_id == timeframe.configuration_id
+    appended = select_window_observations(
+        source_window,
+        (*source_observations, _timestamp("2024-01-02T16:00:00+00:00")),
+        source_timeframe=timeframe,
+    )
+    assert appended.selection_id == selected.selection_id
 
 
 def test_backtest_fixture_uses_same_contract_without_prediction_results() -> None:

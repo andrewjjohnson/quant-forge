@@ -26,6 +26,13 @@ to UTC or actual exchange sessions under one QF-13 session policy. Partition
 intervals are closed and inclusive because their boundaries identify discrete
 observation membership, not continuous execution time.
 
+Any selected intraday source requires a timestamp-axis plan. A session date
+cannot identify multiple intraday bars, so accepting such a source in a
+session-axis plan would promise warm-up observations that cannot be represented.
+Plan construction and explicit intraday warm-up selection reject that mismatch.
+This checks selected sources, not unselected intraday ancestors in family
+lineage. Cross-axis source-key conversion is not part of this contract.
+
 Explicit folds contain development, optional selection, and test windows.
 Expanding and rolling progression rules are validated from those fixed windows.
 One reserved final holdout follows every fold. QF-8 defines membership only and

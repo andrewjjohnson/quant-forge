@@ -28,6 +28,16 @@ timeframe when the plan is session-indexed. This prevents a validation interval
 from being described as XNYS regular sessions while its inputs use another
 calendar, timezone, or session scope.
 
+A plan containing any selected intraday source must use timestamp boundaries.
+Session-date keys cannot represent multiple bars within one session, so a
+session-axis plan containing an `IntradayInterval` fails construction, including
+mixed intraday/daily plans and zero-warm-up sources. Warm-up selection also
+rejects an explicitly supplied intraday source for a session-axis window.
+Consumers must use timestamp keys for each intraday bar and timestamp-axis
+horizons/embargo; QF-8 does not convert between source and window axes. A family
+may still record intraday ancestors when only daily/weekly members are selected
+for a session-axis plan.
+
 ## Folds and final holdout
 
 One `ValidationFold` contains:

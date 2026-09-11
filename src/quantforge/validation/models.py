@@ -23,6 +23,7 @@ from quantforge.indicators import Indicator, IndicatorBackendIdentity
 from quantforge.timeframes import (
     DEFAULT_US_EQUITY_SESSION_POLICY,
     ExchangeSessionPolicy,
+    IntradayInterval,
     SessionInterval,
     Timeframe,
     TimeframeValidationError,
@@ -299,6 +300,14 @@ class ValidationWindow:
 
     def warm_up_observations_for(self, source_timeframe: Timeframe | None) -> int:
         """Resolve a source-specific count, failing on ambiguous multi-source use."""
+        if (
+            self.interval.axis is BoundaryAxis.EXCHANGE_SESSION
+            and source_timeframe is not None
+            and isinstance(source_timeframe.interval, IntradayInterval)
+        ):
+            raise ValidationPlanError(
+                "intraday source observations require timestamp validation boundaries"
+            )
         if not self.warm_up_by_timeframe:
             return self.warm_up_observations
         if source_timeframe is None:
@@ -1752,6 +1761,13 @@ class ValidationPlan:
         if self.purge_policy.axis is not axis:
             raise ValidationPlanError(
                 "validation purge policy does not match the plan temporal axis"
+            )
+        if axis is BoundaryAxis.EXCHANGE_SESSION and any(
+            isinstance(timeframe.interval, IntradayInterval)
+            for timeframe in self.environment.timeframes
+        ):
+            raise ValidationPlanError(
+                "intraday source observations require timestamp validation boundaries"
             )
         self._validate_research_warm_up((*windows, self.final_holdout.window))
         self._validate_outcome_horizon(axis)
