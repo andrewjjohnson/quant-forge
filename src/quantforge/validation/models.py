@@ -1607,6 +1607,10 @@ class ResearchEnvironment:
                 item.timeframe_configuration_id
                 for item in self.dataset.family_references
             }
+            if len(available_timeframe_ids) != len(self.dataset.family_references):
+                raise ValidationPlanError(
+                    "research inputs require exactly one dataset per timeframe"
+                )
         else:
             assert self.dataset.standalone_timeframe is not None
             available_timeframe_ids = {

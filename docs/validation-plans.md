@@ -179,7 +179,13 @@ folds and the holdout. It preserves:
 The configured timeframe set must exactly equal the timeframe set supplied by
 dataset provenance. Every QF-14 family reference names one exact QF-13
 timeframe; no referenced timeframe may be omitted and no unavailable timeframe
-may be added. `DatasetProvenance.from_market_dataset()` binds the legacy QF-3
+may be added. Each configured timeframe must map to exactly one selected dataset:
+selecting multiple family members with the same timeframe configuration ID is
+rejected for both study types, matching the existing context builder's unique
+timeframe-series contract. A family may retain alternative members on that
+timeframe, but a research environment must select only one. The exact selected
+dataset remains part of plan identity and cache validation.
+`DatasetProvenance.from_market_dataset()` binds the legacy QF-3
 daily dataset to its canonical one-session exchange timeframe, including its
 calendar and the calendar's authoritative exchange timezone, so it cannot be
 relabeled as intraday or advertised as multiple timeframes. The provider's

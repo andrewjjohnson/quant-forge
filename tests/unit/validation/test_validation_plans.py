@@ -575,6 +575,48 @@ def test_environment_rejects_timeframe_that_mismatches_family_reference() -> Non
         )
 
 
+@pytest.mark.parametrize("study_type", list(ResearchStudyType))
+@pytest.mark.parametrize("dataset_ids", [(DAILY_ID, WEEKLY_ID), (WEEKLY_ID, DAILY_ID)])
+def test_environment_rejects_multiple_selected_datasets_on_one_timeframe(
+    study_type: ResearchStudyType,
+    dataset_ids: tuple[str, ...],
+) -> None:
+    daily = Timeframe.us_equity(SessionInterval())
+    # Distinct lineage IDs may legitimately record the same timeframe.
+    family = _multi_timeframe_family(daily, daily)
+    provenance = DatasetProvenance.from_dataset_family(family, dataset_ids)
+    assert len(provenance.family_references) == 2
+    with pytest.raises(ValidationPlanError, match="one dataset per timeframe"):
+        replace(_environment(study_type), dataset=provenance)
+
+
+@pytest.mark.parametrize("study_type", list(ResearchStudyType))
+def test_environment_selects_one_of_same_timeframe_family_members(
+    study_type: ResearchStudyType,
+) -> None:
+    daily = Timeframe.us_equity(SessionInterval())
+    family = _multi_timeframe_family(daily, daily)
+    baseline = _environment(study_type)
+    plans = tuple(
+        _session_plan(
+            environment=replace(
+                baseline,
+                dataset=DatasetProvenance.from_dataset_family(family, (dataset_id,)),
+            ),
+            horizon_sessions=1 if study_type is ResearchStudyType.PREDICTION else 0,
+        )
+        for dataset_id in (DAILY_ID, WEEKLY_ID)
+    )
+    for plan, dataset_id in zip(plans, (DAILY_ID, WEEKLY_ID), strict=True):
+        assert plan.environment.dataset.dataset_ids == (dataset_id,)
+        assert plan.environment.dataset.family_manifest_id == family.manifest_id
+        content = serialize_validation_plan(plan)
+        assert validate_validation_plan_manifest(plan, content) == plan.to_manifest()
+    assert plans[0].plan_id != plans[1].plan_id
+    with pytest.raises(ValidationPlanIdentityError):
+        validate_validation_plan_manifest(plans[1], serialize_validation_plan(plans[0]))
+
+
 def test_environment_binds_aggregation_to_selected_dataset_lineage() -> None:
     environment = _environment()
     mismatched_policy = AggregationPolicy(
