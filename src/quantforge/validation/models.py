@@ -1,6 +1,6 @@
 """Immutable, study-neutral validation-plan contracts."""
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from itertools import pairwise
@@ -16,9 +16,11 @@ from quantforge.data import (
     AggregationPolicy,
     DatasetFamily,
     DatasetFamilyReference,
+    DatasetMetadata,
     MarketDataset,
     validate_market_dataset,
 )
+from quantforge.data.identity import serialize_metadata_values
 from quantforge.indicators import Indicator, IndicatorBackendIdentity
 from quantforge.timeframes import (
     DEFAULT_US_EQUITY_SESSION_POLICY,
@@ -1269,6 +1271,7 @@ class DatasetProvenance:
     family_references: tuple[DatasetFamilyReference, ...] = ()
     dataset_family: DatasetFamily | None = None
     standalone_timeframe: Timeframe | None = None
+    market_data_metadata: DatasetMetadata | None = None
 
     def __init__(self) -> None:
         raise TypeError(
@@ -1293,6 +1296,10 @@ class DatasetProvenance:
         if len({item.dataset_id for item in references}) != len(references):
             raise ValidationPlanError("dataset family references must be unique")
         if references:
+            if self.market_data_metadata is not None:
+                raise ValidationPlanError(
+                    "family-backed provenance cannot define standalone market metadata"
+                )
             if self.standalone_timeframe is not None:
                 raise ValidationPlanError(
                     "family-backed provenance cannot define a standalone timeframe"
@@ -1332,6 +1339,14 @@ class DatasetProvenance:
             raise ValidationPlanError(
                 "standalone dataset provenance requires its canonical timeframe"
             )
+        elif (
+            self.market_data_metadata is None
+            or ordered_ids != (self.market_data_metadata.dataset_id,)
+            or self.dataset_fingerprint != self.market_data_metadata.data_sha256
+        ):
+            raise ValidationPlanError(
+                "standalone dataset provenance requires its validated market metadata"
+            )
         object.__setattr__(self, "dataset_ids", ordered_ids)
         object.__setattr__(self, "family_references", references)
 
@@ -1363,6 +1378,7 @@ class DatasetProvenance:
             dataset.metadata.data_sha256,
             (dataset.metadata.dataset_id,),
             standalone_timeframe=timeframe,
+            market_data_metadata=dataset.metadata,
         )
 
     @classmethod
@@ -1407,6 +1423,7 @@ class DatasetProvenance:
         family_references: tuple[DatasetFamilyReference, ...] = (),
         dataset_family: DatasetFamily | None = None,
         standalone_timeframe: Timeframe | None = None,
+        market_data_metadata: DatasetMetadata | None = None,
     ) -> "DatasetProvenance":
         instance = object.__new__(cls)
         object.__setattr__(instance, "dataset_fingerprint", dataset_fingerprint)
@@ -1414,6 +1431,7 @@ class DatasetProvenance:
         object.__setattr__(instance, "family_references", family_references)
         object.__setattr__(instance, "dataset_family", dataset_family)
         object.__setattr__(instance, "standalone_timeframe", standalone_timeframe)
+        object.__setattr__(instance, "market_data_metadata", market_data_metadata)
         instance.__post_init__()
         return instance
 
@@ -1441,6 +1459,14 @@ class DatasetProvenance:
             "dataset_fingerprint": self.dataset_fingerprint,
             "dataset_ids": list(self.dataset_ids),
             "dataset_family": family,
+            "market_data_metadata": (
+                None
+                if self.market_data_metadata is None
+                else cast(
+                    PrimitiveMapping,
+                    serialize_metadata_values(asdict(self.market_data_metadata)),
+                )
+            ),
             "standalone_timeframe": (
                 None
                 if self.standalone_timeframe is None
@@ -1534,6 +1560,31 @@ class ResearchEnvironment:
             raise ValidationPlanError(
                 "trading/backtest research requires execution provenance"
             )
+        if (
+            self.study_type is ResearchStudyType.TRADING_BACKTEST
+            and self.dataset.market_data_metadata is not None
+        ):
+            from quantforge.backtesting.config import DividendPolicy
+            from quantforge.backtesting.errors import InvalidMarketDataError
+            from quantforge.backtesting.validation import (
+                validate_backtest_dataset_metadata,
+            )
+
+            assert self.execution is not None
+            execution = (
+                self.execution.configuration.configuration_snapshot.to_primitive()
+            )
+            try:
+                validate_backtest_dataset_metadata(
+                    self.dataset.market_data_metadata,
+                    dividend_policy=DividendPolicy(
+                        cast(str, execution["dividend_policy"])
+                    ),
+                )
+            except InvalidMarketDataError as error:
+                raise ValidationPlanError(
+                    f"dataset is incompatible with trading execution: {error}"
+                ) from error
         if not self.timeframes or any(
             not isinstance(item, Timeframe)
             for item in cast(tuple[object, ...], self.timeframes)

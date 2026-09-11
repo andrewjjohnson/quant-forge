@@ -56,6 +56,7 @@ from quantforge.backtesting.models import (
     TradeRecord,
 )
 from quantforge.backtesting.runner import fingerprint_market_bars, run_backtest
+from quantforge.backtesting.validation import validate_backtest_dataset_metadata
 
 __all__ = [
     "BACKTEST_ARTIFACT_FILENAMES",
@@ -103,6 +104,7 @@ __all__ = [
     "fingerprint_market_bars",
     "load_backtest_manifest",
     "run_backtest",
+    "validate_backtest_dataset_metadata",
     "validate_backtest_result_artifact",
     "validate_backtest_result_export",
 ]

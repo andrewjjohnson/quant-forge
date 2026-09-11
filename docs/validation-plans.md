@@ -194,6 +194,28 @@ but unrelated fingerprint, timeframe, or manifest cannot be paired through a
 public constructor, and the verified manifest or standalone timeframe
 participates in environment and plan identity.
 
+Standalone capture also retains the validated immutable QF-3 `DatasetMetadata`
+as `market_data_metadata`, serialized with the existing canonical metadata
+policy. This includes adjustment mode, OHLC/volume basis, adjusted-field usage,
+corporate-action policy/completeness, action counts and sessions, action snapshot
+ID, and verified missing-session provenance. It remains bound to the captured
+dataset ID and data fingerprint. Changing actions can change the dataset and
+plan identities even when OHLCV bytes are unchanged.
+
+For standalone trading environments, metadata compatibility is checked by the
+same `validate_backtest_dataset_metadata()` function used by the QF-5 runner
+after full dataset validation. Adjusted prices, inconsistent raw basis,
+incomplete actions, internal missing sessions, and dividends paired with
+`REJECT_IF_DIVIDENDS` are rejected during environment construction. Dividend
+datasets require an explicit `CASH_DIVIDENDS` or `PRICE_RETURN_ONLY` policy.
+Prediction environments retain QF-3's broader dataset support. Family-only
+provenance retains its existing QF-14 metadata; it does not supply QF-3 bars or
+action records and does not certify an executable QF-5 dataset. Execution still
+validates the actual artifacts when a consumer runs a study.
+
+The added standalone metadata is part of the QF-8 manifest and plan identity;
+earlier manifests without it fail exact cache validation and are not migrated.
+
 Every primary and contextual rule requirement must have selected family
 references on its exact timeframe with the same `FeedScope`, including inputs
 that declare no indicators. Matching compares the complete existing scope

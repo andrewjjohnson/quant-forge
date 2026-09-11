@@ -11,6 +11,7 @@ import pytest
 from quantforge.backtesting import (
     BacktestConfig,
     BasisPointSlippage,
+    DividendPolicy,
     ExplicitZeroFees,
     FixedCommission,
 )
@@ -22,6 +23,10 @@ from quantforge.data import (
     DatasetFamily,
     DatasetLineage,
     FeedScope,
+    MarketDataset,
+)
+from quantforge.data import (
+    ValidationError as MarketDataValidationError,
 )
 from quantforge.data.identity import canonical_json_bytes
 from quantforge.indicators import (
@@ -219,13 +224,18 @@ def _rule(
     raise AssertionError(f"unsupported fixture research rule type: {component_type}")
 
 
-def _backtest_provenance(slippage_bps: str = "5") -> BacktestProvenance:
+def _backtest_provenance(
+    slippage_bps: str = "5",
+    *,
+    dividend_policy: DividendPolicy = DividendPolicy.REJECT_IF_DIVIDENDS,
+) -> BacktestProvenance:
     return BacktestProvenance.capture(
         BacktestConfig(
             Decimal("100000"),
             FixedCommission(Decimal(0)),
             ExplicitZeroFees(),
             BasisPointSlippage(Decimal(slippage_bps)),
+            dividend_policy=dividend_policy,
         )
     )
 
@@ -626,6 +636,112 @@ def test_standalone_dataset_uses_exchange_not_provider_timezone() -> None:
     assert (
         provenance.standalone_timeframe.session_policy.timezone_name == "Europe/London"
     )
+
+
+@pytest.mark.parametrize(
+    ("build_dataset", "error_message"),
+    [
+        (
+            lambda: make_dataset(
+                ("100", "101"), adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED
+            ),
+            "adjusted market data",
+        ),
+        (
+            lambda: make_dataset(("100", "101"), corporate_actions_complete=False),
+            "complete explicit corporate actions",
+        ),
+        (
+            lambda: make_dataset(("100", "101"), adjusted_fields_used=True),
+            "consistent raw provider OHLCV",
+        ),
+        (
+            lambda: make_dataset(
+                ("100", "101"),
+                sessions=(date(2024, 7, 1), date(2024, 7, 3)),
+                missing_sessions=(date(2024, 7, 2),),
+            ),
+            "missing expected sessions",
+        ),
+    ],
+)
+def test_standalone_accounting_compatibility_is_trading_only(
+    build_dataset: Callable[[], MarketDataset],
+    error_message: str,
+) -> None:
+    dataset = build_dataset()
+    provenance = DatasetProvenance.from_market_dataset(dataset)
+    prediction = replace(_environment(), dataset=provenance, aggregation_policies=())
+    assert prediction.dataset.market_data_metadata == dataset.metadata
+    with pytest.raises(ValidationPlanError, match=error_message):
+        replace(
+            _environment(ResearchStudyType.TRADING_BACKTEST),
+            dataset=provenance,
+            aggregation_policies=(),
+        )
+
+
+@pytest.mark.parametrize("dividend_policy", list(DividendPolicy))
+def test_standalone_trading_binds_dividend_policy_to_validated_action_metadata(
+    dividend_policy: DividendPolicy,
+) -> None:
+    dataset = make_dataset(("100", "101"), dividends=((date(2024, 7, 2), "1"),))
+    environment = _environment(
+        ResearchStudyType.TRADING_BACKTEST,
+        execution=_backtest_provenance(dividend_policy=dividend_policy),
+    )
+    provenance = DatasetProvenance.from_market_dataset(dataset)
+    if dividend_policy is DividendPolicy.REJECT_IF_DIVIDENDS:
+        with pytest.raises(
+            ValidationPlanError, match="dataset contains cash dividends"
+        ):
+            replace(environment, dataset=provenance, aggregation_policies=())
+    else:
+        accepted = replace(environment, dataset=provenance, aggregation_policies=())
+        plan = _session_plan(environment=accepted, horizon_sessions=0)
+        manifest = serialize_validation_plan(plan)
+        assert dataset.metadata.corporate_action_snapshot_id.encode() in manifest
+        assert dividend_policy.value.encode() in manifest
+        assert validate_validation_plan_manifest(plan, manifest) == plan.to_manifest()
+
+
+def test_standalone_metadata_preserves_basis_actions_and_cache_identity() -> None:
+    plain = make_dataset(("100", "101"))
+    actions = make_dataset(("100", "101"), splits=((date(2024, 7, 2), "2"),))
+    baseline = replace(
+        _environment(ResearchStudyType.TRADING_BACKTEST),
+        dataset=DatasetProvenance.from_market_dataset(plain),
+        aggregation_policies=(),
+    )
+    changed = replace(baseline, dataset=DatasetProvenance.from_market_dataset(actions))
+    assert baseline.dataset.dataset_fingerprint == changed.dataset.dataset_fingerprint
+    assert baseline.environment_id != changed.environment_id
+    original = _session_plan(environment=baseline, horizon_sessions=0)
+    plan = _session_plan(environment=changed, horizon_sessions=0)
+    content = serialize_validation_plan(plan)
+    metadata = cast(
+        PrimitiveMapping, changed.dataset.to_primitive()["market_data_metadata"]
+    )
+    assert metadata["adjustment_mode"] == "unadjusted"
+    assert metadata["ohlc_basis"] == "raw_provider"
+    assert metadata["volume_basis"] == "raw_provider"
+    assert metadata["split_count"] == 1
+    assert metadata["corporate_actions_complete"] is True
+    assert (
+        metadata["corporate_action_snapshot_id"]
+        == actions.metadata.corporate_action_snapshot_id
+    )
+    with pytest.raises(ValidationPlanIdentityError):
+        validate_validation_plan_manifest(plan, serialize_validation_plan(original))
+    metadata["split_count"] = 0
+    assert serialize_validation_plan(plan) == content
+
+
+def test_standalone_capture_rejects_forged_action_metadata() -> None:
+    dataset = make_dataset(("100", "101"), dividends=((date(2024, 7, 2), "1"),))
+    forged = replace(dataset, metadata=replace(dataset.metadata, dividend_count=0))
+    with pytest.raises(MarketDataValidationError, match="counts or sessions"):
+        DatasetProvenance.from_market_dataset(forged)
 
 
 def test_dataset_provenance_requires_typed_factory_capture() -> None:

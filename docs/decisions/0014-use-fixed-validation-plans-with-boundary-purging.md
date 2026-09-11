@@ -91,6 +91,14 @@ references on its exact timeframe and complete feed scope, even when no
 indicator is declared on that input. The comparison uses the immutable rule
 configuration and existing family references already recorded in plan identity.
 
+Standalone QF-3 capture retains its validated immutable dataset metadata,
+including price/volume basis and corporate-action snapshot, counts, completeness,
+and policy. Trading environment construction reuses QF-5's metadata compatibility
+checks against the captured dividend policy, so a valid prediction dataset is
+not automatically accepted for raw-price backtest accounting. Family-only
+lineage does not certify QF-3 execution artifacts. The runner still validates
+the full dataset before executing; plan construction performs no backtest.
+
 ## Consequences
 
 Prediction and trading/backtest studies can share leakage controls without
