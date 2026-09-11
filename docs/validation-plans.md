@@ -346,6 +346,15 @@ remain valid. Callers loading collections must explicitly capture `tuple(keys)`
 so later source-list edits cannot change membership or result identities.
 Existing valid tuple-based result serialization is unchanged.
 
+Direct construction also enforces a single strictly chronological, unique
+sequence across each record's paired fields. Both collections must share one
+temporal axis and, for sessions, the exact session policy. Every retained key
+must precede every purged key, and every warm-up key must precede every study
+key; overlapping or interleaved membership is rejected rather than reconciled.
+Either or both collections may be empty. These structural checks reuse the
+partition chronology validator; artifact/plan binding remains the responsibility
+of the purge and selection helpers.
+
 `serialize_validation_plan()` writes the complete manifest with QuantForge's
 canonical sorted compact JSON policy. Scientific timestamps are UTC, durations
 are integer microseconds, exchange sessions are ISO dates, and set-like

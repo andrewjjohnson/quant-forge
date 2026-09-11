@@ -1,20 +1,31 @@
 """Construction-time immutability of exported partition membership records."""
 
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date, datetime
 from typing import cast
 
 import pytest
 
 from quantforge.data.identity import canonical_json_bytes
+from quantforge.timeframes import ExchangeSessionPolicy
 from quantforge.validation import (
     ExchangeSessionBoundary,
     PurgedPartitionObservations,
+    TimestampBoundary,
     ValidationBoundary,
     ValidationPlanError,
     WindowObservationSelection,
 )
 
 COLLECTION_FIELDS = ("retained", "purged", "warm_up_context", "study_observations")
+SESSION_A = ExchangeSessionBoundary(date(2024, 1, 2))
+SESSION_B = ExchangeSessionBoundary(date(2024, 1, 3))
+SESSION_C = ExchangeSessionBoundary(date(2024, 1, 4))
+TIMESTAMP_A = TimestampBoundary(datetime(2024, 1, 2, 15, tzinfo=UTC))
+TIMESTAMP_B = TimestampBoundary(datetime(2024, 1, 3, 15, tzinfo=UTC))
+LONDON_B = ExchangeSessionBoundary(
+    date(2024, 1, 3), ExchangeSessionPolicy("XLON", "Europe/London")
+)
 
 
 def _result(
@@ -39,6 +50,70 @@ def _result(
         source_dataset_id=identity,
         source_timeframe_configuration_id=identity,
     )
+
+
+def _paired_result(
+    kind: str,
+    earlier: tuple[ValidationBoundary, ...],
+    later: tuple[ValidationBoundary, ...],
+) -> PurgedPartitionObservations | WindowObservationSelection:
+    result = _result("retained" if kind == "purge" else "warm_up_context", earlier)
+    if isinstance(result, PurgedPartitionObservations):
+        return replace(result, purged=later)
+    return replace(result, study_observations=later)
+
+
+@pytest.mark.parametrize("field_name", COLLECTION_FIELDS)
+@pytest.mark.parametrize(
+    "observations",
+    [
+        (SESSION_A, SESSION_A),
+        (SESSION_B, SESSION_A),
+        (SESSION_A, TIMESTAMP_B),
+        (SESSION_A, LONDON_B),
+    ],
+    ids=["duplicate", "reversed", "mixed-axes", "mixed-session-policies"],
+)
+def test_result_rejects_invalid_collection_chronology(
+    field_name: str,
+    observations: tuple[ValidationBoundary, ...],
+) -> None:
+    with pytest.raises(ValidationPlanError):
+        _result(field_name, observations)
+
+
+@pytest.mark.parametrize("kind", ["purge", "selection"])
+@pytest.mark.parametrize(
+    ("earlier", "later"),
+    [
+        ((SESSION_A, SESSION_B), (SESSION_B, SESSION_C)),
+        ((SESSION_B,), (SESSION_A,)),
+        ((SESSION_A, SESSION_C), (SESSION_B,)),
+        ((SESSION_A,), (TIMESTAMP_B,)),
+        ((SESSION_A,), (LONDON_B,)),
+    ],
+    ids=["overlap", "reversed", "interleaved", "mixed-axes", "mixed-session-policies"],
+)
+def test_result_rejects_incompatible_cross_field_membership(
+    kind: str,
+    earlier: tuple[ValidationBoundary, ...],
+    later: tuple[ValidationBoundary, ...],
+) -> None:
+    with pytest.raises(ValidationPlanError):
+        _paired_result(kind, earlier, later)
+
+
+@pytest.mark.parametrize("kind", ["purge", "selection"])
+@pytest.mark.parametrize("keys", [(SESSION_A, SESSION_B), (TIMESTAMP_A, TIMESTAMP_B)])
+def test_result_preserves_valid_ordered_and_empty_membership(
+    kind: str,
+    keys: tuple[ValidationBoundary, ...],
+) -> None:
+    for earlier, later in ((keys[:1], keys[1:]), ((), keys), (keys, ()), ((), ())):
+        result = _paired_result(kind, earlier, later)
+        assert canonical_json_bytes(result.to_primitive()) == canonical_json_bytes(
+            _paired_result(kind, earlier, later).to_primitive()
+        )
 
 
 @pytest.mark.parametrize("field_name", COLLECTION_FIELDS)

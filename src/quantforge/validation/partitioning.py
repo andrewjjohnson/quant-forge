@@ -70,6 +70,16 @@ def _validate_window_coverage(
         )
 
 
+def _validate_result_chronology(
+    earlier: tuple[ValidationBoundary, ...],
+    later: tuple[ValidationBoundary, ...],
+) -> None:
+    """Require one unique chronology with all earlier members before later ones."""
+    chronology = (*earlier, *later)
+    if chronology:
+        _validate_observations(chronology, chronology[0])
+
+
 def _validate_source_observations(
     observations: tuple[ValidationBoundary, ...],
     reference: ValidationBoundary,
@@ -170,6 +180,7 @@ class PurgedPartitionObservations:
     def __post_init__(self) -> None:
         _validate_result_collection(self.retained, "retained")
         _validate_result_collection(self.purged, "purged")
+        _validate_result_chronology(self.retained, self.purged)
 
     def _identity_primitive(self) -> PrimitiveMapping:
         return {
@@ -368,6 +379,7 @@ class WindowObservationSelection:
     def __post_init__(self) -> None:
         _validate_result_collection(self.warm_up_context, "warm_up_context")
         _validate_result_collection(self.study_observations, "study_observations")
+        _validate_result_chronology(self.warm_up_context, self.study_observations)
 
     def _identity_primitive(self) -> PrimitiveMapping:
         return {
