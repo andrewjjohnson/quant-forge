@@ -1443,6 +1443,36 @@ class DatasetProvenance:
         }
 
 
+def _validate_context_feed_scopes(
+    configuration: PrimitiveMapping,
+    references: tuple[DatasetFamilyReference, ...],
+) -> None:
+    """Reconcile every captured context requirement with selected lineage."""
+    context = cast(PrimitiveMapping | None, configuration.get("context_requirements"))
+    if context is None:
+        return
+    # Rule capture already validates this shape, including indicator-free inputs.
+    requirements = (
+        cast(PrimitiveMapping, context["primary"]),
+        *cast(list[PrimitiveMapping], context["contextual"]),
+    )
+    for requirement in requirements:
+        timeframe = cast(PrimitiveMapping, requirement["timeframe"])
+        selected_references = tuple(
+            reference
+            for reference in references
+            if reference.timeframe_configuration_id == timeframe["configuration_id"]
+        )
+        if not selected_references or any(
+            reference.feed_scope.to_primitive() != requirement.get("feed_scope")
+            for reference in selected_references
+        ):
+            raise ValidationPlanError(
+                "research rule context feed scope must match selected dataset "
+                f"family provenance for timeframe: {timeframe['configuration_id']}"
+            )
+
+
 class ResearchStudyType(StrEnum):
     """Validation consumers that share partitions without sharing result models."""
 
@@ -1526,6 +1556,10 @@ class ResearchEnvironment:
             raise ValidationPlanError(
                 "configured research timeframes must exactly match dataset provenance"
             )
+        _validate_context_feed_scopes(
+            self.research_rule.configuration.configuration_snapshot.to_primitive(),
+            self.dataset.family_references,
+        )
         ordered_aggregations = _ordered_unique_references(
             self.aggregation_policies, "aggregation policies"
         )

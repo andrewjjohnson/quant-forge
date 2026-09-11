@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-25
+- Updated: 2026-09-11
 - Jira: [QF-8](https://frostfiredigital-37308542.atlassian.net/browse/QF-8)
 
 ## Context
@@ -38,8 +39,17 @@ equal the maximum outcome reach.
 
 Before an earlier partition is used, observations are removed when their label
 horizon plus explicit embargo reaches or crosses the next protected boundary.
-Exchange-session distances use the configured exchange calendar rather than
-weekdays. Warm-up observations are returned in a separate context-only field
+Session boundaries must identify real sessions in the configured exchange
+calendar, but session-axis label horizons and embargo count the supplied
+observations, matching the existing session-indexed outcome labelers. For
+example, if Friday's bar is missing and Monday starts the protected interval,
+Thursday's one-observation label reaches Monday and Thursday must be purged.
+Counting backward to calendar Friday would incorrectly retain that label.
+Positive session separation requires a protected-window observation in the
+chronology and fails closed without it. Timestamp-axis horizons and embargo
+remain exact elapsed durations; they do not count rows.
+
+Warm-up observations are returned in a separate context-only field
 that is never eligible for selection. A single-timeframe plan may use a scalar
 count; a multi-timeframe plan records and selects an independent count for every
 exact source timeframe. Every window must provide enough preceding context for
@@ -69,6 +79,10 @@ calendar rather than provider serialization metadata. QF-14 members retain
 their manifest-bound timeframe identities. If a selected family member is derived,
 the environment's aggregation reference is factory-captured from and must
 exactly match that family's typed aggregation policy.
+Every primary and contextual rule requirement must also match selected family
+references on its exact timeframe and complete feed scope, even when no
+indicator is declared on that input. The comparison uses the immutable rule
+configuration and existing family references already recorded in plan identity.
 
 ## Consequences
 
@@ -76,8 +90,11 @@ Prediction and trading/backtest studies can share leakage controls without
 sharing prediction metrics, orders, trades, portfolio state, or equity curves.
 Changing any scientific environment field, boundary, horizon, embargo, warm-up,
 fold mode, or holdout reservation produces a different deterministic plan ID.
-Appending future observations cannot change membership inside an already fixed
-historical interval. Multi-timeframe consumers must select warm-up separately
+Appending observations after the first protected observation cannot change
+membership inside an already fixed historical interval. Correcting the observed
+chronology before that boundary can change label reach and purge membership,
+and the changed dataset must carry its corresponding fingerprint.
+Multi-timeframe consumers must select warm-up separately
 from each source chronology; daily and weekly observation counts are never
 treated as interchangeable units.
 
@@ -99,9 +116,12 @@ holdout-consumption ledger remain later work.
 - **Use calendar dates or elapsed durations for every plan.** Rejected because
   exchange holidays, early closes, daylight-saving transitions, and intraday
   timestamps are materially different temporal domains.
-- **Purge a fixed number of observed rows.** Rejected because missing rows could
-  weaken an exchange-session horizon and because timestamp labels need exact
-  elapsed reach.
+- **Resolve session-indexed label reach only from the exchange calendar.**
+  Rejected because existing labelers advance through observed bars. Missing
+  sessions can make a label reach beyond a calendar-derived purge cutoff.
+- **Use observed-row counts for every temporal axis.** Rejected because
+  timestamp labels require exact elapsed reach. Observed counts apply only to
+  session-indexed label horizons and their session-axis embargo.
 - **Include warm-up rows in the partition and rely on callers not to select
   them.** Rejected because the unsafe state would be representable and easy to
   misuse.
@@ -114,7 +134,8 @@ Unit fixtures cover prediction and backtest studies, session and timestamp
 boundaries, expanding and rolling folds, overlap rejection, outcome-horizon
 purging, embargo, warm-up separation, future-data appends, family/timeframe and
 manifest identity mismatch, standalone timeframe relabeling, source-specific
-multi-timeframe warm-up, and historical native-backend preservation. A
-deterministic integration test captures existing QF-11 rule, outcome, and
+multi-timeframe warm-up, missing-session label reach, missing protected
+chronology, exact context feed scopes, and historical native-backend preservation.
+A deterministic integration test captures existing QF-11 rule, outcome, and
 indicator contracts directly into a validation plan. Canonical manifest tests
 reject non-canonical bytes, tampering, and unsafe cross-plan reuse.

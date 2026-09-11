@@ -184,6 +184,17 @@ but unrelated fingerprint, timeframe, or manifest cannot be paired through a
 public constructor, and the verified manifest or standalone timeframe
 participates in environment and plan identity.
 
+Every primary and contextual rule requirement must have selected family
+references on its exact timeframe with the same `FeedScope`, including inputs
+that declare no indicators. Matching compares the complete existing scope
+contract (coverage, venue, and provider scope); IEX-only data cannot satisfy a
+consolidated requirement. A missing family reference or missing/contradictory
+scope is rejected before the environment is accepted. The check reads the
+rule's immutable configuration snapshot, so later edits to the component cannot
+change the captured requirements. Existing snapshots and family references
+already serialize these fields and include them in environment/plan identity;
+no additional persistence schema is introduced.
+
 Aggregation provenance is derived from the same selected dataset lineage. When
 any selected QF-14 member is derived, the environment must contain exactly the
 typed `AggregationPolicy` recorded by that family; a generic reference, changed

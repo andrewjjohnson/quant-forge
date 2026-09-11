@@ -30,7 +30,11 @@ from quantforge.indicators import (
     SimpleMovingAverage,
     SimpleMovingAverageParameters,
 )
-from quantforge.prediction import ForwardReturnOutcomeLabeler
+from quantforge.prediction import (
+    ForwardReturnOutcomeLabeler,
+    PredictionContextRequirements,
+    PredictionTimeframeRequirement,
+)
 from quantforge.timeframes import (
     IntradayInterval,
     SessionInterval,
@@ -70,6 +74,7 @@ from quantforge.validation import (
 )
 
 from ..helpers import make_dataset
+from ..prediction.test_multi_timeframe_study import FixtureMultiTimeframeRule
 
 SOURCE_ID = "qf8-source-1m"
 DAILY_ID = "qf8-derived-daily"
@@ -137,6 +142,7 @@ class _FixtureRule:
 
             def requirement(timeframe: Timeframe) -> PrimitiveMapping:
                 return {
+                    "feed_scope": FeedScope.consolidated().to_primitive(),
                     "timeframe": {
                         "configuration_id": timeframe.configuration_id,
                         "configuration": timeframe.to_primitive(),
@@ -625,6 +631,92 @@ def test_standalone_dataset_uses_exchange_not_provider_timezone() -> None:
 def test_dataset_provenance_requires_typed_factory_capture() -> None:
     with pytest.raises(TypeError, match="captured from a MarketDataset"):
         DatasetProvenance()
+
+
+@pytest.mark.parametrize(
+    "feed_scope",
+    [
+        FeedScope.consolidated(),
+        FeedScope.iex_only(),
+        FeedScope.single_venue("XNYS"),
+        FeedScope.provider_defined("fixture_feed"),
+    ],
+)
+@pytest.mark.parametrize("requirement_role", ["primary", "contextual"])
+def test_context_feed_scope_matches_selected_family_and_survives_capture(
+    feed_scope: FeedScope,
+    requirement_role: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    family = replace(_family(), feed_scope=feed_scope)
+    primary = family.source_timeframe
+    daily = Timeframe.us_equity(SessionInterval())
+    requirements = PredictionContextRequirements(
+        PredictionTimeframeRequirement(primary, feed_scope),
+        (PredictionTimeframeRequirement(daily, feed_scope),),
+    )
+    component = FixtureMultiTimeframeRule(requirements)
+    provenance = ResearchRuleProvenance.capture_prediction(component)
+    # Every requirement is indicator-free: feed validation must not depend on
+    # the presence of an IndicatorTimeframeBinding.
+    assert provenance.required_indicator_bindings == ()
+    environment = ResearchEnvironment(
+        ResearchStudyType.PREDICTION,
+        DatasetProvenance.from_dataset_family(family, (SOURCE_ID, DAILY_ID)),
+        (primary, daily),
+        provenance,
+        aggregation_policies=(
+            ConfigurationReference.capture_aggregation_policy(
+                family.aggregation_policy
+            ),
+        ),
+        outcomes=(_session_outcome(1),),
+    )
+    mismatched_scope = (
+        FeedScope.iex_only()
+        if feed_scope == FeedScope.consolidated()
+        else FeedScope.consolidated()
+    )
+    with pytest.raises(ValidationPlanError, match="context feed scope"):
+        replace(
+            environment,
+            dataset=DatasetProvenance.from_dataset_family(
+                replace(family, feed_scope=mismatched_scope), (SOURCE_ID, DAILY_ID)
+            ),
+        )
+
+    original_id = environment.environment_id
+    original_manifest = environment.to_primitive()
+    component.context_requirements = PredictionContextRequirements(
+        PredictionTimeframeRequirement(primary, mismatched_scope),
+        (PredictionTimeframeRequirement(daily, mismatched_scope),),
+    )
+    assert replace(environment).to_primitive() == original_manifest
+    assert environment.environment_id == original_id
+    with pytest.raises(ValidationPlanError, match="context feed scope"):
+        replace(
+            environment,
+            research_rule=ResearchRuleProvenance.capture_prediction(component),
+        )
+
+    # A custom component must not bypass the check for an indicator-free
+    # contextual input merely because its primary input has a matching scope.
+    component.context_requirements = requirements
+    configuration = component.configuration()
+    context = cast(PrimitiveMapping, configuration["context_requirements"])
+    requirement = (
+        cast(PrimitiveMapping, context["primary"])
+        if requirement_role == "primary"
+        else cast(list[PrimitiveMapping], context["contextual"])[0]
+    )
+    requirement["feed_scope"] = mismatched_scope.to_primitive()
+    monkeypatch.setattr(component, "configuration", lambda: configuration)
+    expected_timeframe = primary if requirement_role == "primary" else daily
+    with pytest.raises(ValidationPlanError, match=expected_timeframe.configuration_id):
+        replace(
+            environment,
+            research_rule=ResearchRuleProvenance.capture_prediction(component),
+        )
 
 
 def test_dataset_provenance_rejects_unknown_family_member() -> None:
