@@ -109,6 +109,14 @@ def _calendar_timezone_name(calendar: _ExchangeCalendar) -> str:
     return key if isinstance(key, str) else str(timezone)
 
 
+def resolve_exchange_timezone_name(calendar_name: str) -> str:
+    """Return the authoritative IANA timezone declared by an exchange calendar."""
+    value = cast(object, calendar_name)
+    if not isinstance(value, str) or not value.strip():
+        raise TimeframeValidationError("calendar name must be a nonempty string")
+    return _calendar_timezone_name(_load_calendar(value))
+
+
 def _validate_plain_time(value: object, field_name: str) -> time:
     if not isinstance(value, time) or value.tzinfo is not None:
         raise TimeframeValidationError(
@@ -691,5 +699,6 @@ __all__ = [
     "TimeframeValidationError",
     "TradingWeekInterval",
     "resolve_exchange_session",
+    "resolve_exchange_timezone_name",
     "resolve_trading_week",
 ]

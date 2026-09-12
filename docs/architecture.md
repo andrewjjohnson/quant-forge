@@ -76,6 +76,12 @@ configured evaluator. The original QF-11 study supplies the concrete
 next-session-open gap label and directional evaluator. Prediction studies never
 create orders, fills, or portfolio results. See `docs/prediction-analysis.md`.
 
+QF-8 represents contextual predictions with both their standalone daily
+prediction/outcome dataset and their feature context family. Session-based
+outcome membership/purging is independent of timestamped context selection;
+both inputs participate in fixed validation-plan identity. It reuses QF-20/QF-28
+alignment and QF-11 outcome contracts without executing them while planning.
+
 QF-32 adds deterministic finite parameter comparison above that prediction
 branch. It reuses QF-6 search-space, constraint, persistence/resume, ranking,
 and neighborhood-stability concepts, but executes QF-11/QF-28 studies directly
@@ -477,17 +483,40 @@ QF-5 calculates typed, nullable performance summaries and a cost-matched
 full-period buy-and-hold benchmark without altering the underlying ledgers.
 Undefined ratios serialize as `null`; metrics never insert `NaN` or infinity.
 
+QF-8 implements the shared validation-plan boundary in
+`quantforge.validation`. It defines deterministic exchange-session or timestamp
+windows for development, optional selection, walk-forward test, and a reserved
+final holdout. One fixed research environment binds dataset-family/fingerprint,
+timeframe/session/aggregation, indicator/backend, typed rule or strategy plus
+its warm-up/indicator requirements, outcome, and complete typed backtest
+configuration when applicable across every window. Horizon-aware
+purging, explicit embargo, and structurally non-selecting indicator warm-up
+context prevent protected observations from entering training or selection.
+Standalone daily datasets and family members are bound to their exact available
+timeframes. Multi-timeframe warm-up remains expressed and selected separately in
+each source chronology rather than comparing counts across bar frequencies;
+rules bind each required indicator configuration to every source timeframe on
+which it is declared. Aggregation provenance for derived family members must
+exactly match the typed policy embedded in the same QF-14 family.
+Standalone provenance is factory-captured from a validated dataset, and its
+exchange timezone is resolved from the exchange calendar independently of the
+provider serialization timezone.
+The contracts are neutral between prediction and trading/backtest studies and
+do not run either kind of study. See `docs/validation-plans.md`.
+
 Responsibilities:
 
 - calculate performance and risk metrics;
 - compare against benchmarks;
-- implement chronological splits;
+- define and validate identity-bearing chronological partitions;
+- purge future-label overlap and enforce explicit embargo;
 - assemble out-of-sample results;
 - flag low sample sizes and fragile outcomes.
 
 Must not:
 
 - tune strategy parameters using test or holdout periods;
+- attach protected outcomes to warm-up or development membership;
 - rewrite trades;
 - conceal invalid runs.
 

@@ -22,6 +22,13 @@ QF-5 orders -> fills -> cash/position state -> trades/equity
 
 ## Public API
 
+`validate_backtest_dataset_metadata(metadata, dividend_policy=...)` checks
+raw-price and corporate-action compatibility without executing a backtest. Both
+the runner and standalone QF-8 trading environments use this check. Callers must
+first validate the complete `MarketDataset` with `validate_market_dataset()`;
+the metadata check alone cannot verify bars, corporate-action records, or their
+fingerprints and does not replace complete-dataset validation.
+
 ```python
 from decimal import Decimal
 from pathlib import Path

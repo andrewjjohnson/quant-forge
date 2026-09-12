@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "description": "One-session forward prediction label before a protected selection session",
+  "observations": [
+    "2023-12-28",
+    "2023-12-29",
+    "2024-01-02",
+    "2024-01-03",
+    "2024-01-04",
+    "2024-01-05",
+    "2024-01-08",
+    "2024-01-09",
+    "2024-01-10",
+    "2024-01-11"
+  ],
+  "expected_retained_development": [
+    "2024-01-02",
+    "2024-01-03",
+    "2024-01-04",
+    "2024-01-05"
+  ],
+  "expected_purged_development": ["2024-01-08"]
+}

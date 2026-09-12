@@ -257,6 +257,14 @@ incomplete corporate-action provenance or recorded stock splits fail closed
 because an unknown or mechanical split is not a research return. Split-adjusted
 datasets do not require a complete raw corporate-action snapshot for these
 labels.
+The public metadata-only helper
+`quantforge.prediction.feature_outcomes.validate_multi_session_price_basis_metadata()`
+owns this shared rule for forward-return, excursion, and target/stop labelers.
+It requires metadata from an already validated QF-3 dataset and does not index
+bars or compute labels. QF-8 captures the requirement through its typed outcome
+adapter and applies this helper during standalone environment construction;
+stateful runtime dataset validation still follows fixed predictions. Outcome
+configurations and existing QF-11/QF-7 identities are unchanged.
 The default supported composition uses 1, 2, 5, 10, and 20 sessions; arbitrary
 positive session horizons are configurable.
 

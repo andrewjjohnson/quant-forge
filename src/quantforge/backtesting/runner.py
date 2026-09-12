@@ -42,6 +42,7 @@ from quantforge.backtesting.models import (
     SplitAdjustmentRecord,
     TradeRecord,
 )
+from quantforge.backtesting.validation import validate_backtest_dataset_metadata
 from quantforge.configuration import (
     Primitive,
     PrimitiveMapping,
@@ -54,7 +55,6 @@ from quantforge.data.models import (
     SCHEMA_VERSION as MARKET_DATA_SCHEMA_VERSION,
 )
 from quantforge.data.models import (
-    AdjustmentMode,
     CashDividend,
     DailyBar,
     MarketDataset,
@@ -141,55 +141,10 @@ def _validate_dataset(dataset: MarketDataset, config: BacktestConfig) -> None:
             "verified corporate-action provenance"
         )
     try:
-        recomputed_missing_sessions = validate_market_dataset(dataset_value)
+        validate_market_dataset(dataset_value)
     except MarketDataValidationError as error:
         raise InvalidMarketDataError(str(error)) from error
-    if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
-        raise InvalidMarketDataError(
-            "adjusted market data is unsupported by raw-price explicit "
-            "corporate-action accounting"
-        )
-    internal_missing_sessions = tuple(
-        missing_session
-        for missing_session in recomputed_missing_sessions
-        if metadata.actual_first_session
-        <= missing_session
-        <= metadata.actual_last_session
-    )
-    if internal_missing_sessions:
-        rendered = ", ".join(
-            missing_session.isoformat() for missing_session in internal_missing_sessions
-        )
-        raise InvalidMarketDataError(
-            "dataset has missing expected sessions within its observed range: "
-            f"{rendered}"
-        )
-    if not metadata.corporate_actions_complete:
-        raise InvalidMarketDataError(
-            "unadjusted market data requires complete explicit corporate actions"
-        )
-    if (
-        metadata.ohlc_basis != "raw_provider"
-        or metadata.volume_basis != "raw_provider"
-        or metadata.adjusted_fields_used
-    ):
-        raise InvalidMarketDataError(
-            "corporate-action execution requires consistent raw provider OHLCV"
-        )
-    if metadata.corporate_action_policy != (
-        "separate_provider_reported_cash_dividends_and_splits"
-    ):
-        raise InvalidMarketDataError(
-            "market data has unsupported corporate-action semantics"
-        )
-    if (
-        config.dividend_policy is DividendPolicy.REJECT_IF_DIVIDENDS
-        and metadata.dividend_count > 0
-    ):
-        raise InvalidMarketDataError(
-            "dataset contains cash dividends; select DividendPolicy.PRICE_RETURN_ONLY "
-            "or DividendPolicy.CASH_DIVIDENDS explicitly"
-        )
+    validate_backtest_dataset_metadata(metadata, dividend_policy=config.dividend_policy)
 
 
 def _order_id(run_id: str, signal_id: str) -> str:

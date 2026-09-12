@@ -11,7 +11,12 @@ from quantforge.configuration import (
     configuration_identity,
     decimal_to_primitive,
 )
-from quantforge.data.models import AdjustmentMode, DailyBar, MarketDataset
+from quantforge.data.models import (
+    AdjustmentMode,
+    DailyBar,
+    DatasetMetadata,
+    MarketDataset,
+)
 from quantforge.prediction._arithmetic import arithmetic
 from quantforge.prediction.contracts import OutcomeLabel, PredictionOutcome
 from quantforge.prediction.errors import (
@@ -100,7 +105,7 @@ class ForwardReturnOutcomeLabeler(_SessionIndexedOutcomeLabeler):
         )
 
     def validate_dataset(self, dataset: MarketDataset) -> None:
-        _validate_price_basis(dataset)
+        validate_multi_session_price_basis_metadata(dataset.metadata)
         self._prepare_session_indexes(dataset)
 
     def label(
@@ -239,7 +244,7 @@ class ExcursionOutcomeLabeler(_SessionIndexedOutcomeLabeler):
         )
 
     def validate_dataset(self, dataset: MarketDataset) -> None:
-        _validate_price_basis(dataset)
+        validate_multi_session_price_basis_metadata(dataset.metadata)
         self._prepare_session_indexes(dataset)
 
     def label(
@@ -476,7 +481,7 @@ class TargetStopOutcomeLabeler(_SessionIndexedOutcomeLabeler):
         )
 
     def validate_dataset(self, dataset: MarketDataset) -> None:
-        _validate_price_basis(dataset)
+        validate_multi_session_price_basis_metadata(dataset.metadata)
         self._prepare_session_indexes(dataset)
 
     def label(
@@ -730,8 +735,12 @@ def _build_session_indexes(dataset: MarketDataset) -> dict[date, int]:
     return {bar.session_date: index for index, bar in enumerate(dataset.bars)}
 
 
-def _validate_price_basis(dataset: MarketDataset) -> None:
-    metadata = dataset.metadata
+def validate_multi_session_price_basis_metadata(metadata: DatasetMetadata) -> None:
+    """Check validated QF-3 metadata without indexing bars or computing labels.
+
+    Raw prices require complete action provenance and no recorded splits;
+    adjusted prices retain the existing labelers' broader action support.
+    """
     if metadata.adjustment_mode is not AdjustmentMode.UNADJUSTED:
         return
     if not metadata.corporate_actions_complete:

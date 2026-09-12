@@ -161,6 +161,15 @@ copies that alias their top-level component-owned object or serialize
 differently. The complete fixed prediction payload, including contemporaneous
 features, participates in each generic row identity.
 
+`quantforge.prediction.outcomes.overnight_gap.validate_overnight_gap_dataset_metadata()`
+is the shared metadata-only check for the gap outcome's declared raw-split
+rejection policy. Its input must be metadata from an already validated QF-3
+dataset. Both the gap labeler's runtime validation and standalone QF-8 planning
+reuse it; it neither computes outcomes nor calls stateful labeler methods.
+Planning checks the captured policy, while the runner retains the callback
+ordering above. Passing this one policy check does not certify compatibility
+with arbitrary outcome implementations.
+
 To add a future prediction experiment, define a typed prediction record and
 rule when an existing one is unsuitable, define typed outcome values and an
 `OutcomeLabeler`, define the corresponding typed `PredictionEvaluator`, compose
