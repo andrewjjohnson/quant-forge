@@ -94,6 +94,13 @@ the observed bar sequence when a dataset records a missing session. For
 timestamp plans, both values are exact elapsed durations serialized as integer
 microseconds.
 
+`OutcomeProvenance.capture_exchange_sessions()` requires a positive integer
+future-session horizon, matching the QF-11 prediction runner. Zero, negative,
+boolean, and non-integer horizons are rejected before provenance can enter a
+plan; capture never executes outcome callbacks. This does not prohibit zero
+embargo or a zero label horizon for trading plans without outcomes. Accepted
+outcome serialization and plan identities are unchanged.
+
 `purge_partition_observations()` compares an earlier partition with its next
 protected interval: development with selection/test, selection with test, and a
 test segment with the next test or final holdout. The common

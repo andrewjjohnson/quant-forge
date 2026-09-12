@@ -715,11 +715,11 @@ class OutcomeProvenance:
         cls,
         outcome: SessionOutcomeComponent,
     ) -> "OutcomeProvenance":
-        """Capture an existing QF-11-style session-indexed outcome labeler."""
+        """Capture a QF-11-style outcome with a positive future-session horizon."""
         sessions = cast(object, outcome.required_future_sessions)
-        if isinstance(sessions, bool) or not isinstance(sessions, int) or sessions < 0:
+        if isinstance(sessions, bool) or not isinstance(sessions, int) or sessions < 1:
             raise ValidationPlanError(
-                "outcome required future sessions must be a non-negative integer"
+                "outcome required future sessions must be a positive integer"
             )
         return cls._capture_component(
             outcome,

@@ -2,15 +2,19 @@ from datetime import date
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from quantforge.data import (
     SessionAggregationPolicy,
     TimeframeBarSeries,
     aggregate_session_dataset,
 )
 from quantforge.prediction import (
+    InvalidPredictionConfigurationError,
     NextSessionOpenGapOutcomeLabeler,
     OvernightGapPredictionParameters,
     OvernightGapPredictionStrategy,
+    run_prediction_study,
 )
 from quantforge.timeframes import SessionInterval, Timeframe
 from quantforge.validation import (
@@ -31,6 +35,7 @@ from quantforge.validation import (
     ValidationFold,
     ValidationInterval,
     ValidationPlan,
+    ValidationPlanError,
     ValidationWindow,
     select_window_observations,
 )
@@ -39,6 +44,37 @@ from tests.unit.data.test_multi_timeframe import (
     _persisted_source_dataset,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.unit.helpers import make_dataset
+from tests.unit.prediction.test_study import (
+    _study,  # pyright: ignore[reportPrivateUsage]
+)
+
+
+@pytest.mark.parametrize("horizon", [0, -1, True, False, 1.5, "1"])
+def test_session_outcome_capture_rejects_horizons_rejected_by_runner(
+    horizon: object,
+) -> None:
+    events: list[str] = []
+    study = _study(events, horizon=cast(int, horizon))
+    with pytest.raises(
+        InvalidPredictionConfigurationError, match="positive future-session horizon"
+    ):
+        run_prediction_study(make_dataset(("100", "101", "102")), study)
+    with pytest.raises(ValidationPlanError, match="positive integer"):
+        OutcomeProvenance.capture_exchange_sessions(study.outcome_labeler)
+    assert events == []
+
+
+@pytest.mark.parametrize("horizon", [1, 2])
+def test_session_outcome_capture_preserves_valid_runner_horizon(horizon: int) -> None:
+    events: list[str] = []
+    study = _study(events, horizon=horizon)
+    outcome = OutcomeProvenance.capture_exchange_sessions(study.outcome_labeler)
+    assert events == []
+    result = run_prediction_study(make_dataset(("100", "101", "102")), study)
+    assert outcome.future_horizon == TemporalOffset.sessions(
+        result.configuration.required_future_sessions
+    )
+    assert outcome.configuration_id == study.outcome_labeler.configuration_id
 
 
 def test_warm_up_consumes_existing_validated_source_and_derived_artifacts(
