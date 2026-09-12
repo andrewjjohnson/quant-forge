@@ -98,8 +98,21 @@ microseconds.
 future-session horizon, matching the QF-11 prediction runner. Zero, negative,
 boolean, and non-integer horizons are rejected before provenance can enter a
 plan; capture never executes outcome callbacks. This does not prohibit zero
-embargo or a zero label horizon for trading plans without outcomes. Accepted
-outcome serialization and plan identities are unchanged.
+embargo or a zero label horizon for trading plans without outcomes.
+
+The session-outcome adapter also requires and immutably snapshots
+`required_market_fields` (a non-empty tuple of sorted, unique, non-empty names)
+and `result_schema_version` (a non-empty string). These QF-11 contract properties
+are serialized separately even when the component does not repeat them in
+`configuration()`. Changing either changes environment and plan identity without
+changing the component's own configuration ID. Missing or invalid declarations
+fail capture; editing a component after capture cannot change the fixed plan.
+
+These added session-outcome identity fields invalidate earlier QF-8 manifests
+that omit them; cache validation rejects those manifests without migration.
+Timestamp-outcome capture does not claim the QF-11 session contract and omits
+both fields, preserving its serialization. Outcome-free trading plans, QF-11
+study identities, and label computations are unchanged.
 
 `purge_partition_observations()` compares an earlier partition with its next
 protected interval: development with selection/test, selection with test, and a

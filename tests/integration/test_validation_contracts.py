@@ -1,14 +1,18 @@
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
+from quantforge.configuration import PrimitiveMapping
 from quantforge.data import (
     SessionAggregationPolicy,
     TimeframeBarSeries,
     aggregate_session_dataset,
 )
+from quantforge.data.identity import canonical_json_bytes
 from quantforge.prediction import (
     InvalidPredictionConfigurationError,
     NextSessionOpenGapOutcomeLabeler,
@@ -29,6 +33,7 @@ from quantforge.validation import (
     ResearchEnvironment,
     ResearchRuleProvenance,
     ResearchStudyType,
+    SessionOutcomeComponent,
     TemporalOffset,
     TimestampBoundary,
     TrainingWindowMode,
@@ -36,8 +41,11 @@ from quantforge.validation import (
     ValidationInterval,
     ValidationPlan,
     ValidationPlanError,
+    ValidationPlanIdentityError,
     ValidationWindow,
     select_window_observations,
+    serialize_validation_plan,
+    validate_validation_plan_manifest,
 )
 from tests.unit.data.test_multi_timeframe import (
     _family,  # pyright: ignore[reportPrivateUsage]
@@ -45,8 +53,138 @@ from tests.unit.data.test_multi_timeframe import (
 )
 from tests.unit.helpers import make_dataset
 from tests.unit.prediction.test_study import (
+    FutureCloseOutcomeLabeler,
     _study,  # pyright: ignore[reportPrivateUsage]
 )
+from tests.unit.validation.test_validation_plans import (
+    _environment,  # pyright: ignore[reportPrivateUsage]
+    _session_plan,  # pyright: ignore[reportPrivateUsage]
+)
+
+
+class _SeparatelyConfiguredOutcome(FutureCloseOutcomeLabeler):
+    """QF-11 does not require contract properties inside configuration()."""
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "component_type": "prediction_outcome_labeler",
+            "contract_version": "1",
+            "implementation_version": self.implementation_version,
+            "parameters": {"future_sessions": self.required_future_sessions},
+        }
+
+
+@pytest.mark.parametrize(
+    "attribute", ["required_market_fields", "result_schema_version"]
+)
+def test_session_outcome_contract_fields_change_plan_identity(attribute: str) -> None:
+    events: list[str] = []
+    labeler = _SeparatelyConfiguredOutcome(events)
+    study = replace(_study(events), outcome_labeler=labeler)
+    dataset = make_dataset(("100", "101", "102"))
+    original = OutcomeProvenance.capture_exchange_sessions(labeler)
+    assert original.required_market_fields == ("close",)
+    assert original.result_schema_version == "1"
+    plan = _session_plan(environment=_environment(outcome=original))
+    content = serialize_validation_plan(plan)
+    first_result = run_prediction_study(dataset, study)
+    events.clear()
+
+    setattr(
+        labeler,
+        attribute,
+        ("close", "open") if attribute == "required_market_fields" else "2",
+    )
+    changed = OutcomeProvenance.capture_exchange_sessions(labeler)
+    assert events == []
+    changed_plan = _session_plan(environment=_environment(outcome=changed))
+    second_result = run_prediction_study(dataset, study)
+    assert original.configuration_id == changed.configuration_id
+    assert changed.required_market_fields == labeler.required_market_fields
+    assert changed.result_schema_version == labeler.result_schema_version
+    assert (
+        first_result.configuration.to_primitive()
+        != second_result.configuration.to_primitive()
+    )
+    assert original.to_primitive() != changed.to_primitive()
+    assert plan.environment.environment_id != changed_plan.environment.environment_id
+    assert plan.plan_id != changed_plan.plan_id
+    assert serialize_validation_plan(plan) == content
+    assert validate_validation_plan_manifest(plan, content) == plan.to_manifest()
+    with pytest.raises(ValidationPlanIdentityError):
+        validate_validation_plan_manifest(changed_plan, content)
+    for field_name in ("required_market_fields", "result_schema_version"):
+        corrupted = plan.to_manifest()
+        # Canonical bytes cannot make omitted outcome identity safe to reuse.
+        outcome_mapping = cast(
+            list[PrimitiveMapping],
+            cast(PrimitiveMapping, corrupted["environment"])["outcomes"],
+        )[0]
+        outcome_mapping.pop(field_name)
+        with pytest.raises(ValidationPlanIdentityError):
+            validate_validation_plan_manifest(plan, canonical_json_bytes(corrupted))
+
+
+@pytest.mark.parametrize(
+    ("attribute", "invalid", "message"),
+    [
+        ("required_market_fields", (), "required market fields"),
+        ("required_market_fields", ["close"], "required market fields"),
+        ("required_market_fields", ("open", "close"), "required market fields"),
+        ("required_market_fields", ("close", "close"), "required market fields"),
+        ("required_market_fields", ("",), "required market fields"),
+        ("required_market_fields", (1,), "required market fields"),
+        ("required_market_fields", None, "required market fields"),
+        ("result_schema_version", "", "result schema version"),
+        ("result_schema_version", None, "result schema version"),
+    ],
+)
+def test_session_outcome_capture_rejects_invalid_contract_fields(
+    attribute: str,
+    invalid: object,
+    message: str,
+) -> None:
+    events: list[str] = []
+    labeler = _SeparatelyConfiguredOutcome(events)
+    setattr(labeler, attribute, invalid)
+    study = replace(_study(events), outcome_labeler=labeler)
+    with pytest.raises(InvalidPredictionConfigurationError, match=message):
+        run_prediction_study(make_dataset(("100", "101", "102")), study)
+    with pytest.raises(ValidationPlanError, match=message):
+        OutcomeProvenance.capture_exchange_sessions(labeler)
+    assert events == []
+
+
+@pytest.mark.parametrize(
+    "attribute", ["required_market_fields", "result_schema_version"]
+)
+def test_session_outcome_capture_rejects_missing_contract_fields(
+    attribute: str,
+) -> None:
+    labeler = _SeparatelyConfiguredOutcome([])
+    component = SimpleNamespace(
+        name=labeler.name,
+        implementation_version=labeler.implementation_version,
+        configuration_id=labeler.configuration_id,
+        configuration=labeler.configuration,
+        required_future_sessions=labeler.required_future_sessions,
+        required_market_fields=labeler.required_market_fields,
+        result_schema_version=labeler.result_schema_version,
+    )
+    delattr(component, attribute)
+    with pytest.raises(ValidationPlanError, match=attribute.replace("_", " ")):
+        OutcomeProvenance.capture_exchange_sessions(
+            cast(SessionOutcomeComponent, component)
+        )
+
+
+@pytest.mark.parametrize("version", [1, True, " "])
+def test_session_outcome_schema_requires_nonblank_string(version: object) -> None:
+    labeler = _SeparatelyConfiguredOutcome([])
+    labeler.result_schema_version = cast(str, version)
+    with pytest.raises(ValidationPlanError, match="result schema version"):
+        OutcomeProvenance.capture_exchange_sessions(labeler)
 
 
 @pytest.mark.parametrize("horizon", [0, -1, True, False, 1.5, "1"])

@@ -2400,6 +2400,12 @@ def test_outcome_provenance_requires_typed_component_capture() -> None:
     assert timestamp_outcome.future_horizon == TemporalOffset.duration(
         timedelta(minutes=10)
     )
+    assert timestamp_outcome.required_market_fields is None
+    assert timestamp_outcome.result_schema_version is None
+    assert timestamp_outcome.to_primitive() == {
+        "configuration": timestamp_outcome.configuration.to_primitive(),
+        "future_horizon": timestamp_outcome.future_horizon.to_primitive(),
+    }
 
 
 def test_timestamp_outcome_rejects_invalid_component_horizon() -> None:

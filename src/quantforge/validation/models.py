@@ -574,6 +574,12 @@ class SessionOutcomeComponent(ConfiguredComponent, Protocol):
     @property
     def required_future_sessions(self) -> int: ...
 
+    @property
+    def required_market_fields(self) -> tuple[str, ...]: ...
+
+    @property
+    def result_schema_version(self) -> str: ...
+
 
 class TimestampOutcomeComponent(ConfiguredComponent, Protocol):
     """Existing outcome component with an exact elapsed future horizon."""
@@ -674,7 +680,7 @@ class ConfigurationReference:
 
 @dataclass(frozen=True, slots=True, init=False)
 class OutcomeProvenance:
-    """Capture future reach and built-in multi-session price-basis requirements.
+    """Capture future reach, session result contracts, and price-basis needs.
 
     The typed adapter snapshots static requirements without retaining or calling
     dataset/label callbacks. It does not certify arbitrary custom outcomes.
@@ -683,6 +689,8 @@ class OutcomeProvenance:
     configuration: ConfigurationReference
     future_horizon: TemporalOffset
     requires_multi_session_price_basis: bool
+    required_market_fields: tuple[str, ...] | None
+    result_schema_version: str | None
 
     def __init__(self) -> None:
         raise TypeError(
@@ -696,6 +704,30 @@ class OutcomeProvenance:
             raise ValidationPlanError("outcome future horizon is invalid")
         if type(self.requires_multi_session_price_basis) is not bool:
             raise ValidationPlanError("outcome price-basis requirement is invalid")
+        if self.future_horizon.axis is BoundaryAxis.EXCHANGE_SESSION:
+            fields_value = cast(object, self.required_market_fields)
+            if not isinstance(fields_value, tuple) or not fields_value:
+                raise ValidationPlanError(
+                    "outcome required market fields must be sorted unique names"
+                )
+            raw_fields = cast(tuple[object, ...], fields_value)
+            if any(not isinstance(item, str) or not item for item in raw_fields):
+                raise ValidationPlanError(
+                    "outcome required market fields must be sorted unique names"
+                )
+            fields = cast(tuple[str, ...], raw_fields)
+            if fields != tuple(sorted(fields)) or len(fields) != len(set(fields)):
+                raise ValidationPlanError(
+                    "outcome required market fields must be sorted unique names"
+                )
+            _validated_text(self.result_schema_version, "outcome result schema version")
+        elif (
+            self.required_market_fields is not None
+            or self.result_schema_version is not None
+        ):
+            raise ValidationPlanError(
+                "timestamp outcomes cannot carry a session result contract"
+            )
 
     @property
     def configuration_id(self) -> str:
@@ -708,6 +740,9 @@ class OutcomeProvenance:
         }
         if self.requires_multi_session_price_basis:
             primitive["requires_multi_session_price_basis"] = True
+        if self.required_market_fields is not None:
+            primitive["required_market_fields"] = list(self.required_market_fields)
+            primitive["result_schema_version"] = self.result_schema_version
         return primitive
 
     @classmethod
@@ -724,6 +759,12 @@ class OutcomeProvenance:
         return cls._capture_component(
             outcome,
             TemporalOffset.sessions(sessions),
+            required_market_fields=cast(
+                tuple[str, ...] | None, getattr(outcome, "required_market_fields", None)
+            ),
+            result_schema_version=cast(
+                str | None, getattr(outcome, "result_schema_version", None)
+            ),
         )
 
     @classmethod
@@ -744,6 +785,9 @@ class OutcomeProvenance:
         cls,
         outcome: ConfiguredComponent,
         future_horizon: TemporalOffset,
+        *,
+        required_market_fields: tuple[str, ...] | None = None,
+        result_schema_version: str | None = None,
     ) -> "OutcomeProvenance":
         from quantforge.prediction.feature_outcomes import (
             ExcursionOutcomeLabeler,
@@ -758,6 +802,8 @@ class OutcomeProvenance:
             ConfigurationReference.capture_component("outcome_labeler", outcome),
         )
         object.__setattr__(instance, "future_horizon", future_horizon)
+        object.__setattr__(instance, "required_market_fields", required_market_fields)
+        object.__setattr__(instance, "result_schema_version", result_schema_version)
         object.__setattr__(
             instance,
             "requires_multi_session_price_basis",
