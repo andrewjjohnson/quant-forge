@@ -32,6 +32,8 @@ from quantforge.timeframes import (
     resolve_exchange_session,
     resolve_exchange_timezone_name,
 )
+from quantforge.validation._identity import validated_hash as _validated_hash
+from quantforge.validation._identity import validated_text as _validated_text
 from quantforge.validation.errors import ValidationPlanError
 
 if TYPE_CHECKING:
@@ -40,23 +42,6 @@ if TYPE_CHECKING:
 VALIDATION_PLAN_SCHEMA_VERSION = "1"
 VALIDATION_WINDOW_SCHEMA_VERSION = "1"
 RESEARCH_ENVIRONMENT_SCHEMA_VERSION = "1"
-
-
-def _validated_text(value: object, label: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValidationPlanError(f"{label} must be a non-empty string")
-    return value
-
-
-def _validated_hash(value: object, label: str) -> str:
-    text = _validated_text(value, label)
-    if (
-        len(text) != 64
-        or text != text.lower()
-        or any(character not in "0123456789abcdef" for character in text)
-    ):
-        raise ValidationPlanError(f"{label} must be a lowercase SHA-256 value")
-    return text
 
 
 def _duration_microseconds(duration: timedelta) -> int:

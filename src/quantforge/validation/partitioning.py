@@ -7,6 +7,7 @@ from typing import cast
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data import AggregatedSessionBar, MarketDataset, TimeframeBarSeries
 from quantforge.timeframes import Timeframe, resolve_exchange_session
+from quantforge.validation._identity import validated_hash, validated_text
 from quantforge.validation.errors import ValidationPlanError
 from quantforge.validation.models import (
     BoundaryAxis,
@@ -185,6 +186,15 @@ class PurgedPartitionObservations:
     source_timeframe_configuration_id: str
 
     def __post_init__(self) -> None:
+        for field_name in (
+            "plan_id",
+            "fold_id",
+            "source_window_id",
+            "protected_window_id",
+            "source_timeframe_configuration_id",
+        ):
+            validated_hash(getattr(self, field_name), field_name)
+        validated_text(self.source_dataset_id, "source_dataset_id")
         _validate_result_collection(self.retained, "retained")
         _validate_result_collection(self.purged, "purged")
         _validate_result_chronology(self.retained, self.purged)
@@ -384,6 +394,13 @@ class WindowObservationSelection:
     source_family_manifest_id: str | None = None
 
     def __post_init__(self) -> None:
+        validated_hash(self.window_id, "window_id")
+        validated_hash(
+            self.source_timeframe_configuration_id, "source_timeframe_configuration_id"
+        )
+        if self.source_family_manifest_id is not None:
+            validated_hash(self.source_family_manifest_id, "source_family_manifest_id")
+        validated_text(self.source_dataset_id, "source_dataset_id")
         _validate_result_collection(self.warm_up_context, "warm_up_context")
         _validate_result_collection(self.study_observations, "study_observations")
         _validate_result_chronology(self.warm_up_context, self.study_observations)

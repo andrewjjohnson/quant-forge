@@ -18,6 +18,16 @@ from quantforge.validation import (
 )
 
 COLLECTION_FIELDS = ("retained", "purged", "warm_up_context", "study_observations")
+IDENTITY_FIELDS = (
+    ("purge", "plan_id"),
+    ("purge", "fold_id"),
+    ("purge", "source_window_id"),
+    ("purge", "protected_window_id"),
+    ("purge", "source_timeframe_configuration_id"),
+    ("selection", "window_id"),
+    ("selection", "source_timeframe_configuration_id"),
+    ("selection", "source_family_manifest_id"),
+)
 SESSION_A = ExchangeSessionBoundary(date(2024, 1, 2))
 SESSION_B = ExchangeSessionBoundary(date(2024, 1, 3))
 SESSION_C = ExchangeSessionBoundary(date(2024, 1, 4))
@@ -61,6 +71,53 @@ def _paired_result(
     if isinstance(result, PurgedPartitionObservations):
         return replace(result, purged=later)
     return replace(result, study_observations=later)
+
+
+@pytest.mark.parametrize(("kind", "field_name"), IDENTITY_FIELDS)
+@pytest.mark.parametrize(
+    "invalid", ["", " ", 1, True, "a" * 63, "a" * 65, "A" * 64, "g" * 64]
+)
+def test_result_rejects_malformed_provenance_hashes(
+    kind: str,
+    field_name: str,
+    invalid: object,
+) -> None:
+    result = _paired_result(kind, (), ())
+    with pytest.raises(ValidationPlanError, match=field_name):
+        replace(result, **{field_name: invalid})
+
+
+@pytest.mark.parametrize(("kind", "field_name"), IDENTITY_FIELDS[:-1])
+def test_result_requires_nonoptional_provenance_hashes(
+    kind: str, field_name: str
+) -> None:
+    with pytest.raises(ValidationPlanError, match=field_name):
+        replace(_paired_result(kind, (), ()), **{field_name: None})
+
+
+@pytest.mark.parametrize("kind", ["purge", "selection"])
+@pytest.mark.parametrize("invalid", ["", " \t", None, 1, True])
+def test_result_rejects_missing_or_untyped_dataset_identity(
+    kind: str, invalid: object
+) -> None:
+    with pytest.raises(ValidationPlanError, match="source_dataset_id"):
+        replace(_paired_result(kind, (), ()), source_dataset_id=cast(str, invalid))
+
+
+@pytest.mark.parametrize("kind", ["purge", "selection"])
+def test_result_preserves_opaque_dataset_ids_and_valid_hashes(kind: str) -> None:
+    result = replace(
+        _paired_result(kind, (SESSION_A,), (SESSION_B,)),
+        source_dataset_id="provider:immutable-snapshot",
+    )
+    original = canonical_json_bytes(result.to_primitive())
+    assert canonical_json_bytes(replace(result).to_primitive()) == original
+    assert result.source_dataset_id == "provider:immutable-snapshot"
+    if isinstance(result, WindowObservationSelection):
+        assert result.source_family_manifest_id is None
+        family_result = replace(result, source_family_manifest_id="b" * 64)
+        assert family_result.selection_id != result.selection_id
+        assert family_result.to_primitive()["source_family_manifest_id"] == "b" * 64
 
 
 @pytest.mark.parametrize("field_name", COLLECTION_FIELDS)

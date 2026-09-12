@@ -459,6 +459,15 @@ remain valid. Callers loading collections must explicitly capture `tuple(keys)`
 so later source-list edits cannot change membership or result identities.
 Existing valid tuple-based result serialization is unchanged.
 
+Both records also validate provenance identifier syntax at construction. Plan,
+fold, window, and source-timeframe IDs must be lowercase SHA-256 strings; the
+selection's optional family-manifest ID follows the same rule when present.
+Source dataset IDs remain opaque, nonblank strings rather than being forced
+into a hash format. These checks reject malformed provenance without changing
+valid serialization or identities. Syntax validation alone cannot authenticate
+a well-formed ID or its relationship to a plan/artifact; use the source-verifying
+purge and selection helpers to establish that binding.
+
 Direct construction also enforces a single strictly chronological, unique
 sequence across each record's paired fields. Both collections must share one
 temporal axis and, for sessions, the exact session policy. Every retained key
