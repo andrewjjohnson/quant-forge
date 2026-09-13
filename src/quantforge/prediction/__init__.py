@@ -68,6 +68,7 @@ from quantforge.prediction.context import (
     PredictionRuleContext,
     PredictionTimeframeInput,
     PredictionTimeframeRequirement,
+    RejectedPredictionContextError,
     build_prediction_rule_context,
 )
 from quantforge.prediction.contracts import (
@@ -473,6 +474,7 @@ __all__ = [
     "PredictionWindowDecision",
     "PredictionWindowResult",
     "PublishedAlertDeduplication",
+    "RejectedPredictionContextError",
     "RsiOversoldUpParameters",
     "RsiOversoldUpPredictionStrategy",
     "RuleSummary",

@@ -15,11 +15,15 @@ from quantforge.configuration import (
 from quantforge.data.calendar import expected_sessions
 from quantforge.data.intraday_aggregation import intraday_session_windows
 from quantforge.data.models import MarketDataset
-from quantforge.data.multi_timeframe import MultiTimeframeContext
+from quantforge.data.multi_timeframe import (
+    MultiTimeframeContext,
+    MultiTimeframeContextError,
+)
 from quantforge.prediction.context import (
     PredictionContextError,
     PredictionContextRequirements,
     PredictionIndicatorOutputCache,
+    RejectedPredictionContextError,
 )
 from quantforge.prediction.contracts import (
     EvaluationValuesT,
@@ -51,7 +55,7 @@ from quantforge.timeframes import (
 )
 
 PREDICTION_WINDOW_SCHEMA_VERSION = "1"
-PREDICTION_WINDOW_ENGINE_VERSION = "1"
+PREDICTION_WINDOW_ENGINE_VERSION = "2"
 
 
 def _utc(timestamp: datetime) -> datetime:
@@ -153,25 +157,31 @@ class _DecisionContextProvider:
             raise PredictionContextError(
                 "historical provider returned an invalid context"
             )
-        if context.as_of != self.decision_timestamp:
-            raise PredictionContextError(
-                "historical context has the wrong decision timestamp"
-            )
-        if context.source_consistency.family_id != self.dataset_family_fingerprint:
-            raise PredictionContextError(
-                "historical context has the wrong dataset family"
-            )
-        # QF-28 allows an older primary bar in general. A scheduled bar-end decision
-        # requires this exact bar, otherwise missing observations could be filled
-        # implicitly with a previous primary bar even without a freshness limit.
-        primary = context.latest_bar_for(requirements.primary.timeframe)
-        if (
-            primary.end_timestamp != self.decision_timestamp
-            or primary.completion is BarCompletion.DEVELOPING
-        ):
-            raise PredictionContextError(
-                "historical context is missing the scheduled primary bar"
-            )
+        try:
+            if context.as_of != self.decision_timestamp:
+                raise PredictionContextError(
+                    "historical context has the wrong decision timestamp"
+                )
+            if context.source_consistency.family_id != self.dataset_family_fingerprint:
+                raise PredictionContextError(
+                    "historical context has the wrong dataset family"
+                )
+            # QF-28 allows an older primary bar in general. A scheduled bar-end
+            # decision requires this exact bar, even without a freshness limit.
+            primary = context.latest_bar_for(requirements.primary.timeframe)
+            if (
+                primary.end_timestamp != self.decision_timestamp
+                or primary.completion is BarCompletion.DEVELOPING
+            ):
+                raise PredictionContextError(
+                    "historical context is missing the scheduled primary bar"
+                )
+        except (PredictionContextError, MultiTimeframeContextError) as error:
+            # The runner has not received this object yet. Carry it into its
+            # existing skip manifest/identity path without exposing it to a rule.
+            raise RejectedPredictionContextError(
+                str(error), source_context=context
+            ) from error
         return context
 
 
@@ -198,9 +208,9 @@ class PredictionWindowDecision[
         skipped = context.get("status") == "skipped"
         source = context.get("source_context")
         source_context = source if isinstance(source, dict) else context
-        if (not skipped or isinstance(source, dict)) and source_context.get(
-            "as_of"
-        ) != timestamp.isoformat():
+        # A skipped source may itself have the wrong as-of timestamp. Preserve
+        # that rejected snapshot alongside the requested decision timestamp.
+        if not skipped and source_context.get("as_of") != timestamp.isoformat():
             raise InvalidPredictionOutputError(
                 "historical result decision timestamp changed"
             )

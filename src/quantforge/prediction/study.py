@@ -23,6 +23,7 @@ from quantforge.prediction.context import (
     PredictionContextRequirements,
     PredictionIndicatorOutputCache,
     PredictionRuleContext,
+    RejectedPredictionContextError,
     available_prediction_context_manifest,
     build_prediction_rule_context,
     skipped_prediction_context_manifest,
@@ -788,7 +789,9 @@ def _prepare_prediction_context(
         skipped = skipped_prediction_context_manifest(
             requirements,
             str(error),
-            source_context=source_context,
+            source_context=error.source_context
+            if isinstance(error, RejectedPredictionContextError)
+            else source_context,
         )
         return None, PrimitiveMappingSnapshot.capture(skipped)
     available = available_prediction_context_manifest(rule_context)

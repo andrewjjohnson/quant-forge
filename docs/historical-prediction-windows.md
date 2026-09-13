@@ -27,8 +27,12 @@ bar therefore does not remove a decision. Its context must contain a completed
 primary bar ending at exactly the scheduled timestamp; an earlier bar cannot
 substitute for it. Missing, stale, incompatible, or incorrectly timestamped
 contexts follow the existing `FAIL` or `SKIP` policy. `FAIL` returns no partial
-window; `SKIP` retains the QF-11 skipped result. An interval containing no primary
-bar ends produces a valid empty collection.
+window; `SKIP` retains the QF-11 skipped result. When the historical adapter
+rejects a returned context, its exact snapshot and context ID remain in the
+skip evidence, including an incorrect source `as_of` alongside the requested
+decision timestamp. Rejected contexts never reach indicator or rule execution.
+Failures before a context is resolved retain `source_context: null`.
+An interval containing no primary bar ends produces a valid empty collection.
 
 `decision_timestamps` is an ordered immutable tuple. Boundaries, the full primary
 timeframe/session configuration, schedule policy/schema, and the UTC timestamp
@@ -69,7 +73,7 @@ class LocalWindowProvider:
 ```
 
 `run_prediction_window()` validates the QF-3 outcome dataset once, then delegates
-each decision to the unchanged `run_prediction_study_in_session()` with a
+each decision to the existing `run_prediction_study_in_session()` with a
 provider bound to that UTC timestamp. Context family identity must match the
 declared `dataset_family_fingerprint`. The caller supplies immutable artifacts
 and provider-environment provenance; rules do not download data.
@@ -130,6 +134,11 @@ configuration, and indicator/backend provenance. Optional
 its existing backend environment automatically. `window_result_id` additionally
 hashes all ordered decision snapshots. Serialization uses the repository's
 canonical JSON and SHA-256 conventions.
+
+Window engine version 2 preserves contexts rejected by the historical adapter
+in QF-11 skip manifests and result identities. Window schema version 1 is
+unchanged. Scheduled grid identities also bind the window engine version, so
+artifacts from the earlier engine cannot be reused through resume.
 
 Future bars within the **same immutable provenance** cannot change earlier
 contexts or decisions. A newly persisted source snapshot, family, or outcome

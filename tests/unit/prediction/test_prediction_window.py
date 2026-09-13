@@ -435,14 +435,71 @@ def test_missing_primary_is_scheduled_and_explicitly_skipped_or_failed() -> None
         InvalidPredictionDataError, match="missing the scheduled primary"
     ):
         run_window(decision_schedule=extended)
+    provider = WindowProvider()
+    requirements = _requirements(failure_policy=PredictionContextFailurePolicy.SKIP)
     result = run_window(
-        requirements=_requirements(failure_policy=PredictionContextFailurePolicy.SKIP),
+        provider,
+        requirements=requirements,
         decision_schedule=extended,
     )
     assert result.counts_primitive()["scheduled_decisions"] == 5
     assert result.counts_primitive()["skipped_decisions"] == 1
     assert result.decisions[-1].to_primitive()["status"] == "skipped"
     assert result.decisions[-1].decision_timestamp == END + timedelta(minutes=5)
+    skipped = result.decisions[-1]
+    source = provider.get_context_at(requirements, as_of=skipped.decision_timestamp)
+    assert skipped.context_id == source.context_id
+    assert skipped.result.signals == ()
+    assert skipped.result.prediction_context_snapshot is not None
+    assert (
+        skipped.result.prediction_context_snapshot.to_primitive()["source_context"]
+        == source.to_primitive()
+    )
+
+
+def test_different_missing_bar_contexts_keep_distinct_skip_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_rule_call(
+        self: WindowRule, context: PredictionRuleContext
+    ) -> PredictionStrategyOutput:
+        pytest.fail("a skipped context must never reach the rule")
+
+    monkeypatch.setattr(WindowRule, "generate_with_context", forbidden_rule_call)
+    original, truncated = WindowProvider(), WindowProvider()
+    primary = _requirements().primary.timeframe
+    truncated.series = tuple(
+        TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
+            series.dataset_reference,
+            series.timeframe,
+            series.bars[:-1],
+            dataset_family_manifest_id=series.dataset_family_manifest_id,
+        )
+        if series.timeframe == primary
+        else series
+        for series in truncated.series
+    )
+    missing_timestamp = END + timedelta(minutes=5)
+    requirements = _requirements(failure_policy=PredictionContextFailurePolicy.SKIP)
+    results = [
+        run_window(
+            provider,
+            requirements=requirements,
+            decision_schedule=schedule(missing_timestamp, missing_timestamp),
+        )
+        for provider in (original, truncated)
+    ]
+    assert results[0].window_id == results[1].window_id
+    for result, provider in zip(results, (original, truncated), strict=True):
+        source = provider.get_context_at(requirements, as_of=missing_timestamp)
+        skipped = result.decisions[0]
+        assert skipped.to_primitive()["status"] == "skipped"
+        assert skipped.context_id == source.context_id
+        assert skipped.result.signals == ()
+    assert results[0].decisions[0].context_id != results[1].decisions[0].context_id
+    assert results[0].results[0].study_id != results[1].results[0].study_id
+    assert results[0].window_result_id != results[1].window_result_id
+    assert results[0].serialize() != results[1].serialize()
 
 
 def test_stale_context_keeps_its_original_qf11_skip_result_and_identity() -> None:
@@ -475,6 +532,21 @@ def test_wrong_timestamp_and_family_cannot_enter_historical_results() -> None:
 
     with pytest.raises(InvalidPredictionDataError, match="wrong decision timestamp"):
         run_window(WrongTimestampProvider())
+    requirements = _requirements(failure_policy=PredictionContextFailurePolicy.SKIP)
+    wrong_timestamp_provider = WrongTimestampProvider()
+    skipped = run_window(wrong_timestamp_provider, requirements=requirements)
+    for decision in skipped.decisions:
+        source = wrong_timestamp_provider.get_context_at(
+            requirements, as_of=decision.decision_timestamp
+        )
+        assert decision.to_primitive()["status"] == "skipped"
+        assert decision.result.signals == ()
+        assert decision.context_id == source.context_id
+        assert decision.result.prediction_context_snapshot is not None
+        assert (
+            decision.result.prediction_context_snapshot.to_primitive()["source_context"]
+            == source.to_primitive()
+        )
     provider = WindowProvider()
     with pytest.raises(InvalidPredictionDataError, match="wrong dataset family"):
         run_prediction_window(
@@ -548,6 +620,62 @@ def test_grid_analyzes_full_collection_and_preserves_ranking_resume_and_sources(
     assert len(analyzer.seen) == 2
 
 
+def test_grid_persists_and_resumes_missing_primary_context_evidence(
+    tmp_path: Path,
+) -> None:
+    class SkipWindowFactory(WindowFactory):
+        def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]:
+            return _study(
+                WindowRule(
+                    _requirements(
+                        window=cast(int, parameters["window"]),
+                        failure_policy=PredictionContextFailurePolicy.SKIP,
+                    )
+                )
+            )
+
+    provider = WindowProvider()
+    extended = schedule(end=END + timedelta(minutes=5))
+    study = grid(
+        tmp_path, provider, decision_schedule=extended, factory=SkipWindowFactory()
+    )
+    result = study.run()
+    source = WindowProvider().get_context_at(
+        _requirements(), as_of=extended.decision_timestamps[-1]
+    )
+    for trial in result.trials:
+        assert trial.status is TrialStatus.SUCCEEDED
+        assert trial.artifact_location is not None
+        assert trial.analysis is not None
+        artifact = json.loads(
+            (tmp_path / study.study_id / trial.artifact_location).read_text()
+        )
+        skipped = artifact["prediction_window"]["decisions"][-1]
+        assert skipped["status"] == "skipped"
+        assert skipped["context_id"] == source.context_id
+        assert skipped["generated_signals"] == []
+        assert (
+            skipped["prediction_study"]["manifest"]["prediction_context"][
+                "source_context"
+            ]
+            == source.to_primitive()
+        )
+        references = cast(
+            PrimitiveMapping,
+            trial.analysis.artifacts_snapshot.to_primitive()[
+                "prediction_window_sources"
+            ],
+        )
+        assert cast(list[PrimitiveMapping], references["decisions"])[-1] == {
+            "decision_timestamp": skipped["decision_timestamp"],
+            "prediction_study_id": skipped["prediction_study_id"],
+            "context_id": source.context_id,
+        }
+    assert study.load_result().trials == result.trials
+    assert study.resume().trials == result.trials
+    assert provider.requests == list(extended.decision_timestamps) * 2
+
+
 def test_interrupted_window_is_not_complete_and_resume_reruns_entire_candidate(
     tmp_path: Path,
 ) -> None:
@@ -610,6 +738,7 @@ def test_modified_or_partial_window_artifact_cannot_be_loaded_or_resumed(
 
 def test_schedule_backend_and_analyzer_identity_prevent_cross_configuration_resume(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = WindowProvider()
     original = grid(tmp_path, provider)
@@ -623,6 +752,10 @@ def test_schedule_backend_and_analyzer_identity_prevent_cross_configuration_resu
     analyzer = WindowAnalyzer()
     analyzer.version = "2"
     changed_analyzer = grid(tmp_path, provider, analyzer=analyzer)
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.PREDICTION_WINDOW_ENGINE_VERSION", "changed"
+    )
+    changed_engine = grid(tmp_path, provider)
     assert (
         len(
             {
@@ -632,12 +765,13 @@ def test_schedule_backend_and_analyzer_identity_prevent_cross_configuration_resu
                     changed_schedule,
                     changed_backend,
                     changed_analyzer,
+                    changed_engine,
                 )
             }
         )
-        == 4
+        == 5
     )
-    for item in (changed_schedule, changed_backend, changed_analyzer):
+    for item in (changed_schedule, changed_backend, changed_analyzer, changed_engine):
         with pytest.raises(PredictionGridPersistenceError, match="no manifest"):
             item.resume()
 
@@ -810,6 +944,13 @@ def test_developing_context_policy_remains_identity_bearing_and_uses_qf28_skip()
     # evidence. The public builder rejects developing reconstruction explicitly.
     developing_result = run_window(requirements=developing)
     assert developing_result.counts_primitive()["skipped_decisions"] == 4
+    for decision in developing_result.decisions:
+        assert decision.context_id is None
+        assert decision.result.prediction_context_snapshot is not None
+        assert (
+            decision.result.prediction_context_snapshot.to_primitive()["source_context"]
+            is None
+        )
     assert completed_result.window_id != developing_result.window_id
 
 

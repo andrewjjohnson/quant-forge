@@ -58,6 +58,7 @@ from quantforge.prediction.study import (
     run_prediction_study_in_session,
 )
 from quantforge.prediction.window import (
+    PREDICTION_WINDOW_ENGINE_VERSION,
     PredictionDecisionSchedule,
     PredictionWindowContextProvider,
     PredictionWindowResult,
@@ -1899,6 +1900,9 @@ class PredictionGridStudy:
         }
         if decision_schedule is not None:
             identity["decision_schedule"] = decision_schedule.to_primitive()
+            identity["prediction_window_engine_version"] = (
+                PREDICTION_WINDOW_ENGINE_VERSION
+            )
         self.study_id = configuration_identity(identity)
         self._manifest: PrimitiveMapping = {
             **identity,
