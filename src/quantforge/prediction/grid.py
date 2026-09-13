@@ -961,7 +961,12 @@ class _ContextAtTimestamp:
     def get_context(
         self, requirements: PredictionContextRequirements
     ) -> MultiTimeframeContext:
-        return self.source.get_context_at(requirements, as_of=self.as_of)
+        context = self.source.get_context_at(requirements, as_of=self.as_of)
+        if not isinstance(cast(object, context), MultiTimeframeContext):
+            raise PredictionContextError(
+                "historical provider returned an invalid context"
+            )
+        return context
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,6 +10,9 @@ NYSE_CALENDAR = "XNYS"
 
 class _ExchangeCalendar(Protocol):
     @property
+    def has_break(self) -> bool: ...
+
+    @property
     def open_offset(self) -> int: ...
 
     @property
@@ -30,6 +33,12 @@ class _ExchangeCalendar(Protocol):
 
 class _ExchangeCalendars(Protocol):
     def get_calendar(self, calendar: str) -> _ExchangeCalendar: ...
+
+
+def calendar_has_intraday_recesses(calendar: str) -> bool:
+    """Whether any session in the available calendar has an intraday recess."""
+    exchange_calendars = cast(_ExchangeCalendars, import_module("exchange_calendars"))
+    return exchange_calendars.get_calendar(calendar).has_break
 
 
 def expected_sessions(

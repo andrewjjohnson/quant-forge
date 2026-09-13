@@ -360,6 +360,35 @@ def test_clock_anchor_and_extended_hours_follow_existing_session_windows() -> No
 
 
 @pytest.mark.parametrize(
+    "scope", [SessionScope.REGULAR_HOURS, SessionScope.EXTENDED_HOURS]
+)
+def test_schedule_rejects_exchange_recesses_as_unsupported_configuration(
+    scope: SessionScope,
+) -> None:
+    timeframe = Timeframe(
+        IntradayInterval(timedelta(minutes=5)),
+        ExchangeSessionPolicy(
+            calendar_name="XHKG",
+            timezone_name="Asia/Hong_Kong",
+            scope=scope,
+            extended_hours_start=time(9)
+            if scope is SessionScope.EXTENDED_HOURS
+            else None,
+            extended_hours_end=time(17)
+            if scope is SessionScope.EXTENDED_HOURS
+            else None,
+        ),
+    )
+    # Hong Kong's 12:00-13:00 lunch recess must not become missing observations.
+    with pytest.raises(InvalidPredictionConfigurationError, match="intraday recesses"):
+        PredictionDecisionSchedule(
+            timeframe,
+            datetime(2024, 7, 11, 4, tzinfo=UTC),
+            datetime(2024, 7, 11, 5, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
     ("start", "end", "expected"),
     [
         (
@@ -815,6 +844,90 @@ def test_grid_persists_and_resumes_rejected_context_evidence(
         ).run()
         assert all(trial.status is TrialStatus.FAILED for trial in failed.trials)
         assert all(trial.artifact_location is None for trial in failed.trials)
+
+
+@pytest.mark.parametrize("invalid_context", [None, {}, object()])
+@pytest.mark.parametrize(
+    "policy", [PredictionContextFailurePolicy.SKIP, PredictionContextFailurePolicy.FAIL]
+)
+def test_grid_invalid_timestamp_provider_return_preserves_failure_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_context: object,
+    policy: PredictionContextFailurePolicy,
+) -> None:
+    class InvalidWindowProvider(WindowProvider):
+        def get_context_at(
+            self, requirements: PredictionContextRequirements, *, as_of: datetime
+        ) -> MultiTimeframeContext:
+            self.requests.append(as_of)
+            return cast(MultiTimeframeContext, invalid_context)
+
+    class PolicyFactory(WindowFactory):
+        def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]:
+            return _study(
+                WindowRule(
+                    _requirements(
+                        window=cast(int, parameters["window"]), failure_policy=policy
+                    )
+                )
+            )
+
+    def forbidden_rule_call(
+        self: WindowRule, context: PredictionRuleContext
+    ) -> PredictionStrategyOutput:
+        pytest.fail("an invalid context must never reach the rule")
+
+    monkeypatch.setattr(WindowRule, "generate_with_context", forbidden_rule_call)
+    provider = InvalidWindowProvider()
+    study = grid(tmp_path, provider, factory=PolicyFactory())
+    result = study.run()
+    assert result.cache_statistics.context_hits == 0
+    assert result.cache_statistics.context_misses == 0
+    assert result.cache_statistics.indicator_misses == 0
+    if policy is PredictionContextFailurePolicy.FAIL:
+        assert all(trial.status is TrialStatus.FAILED for trial in result.trials)
+        assert all(
+            trial.failure_type == "InvalidPredictionDataError"
+            for trial in result.trials
+        )
+        assert all(trial.artifact_location is None for trial in result.trials)
+        assert provider.requests == [START, START]
+    else:
+        standalone = run_window(
+            InvalidWindowProvider(), requirements=_requirements(failure_policy=policy)
+        )
+        expected_manifest = standalone.decisions[0].result.prediction_context_snapshot
+        assert expected_manifest is not None
+        for trial in result.trials:
+            assert trial.status is TrialStatus.SUCCEEDED
+            assert trial.artifact_location is not None
+            assert trial.analysis is not None
+            assert trial.analysis.prediction_count == 0
+            artifact = json.loads(
+                (tmp_path / study.study_id / trial.artifact_location).read_text()
+            )
+            decisions = artifact["prediction_window"]["decisions"]
+            assert [item["decision_timestamp"] for item in decisions] == [
+                timestamp.isoformat() for timestamp in schedule().decision_timestamps
+            ]
+            for decision in decisions:
+                assert decision["status"] == "skipped"
+                assert decision["context_id"] is None
+                assert decision["generated_signals"] == []
+                context_manifest = decision["prediction_study"]["manifest"][
+                    "prediction_context"
+                ]
+                assert context_manifest["source_context"] is None
+                assert (
+                    context_manifest["reason"]
+                    == expected_manifest.to_primitive()["reason"]
+                )
+        assert provider.requests == list(schedule().decision_timestamps) * 2
+    requests = list(provider.requests)
+    assert study.load_result().trials == result.trials
+    assert study.resume().trials == result.trials
+    assert provider.requests == requests
 
 
 def test_interrupted_window_is_not_complete_and_resume_reruns_entire_candidate(

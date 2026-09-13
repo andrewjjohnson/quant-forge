@@ -16,8 +16,11 @@ source identity. QF-39 will consume this sequence; fold selection is separate.
 Add a calendar-derived `PredictionDecisionSchedule` and timestamp-aware context
 provider. Reuse QF-18 session windows to schedule completed primary bar ends in
 a closed UTC interval. Missing observations follow the existing QF-28 policy.
+Reject calendars with intraday recesses until the shared aggregation/window
+contract defines how bars interact with those breaks. A market recess is not a
+missing observation and must not enter the FAIL/SKIP context policy.
 
-Execute independent copies of one configured QF-11 study through its unchanged
+Execute independent copies of one configured QF-11 study through its existing
 runner. Collect original results in `PredictionWindowResult` with immutable
 decision snapshots and explicit timestamps. Preserve unlabeled signals alongside
 the unchanged QF-11 serialization.

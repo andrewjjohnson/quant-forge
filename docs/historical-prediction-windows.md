@@ -29,6 +29,13 @@ Labels never advance availability. The primary must be intraday and
 completed-only, with cross-session bars prohibited, matching the supported QF-28
 contract. Contextual developing bars remain an explicit QF-21/QF-28 policy.
 
+Calendars with an intraday recess anywhere in their available schedule, such as
+XHKG's lunch break, are rejected with `InvalidPredictionConfigurationError`
+before decisions are constructed, under both regular and extended-hours scope.
+QF-18's shared window contract assumes a continuous session; supporting recesses
+requires a separate aggregation/window policy. Recesses must not be represented
+as missing observations or skipped decisions.
+
 Scheduling consults the calendar, **not observed market rows**. A missing primary
 bar therefore does not remove a decision. Its context must contain a completed
 primary bar ending at exactly the scheduled timestamp; an earlier bar cannot
@@ -142,8 +149,10 @@ its existing backend environment automatically. `window_result_id` additionally
 hashes all ordered decision snapshots. Serialization uses the repository's
 canonical JSON and SHA-256 conventions.
 
-Window engine version 3 includes overnight trade-date scheduling and preserves
-contexts rejected by either the historical adapter or scheduled grid's family
+Window engine version 4 rejects calendars with recesses and validates historical
+provider return types before the grid cache. It includes overnight trade-date
+scheduling and preserves contexts rejected by either the historical adapter or
+scheduled grid's family
 check in QF-11 skip manifests and result identities. Window schema version 1 is
 unchanged. Scheduled grid identities also bind the window engine version, so
 artifacts from the earlier engine cannot be reused through resume.
@@ -180,6 +189,10 @@ configuration, and backend keys. Native configurations remain native.
 The scheduled grid retains an incompatible returned family's snapshot as skip
 evidence before rejecting it from the cache. Neither indicators nor rules run
 against that context; the declared `FAIL` policy still fails the candidate.
+Malformed timestamp-provider returns are rejected before cache field access.
+They follow the same policy as standalone windows: `SKIP` records each scheduled
+decision with `source_context: null` and `FAIL` fails the candidate with a context
+data error. Neither invalid objects nor their absence become cached contexts.
 
 Persistence is **incremental per candidate**, using QF-32's atomic writes and
 terminal states. A window succeeds only after every scheduled decision and the

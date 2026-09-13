@@ -12,7 +12,7 @@ from quantforge.configuration import (
     PrimitiveMappingSnapshot,
     configuration_identity,
 )
-from quantforge.data.calendar import expected_sessions
+from quantforge.data.calendar import calendar_has_intraday_recesses, expected_sessions
 from quantforge.data.intraday_aggregation import intraday_session_windows
 from quantforge.data.models import MarketDataset
 from quantforge.data.multi_timeframe import (
@@ -56,7 +56,7 @@ from quantforge.timeframes import (
 )
 
 PREDICTION_WINDOW_SCHEMA_VERSION = "1"
-PREDICTION_WINDOW_ENGINE_VERSION = "3"
+PREDICTION_WINDOW_ENGINE_VERSION = "4"
 
 
 def _utc(timestamp: datetime) -> datetime:
@@ -100,6 +100,11 @@ class PredictionDecisionSchedule:
         if start > end:
             raise InvalidPredictionConfigurationError(
                 "historical interval start must not follow its end"
+            )
+        if calendar_has_intraday_recesses(timeframe.session_policy.calendar_name):
+            raise InvalidPredictionConfigurationError(
+                "historical schedules do not support calendars with intraday recesses: "
+                f"{timeframe.session_policy.calendar_name}"
             )
         timezone = ZoneInfo(timeframe.session_policy.timezone_name)
         sessions = expected_sessions(
