@@ -6,6 +6,7 @@ from quantforge.backtesting.config import (
     BacktestConfig,
     DiscreteTargetWeightSizing,
     DividendPolicy,
+    EvaluationInterval,
     NextSessionOpenExecution,
     SplitAccountingPolicy,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "DividendAccountingSummary",
     "DividendCashflowRecord",
     "DividendPolicy",
+    "EvaluationInterval",
     "ExecutionError",
     "ExplicitZeroFees",
     "FeeModel",

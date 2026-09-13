@@ -45,7 +45,11 @@ def run_buy_and_hold_benchmark(
     run_id: str,
     backtest_configuration: PrimitiveMapping,
 ) -> BenchmarkResult:
-    """Buy at the first open using the strategy's dividend and split policies."""
+    """Buy at the first open using the strategy's dividend and split policies.
+
+    The runner supplies only evaluation bars/actions when an interval is set.
+    Source metadata remains the original immutable provenance reference.
+    """
     configuration: PrimitiveMapping = {
         "model": "buy_and_hold",
         "implementation_version": "4",
@@ -60,6 +64,9 @@ def run_buy_and_hold_benchmark(
         "split_policy": backtest_configuration["split_policy"],
         "corporate_action_snapshot_id": (dataset.metadata.corporate_action_snapshot_id),
     }
+    if config.evaluation_interval is not None:
+        configuration["start"] = "first_evaluation_session_open"
+        configuration["evaluation_interval"] = config.evaluation_interval.to_primitive()
     benchmark_id = configuration_identity(
         {
             "run_id": run_id,

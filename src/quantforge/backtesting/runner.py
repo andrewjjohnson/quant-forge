@@ -28,6 +28,7 @@ from quantforge.backtesting.errors import (
     InvalidSignalError,
     PortfolioAccountingError,
 )
+from quantforge.backtesting.evaluation import select_backtest_datasets
 from quantforge.backtesting.metrics import calculate_performance
 from quantforge.backtesting.models import (
     BacktestResult,
@@ -302,10 +303,18 @@ def run_backtest(
     *,
     initiated_at: datetime | None = None,
 ) -> BacktestResult:
-    """Run QF-4 decisions through deterministic next-open execution and accounting."""
+    """Run QF-4 decisions through deterministic next-open execution and accounting.
+
+    With config.evaluation_interval, earlier bars provide strategy history only;
+    accounting starts flat with configured capital at its first session. Only
+    decisions originating inside that inclusive interval can create orders.
+    """
     _validate_dataset(dataset, config)
     bars_fingerprint = fingerprint_market_bars(dataset.bars)
-    strategy_dataset = causal_split_normalized_strategy_dataset(dataset)
+    history_dataset, evaluation_dataset = select_backtest_datasets(
+        dataset, config.evaluation_interval
+    )
+    strategy_dataset = causal_split_normalized_strategy_dataset(history_dataset)
     market_data_reference = MarketDataReference.from_dataset(dataset)
     if initiated_at is not None and initiated_at.utcoffset() is None:
         raise InvalidSignalError("initiated_at must include a defined UTC offset")
@@ -355,7 +364,15 @@ def run_backtest(
         raise InvalidSignalError(
             "strategy configuration changed during backtest initialization"
         )
-    signals = _signal_records(run_id, strategy_output.decisions)
+    evaluation_sessions = {bar.session_date for bar in evaluation_dataset.bars}
+    signals = _signal_records(
+        run_id,
+        tuple(
+            decision
+            for decision in strategy_output.decisions
+            if decision.signal_session in evaluation_sessions
+        ),
+    )
     signals_by_execution: dict[date, list[SignalRecord]] = {}
     order_ids_by_signal_session: dict[date, list[str]] = {}
     for signal in signals:
@@ -383,15 +400,17 @@ def run_backtest(
     split_adjustments: list[SplitAdjustmentRecord] = []
     positions: list[PositionRecord] = []
     daily_equity: list[DailyPortfolioRecord] = []
-    session_index = {bar.session_date: index for index, bar in enumerate(dataset.bars)}
-    corporate_actions_by_session = actions_by_session(dataset)
+    session_index = {
+        bar.session_date: index for index, bar in enumerate(evaluation_dataset.bars)
+    }
+    corporate_actions_by_session = actions_by_session(evaluation_dataset)
     dividend_actions = tuple(
         action
-        for action in dataset.corporate_actions
+        for action in evaluation_dataset.corporate_actions
         if isinstance(action, CashDividend)
     )
 
-    for index, bar in enumerate(dataset.bars):
+    for index, bar in enumerate(evaluation_dataset.bars):
         session_fill_ids: list[str] = []
         session_dividend_cashflow_ids: list[str] = []
         session_split_adjustment_ids: list[str] = []
@@ -673,7 +692,7 @@ def run_backtest(
         )
         previous_equity = equity
 
-    final_session = dataset.bars[-1].session_date
+    final_session = evaluation_dataset.bars[-1].session_date
     available_sessions = set(session_index)
     for signal in signals:
         if signal.signal_id in order_outcomes:
@@ -709,7 +728,7 @@ def run_backtest(
         else (_open_trade_record(run_id, open_trade, strategy_implementation_version),)
     )
     benchmark = run_buy_and_hold_benchmark(
-        dataset,
+        evaluation_dataset,
         config,
         run_id,
         backtest_configuration,
