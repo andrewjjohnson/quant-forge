@@ -48,7 +48,12 @@ decision timestamp. Rejected contexts never reach indicator or rule execution.
 Failures before a context is resolved retain `source_context: null`.
 An interval containing no primary bar ends produces a valid empty collection.
 
-`decision_timestamps` is an ordered immutable tuple. Boundaries, the full primary
+`decision_timestamps` is an ordered immutable tuple. The parallel
+`decision_sessions` tuple derives each exchange trade-date label in the same
+calendar-window traversal. It does not infer a session by taking the UTC or local
+date of a timestamp: an evening opening can belong to the next trade date, and
+a midnight close can belong to the previous one. These derived labels require
+no change to the serialized schedule or its identity. Boundaries, the full primary
 timeframe/session configuration, schedule policy/schema, and the UTC timestamp
 sequence participate in `schedule_id`.
 
@@ -214,10 +219,15 @@ component provenance and correct dataset/signal/outcome references. Every row's
 prediction and features must match a distinct entry in `generated_signals`;
 decision counts must match the signal and row collections. Unlabeled
 end-of-data signals remain valid without a row.
+Window-level `record_counts` are also recomputed from the validated decisions
+through the same helper used by `PredictionWindowResult.counts_primitive()`.
+All decision, signal, unavailable-outcome, and disposition totals must agree.
 Every generated signal, including those without rows, must retain the candidate's
 strategy identity and exact parameter payload, match the dataset symbol and
-context decision session, occur in the validated outcome dataset after warm-up,
+scheduled exchange session, occur in the validated outcome dataset after warm-up,
 and obey QF-11 ordering and one-signal-per-session rules.
+The available context's `decision_session` must match that schedule-derived
+session independently, including decisions that produce no predictions.
 Available contexts must match the scheduled timestamp, family, and primary
 timeframe. Exactly one available primary entry must retain visible bars and a
 completed latest bar ending at the decision timestamp with zero age. Rejected

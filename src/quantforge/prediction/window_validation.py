@@ -1,6 +1,7 @@
 """Offline provenance checks for persisted historical prediction windows."""
 
 from datetime import date
+from typing import cast
 
 from quantforge.configuration import (
     Primitive,
@@ -9,7 +10,10 @@ from quantforge.configuration import (
     configuration_identity,
 )
 from quantforge.prediction.errors import InvalidPredictionOutputError
-from quantforge.prediction.window import PredictionDecisionSchedule
+from quantforge.prediction.window import (
+    PredictionDecisionSchedule,
+    _window_record_counts,  # pyright: ignore[reportPrivateUsage]
+)
 from quantforge.timeframes import BarCompletion
 
 
@@ -18,7 +22,7 @@ def _validate_generated_signals(
     *,
     configuration: PrimitiveMapping,
     market_data: PrimitiveMapping,
-    context: PrimitiveMapping,
+    decision_session: str,
     session_indexes: dict[str, int],
     strategy_parameters: PrimitiveMapping,
 ) -> None:
@@ -42,7 +46,7 @@ def _validate_generated_signals(
         if (
             not isinstance(session, str)
             or session not in session_indexes
-            or session != context.get("decision_session")
+            or session != decision_session
             or session_indexes[session] + 1 < warm_up
             or configuration_identity(
                 {
@@ -245,6 +249,7 @@ def _validate_decision(
     timestamp: str,
     *,
     primary_timeframe: PrimitiveMapping,
+    decision_session: str,
     session_indexes: dict[str, int],
     strategy_parameters: PrimitiveMapping,
 ) -> None:
@@ -322,7 +327,7 @@ def _validate_decision(
         signals,
         configuration=configuration,
         market_data=market_data,
-        context=context,
+        decision_session=decision_session,
         session_indexes=session_indexes,
         strategy_parameters=strategy_parameters,
     )
@@ -340,6 +345,10 @@ def _validate_decision(
     ):
         raise InvalidPredictionOutputError("decision record counts are inconsistent")
     skipped = context["status"] == "skipped"
+    if not skipped and context.get("decision_session") != decision_session:
+        raise InvalidPredictionOutputError(
+            "decision session differs from the scheduled exchange session"
+        )
     if skipped and requirements.get("failure_policy") != "skip":
         raise InvalidPredictionOutputError(
             "skipped decision contradicts its failure policy"
@@ -414,8 +423,8 @@ def validate_prediction_window_snapshot(
         "configuration_id": schedule.primary_timeframe.configuration_id,
         "configuration": schedule.primary_timeframe.to_primitive(),
     }
-    for decision, timestamp in zip(
-        decisions, schedule.decision_timestamps, strict=True
+    for decision, timestamp, session in zip(
+        decisions, schedule.decision_timestamps, schedule.decision_sessions, strict=True
     ):
         if not isinstance(decision, dict):
             raise InvalidPredictionOutputError("window decision is not an object")
@@ -424,9 +433,16 @@ def validate_prediction_window_snapshot(
             identity,
             timestamp.isoformat(),
             primary_timeframe=primary_timeframe,
+            decision_session=session.isoformat(),
             session_indexes=session_indexes,
             strategy_parameters=strategy_parameters,
         )
+    if configuration_identity(
+        {"counts": manifest.get("record_counts")}
+    ) != configuration_identity(
+        {"counts": _window_record_counts(cast(list[PrimitiveMapping], decisions))}
+    ):
+        raise InvalidPredictionOutputError("window record counts are inconsistent")
     if configuration_identity(
         {"window_id": window_id, "decisions": decisions}
     ) != manifest.get("window_result_id"):

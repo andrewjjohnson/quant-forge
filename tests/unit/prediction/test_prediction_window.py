@@ -286,6 +286,7 @@ def test_schedule_is_deterministic_closed_and_normalized_to_utc() -> None:
     assert baseline.decision_timestamps == tuple(
         START + timedelta(minutes=5 * i) for i in range(4)
     )
+    assert baseline.decision_sessions == (START.date(),) * 4
     assert (
         schedule(START + timedelta(seconds=1), END).decision_timestamps
         == baseline.decision_timestamps[1:]
@@ -339,6 +340,9 @@ def test_exchange_holiday_early_close_and_dst(
         Timeframe.us_equity(IntradayInterval(timedelta(hours=4))), start, end
     )
     assert tuple(item.isoformat() for item in result.decision_timestamps) == expected
+    assert result.decision_sessions == tuple(
+        datetime.fromisoformat(item).astimezone(NEW_YORK).date() for item in expected
+    )
 
 
 def test_clock_anchor_and_extended_hours_follow_existing_session_windows() -> None:
@@ -358,6 +362,7 @@ def test_clock_anchor_and_extended_hours_follow_existing_session_windows() -> No
     assert tuple(
         item.astimezone(NEW_YORK).time() for item in result.decision_timestamps
     ) == (*tuple(time(hour) for hour in range(9, 18)), time(17, 15))
+    assert result.decision_sessions == (date(2024, 7, 3),) * 10
 
 
 @pytest.mark.parametrize(
@@ -390,7 +395,7 @@ def test_schedule_rejects_exchange_recesses_as_unsupported_configuration(
 
 
 @pytest.mark.parametrize(
-    ("start", "end", "expected"),
+    ("start", "end", "expected", "expected_sessions"),
     [
         (
             "2024-07-10T17:05:00-05:00",
@@ -400,21 +405,25 @@ def test_schedule_rejects_exchange_recesses_as_unsupported_configuration(
                 "2024-07-10T22:10:00+00:00",
                 "2024-07-10T22:15:00+00:00",
             ),
+            ("2024-07-11",) * 3,
         ),
         (
             "2024-07-07T17:00:00-05:00",
             "2024-07-07T17:10:00-05:00",
             ("2024-07-07T22:05:00+00:00", "2024-07-07T22:10:00+00:00"),
+            ("2024-07-08",) * 2,
         ),
         (
             "2024-03-03T17:05:00-06:00",
             "2024-03-03T17:05:00-06:00",
             ("2024-03-03T23:05:00+00:00",),
+            ("2024-03-04",),
         ),
         (
             "2024-03-10T17:05:00-05:00",
             "2024-03-10T17:05:00-05:00",
             ("2024-03-10T22:05:00+00:00",),
+            ("2024-03-11",),
         ),
         (
             "2024-07-11T16:55:00-05:00",
@@ -424,16 +433,18 @@ def test_schedule_rejects_exchange_recesses_as_unsupported_configuration(
                 "2024-07-11T22:00:00+00:00",
                 "2024-07-11T22:05:00+00:00",
             ),
+            ("2024-07-11", "2024-07-11", "2024-07-12"),
         ),
         (
             "2024-07-06T17:00:00-05:00",
             "2024-07-06T17:10:00-05:00",
             (),
+            (),
         ),
     ],
 )
 def test_overnight_schedule_uses_trade_dates_and_exact_utc_boundaries(
-    start: str, end: str, expected: tuple[str, ...]
+    start: str, end: str, expected: tuple[str, ...], expected_sessions: tuple[str, ...]
 ) -> None:
     timeframe = Timeframe(
         IntradayInterval(timedelta(minutes=5)),
@@ -442,6 +453,10 @@ def test_overnight_schedule_uses_trade_dates_and_exact_utc_boundaries(
     first, last = datetime.fromisoformat(start), datetime.fromisoformat(end)
     result = PredictionDecisionSchedule(timeframe, first, last)
     assert tuple(item.isoformat() for item in result.decision_timestamps) == expected
+    assert (
+        tuple(item.isoformat() for item in result.decision_sessions)
+        == expected_sessions
+    )
     assert result.decision_timestamps == tuple(sorted(set(result.decision_timestamps)))
     assert result == PredictionDecisionSchedule(
         timeframe, first.astimezone(UTC), last.astimezone(UTC)
@@ -458,6 +473,9 @@ def test_schedule_includes_previous_trade_date_at_next_day_close() -> None:
     close = datetime(2024, 7, 13, tzinfo=UTC)
     assert PredictionDecisionSchedule(timeframe, close, close).decision_timestamps == (
         close,
+    )
+    assert PredictionDecisionSchedule(timeframe, close, close).decision_sessions == (
+        date(2024, 7, 12),
     )
     assert (
         PredictionDecisionSchedule(
@@ -489,6 +507,12 @@ def test_schedule_preserves_available_calendar_boundary_sessions(
         start = end - timedelta(minutes=5)
     result = PredictionDecisionSchedule(timeframe, start, end)
     assert result.decision_timestamps == (start, end)
+    expected_session = (
+        exchange.first_session.date()
+        if boundary == "first"
+        else exchange.last_session.date()
+    )
+    assert result.decision_sessions == (expected_session,) * 2
     outside = (
         start - timedelta(days=2) if boundary == "first" else end + timedelta(days=2)
     )
@@ -1838,6 +1862,90 @@ def test_partial_window_cannot_claim_success_with_recomputed_checksums(
         PredictionGridPersistenceError, match="window artifact is incomplete"
     ):
         study.load_result()
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "scheduled_decisions",
+        "valid_decisions",
+        "skipped_decisions",
+        "no_prediction_decisions",
+        "generated_predictions",
+        "unavailable_outcomes",
+        "signal_dispositions",
+    ],
+)
+def test_recovered_window_totals_must_match_unchanged_decisions(
+    tmp_path: Path, field: str
+) -> None:
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(tmp_path, provider, analyzer=analyzer)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    window = artifact["prediction_window"]
+    original_decisions = deepcopy(window["decisions"])
+    original_result_id = window["manifest"]["window_result_id"]
+    counts = window["manifest"]["record_counts"]
+    if field == "signal_dispositions":
+        counts[field]["fabricated"] = 100
+    else:
+        counts[field] += 100
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    assert window["decisions"] == original_decisions
+    assert window["manifest"]["window_result_id"] == original_result_id
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+@pytest.mark.parametrize("no_prediction", [False, True])
+def test_recovered_decision_session_cannot_move_with_its_signal(
+    tmp_path: Path, no_prediction: bool
+) -> None:
+    provider, analyzer = _provider_with_final_session(), WindowAnalyzer()
+    tomorrow = START + timedelta(days=1)
+    study = grid(
+        tmp_path,
+        provider,
+        analyzer=analyzer,
+        decision_schedule=schedule(tomorrow, tomorrow),
+    )
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    window = artifact["prediction_window"]
+    decision = window["decisions"][0]
+    manifest = decision["prediction_study"]["manifest"]
+    context = manifest["prediction_context"]
+    moved_session = START.date().isoformat()
+    # This session is in the outcome dataset and already beyond warm-up.
+    assert _prediction_dataset().bars[1].session_date.isoformat() == moved_session
+    context["decision_session"] = moved_session
+    decision["generated_signals"][0]["prediction"]["signal_session"] = moved_session
+    if no_prediction:
+        decision["generated_signals"] = []
+        decision["status"] = "no_prediction"
+        manifest["record_counts"]["generated_predictions"] = 0
+        manifest["record_counts"]["unavailable_outcomes"] = 0
+        window["manifest"]["record_counts"]["no_prediction_decisions"] = 1
+        window["manifest"]["record_counts"]["generated_predictions"] = 0
+        window["manifest"]["record_counts"]["unavailable_outcomes"] = 0
+        window["manifest"]["record_counts"]["signal_dispositions"] = {}
+    _rewrite_decision_identities(decision)
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
 
 
 def test_candidate_primary_mismatch_is_excluded_before_context_execution(

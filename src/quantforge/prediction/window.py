@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Protocol, cast
 from zoneinfo import ZoneInfo
 
@@ -83,6 +83,7 @@ class PredictionDecisionSchedule:
     start_timestamp: datetime
     end_timestamp: datetime
     decision_timestamps: tuple[datetime, ...] = field(init=False)
+    decision_sessions: tuple[date, ...] = field(init=False)
 
     def __post_init__(self) -> None:
         start, end = _utc(self.start_timestamp), _utc(self.end_timestamp)
@@ -116,15 +117,20 @@ class PredictionDecisionSchedule:
                 timeframe.session_policy.scope is SessionScope.REGULAR_HOURS
             ),
         )
-        timestamps = tuple(
-            window.end_timestamp
+        decisions = tuple(
+            (window.end_timestamp, session)
             for session in sessions
             for window in intraday_session_windows(session, timeframe)
             if start <= window.end_timestamp <= end
         )
         object.__setattr__(self, "start_timestamp", start)
         object.__setattr__(self, "end_timestamp", end)
-        object.__setattr__(self, "decision_timestamps", timestamps)
+        object.__setattr__(
+            self, "decision_timestamps", tuple(timestamp for timestamp, _ in decisions)
+        )
+        object.__setattr__(
+            self, "decision_sessions", tuple(session for _, session in decisions)
+        )
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -254,6 +260,36 @@ class PredictionWindowDecision[
         return self.snapshot.to_primitive()
 
 
+def _window_record_counts(decisions: list[PrimitiveMapping]) -> PrimitiveMapping:
+    """Derive window totals from complete, validated decision snapshots."""
+    dispositions: dict[str, int] = {}
+    generated_predictions = 0
+    unavailable_outcomes = 0
+    for decision in decisions:
+        signals = cast(list[PrimitiveMapping], decision["generated_signals"])
+        study = cast(PrimitiveMapping, decision["prediction_study"])
+        rows = cast(list[PrimitiveMapping], study["rows"])
+        generated_predictions += len(signals)
+        unavailable_outcomes += len(signals) - len(rows)
+        for signal in signals:
+            prediction = cast(PrimitiveMapping, signal["prediction"])
+            values = cast(PrimitiveMapping, prediction["values"])
+            disposition = values.get("disposition", "unclassified")
+            key = disposition if isinstance(disposition, str) else "unclassified"
+            dispositions[key] = dispositions.get(key, 0) + 1
+    return {
+        "scheduled_decisions": len(decisions),
+        "valid_decisions": sum(item["status"] != "skipped" for item in decisions),
+        "skipped_decisions": sum(item["status"] == "skipped" for item in decisions),
+        "no_prediction_decisions": sum(
+            item["status"] == "no_prediction" for item in decisions
+        ),
+        "generated_predictions": generated_predictions,
+        "unavailable_outcomes": unavailable_outcomes,
+        "signal_dispositions": dict(sorted(dispositions.items())),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class PredictionWindowResult[
     PredictionRecordT: PredictionRecord,
@@ -315,30 +351,7 @@ class PredictionWindowResult[
         return tuple(item.result for item in self.decisions)
 
     def counts_primitive(self) -> PrimitiveMapping:
-        decisions = [item.to_primitive() for item in self.decisions]
-        dispositions: dict[str, int] = {}
-        for decision in decisions:
-            for signal in cast(list[PrimitiveMapping], decision["generated_signals"]):
-                prediction = cast(PrimitiveMapping, signal["prediction"])
-                values = cast(PrimitiveMapping, prediction["values"])
-                disposition = values.get("disposition", "unclassified")
-                key = disposition if isinstance(disposition, str) else "unclassified"
-                dispositions[key] = dispositions.get(key, 0) + 1
-        return {
-            "scheduled_decisions": len(decisions),
-            "valid_decisions": sum(item["status"] != "skipped" for item in decisions),
-            "skipped_decisions": sum(item["status"] == "skipped" for item in decisions),
-            "no_prediction_decisions": sum(
-                item["status"] == "no_prediction" for item in decisions
-            ),
-            "generated_predictions": sum(
-                item.result.generated_prediction_count for item in self.decisions
-            ),
-            "unavailable_outcomes": sum(
-                item.result.unavailable_outcome_count for item in self.decisions
-            ),
-            "signal_dispositions": dict(sorted(dispositions.items())),
-        }
+        return _window_record_counts([item.to_primitive() for item in self.decisions])
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
