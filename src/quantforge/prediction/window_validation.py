@@ -16,6 +16,7 @@ from quantforge.prediction.window import (
 )
 from quantforge.prediction.window_context_validation import (
     validate_window_context_snapshot,
+    validate_window_source_snapshot,
 )
 
 
@@ -337,7 +338,9 @@ def _validate_decision(
             raise InvalidPredictionOutputError(
                 "decision source context identity is inconsistent"
             )
-        if not skipped:
+        if skipped:
+            validate_window_source_snapshot(source)
+        else:
             consistency = source.get("source_consistency")
             if (
                 source.get("as_of") != timestamp

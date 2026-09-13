@@ -2150,6 +2150,222 @@ def test_recovered_signal_cannot_omit_an_available_outcome(tmp_path: Path) -> No
     assert analyzer.seen == analyses
 
 
+@pytest.mark.parametrize("timeframe_index", [0, 1])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "duplicate",
+        "alias",
+        "indicator_name",
+        "configuration_id",
+        "backend",
+        "source_timeframe",
+        "source_fields",
+        "completion_policy",
+        "dataset_reference",
+        "feed_scope",
+        "warm_up_bars",
+        "visible_bar_ids",
+        "output_fields",
+    ],
+)
+def test_recovered_indicator_manifest_matches_its_declared_causal_source(
+    tmp_path: Path, timeframe_index: int, mutation: str
+) -> None:
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(tmp_path, provider, analyzer=analyzer)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    context = decision["prediction_study"]["manifest"]["prediction_context"]
+    selected = context["timeframes"][timeframe_index]
+    indicator = selected["indicators"][0]
+    if mutation == "missing":
+        selected.pop("indicators")
+    elif mutation == "duplicate":
+        selected["indicators"].append(deepcopy(indicator))
+    elif mutation == "backend":
+        indicator["backend"]["library_version"] = "changed"
+    elif mutation == "dataset_reference":
+        indicator["dataset_reference"]["dataset_id"] = "changed"
+    elif mutation == "feed_scope":
+        indicator["dataset_reference"]["feed_scope"]["coverage"] = "changed"
+    elif mutation in ("source_fields", "visible_bar_ids", "output_fields"):
+        indicator[mutation] = []
+    elif mutation == "warm_up_bars":
+        indicator[mutation] = 999
+    else:
+        indicator[mutation] = "changed"
+    _rewrite_decision_identities(decision)
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_entry",
+        "duplicate_entry",
+        "duplicate_requirement",
+        "requirement",
+        "completion_policy",
+        "consistency_mode",
+        "external_policy",
+        "family",
+        "canonical_source",
+        "age",
+        "missing_with_bars",
+        "future",
+        "schema",
+        "naive_as_of",
+    ],
+)
+def test_recovered_skipped_context_preserves_internal_source_validity(
+    tmp_path: Path, mutation: str
+) -> None:
+    class SkipWindowFactory(WindowFactory):
+        def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]:
+            return _study(
+                WindowRule(
+                    _requirements(
+                        window=cast(int, parameters["window"]),
+                        failure_policy=PredictionContextFailurePolicy.SKIP,
+                    )
+                )
+            )
+
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(
+        tmp_path,
+        provider,
+        analyzer=analyzer,
+        factory=SkipWindowFactory(),
+        dataset_family_fingerprint="rejected-family",
+    )
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    assert decision["status"] == "skipped"
+    source = decision["prediction_study"]["manifest"]["prediction_context"][
+        "source_context"
+    ]
+    contextual = source["timeframes"][1]
+    if mutation == "missing_entry":
+        source["timeframes"].pop(1)
+    elif mutation == "duplicate_entry":
+        source["timeframes"].append(deepcopy(contextual))
+    elif mutation == "duplicate_requirement":
+        source["required_timeframes"].append(deepcopy(source["required_timeframes"][0]))
+    elif mutation == "requirement":
+        contextual["requirement"]["maximum_age_microseconds"] = 1
+    elif mutation == "completion_policy":
+        source["completion_policy"] = "unknown"
+    elif mutation == "consistency_mode":
+        source["source_consistency"]["mode"] = "externally_validated"
+    elif mutation == "external_policy":
+        source["source_consistency"]["external_validation_policy_id"] = "changed"
+    elif mutation == "family":
+        contextual["dataset_reference"]["family_id"] = "changed"
+    elif mutation == "canonical_source":
+        contextual["dataset_reference"]["canonical_source_snapshot_id"] = "changed"
+    elif mutation == "age":
+        contextual["age_microseconds"] = 0
+    elif mutation == "missing_with_bars":
+        contextual["availability"] = "missing"
+    elif mutation == "future":
+        contextual["latest_completed_bar_timestamp"] = END.isoformat()
+    elif mutation == "schema":
+        source["schema_version"] = "unknown"
+    else:
+        source["as_of"] = "2024-07-11T13:35:00"
+    _rewrite_decision_identities(decision)
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+@pytest.mark.parametrize("rejection", ["missing", "stale", "requirements", "timestamp"])
+def test_valid_skipped_source_evidence_still_loads_and_resumes(
+    tmp_path: Path, rejection: str
+) -> None:
+    class SkipWindowFactory(WindowFactory):
+        def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]:
+            requirements = _requirements(
+                window=cast(int, parameters["window"]),
+                failure_policy=PredictionContextFailurePolicy.SKIP,
+            )
+            if rejection == "stale":
+                requirements = replace(
+                    requirements,
+                    contextual=tuple(
+                        replace(item, maximum_age=timedelta(microseconds=1))
+                        for item in requirements.contextual
+                    ),
+                )
+            return _study(WindowRule(requirements))
+
+    class RejectedWindowProvider(WindowProvider):
+        def get_context_at(
+            self, requirements: PredictionContextRequirements, *, as_of: datetime
+        ) -> MultiTimeframeContext:
+            if rejection == "requirements":
+                requirements = replace(
+                    requirements,
+                    contextual=tuple(
+                        replace(item, maximum_age=timedelta(days=7))
+                        for item in requirements.contextual
+                    ),
+                )
+            return super().get_context_at(
+                requirements,
+                as_of=as_of + timedelta(minutes=5)
+                if rejection == "timestamp"
+                else as_of,
+            )
+
+    provider, analyzer = RejectedWindowProvider(), WindowAnalyzer()
+    if rejection == "missing":
+        provider.series = tuple(
+            item
+            for item in provider.series
+            if item.timeframe == _requirements().primary.timeframe
+        )
+    study = grid(tmp_path, provider, factory=SkipWindowFactory(), analyzer=analyzer)
+    result = study.run()
+    for trial in result.trials:
+        assert trial.status is TrialStatus.SUCCEEDED
+        artifact = json.loads(
+            (tmp_path / study.study_id / cast(str, trial.artifact_location)).read_text()
+        )
+        for decision in artifact["prediction_window"]["decisions"]:
+            assert decision["status"] == "skipped"
+            assert (
+                decision["prediction_study"]["manifest"]["prediction_context"][
+                    "source_context"
+                ]
+                is not None
+            )
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    assert study.load_result().trials == result.trials
+    assert study.resume().trials == result.trials
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
 def test_candidate_primary_mismatch_is_excluded_before_context_execution(
     tmp_path: Path,
 ) -> None:

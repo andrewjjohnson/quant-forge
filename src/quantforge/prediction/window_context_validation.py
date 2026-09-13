@@ -1,12 +1,30 @@
-"""Validate persisted available QF-28 context metadata without component execution."""
+"""Validate persisted QF-20/QF-28 context metadata without component execution."""
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
-from quantforge.data.multi_timeframe import ContextCompletionPolicy
+from quantforge.data.lineage import SourceConsistencyMode
+from quantforge.data.multi_timeframe import (
+    MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION,
+    ContextCompletionPolicy,
+)
+from quantforge.indicators.timeframe import TIMEFRAME_INDICATOR_CONTRACT_VERSION
 from quantforge.prediction.errors import InvalidPredictionOutputError
+from quantforge.prediction.window_timeframe_validation import (
+    validate_source_timeframe_definition,
+)
 from quantforge.timeframes import BarCompletion
+
+
+@dataclass(frozen=True)
+class _SourceTimeframe:
+    snapshot: PrimitiveMapping
+    visible_ids: list[str]
+    completed_ids: list[str]
+    latest_end: datetime | None
+    completed_end: datetime | None
 
 
 def _mapping(value: Primitive, label: str) -> PrimitiveMapping:
@@ -62,7 +80,6 @@ def _developing_end(
     decision_timestamp: datetime,
     *,
     family_id: Primitive,
-    symbol: Primitive,
 ) -> datetime:
     developing = _mapping(aligned.get("developing_bar"), "developing bar evidence")
     bar = _mapping(developing.get("bar"), "developing bar")
@@ -70,7 +87,8 @@ def _developing_end(
     _equal(developing.get("bar_id"), bar_id, "developing bar identity")
     _equal(visible_ids[-1], bar_id, "latest developing bar reference")
     _equal(bar.get("timeframe"), timeframe, "developing timeframe")
-    _equal(bar.get("symbol"), symbol, "developing symbol")
+    if not isinstance(bar.get("symbol"), str) or not bar["symbol"]:
+        raise InvalidPredictionOutputError("developing symbol is missing")
     _equal(bar.get("complete"), False, "developing completion flag")
     _equal(
         bar.get("completion"), BarCompletion.DEVELOPING.value, "developing completion"
@@ -92,65 +110,85 @@ def _developing_end(
     return observed_end
 
 
-def _validate_timeframe(
+def _validate_source_timeframe(
     aligned: PrimitiveMapping,
-    selected: PrimitiveMapping,
     requirement: PrimitiveMapping,
     decision_timestamp: datetime,
     *,
     primary: bool,
     source_completion_policy: Primitive,
     family_id: Primitive,
-    symbol: Primitive,
-) -> str:
+) -> _SourceTimeframe:
     timeframe = _mapping(requirement.get("timeframe"), "declared timeframe")
     timeframe_configuration = _mapping(
         timeframe.get("configuration"), "timeframe configuration"
     )
     _equal(
         aligned.get("requirement"),
-        {
-            "timeframe": timeframe,
-            "maximum_age_microseconds": None
-            if primary
-            else requirement.get("maximum_age_microseconds"),
-        },
+        requirement,
         "source timeframe requirement",
     )
-    _equal(selected.get("requirement"), requirement, "rule timeframe requirement")
     _equal(
         aligned.get("bar_interval"),
         timeframe_configuration.get("interval"),
         "source bar interval",
     )
-    reference = _mapping(
-        aligned.get("dataset_reference"), "timeframe dataset reference"
-    )
-    dataset_id, source_id = (
-        reference.get("dataset_id"),
-        reference.get("canonical_source_snapshot_id"),
-    )
-    if (
-        not isinstance(dataset_id, str)
-        or not dataset_id
-        or not isinstance(source_id, str)
-        or not source_id
-    ):
-        raise InvalidPredictionOutputError("timeframe dataset identity is missing")
-    _equal(aligned.get("dataset_id"), dataset_id, "timeframe dataset ID")
-    _equal(reference.get("family_id"), family_id, "timeframe family")
-    _equal(
-        reference.get("timeframe_configuration_id"),
-        timeframe.get("configuration_id"),
-        "dataset timeframe",
-    )
-    if aligned.get("availability") != "available":
-        raise InvalidPredictionOutputError(
-            "required context timeframe is missing or stale"
+    reference = aligned.get("dataset_reference")
+    if reference is None:
+        _equal(aligned.get("dataset_id"), None, "absent timeframe dataset")
+    else:
+        reference = _mapping(reference, "timeframe dataset reference")
+        if any(
+            not isinstance(reference.get(key), str) or not reference[key]
+            for key in (
+                "dataset_id",
+                "canonical_source_snapshot_id",
+                "family_id",
+                "timeframe_configuration_id",
+            )
+        ):
+            raise InvalidPredictionOutputError("timeframe dataset identity is missing")
+        _equal(
+            aligned.get("dataset_id"), reference["dataset_id"], "timeframe dataset ID"
         )
+        _equal(reference["family_id"], family_id, "timeframe family")
+        _equal(
+            reference["timeframe_configuration_id"],
+            timeframe.get("configuration_id"),
+            "dataset timeframe",
+        )
+    maximum_age = requirement.get("maximum_age_microseconds")
+    if maximum_age is not None and (
+        not isinstance(maximum_age, int)
+        or isinstance(maximum_age, bool)
+        or maximum_age <= 0
+    ):
+        raise InvalidPredictionOutputError("source maximum age must be positive")
     visible_ids = _bar_ids(aligned.get("visible_bar_ids"))
     if not visible_ids:
-        raise InvalidPredictionOutputError("required context timeframe has no bars")
+        _equal(
+            {
+                key: aligned.get(key)
+                for key in (
+                    "availability",
+                    "latest_completed_bar_timestamp",
+                    "latest_completion_state",
+                    "age_microseconds",
+                )
+            },
+            {
+                "availability": "missing",
+                "latest_completed_bar_timestamp": None,
+                "latest_completion_state": None,
+                "age_microseconds": None,
+            },
+            "missing timeframe metadata",
+        )
+        if "developing_bar" in aligned:
+            raise InvalidPredictionOutputError(
+                "missing timeframe exposes developing evidence"
+            )
+        return _SourceTimeframe(aligned, [], [], None, None)
     completed_end = (
         None
         if aligned.get("latest_completed_bar_timestamp") is None
@@ -172,7 +210,6 @@ def _validate_timeframe(
             visible_ids,
             decision_timestamp,
             family_id=family_id,
-            symbol=symbol,
         )
         completed_ids = visible_ids[:-1]
     elif isinstance(completion, str) and completion in {
@@ -189,23 +226,51 @@ def _validate_timeframe(
         bool(completed_ids) != (completed_end is not None)
         or (completed_end is not None and completed_end > latest_end)
         or latest_end > decision_timestamp
-        or (primary and latest_end != decision_timestamp)
     ):
         raise InvalidPredictionOutputError(
             "context timeframe exposes incompatible bar timestamps"
         )
+    age = (decision_timestamp - latest_end) // timedelta(microseconds=1)
+    _equal(aligned.get("age_microseconds"), age, "timeframe age")
     _equal(
-        aligned.get("age_microseconds"),
-        (decision_timestamp - latest_end) // timedelta(microseconds=1),
-        "timeframe age",
+        aligned.get("availability"),
+        "stale" if isinstance(maximum_age, int) and age > maximum_age else "available",
+        "timeframe availability",
     )
+    return _SourceTimeframe(
+        aligned, visible_ids, completed_ids, latest_end, completed_end
+    )
+
+
+def _validate_rule_timeframe(
+    aligned: _SourceTimeframe,
+    selected: PrimitiveMapping,
+    requirement: PrimitiveMapping,
+    decision_timestamp: datetime,
+    *,
+    primary: bool,
+    symbol: Primitive,
+) -> None:
+    _equal(selected.get("requirement"), requirement, "rule timeframe requirement")
+    if aligned.snapshot.get("availability") != "available":
+        raise InvalidPredictionOutputError(
+            "required context timeframe is missing or stale"
+        )
+    if primary and aligned.latest_end != decision_timestamp:
+        raise InvalidPredictionOutputError(
+            "primary bar must end at the scheduled timestamp"
+        )
+    if "developing_bar" in aligned.snapshot:
+        developing = _mapping(aligned.snapshot["developing_bar"], "developing evidence")
+        bar = _mapping(developing.get("bar"), "developing bar")
+        _equal(bar.get("symbol"), symbol, "developing symbol")
     if (
         requirement.get("completion_policy")
         == ContextCompletionPolicy.COMPLETED_BARS_ONLY.value
     ):
-        selected_ids, selected_end = completed_ids, completed_end
+        selected_ids, selected_end = aligned.completed_ids, aligned.completed_end
     else:
-        selected_ids, selected_end = visible_ids, latest_end
+        selected_ids, selected_end = aligned.visible_ids, aligned.latest_end
     if not selected_ids or selected_end is None:
         raise InvalidPredictionOutputError("rule timeframe has no permitted bars")
     maximum_age = requirement.get("maximum_age_microseconds")
@@ -222,7 +287,158 @@ def _validate_timeframe(
         cast(list[Primitive], selected_ids),
         "rule selected bar IDs",
     )
-    return source_id
+    _validate_indicators(selected, requirement, aligned.snapshot)
+
+
+def _validate_indicators(
+    selected: PrimitiveMapping,
+    requirement: PrimitiveMapping,
+    source: PrimitiveMapping,
+) -> None:
+    reference = _mapping(source.get("dataset_reference"), "rule dataset reference")
+    expanded_reference: PrimitiveMapping = {
+        **reference,
+        "feed_scope": requirement.get("feed_scope"),
+    }
+    expected: list[Primitive] = []
+    for declaration in _records(requirement.get("indicators"), "declared indicators"):
+        indicator = _mapping(declaration.get("indicator"), "declared indicator")
+        # Rebuild QF-22's bound configuration from the fixed declaration and
+        # validated source metadata; no indicator implementation is invoked.
+        configuration: PrimitiveMapping = {
+            "component_type": "timeframe_indicator",
+            "contract_version": TIMEFRAME_INDICATOR_CONTRACT_VERSION,
+            "indicator": {
+                "configuration_id": indicator.get("configuration_id"),
+                "configuration": indicator.get("configuration"),
+            },
+            "source": {
+                "timeframe": requirement.get("timeframe"),
+                "fields": indicator.get("source_fields"),
+                "completion_policy": requirement.get("completion_policy"),
+                "developing_bar_support": indicator.get("developing_bar_support"),
+                "observation_unit": "bar",
+                "warm_up_bars": indicator.get("warm_up_bars"),
+                "aggregation_provenance": expanded_reference,
+                "feed_scope": requirement.get("feed_scope"),
+            },
+        }
+        expected.append(
+            {
+                "alias": declaration.get("alias"),
+                "indicator_name": indicator.get("name"),
+                "configuration_id": configuration_identity(configuration),
+                "backend": indicator.get("backend"),
+                "source_timeframe": requirement.get("timeframe"),
+                "source_fields": indicator.get("source_fields"),
+                "completion_policy": requirement.get("completion_policy"),
+                "dataset_reference": expanded_reference,
+                "warm_up_bars": indicator.get("warm_up_bars"),
+                "visible_bar_ids": selected.get("visible_bar_ids"),
+                "output_fields": indicator.get("output_fields"),
+            }
+        )
+    _equal(selected.get("indicators"), expected, "rule indicator manifests")
+
+
+def validate_window_source_snapshot(
+    source: PrimitiveMapping,
+) -> tuple[_SourceTimeframe, ...]:
+    """Check QF-20's internal contract, including evidence retained by SKIP."""
+    _equal(
+        source.get("schema_version"),
+        MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION,
+        "source schema",
+    )
+    _equal(
+        source.get("artifact_type"), "multi_timeframe_context", "source artifact type"
+    )
+    source_policy = source.get("completion_policy")
+    if not isinstance(source_policy, str) or source_policy not in {
+        item.value for item in ContextCompletionPolicy
+    }:
+        raise InvalidPredictionOutputError("source completion policy is invalid")
+    primary = _mapping(source.get("primary_timeframe"), "source primary timeframe")
+    contextual = _records(source.get("required_timeframes"), "source requirements")
+    declared: list[PrimitiveMapping] = [
+        {"timeframe": primary, "maximum_age_microseconds": None},
+        *contextual,
+    ]
+    timeframe_ids: list[str] = []
+    session_policy: Primitive = None
+    for requirement in declared:
+        timeframe = _mapping(
+            requirement.get("timeframe"), "source requirement timeframe"
+        )
+        validate_source_timeframe_definition(timeframe)
+        configuration = _mapping(
+            timeframe.get("configuration"), "source timeframe configuration"
+        )
+        configuration_id = configuration_identity(configuration)
+        _equal(
+            timeframe.get("configuration_id"),
+            configuration_id,
+            "source timeframe identity",
+        )
+        _equal(
+            configuration.get("developing_bar_exposure"),
+            "completed_only",
+            "source timeframe exposure",
+        )
+        if not timeframe_ids:
+            session_policy = _mapping(
+                configuration.get("session_policy"), "source session policy"
+            )
+        _equal(
+            configuration.get("session_policy"), session_policy, "source session policy"
+        )
+        timeframe_ids.append(configuration_id)
+    if len(set(timeframe_ids)) != len(timeframe_ids) or timeframe_ids[1:] != sorted(
+        timeframe_ids[1:]
+    ):
+        raise InvalidPredictionOutputError(
+            "source requirements must be unique and ordered"
+        )
+    aligned = _records(source.get("timeframes"), "source timeframes")
+    if len(aligned) != len(declared):
+        raise InvalidPredictionOutputError(
+            "source timeframe coverage is incomplete or duplicated"
+        )
+    consistency = _mapping(source.get("source_consistency"), "source consistency")
+    _equal(
+        consistency,
+        {
+            "mode": SourceConsistencyMode.COMMON_DATASET_FAMILY.value,
+            "family_id": consistency.get("family_id"),
+            "external_validation_policy_id": None,
+        },
+        "source consistency",
+    )
+    source_ids: set[str] = set()
+    for item in aligned:
+        reference = item.get("dataset_reference")
+        if isinstance(reference, dict):
+            source_id = reference.get("canonical_source_snapshot_id")
+            if isinstance(source_id, str):
+                source_ids.add(source_id)
+    if len(source_ids) != 1:
+        raise InvalidPredictionOutputError(
+            "context requires one common canonical source"
+        )
+    as_of = _timestamp(source.get("as_of"))
+    return tuple(
+        _validate_source_timeframe(
+            entry,
+            requirement,
+            as_of,
+            primary=index == 0,
+            source_completion_policy=source_policy,
+            family_id=consistency.get("family_id"),
+        )
+        for index, (entry, requirement) in enumerate(
+            zip(aligned, declared, strict=True)
+        )
+    )
 
 
 def validate_window_context_snapshot(
@@ -277,30 +493,21 @@ def validate_window_context_snapshot(
         ],
         "source contextual requirements",
     )
-    aligned = _records(source.get("timeframes"), "source timeframes")
+    aligned = validate_window_source_snapshot(source)
     selected = _records(context.get("timeframes"), "rule timeframes")
     if len(aligned) != len(declared) or len(selected) != len(declared):
         raise InvalidPredictionOutputError(
             "context timeframe coverage is incomplete or duplicated"
         )
-    consistency = _mapping(source.get("source_consistency"), "source consistency")
     decision_timestamp = _timestamp(timestamp)
-    source_ids = {
-        _validate_timeframe(
+    for index, (source_entry, rule_entry, requirement) in enumerate(
+        zip(aligned, selected, declared, strict=True)
+    ):
+        _validate_rule_timeframe(
             source_entry,
             rule_entry,
             requirement,
             decision_timestamp,
             primary=index == 0,
-            source_completion_policy=source_policy,
-            family_id=consistency.get("family_id"),
             symbol=market_data["symbol"],
-        )
-        for index, (source_entry, rule_entry, requirement) in enumerate(
-            zip(aligned, selected, declared, strict=True)
-        )
-    }
-    if len(source_ids) != 1:
-        raise InvalidPredictionOutputError(
-            "context timeframes have different canonical sources"
         )

@@ -239,7 +239,19 @@ its age limit. Bar timestamps cannot exceed the scheduled decision. The primary
 must have a completed latest bar ending at that exact timestamp with zero age.
 Developing contextual bars retain their content-derived identity and causal
 observation boundaries; their expected completion boundary remains in the future.
-Rejected `SKIP` contexts retain their original audit evidence. Regenerating
+Every rule-facing indicator manifest must match its declared alias, backend,
+source fields, output schema, warm-up, completion policy, selected bars, and
+dataset/feed reference. Its bound configuration identity is recomputed from that
+fixed declaration and validated source metadata without indicator execution.
+
+Returned source snapshots retained by `SKIP` still satisfy QF-20's internal
+contract: canonical timeframe definitions, ordered unique requirements and exact
+coverage, completion policy, common-family/source evidence, and coherent
+missing/stale/available metadata. Their bar timestamps and ages are checked against
+their own source `as_of`. A source can therefore retain a legitimate wrong
+timestamp, family, or requirement relative to the requested decision, or missing
+and stale observations, while malformed audit evidence is rejected. Failures
+without a returned source still retain `source_context: null`. Regenerating
 artifact or trial checksums cannot bypass these checks.
 
 Validation does not call the context provider or rerun predictions or analysis.

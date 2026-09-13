@@ -17,6 +17,7 @@ from quantforge.prediction import (
 from quantforge.prediction.context import available_prediction_context_manifest
 from quantforge.prediction.window_context_validation import (
     validate_window_context_snapshot,
+    validate_window_source_snapshot,
 )
 from tests.unit.indicators.test_timeframe_evaluation import (
     _adjustment_basis,  # pyright: ignore[reportPrivateUsage]
@@ -112,3 +113,50 @@ def test_developing_context_rejects_inconsistent_temporal_evidence(
         arguments["context"]["timeframes"][1]["visible_bar_ids"][-1] = bar_id
     with pytest.raises(InvalidPredictionOutputError):
         validate_window_context_snapshot(**arguments)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "duration",
+        "clock_epoch",
+        "session_timezone",
+        "session_hours",
+        "schema",
+        "bar_label",
+    ],
+)
+def test_source_timeframe_definition_requires_valid_domain_configuration(
+    mutation: str,
+) -> None:
+    source = _available_context()["source"]
+    primary = source["primary_timeframe"]
+    configuration = primary["configuration"]
+    if mutation == "duration":
+        configuration["interval"]["nominal_duration_microseconds"] = 0
+    elif mutation == "clock_epoch":
+        configuration["interval"]["clock_anchor_epoch_date"] = "1970-01-01"
+    elif mutation == "session_timezone":
+        configuration["session_policy"]["timezone"] = "UTC"
+    elif mutation == "session_hours":
+        configuration["session_policy"]["extended_hours_end"] = "20:00:00.000000"
+    elif mutation == "schema":
+        configuration["schema_version"] = "unknown"
+    else:
+        configuration["bar_label"] = "unknown"
+    primary["configuration_id"] = configuration_identity(configuration)
+    source["timeframes"][0]["requirement"]["timeframe"] = deepcopy(primary)
+    source["timeframes"][0]["dataset_reference"]["timeframe_configuration_id"] = (
+        primary["configuration_id"]
+    )
+    with pytest.raises(
+        InvalidPredictionOutputError, match="source timeframe definition"
+    ):
+        validate_window_source_snapshot(source)
+
+
+def test_source_policy_cannot_hide_developing_bars_in_skipped_evidence() -> None:
+    source = _available_context()["source"]
+    source["completion_policy"] = "completed_bars_only"
+    with pytest.raises(InvalidPredictionOutputError, match="undeclared developing bar"):
+        validate_window_source_snapshot(source)
