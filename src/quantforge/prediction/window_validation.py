@@ -1,12 +1,124 @@
 """Offline provenance checks for persisted historical prediction windows."""
 
 from quantforge.configuration import (
+    Primitive,
     PrimitiveMapping,
     PrimitiveMappingSnapshot,
     configuration_identity,
 )
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.window import PredictionDecisionSchedule
+
+
+def _validate_rows(
+    rows: list[Primitive],
+    signals: list[Primitive],
+    configuration: PrimitiveMapping,
+) -> None:
+    signal_ids: set[str] = set()
+    for signal in signals:
+        if not isinstance(signal, dict):
+            raise InvalidPredictionOutputError("generated signal is not an object")
+        signal_id = configuration_identity(signal)
+        if signal_id in signal_ids:
+            raise InvalidPredictionOutputError("generated signals contain duplicates")
+        signal_ids.add(signal_id)
+
+    for row in rows:
+        if not isinstance(row, dict):
+            raise InvalidPredictionOutputError("decision row is not an object")
+        prediction, features = row.get("prediction"), row.get("features")
+        outcome, evaluation = row.get("outcome"), row.get("evaluation")
+        if (
+            not isinstance(prediction, dict)
+            or not isinstance(prediction.get("values"), dict)
+            or not isinstance(features, dict)
+            or not isinstance(outcome, dict)
+            or not isinstance(outcome.get("values"), dict)
+            or not isinstance(evaluation, dict)
+            or not isinstance(evaluation.get("values"), dict)
+        ):
+            raise InvalidPredictionOutputError("decision row payload is incomplete")
+        row_signal: PrimitiveMapping = {"prediction": prediction, "features": features}
+        signal_id = configuration_identity(row_signal)
+        if signal_id not in signal_ids:
+            raise InvalidPredictionOutputError(
+                "decision row does not match a distinct generated signal"
+            )
+        signal_ids.remove(signal_id)
+
+        # QF-11 hashes complete outcome/evaluation payloads, excluding their
+        # own IDs. Evaluation identity also binds the fixed prediction values;
+        # row identity binds the full signal, including contemporaneous features.
+        outcome_id = configuration_identity(
+            {
+                **{key: value for key, value in outcome.items() if key != "outcome_id"},
+                "record_type": "prediction_outcome",
+            }
+        )
+        evaluation_id = configuration_identity(
+            {
+                **{
+                    key: value
+                    for key, value in evaluation.items()
+                    if key != "evaluation_id"
+                },
+                "prediction": prediction["values"],
+                "record_type": "prediction_evaluation",
+            }
+        )
+        row_id = configuration_identity(
+            {
+                "evaluation_id": evaluation_id,
+                "outcome_id": outcome_id,
+                "record_type": "prediction_study_row",
+                "signal": row_signal,
+                "study_id": row["study_id"],
+            }
+        )
+        if (
+            outcome.get("outcome_id") != outcome_id
+            or evaluation.get("outcome_id") != outcome_id
+            or evaluation.get("evaluation_id") != evaluation_id
+            or row.get("row_id") != row_id
+            or outcome.get("dataset_id") != row["dataset_id"]
+            or outcome.get("dataset_fingerprint") != row["dataset_fingerprint"]
+            or outcome.get("signal_session") != prediction.get("signal_session")
+        ):
+            raise InvalidPredictionOutputError(
+                "decision row identities are inconsistent"
+            )
+        for payload, component, prefix, schema_field in (
+            (outcome, "outcome_labeler", "outcome", "outcome_result_schema_version"),
+            (evaluation, "evaluator", "evaluator", "evaluation_result_schema_version"),
+        ):
+            configured = configuration.get(component)
+            if not isinstance(configured, dict) or configuration_identity(
+                {
+                    **{
+                        field: payload.get(f"{prefix}_{field}")
+                        for field in (
+                            "name",
+                            "implementation_version",
+                            "configuration_id",
+                        )
+                    },
+                    "result_schema_version": payload.get(schema_field),
+                }
+            ) != configuration_identity(
+                {
+                    field: configured.get(field)
+                    for field in (
+                        "name",
+                        "implementation_version",
+                        "configuration_id",
+                        "result_schema_version",
+                    )
+                }
+            ):
+                raise InvalidPredictionOutputError(
+                    "decision row component differs from its study configuration"
+                )
 
 
 def _validate_decision(
@@ -82,6 +194,19 @@ def _validate_decision(
         raise InvalidPredictionOutputError(
             "decision context requirements are inconsistent"
         )
+    _validate_rows(rows, signals, configuration)
+    if configuration_identity(
+        {"counts": manifest.get("record_counts")}
+    ) != configuration_identity(
+        {
+            "counts": {
+                "generated_predictions": len(signals),
+                "labeled_rows": len(rows),
+                "unavailable_outcomes": len(signals) - len(rows),
+            }
+        }
+    ):
+        raise InvalidPredictionOutputError("decision record counts are inconsistent")
     skipped = context["status"] == "skipped"
     if skipped and requirements.get("failure_policy") != "skip":
         raise InvalidPredictionOutputError(

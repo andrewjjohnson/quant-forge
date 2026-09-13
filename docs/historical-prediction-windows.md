@@ -208,6 +208,12 @@ fields and compare it with the identity captured from the current candidate,
 validated outcome dataset, and provider/backend environments. Each decision's
 configuration, dataset, engine, QF-11 study ID, and exact source-context ID must
 agree; row and reserved analyzer references must point to that same evidence.
+Each row's QF-11 outcome, evaluation, and row IDs are recomputed from their
+serialized payloads. Outcomes and evaluations must retain the configured
+component provenance and correct dataset/signal/outcome references. Every row's
+prediction and features must match a distinct entry in `generated_signals`;
+decision counts must match the signal and row collections. Unlabeled
+end-of-data signals remain valid without a row.
 Available contexts must match the scheduled timestamp and family, while rejected
 `SKIP` contexts retain their original audit evidence. Regenerating artifact or
 trial checksums cannot bypass these checks.

@@ -722,6 +722,11 @@ def test_empty_schedule_and_no_signal_are_valid_and_distinct_from_skip() -> None
     )
     assert result.counts_primitive()["no_prediction_decisions"] == 4
     assert result.counts_primitive()["skipped_decisions"] == 0
+    validate_prediction_window_snapshot(
+        result.to_primitive(),
+        expected_identity=result.identity_snapshot,
+        schedule=result.schedule,
+    )
     empty = run_window(
         decision_schedule=schedule(
             START + timedelta(seconds=1), START + timedelta(seconds=2)
@@ -1074,6 +1079,11 @@ def test_qf31_candidates_preserve_acceptance_and_explicit_no_prediction(
             assert signal.reason_codes == ("technical_confluence_no_prediction",)
             assert signal.direction is None
         assert decision.to_primitive()["generated_signals"]
+    validate_prediction_window_snapshot(
+        result.to_primitive(),
+        expected_identity=result.identity_snapshot,
+        schedule=result.schedule,
+    )
 
 
 def test_unavailable_outcomes_keep_generated_signals_and_original_result_identity() -> (
@@ -1112,6 +1122,11 @@ def test_unavailable_outcomes_keep_generated_signals_and_original_result_identit
     assert (
         len(cast(list[PrimitiveMapping], decision.to_primitive()["generated_signals"]))
         == 1
+    )
+    validate_prediction_window_snapshot(
+        result.to_primitive(),
+        expected_identity=result.identity_snapshot,
+        schedule=result.schedule,
     )
 
 
@@ -1467,6 +1482,141 @@ def test_rehashed_window_keeps_decision_and_analysis_provenance_consistent(
     for read in (study.load_result, study.resume):
         with pytest.raises(PredictionGridPersistenceError, match="historical window"):
             read()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "outcome_values",
+        "evaluation_values",
+        "outcome_id",
+        "evaluation_id",
+        "row_id",
+        "row_prediction",
+        "row_features",
+        "generated_prediction",
+        "generated_features",
+        "missing_generated_signal",
+        "duplicate_generated_signal",
+        "duplicate_row",
+        "record_counts",
+        "evaluation_outcome_reference",
+        "outcome_dataset",
+        "outcome_configuration",
+        "evaluation_configuration",
+        "missing_outcome",
+        "missing_evaluation",
+    ],
+)
+def test_recovered_rows_require_nested_ids_and_original_generated_signals(
+    tmp_path: Path, mutation: str
+) -> None:
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(tmp_path, provider, analyzer=analyzer)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decisions = artifact["prediction_window"]["decisions"]
+    decision = decisions[0]
+    row = decision["prediction_study"]["rows"][0]
+    if mutation == "outcome_values":
+        row["outcome"]["values"]["overnight_gap_percentage"] = "999"
+    elif mutation == "evaluation_values":
+        values = row["evaluation"]["values"]
+        values["direction_correct"] = not values["direction_correct"]
+    elif mutation in ("outcome_id", "evaluation_id"):
+        row[mutation.removesuffix("_id")][mutation] = "changed"
+    elif mutation == "row_id":
+        row["row_id"] = "changed"
+    elif mutation == "row_prediction":
+        row["prediction"]["values"]["direction"] = "down"
+    elif mutation == "row_features":
+        row["features"]["calls"] = "999"
+    elif mutation == "generated_prediction":
+        decision["generated_signals"][0]["prediction"]["values"]["direction"] = "down"
+    elif mutation == "generated_features":
+        decision["generated_signals"][0]["features"]["calls"] = "999"
+    elif mutation == "missing_generated_signal":
+        decision["generated_signals"] = []
+        decision["status"] = "no_prediction"
+    elif mutation == "duplicate_generated_signal":
+        decision["generated_signals"].append(deepcopy(decision["generated_signals"][0]))
+    elif mutation == "duplicate_row":
+        decision["prediction_study"]["rows"].append(deepcopy(row))
+    elif mutation == "record_counts":
+        decision["prediction_study"]["manifest"]["record_counts"][
+            "unavailable_outcomes"
+        ] = 999
+    elif mutation == "evaluation_outcome_reference":
+        row["evaluation"]["outcome_id"] = "changed"
+    elif mutation == "outcome_dataset":
+        row["outcome"]["dataset_id"] = "changed"
+    elif mutation == "outcome_configuration":
+        row["outcome"]["outcome_configuration_id"] = "changed"
+    elif mutation == "evaluation_configuration":
+        row["evaluation"]["evaluator_configuration_id"] = "changed"
+    else:
+        row[mutation.removeprefix("missing_")] = None
+
+    # Recovery can also refresh inner hashes: their references still have to
+    # agree with the original signal collection and configured components.
+    if mutation in (
+        "row_prediction",
+        "row_features",
+        "evaluation_outcome_reference",
+        "outcome_dataset",
+        "outcome_configuration",
+        "evaluation_configuration",
+    ):
+        row["outcome"]["outcome_id"] = configuration_identity(
+            {
+                **{
+                    key: value
+                    for key, value in row["outcome"].items()
+                    if key != "outcome_id"
+                },
+                "record_type": "prediction_outcome",
+            }
+        )
+        if mutation != "evaluation_outcome_reference":
+            row["evaluation"]["outcome_id"] = row["outcome"]["outcome_id"]
+        row["evaluation"]["evaluation_id"] = configuration_identity(
+            {
+                **{
+                    key: value
+                    for key, value in row["evaluation"].items()
+                    if key != "evaluation_id"
+                },
+                "prediction": row["prediction"]["values"],
+                "record_type": "prediction_evaluation",
+            }
+        )
+        row["row_id"] = configuration_identity(
+            {
+                "evaluation_id": row["evaluation"]["evaluation_id"],
+                "outcome_id": row["outcome"]["outcome_id"],
+                "record_type": "prediction_study_row",
+                "signal": {
+                    "prediction": row["prediction"],
+                    "features": row["features"],
+                },
+                "study_id": row["study_id"],
+            }
+        )
+
+    rows = [row for item in decisions for row in item["prediction_study"]["rows"]]
+    artifact["analysis"]["artifacts"]["row_ids"] = [row["row_id"] for row in rows]
+    if mutation == "evaluation_values":
+        correct = sum(row["evaluation"]["values"]["direction_correct"] for row in rows)
+        artifact["analysis"]["metrics"]["accuracy"] = str(Decimal(correct) / len(rows))
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
 
 
 def test_partial_window_cannot_claim_success_with_recomputed_checksums(
