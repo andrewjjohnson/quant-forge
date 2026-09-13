@@ -46,6 +46,7 @@ from quantforge.prediction.context import (
     PredictionContextRequirements,
     PredictionIndicatorOutputCache,
     PredictionIndicatorRequirement,
+    RejectedPredictionContextError,
 )
 from quantforge.prediction.contracts import PredictionStudy
 from quantforge.prediction.errors import (
@@ -869,10 +870,13 @@ class PredictionGridExecutionCache(PredictionIndicatorOutputCache):
             return cached
         context = provider.get_context(requirements)
         if context.source_consistency.family_id != self._dataset_family_fingerprint:
-            raise PredictionContextError(
+            reason = (
                 "prediction context dataset family does not match the fixed "
                 "prediction-grid dataset family"
             )
+            if decision_timestamp is not None:
+                raise RejectedPredictionContextError(reason, source_context=context)
+            raise PredictionContextError(reason)
         self._contexts[key] = context
         self._context_misses += 1
         return context

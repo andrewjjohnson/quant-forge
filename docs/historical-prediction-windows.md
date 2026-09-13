@@ -16,8 +16,15 @@ decision boundaries must supply them; this API does not perform QF-8 partitionin
 
 The schedule reuses QF-18's `intraday_session_windows()` and the existing exchange
 calendar. It respects actual session opens/closes, holidays, early closes, DST,
-session-open or clock anchoring, and explicit extended-hours scope. Completed
-leading and terminal partial-duration bars are eligible at their actual ends.
+session-open or clock anchoring, and explicit extended-hours scope. For regular
+sessions, `expected_sessions(..., include_overnight=True)` uses the calendar's
+local open/close day offsets to include adjacent trade-date labels before
+filtering bar ends against the exact closed UTC interval. Evening bars belonging
+to the next trade date remain scheduled, including Sunday openings. Candidate
+labels are bounded by the available calendar; requests beyond its supported
+local dates fail explicitly. Explicit extended hours retain their same-day
+session-label policy. Completed leading and terminal partial-duration bars are
+eligible at their actual ends.
 Labels never advance availability. The primary must be intraday and
 completed-only, with cross-session bars prohibited, matching the supported QF-28
 contract. Contextual developing bars remain an explicit QF-21/QF-28 policy.
@@ -135,8 +142,9 @@ its existing backend environment automatically. `window_result_id` additionally
 hashes all ordered decision snapshots. Serialization uses the repository's
 canonical JSON and SHA-256 conventions.
 
-Window engine version 2 preserves contexts rejected by the historical adapter
-in QF-11 skip manifests and result identities. Window schema version 1 is
+Window engine version 3 includes overnight trade-date scheduling and preserves
+contexts rejected by either the historical adapter or scheduled grid's family
+check in QF-11 skip manifests and result identities. Window schema version 1 is
 unchanged. Scheduled grid identities also bind the window engine version, so
 artifacts from the earlier engine cannot be reused through resume.
 
@@ -169,6 +177,9 @@ the full window and analyzer evidence. Single-decision artifacts retain their
 original shape and `prediction-study.json` path. Context-cache keys add the UTC
 decision timestamp; indicator caches retain their existing full context,
 configuration, and backend keys. Native configurations remain native.
+The scheduled grid retains an incompatible returned family's snapshot as skip
+evidence before rejecting it from the cache. Neither indicators nor rules run
+against that context; the declared `FAIL` policy still fails the candidate.
 
 Persistence is **incremental per candidate**, using QF-32's atomic writes and
 terminal states. A window succeeds only after every scheduled decision and the

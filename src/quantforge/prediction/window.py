@@ -51,11 +51,12 @@ from quantforge.timeframes import (
     CrossSessionPolicy,
     DevelopingBarExposure,
     IntradayInterval,
+    SessionScope,
     Timeframe,
 )
 
 PREDICTION_WINDOW_SCHEMA_VERSION = "1"
-PREDICTION_WINDOW_ENGINE_VERSION = "2"
+PREDICTION_WINDOW_ENGINE_VERSION = "3"
 
 
 def _utc(timestamp: datetime) -> datetime:
@@ -105,6 +106,9 @@ class PredictionDecisionSchedule:
             start.astimezone(timezone).date(),
             end.astimezone(timezone).date(),
             timeframe.session_policy.calendar_name,
+            include_overnight=(
+                timeframe.session_policy.scope is SessionScope.REGULAR_HOURS
+            ),
         )
         timestamps = tuple(
             window.end_timestamp

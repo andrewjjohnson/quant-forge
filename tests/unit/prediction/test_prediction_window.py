@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -252,10 +253,12 @@ def grid(
     decision_schedule: PredictionDecisionSchedule | None = None,
     factory: FixtureStudyFactory | None = None,
     backend_configuration: PrimitiveMapping | None = None,
+    dataset_family_fingerprint: str | None = None,
 ) -> PredictionGridStudy:
     return PredictionGridStudy(
         dataset=_prediction_dataset(),
-        dataset_family_fingerprint=provider.family.family_id,
+        dataset_family_fingerprint=dataset_family_fingerprint
+        or provider.family.family_id,
         study_factory=factory or WindowFactory(),
         analyzer=analyzer or WindowAnalyzer(),
         context_provider=provider,
@@ -354,6 +357,113 @@ def test_clock_anchor_and_extended_hours_follow_existing_session_windows() -> No
     assert tuple(
         item.astimezone(NEW_YORK).time() for item in result.decision_timestamps
     ) == (*tuple(time(hour) for hour in range(9, 18)), time(17, 15))
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        (
+            "2024-07-10T17:05:00-05:00",
+            "2024-07-10T17:15:00-05:00",
+            (
+                "2024-07-10T22:05:00+00:00",
+                "2024-07-10T22:10:00+00:00",
+                "2024-07-10T22:15:00+00:00",
+            ),
+        ),
+        (
+            "2024-07-07T17:00:00-05:00",
+            "2024-07-07T17:10:00-05:00",
+            ("2024-07-07T22:05:00+00:00", "2024-07-07T22:10:00+00:00"),
+        ),
+        (
+            "2024-03-03T17:05:00-06:00",
+            "2024-03-03T17:05:00-06:00",
+            ("2024-03-03T23:05:00+00:00",),
+        ),
+        (
+            "2024-03-10T17:05:00-05:00",
+            "2024-03-10T17:05:00-05:00",
+            ("2024-03-10T22:05:00+00:00",),
+        ),
+        (
+            "2024-07-11T16:55:00-05:00",
+            "2024-07-11T17:05:00-05:00",
+            (
+                "2024-07-11T21:55:00+00:00",
+                "2024-07-11T22:00:00+00:00",
+                "2024-07-11T22:05:00+00:00",
+            ),
+        ),
+        (
+            "2024-07-06T17:00:00-05:00",
+            "2024-07-06T17:10:00-05:00",
+            (),
+        ),
+    ],
+)
+def test_overnight_schedule_uses_trade_dates_and_exact_utc_boundaries(
+    start: str, end: str, expected: tuple[str, ...]
+) -> None:
+    timeframe = Timeframe(
+        IntradayInterval(timedelta(minutes=5)),
+        ExchangeSessionPolicy(calendar_name="CMES", timezone_name="America/Chicago"),
+    )
+    first, last = datetime.fromisoformat(start), datetime.fromisoformat(end)
+    result = PredictionDecisionSchedule(timeframe, first, last)
+    assert tuple(item.isoformat() for item in result.decision_timestamps) == expected
+    assert result.decision_timestamps == tuple(sorted(set(result.decision_timestamps)))
+    assert result == PredictionDecisionSchedule(
+        timeframe, first.astimezone(UTC), last.astimezone(UTC)
+    )
+
+
+def test_schedule_includes_previous_trade_date_at_next_day_close() -> None:
+    timeframe = Timeframe(
+        IntradayInterval(timedelta(minutes=5)),
+        ExchangeSessionPolicy(calendar_name="24/5", timezone_name="UTC"),
+    )
+    # Saturday midnight is Friday's terminal completed bar, even though
+    # Saturday itself is not a session label on this calendar.
+    close = datetime(2024, 7, 13, tzinfo=UTC)
+    assert PredictionDecisionSchedule(timeframe, close, close).decision_timestamps == (
+        close,
+    )
+    assert (
+        PredictionDecisionSchedule(
+            timeframe, close + timedelta(seconds=1), close + timedelta(minutes=5)
+        ).decision_timestamps
+        == ()
+    )
+
+
+@pytest.mark.parametrize("calendar_name", ["CMES", "XNYS", "24/5"])
+@pytest.mark.parametrize("boundary", ["first", "last"])
+def test_schedule_preserves_available_calendar_boundary_sessions(
+    calendar_name: str, boundary: str
+) -> None:
+    exchange = cast(Any, import_module("exchange_calendars")).get_calendar(
+        calendar_name
+    )
+    timeframe = Timeframe(
+        IntradayInterval(timedelta(minutes=5)),
+        ExchangeSessionPolicy(
+            calendar_name=calendar_name, timezone_name=str(exchange.tz)
+        ),
+    )
+    if boundary == "first":
+        start = cast(datetime, exchange.first_session_open) + timedelta(minutes=5)
+        end = start + timedelta(minutes=5)
+    else:
+        end = cast(datetime, exchange.last_session_close)
+        start = end - timedelta(minutes=5)
+    result = PredictionDecisionSchedule(timeframe, start, end)
+    assert result.decision_timestamps == (start, end)
+    outside = (
+        start - timedelta(days=2) if boundary == "first" else end + timedelta(days=2)
+    )
+    with pytest.raises(ValueError, match="calendar bounds"):
+        PredictionDecisionSchedule(timeframe, outside, outside)
 
 
 @pytest.mark.parametrize(
@@ -620,9 +730,20 @@ def test_grid_analyzes_full_collection_and_preserves_ranking_resume_and_sources(
     assert len(analyzer.seen) == 2
 
 
-def test_grid_persists_and_resumes_missing_primary_context_evidence(
+@pytest.mark.parametrize("rejection", ["missing_primary", "wrong_family"])
+def test_grid_persists_and_resumes_rejected_context_evidence(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rejection: str,
 ) -> None:
+    def forbidden_rule_call(
+        self: WindowRule, context: PredictionRuleContext
+    ) -> PredictionStrategyOutput:
+        pytest.fail("a rejected family must never reach the rule")
+
+    if rejection == "wrong_family":
+        monkeypatch.setattr(WindowRule, "generate_with_context", forbidden_rule_call)
+
     class SkipWindowFactory(WindowFactory):
         def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]:
             return _study(
@@ -635,9 +756,16 @@ def test_grid_persists_and_resumes_missing_primary_context_evidence(
             )
 
     provider = WindowProvider()
-    extended = schedule(end=END + timedelta(minutes=5))
+    extended = schedule(
+        end=END if rejection == "wrong_family" else END + timedelta(minutes=5)
+    )
+    family_id = "different-family" if rejection == "wrong_family" else None
     study = grid(
-        tmp_path, provider, decision_schedule=extended, factory=SkipWindowFactory()
+        tmp_path,
+        provider,
+        decision_schedule=extended,
+        factory=SkipWindowFactory(),
+        dataset_family_fingerprint=family_id,
     )
     result = study.run()
     source = WindowProvider().get_context_at(
@@ -674,6 +802,19 @@ def test_grid_persists_and_resumes_missing_primary_context_evidence(
     assert study.load_result().trials == result.trials
     assert study.resume().trials == result.trials
     assert provider.requests == list(extended.decision_timestamps) * 2
+    if rejection == "wrong_family":
+        assert result.cache_statistics.context_hits == 0
+        assert result.cache_statistics.context_misses == 0
+        assert result.cache_statistics.indicator_misses == 0
+        assert all(
+            trial.analysis is not None and trial.analysis.prediction_count == 0
+            for trial in result.trials
+        )
+        failed = grid(
+            tmp_path / "fail", WindowProvider(), dataset_family_fingerprint=family_id
+        ).run()
+        assert all(trial.status is TrialStatus.FAILED for trial in failed.trials)
+        assert all(trial.artifact_location is None for trial in failed.trials)
 
 
 def test_interrupted_window_is_not_complete_and_resume_reruns_entire_candidate(
