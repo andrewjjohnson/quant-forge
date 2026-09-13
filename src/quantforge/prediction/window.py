@@ -39,6 +39,7 @@ from quantforge.prediction.errors import (
 )
 from quantforge.prediction.study import (
     STUDY_ENGINE_VERSION,
+    PredictionStudyConfiguration,
     PredictionStudyDatasetSession,
     PredictionStudyResult,
     _capture_study_configuration,  # pyright: ignore[reportPrivateUsage]
@@ -381,6 +382,32 @@ def run_prediction_window(
     )
 
 
+def _capture_window_identity(
+    prepared: PredictionStudyDatasetSession,
+    configuration: PredictionStudyConfiguration,
+    *,
+    schedule: PredictionDecisionSchedule,
+    dataset_family_fingerprint: str,
+    context_environment: PrimitiveMapping,
+    indicator_backend_environment: PrimitiveMapping | None,
+) -> PrimitiveMappingSnapshot:
+    """Share the scientific identity between execution and offline grid validation."""
+    return PrimitiveMappingSnapshot.capture(
+        {
+            "component": "quantforge_prediction_window",
+            "schema_version": PREDICTION_WINDOW_SCHEMA_VERSION,
+            "engine_version": PREDICTION_WINDOW_ENGINE_VERSION,
+            "prediction_engine_version": STUDY_ENGINE_VERSION,
+            "schedule": schedule.to_primitive(),
+            "market_data": prepared.market_data.to_primitive(),
+            "configuration": configuration.to_primitive(),
+            "dataset_family_fingerprint": dataset_family_fingerprint,
+            "context_environment": context_environment,
+            "indicator_backend_environment": indicator_backend_environment,
+        }
+    )
+
+
 def run_prediction_window_in_session(
     prepared: PredictionStudyDatasetSession,
     study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
@@ -409,19 +436,13 @@ def run_prediction_window_in_session(
             "a dataset family, and a timestamp-aware context provider"
         )
     configuration = _capture_study_configuration(study)
-    identity = PrimitiveMappingSnapshot.capture(
-        {
-            "component": "quantforge_prediction_window",
-            "schema_version": PREDICTION_WINDOW_SCHEMA_VERSION,
-            "engine_version": PREDICTION_WINDOW_ENGINE_VERSION,
-            "prediction_engine_version": STUDY_ENGINE_VERSION,
-            "schedule": schedule.to_primitive(),
-            "market_data": prepared.market_data.to_primitive(),
-            "configuration": configuration.to_primitive(),
-            "dataset_family_fingerprint": dataset_family_fingerprint,
-            "context_environment": context_environment,
-            "indicator_backend_environment": indicator_backend_environment,
-        }
+    identity = _capture_window_identity(
+        prepared,
+        configuration,
+        schedule=schedule,
+        dataset_family_fingerprint=dataset_family_fingerprint,
+        context_environment=context_environment,
+        indicator_backend_environment=indicator_backend_environment,
     )
     decisions: list[
         PredictionWindowDecision[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]

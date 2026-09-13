@@ -51,10 +51,12 @@ from quantforge.prediction.context import (
 from quantforge.prediction.contracts import PredictionStudy
 from quantforge.prediction.errors import (
     InvalidPredictionConfigurationError,
+    InvalidPredictionOutputError,
     PredictionAnalysisError,
 )
 from quantforge.prediction.study import (
     PredictionStudyResult,
+    _capture_study_configuration,  # pyright: ignore[reportPrivateUsage]
     prepare_prediction_study_dataset,
     run_prediction_study_in_session,
 )
@@ -63,8 +65,10 @@ from quantforge.prediction.window import (
     PredictionDecisionSchedule,
     PredictionWindowContextProvider,
     PredictionWindowResult,
+    _capture_window_identity,  # pyright: ignore[reportPrivateUsage]
     run_prediction_window_in_session,
 )
+from quantforge.prediction.window_validation import validate_prediction_window_snapshot
 from quantforge.timeframes import Timeframe
 
 PREDICTION_GRID_ENGINE_VERSION = "1"
@@ -1408,6 +1412,8 @@ class _PredictionGridStore:
         self,
         record: PredictionGridTrialRecord,
         schedule: PredictionDecisionSchedule | None = None,
+        *,
+        window_identity: PrimitiveMappingSnapshot | None = None,
     ) -> None:
         if record.artifact_location is None or record.analysis is None:
             raise PredictionGridPersistenceError(
@@ -1450,25 +1456,43 @@ class _PredictionGridStore:
                 "completed prediction trial artifact is incompatible with its record"
             )
         if schedule is not None:
-            decisions = prediction_study.get("decisions")
+            if window_identity is None:
+                raise PredictionGridPersistenceError(
+                    "historical window validation requires the candidate identity"
+                )
+            try:
+                validate_prediction_window_snapshot(
+                    prediction_study,
+                    expected_identity=window_identity,
+                    schedule=schedule,
+                )
+            except InvalidPredictionOutputError as error:
+                raise PredictionGridPersistenceError(
+                    f"historical window artifact is incomplete or incompatible: {error}"
+                ) from error
+            decisions = cast(list[PrimitiveMapping], prediction_study["decisions"])
+            sources: PrimitiveMapping = {
+                "window_result_id": prediction_study_id,
+                "decisions": [
+                    {
+                        key: item[key]
+                        for key in (
+                            "decision_timestamp",
+                            "prediction_study_id",
+                            "context_id",
+                        )
+                    }
+                    for item in decisions
+                ],
+            }
             if (
-                manifest.get("schedule") != schedule.to_primitive()
-                or not isinstance(decisions, list)
-                or len(decisions) != len(schedule.decision_timestamps)
-                or any(
-                    not isinstance(item, dict)
-                    or item.get("decision_timestamp") != timestamp.isoformat()
-                    for item, timestamp in zip(
-                        decisions, schedule.decision_timestamps, strict=True
-                    )
+                record.analysis.artifacts_snapshot.to_primitive().get(
+                    "prediction_window_sources"
                 )
-                or configuration_identity(
-                    {"window_id": manifest.get("window_id"), "decisions": decisions}
-                )
-                != prediction_study_id
+                != sources
             ):
                 raise PredictionGridPersistenceError(
-                    "historical window artifact is incomplete or incompatible"
+                    "historical window analysis references incompatible provenance"
                 )
 
 
@@ -2328,7 +2352,21 @@ class PredictionGridStudy:
                 raise PredictionGridPersistenceError(
                     "completed prediction trial artifact is missing or incompatible"
                 )
-            self._store.validate_artifact(record, self._decision_schedule)
+            window_identity = (
+                None
+                if self._decision_schedule is None
+                else _capture_window_identity(
+                    self._prepared,
+                    _capture_study_configuration(candidate.study),
+                    schedule=self._decision_schedule,
+                    dataset_family_fingerprint=self._dataset_family_fingerprint,
+                    context_environment=self._context_environment.to_primitive(),
+                    indicator_backend_environment=self._backend.to_primitive(),
+                )
+            )
+            self._store.validate_artifact(
+                record, self._decision_schedule, window_identity=window_identity
+            )
         if record.status is TrialStatus.FAILED and (
             not record.failure_type or not record.failure_message
         ):

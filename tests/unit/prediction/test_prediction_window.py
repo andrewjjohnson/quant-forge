@@ -56,6 +56,7 @@ from quantforge.prediction import (
     run_prediction_study,
     run_prediction_window,
 )
+from quantforge.prediction.window_validation import validate_prediction_window_snapshot
 from quantforge.timeframes import (
     BarLabel,
     CrossSessionPolicy,
@@ -674,6 +675,11 @@ def test_wrong_timestamp_and_family_cannot_enter_historical_results() -> None:
     requirements = _requirements(failure_policy=PredictionContextFailurePolicy.SKIP)
     wrong_timestamp_provider = WrongTimestampProvider()
     skipped = run_window(wrong_timestamp_provider, requirements=requirements)
+    validate_prediction_window_snapshot(
+        skipped.to_primitive(),
+        expected_identity=skipped.identity_snapshot,
+        schedule=skipped.schedule,
+    )
     for decision in skipped.decisions:
         source = wrong_timestamp_provider.get_context_at(
             requirements, as_of=decision.decision_timestamp
@@ -1262,6 +1268,205 @@ def test_new_outcome_dataset_changes_identity_without_changing_causal_prediction
         assert before.result.study_id != after.result.study_id
     with pytest.raises(InvalidPredictionOutputError, match="configuration or dataset"):
         replace(baseline, decisions=changed.decisions)
+
+
+def _rewrite_window_checksums(
+    artifact_path: Path,
+    trial_path: Path,
+    artifact: dict[str, Any],
+    *,
+    refresh_sources: bool = True,
+) -> None:
+    window = artifact["prediction_window"]
+    result_id = configuration_identity(
+        {"window_id": window["manifest"]["window_id"], "decisions": window["decisions"]}
+    )
+    window["manifest"]["window_result_id"] = result_id
+    artifact["prediction_window_id"] = result_id
+    sources = {
+        "window_result_id": result_id,
+        "decisions": [
+            {
+                key: decision[key]
+                for key in ("decision_timestamp", "prediction_study_id", "context_id")
+            }
+            for decision in window["decisions"]
+        ],
+    }
+    if refresh_sources:
+        artifact["analysis"]["artifacts"]["prediction_window_sources"] = sources
+    artifact.pop("artifact_fingerprint")
+    fingerprint = configuration_identity(artifact)
+    artifact["artifact_fingerprint"] = fingerprint
+    artifact_path.write_text(json.dumps(artifact))
+    record = json.loads(trial_path.read_text())
+    record["artifact_fingerprint"] = fingerprint
+    record["analysis"] = artifact["analysis"]
+    trial_path.write_text(json.dumps(record))
+
+
+@pytest.mark.parametrize("refresh_window_id", [False, True])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "configuration",
+        "market_data",
+        "context_environment",
+        "indicator_backend_environment",
+        "dataset_family_fingerprint",
+        "prediction_engine_version",
+        "engine_version",
+        "schema_version",
+        "component",
+        "schedule_id",
+    ],
+)
+def test_rehashed_window_manifest_must_match_its_identity_and_candidate(
+    tmp_path: Path,
+    field: str,
+    refresh_window_id: bool,
+) -> None:
+    provider = WindowProvider()
+    study = grid(tmp_path, provider)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    manifest = artifact["prediction_window"]["manifest"]
+    if isinstance(manifest[field], dict):
+        manifest[field]["review_mutation"] = "changed"
+    else:
+        manifest[field] = "changed"
+    if refresh_window_id:
+        manifest["window_id"] = configuration_identity(
+            {
+                key: value
+                for key, value in manifest.items()
+                if key
+                not in {"window_id", "window_result_id", "schedule_id", "record_counts"}
+            }
+        )
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests = list(provider.requests)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+
+
+@pytest.mark.parametrize("field", ["configuration", "market_data", "engine_version"])
+def test_rehashed_decision_provenance_must_match_the_window(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    study = grid(tmp_path, WindowProvider())
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    manifest = decision["prediction_study"]["manifest"]
+    if isinstance(manifest[field], dict):
+        manifest[field]["review_mutation"] = "changed"
+    else:
+        manifest[field] = "changed"
+    study_id = configuration_identity(
+        {
+            "component": "quantforge_prediction_study",
+            "engine_version": manifest["engine_version"],
+            "market_data": manifest["market_data"],
+            "study_configuration": manifest["configuration"],
+            "prediction_context": manifest["prediction_context"],
+        }
+    )
+    decision["prediction_study_id"] = manifest["study_id"] = study_id
+    for row in decision["prediction_study"]["rows"]:
+        row["study_id"] = study_id
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "study_id",
+        "context_id",
+        "source_snapshot",
+        "source_timestamp",
+        "source_family",
+        "status",
+        "requirements",
+        "row_study_id",
+        "row_dataset",
+        "analysis_references",
+        "skip_under_fail",
+    ],
+)
+def test_rehashed_window_keeps_decision_and_analysis_provenance_consistent(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    study = grid(tmp_path, WindowProvider())
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    manifest = decision["prediction_study"]["manifest"]
+    context = manifest["prediction_context"]
+    source = context["source_context"]
+    if mutation == "study_id":
+        decision["prediction_study_id"] = manifest["study_id"] = "changed"
+    elif mutation == "context_id":
+        decision["context_id"] = "changed"
+    elif mutation == "status":
+        decision["status"] = "skipped"
+    elif mutation == "row_study_id":
+        decision["prediction_study"]["rows"][0]["study_id"] = "changed"
+    elif mutation == "row_dataset":
+        decision["prediction_study"]["rows"][0]["dataset_id"] = "changed"
+    elif mutation == "analysis_references":
+        artifact["analysis"]["artifacts"]["prediction_window_sources"]["decisions"][0][
+            "context_id"
+        ] = "changed"
+    else:
+        if mutation == "skip_under_fail":
+            decision["status"] = context["status"] = "skipped"
+            decision["generated_signals"] = []
+            decision["prediction_study"]["rows"] = []
+        elif mutation == "requirements":
+            context["requirements"]["failure_policy"] = "changed"
+        elif mutation == "source_family":
+            source["source_consistency"]["family_id"] = "changed"
+        else:
+            source["as_of"] = END.isoformat()
+        if mutation != "source_snapshot":
+            source["context_id"] = decision["context_id"] = configuration_identity(
+                {key: value for key, value in source.items() if key != "context_id"}
+            )
+        study_id = configuration_identity(
+            {
+                "component": "quantforge_prediction_study",
+                "engine_version": manifest["engine_version"],
+                "market_data": manifest["market_data"],
+                "study_configuration": manifest["configuration"],
+                "prediction_context": context,
+            }
+        )
+        decision["prediction_study_id"] = manifest["study_id"] = study_id
+        for row in decision["prediction_study"]["rows"]:
+            row["study_id"] = study_id
+    _rewrite_window_checksums(
+        artifact_path,
+        trial_path,
+        artifact,
+        refresh_sources=mutation != "analysis_references",
+    )
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
 
 
 def test_partial_window_cannot_claim_success_with_recomputed_checksums(

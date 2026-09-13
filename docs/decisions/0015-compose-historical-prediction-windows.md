@@ -28,7 +28,11 @@ the unchanged QF-11 serialization.
 Extend QF-32 with an optional schedule and `analyze_window()` contract. Reuse
 candidate search, backend validation, ranking, stability, caches, and atomic
 candidate persistence. Completed windows resume; interrupted windows rerun in
-full. Do not fabricate a QF-11 identity or average arbitrary decision metrics.
+full. Validate persisted window and decision provenance against the identity of
+the current candidate before accepting recovered artifacts, even when their
+outer checksums have been regenerated. This check must not fetch provider data
+or rerun predictions. Do not fabricate a QF-11 identity or average arbitrary
+decision metrics.
 
 ## Consequences
 

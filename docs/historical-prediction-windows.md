@@ -203,6 +203,20 @@ are rejected. An interrupted candidate remains pending/running and reruns its
 entire window; partial results cannot be ranked. Failed candidates retain
 sanitized diagnostics and obey the existing fixed `retry_failed` policy.
 
+Load and resume recompute `window_id` from the persisted scientific identity
+fields and compare it with the identity captured from the current candidate,
+validated outcome dataset, and provider/backend environments. Each decision's
+configuration, dataset, engine, QF-11 study ID, and exact source-context ID must
+agree; row and reserved analyzer references must point to that same evidence.
+Available contexts must match the scheduled timestamp and family, while rejected
+`SKIP` contexts retain their original audit evidence. Regenerating artifact or
+trial checksums cannot bypass these checks.
+
+Validation does not call the context provider or rerun predictions or analysis.
+Schemas and generated IDs are unchanged; compatible existing artifacts still
+resume. These checks establish provenance consistency, not provider authenticity
+or independent reproduction of numerical results.
+
 There are no per-decision checkpoints or typed component deserializers in this
 story. Standalone windows expose `to_primitive()` and `serialize()`; QF-32 owns
 persistence/resume. Work and retained results grow with the decision count.
