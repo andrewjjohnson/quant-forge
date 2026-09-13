@@ -235,6 +235,9 @@ Existing exact manifest, candidate, successful-trial, QF-5 configuration, and
 artifact-integrity comparisons reject incompatible boundaries or reset policies.
 A changed source, context range, interval, capital, or resolved strategy/backend
 cannot reuse completed trials. No alternative carry-in reset policy is supported.
+The version-2 evaluation contract includes `strategy_metadata=causal_prefix_v1`;
+bounded version-1 artifacts that exposed full-source metadata have different
+study/trial identities and fail exact resume validation under the corrected policy.
 Successful bounded trials resume with zero backtest calls. With no explicit
 interval, both new serialized fields are absent and historical study/trial IDs,
 artifact versions, and resume behavior are unchanged. QF-39/QF-40 orchestration,

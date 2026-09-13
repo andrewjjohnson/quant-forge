@@ -51,3 +51,24 @@ cover process equivalence, zero-call resume, changed source/context/interval/
 capital/backend identity, and altered trial/artifact policies. Only fresh
 accounts are supported. QF-39 owns orchestration and parameter freezing;
 QF-40 owns aggregate OOS results and holdout consumption.
+
+## Pre-merge review correction: causal strategy metadata
+
+The initial version-1 policy above retained full-source metadata on the truncated
+history view. PR #38's review identified that future counts, sessions, actions,
+and hashes could consequently reach strategy code, while defensive validation
+failed because metadata no longer matched bars. Version 2 supersedes that
+strategy-metadata policy with `strategy_metadata=causal_prefix_v1`.
+
+Only the accounting view and final result retain full-source provenance. Raw
+strategy history receives self-consistent prefix ranges/counts, filtered action
+metadata, and rebuilt QF-3 digests, dataset/action identities, and canonical paths
+derived from that prefix. Retrieval time is the epoch unavailable sentinel;
+adapter version explicitly identifies a synthetic causal projection. The raw
+prefix passes QF-3 validation but creates no cache files or provider response.
+The subsequent split-normalized feature view retains its existing ephemeral
+contract. No-boundary behavior is unchanged.
+
+Tests reproduce the original metadata mismatch, compare all strategy-visible
+metadata/action records under future appends, preserve source provenance, and
+reject version-1 bounded artifacts on resume under the corrected policy.

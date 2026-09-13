@@ -22,8 +22,9 @@ from quantforge.backtesting import (
     run_backtest,
     validate_backtest_result_export,
 )
+from quantforge.backtesting.evaluation import select_backtest_datasets
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.data import MarketDataset
+from quantforge.data import MarketDataset, validate_market_dataset
 from quantforge.strategies import (
     ExecutionSessionStatus,
     MarketDataReference,
@@ -85,6 +86,104 @@ class ScheduledStrategy(ManualTransitionStrategy):
                 if session in available
             ),
         )
+
+
+class MetadataCheckingStrategy(ScheduledStrategy):
+    """A generic strategy may defensively validate a raw input without splits."""
+
+    def generate(self, dataset: MarketDataset) -> StrategyOutput:
+        validate_market_dataset(dataset)
+        return super().generate(dataset)
+
+
+def test_strategy_validates_raw_prefix_without_post_interval_metadata() -> None:
+    prices = ("100",) * 6
+    source = make_dataset(prices)
+    extended = make_dataset(
+        (*prices, "50", "50"),
+        dataset_id="future-source-snapshot",
+        splits=((SESSIONS[6], "2"),),
+        dividends=((SESSIONS[7], "3"),),
+        requested_end=SESSIONS[9],
+        missing_sessions=SESSIONS[8:10],
+    )
+    config = replace(
+        zero_cost_config(),
+        evaluation_interval=EvaluationInterval(SESSIONS[2], SESSIONS[5]),
+    )
+    strategies = [
+        MetadataCheckingStrategy(((SESSIONS[2], PositionIntent.LONG),))
+        for _ in range(2)
+    ]
+    results = [
+        run_backtest(dataset, strategy, config)
+        for dataset, strategy in zip((source, extended), strategies, strict=True)
+    ]
+    history = strategies[0].seen_dataset
+    assert history is not None
+    assert strategies[1].seen_dataset == history
+    assert history.metadata.actual_last_session == SESSIONS[5]
+    assert history.metadata.requested_end == SESSIONS[5]
+    assert history.metadata.bar_count == 6
+    assert history.metadata.missing_sessions == ()
+    assert history.metadata.split_sessions == history.metadata.dividend_sessions == ()
+    assert history.metadata.corporate_action_count == 0
+    assert history.metadata.dataset_id not in {
+        source.metadata.dataset_id,
+        extended.metadata.dataset_id,
+    }
+    assert results[0].signals[0].decision == results[1].signals[0].decision
+    assert results[0].performance == results[1].performance
+    assert results[1].market_data.dataset_id == extended.metadata.dataset_id
+    assert results[1].market_data.bar_count == 8
+    assert results[1].market_data.split_sessions == (SESSIONS[6],)
+    assert results[0].run_id != results[1].run_id
+
+
+def test_prefix_rebinds_historical_action_identity_and_preserves_source() -> None:
+    prices = ("100", "50", "50", "50", "50", "50")
+    splits = ((SESSIONS[1], "2"),)
+    dividends = ((SESSIONS[3], "1"),)
+    source = make_dataset(prices, splits=splits, dividends=dividends)
+    extended = make_dataset(
+        (*prices, "25", "25"),
+        splits=(*splits, (SESSIONS[6], "2")),
+        dividends=(*dividends, (SESSIONS[7], "3")),
+    )
+    interval = EvaluationInterval(SESSIONS[2], SESSIONS[5])
+    first_history, _ = select_backtest_datasets(source, interval)
+    second_history, evaluation = select_backtest_datasets(extended, interval)
+    assert first_history == second_history
+    validate_market_dataset(second_history)
+    validate_market_dataset(source)
+    validate_market_dataset(extended)
+    assert second_history.metadata.split_sessions == (SESSIONS[1],)
+    assert second_history.metadata.dividend_sessions == (SESSIONS[3],)
+    assert (
+        second_history.metadata.split_count
+        == second_history.metadata.dividend_count
+        == 1
+    )
+    assert all(
+        action.source_dataset_id == second_history.metadata.dataset_id
+        for action in second_history.corporate_actions
+    )
+    assert (
+        second_history.corporate_actions[0].action_id
+        != extended.corporate_actions[0].action_id
+    )
+    assert evaluation.metadata is extended.metadata
+    assert evaluation.corporate_actions[0] == extended.corporate_actions[1]
+    assert select_backtest_datasets(extended, None) == (extended, extended)
+
+    # Existing split-normalized feature semantics remain causal and prefix-bound.
+    strategy = ScheduledStrategy(((SESSIONS[2], PositionIntent.LONG),))
+    run_backtest(
+        extended, strategy, replace(zero_cost_config(), evaluation_interval=interval)
+    )
+    assert strategy.seen_dataset is not None
+    assert strategy.seen_dataset.metadata == second_history.metadata
+    assert [bar.close for bar in strategy.seen_dataset.bars] == [Decimal(100)] * 6
 
 
 def test_default_preserves_pre_qf43_complete_result_identity() -> None:

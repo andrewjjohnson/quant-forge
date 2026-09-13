@@ -220,6 +220,13 @@ records themselves. QF-5 continues to use only the original raw bars for fills,
 marks, and portfolio accounting, and exports the feature-basis convention in its
 split policy.
 
+QF-43 bounded runs first replace the source-wide metadata with a self-consistent
+raw prefix view through evaluation end. Counts, ranges, action records and
+identities describe only that prefix; full-source provenance stays on the
+backtest result. The raw prefix passes QF-3 validation before the existing
+ephemeral split-feature transformation. See [backtesting.md](backtesting.md) for
+the versioned metadata policy and unavailable retrieval-time sentinel.
+
 ## Position-sizing boundary
 
 `PositionSizingPolicy` converts `PositionIntent` plus an optional `SizingContext`

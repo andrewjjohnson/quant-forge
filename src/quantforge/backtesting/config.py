@@ -227,7 +227,7 @@ class EvaluationInterval:
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
-            "contract_version": "1",
+            "contract_version": "2",
             "start_session": self.start_session.isoformat(),
             "end_session": self.end_session.isoformat(),
             "membership": "inclusive_exchange_sessions",
@@ -235,6 +235,7 @@ class EvaluationInterval:
             "account_initialization": self.account_initialization,
             "signal_policy": "evaluation_decisions_only_no_context_orders",
             "strategy_history": "preserve_non_accounting_target_state",
+            "strategy_metadata": "causal_prefix_v1",
         }
 
 

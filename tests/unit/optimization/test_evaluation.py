@@ -202,7 +202,14 @@ def test_trial_runner_cannot_return_results_without_requested_boundary(
 
 @pytest.mark.parametrize("level", ["trial", "artifact"])
 @pytest.mark.parametrize(
-    "field", ["start_session", "end_session", "account_initialization"]
+    "field",
+    [
+        "start_session",
+        "end_session",
+        "account_initialization",
+        "contract_version",
+        "strategy_metadata",
+    ],
 )
 def test_resume_rejects_modified_boundary_in_completed_artifacts(
     tmp_path: Path, level: str, field: str
@@ -229,6 +236,36 @@ def test_resume_rejects_modified_boundary_in_completed_artifacts(
         integrity_path.write_text(json.dumps(integrity))
     with pytest.raises(StudyPersistenceError, match=r"does not match|do not match"):
         study.resume()
+
+
+def test_previous_metadata_policy_cannot_resume_as_causal_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current_serialization = EvaluationInterval.to_primitive
+
+    def previous_serialization(interval: EvaluationInterval) -> PrimitiveMapping:
+        configuration = current_serialization(interval)
+        configuration["contract_version"] = "1"
+        del configuration["strategy_metadata"]
+        return configuration
+
+    config = bounded_config(tmp_path)
+    with monkeypatch.context() as previous:
+        previous.setattr(EvaluationInterval, "to_primitive", previous_serialization)
+        old_study = GridSearchStudy(_dataset(), MovingAverageCrossoverFactory(), config)
+        old_result = old_study.run()
+
+    current = GridSearchStudy(_dataset(), MovingAverageCrossoverFactory(), config)
+    assert current.study_id != old_study.study_id
+    current.store = old_study.store
+    with pytest.raises(StudyPersistenceError, match="incompatible"):
+        current.resume()
+    current.store = FileStudyStore(tmp_path, current.study_id)
+    current_result = current.run()
+    assert len(current_result.successful_trials) == 2
+    assert {trial.trial_id for trial in old_result.trials}.isdisjoint(
+        trial.trial_id for trial in current_result.trials
+    )
 
 
 class BackendMovingAverage(MovingAverageCrossoverStrategy):

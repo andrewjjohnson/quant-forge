@@ -175,11 +175,23 @@ denominators, and closed/open-trade statistics all use that interval. No
 completed full-period accounting result is sliced afterward.
 
 `market_data` continues to describe the entire immutable source, including its
-full fingerprint/range and action snapshot. Internal history/evaluation views
-retain that provenance and are neither new QF-3 artifacts nor cacheable datasets.
-The optional version-1 `evaluation_interval` configuration records the endpoints,
-inclusive membership, context-prefix rule, account initialization, and decision
-policy. Source metadata plus these rules unambiguously identify consumed context
+full fingerprint/range and action snapshot. Only the internal accounting view
+retains that full-source metadata. The strategy's raw history view has matching
+prefix bounds, bar/action counts, missing sessions, and action-session tuples.
+Its digests, dataset/action IDs, snapshot ID, and canonical paths are rebuilt
+using only permitted prefix contents. Full-source hashes/paths are never exposed
+to strategy code. Retrieval time uses the explicit unavailable sentinel
+`1970-01-01T00:00:00+00:00`, and adapter version is `qf43-causal-prefix-v1`.
+These synthetic view identities describe an in-memory projection; no provider
+retrieval or cache artifacts are created. The raw view passes QF-3 validation.
+Subsequent causal split normalization retains the existing ephemeral feature-view
+contract: its transformed bars are not a raw QF-3 artifact or execution input.
+
+The optional version-2 `evaluation_interval` configuration records the endpoints,
+inclusive membership, context-prefix rule, account initialization, decision
+policy, and `strategy_metadata=causal_prefix_v1`. Version 1 exposed full-source
+metadata even when bars were truncated; its bounded artifacts cannot resume
+under version 2. Source metadata plus these rules identify consumed context
 and evaluation ranges. All existing strategy/indicator/backend, calendar, cost,
 and corporate-action provenance remains intact. The benchmark configuration also
 records the interval and `first_evaluation_session_open` anchoring.
