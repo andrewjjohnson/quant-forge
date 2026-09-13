@@ -217,8 +217,10 @@ Each row's QF-11 outcome, evaluation, and row IDs are recomputed from their
 serialized payloads. Outcomes and evaluations must retain the configured
 component provenance and correct dataset/signal/outcome references. Every row's
 prediction and features must match a distinct entry in `generated_signals`;
-decision counts must match the signal and row collections. Unlabeled
-end-of-data signals remain valid without a row.
+decision counts must match the signal and row collections. An outcome must occur
+exactly `required_future_sessions` positions after its signal in the validated
+outcome dataset. A generated signal may lack a labeled row only when that exact
+future session is beyond the dataset boundary.
 Window-level `record_counts` are also recomputed from the validated decisions
 through the same helper used by `PredictionWindowResult.counts_primitive()`.
 All decision, signal, unavailable-outcome, and disposition totals must agree.
@@ -228,11 +230,17 @@ scheduled exchange session, occur in the validated outcome dataset after warm-up
 and obey QF-11 ordering and one-signal-per-session rules.
 The available context's `decision_session` must match that schedule-derived
 session independently, including decisions that produce no predictions.
-Available contexts must match the scheduled timestamp, family, and primary
-timeframe. Exactly one available primary entry must retain visible bars and a
-completed latest bar ending at the decision timestamp with zero age. Rejected
-`SKIP` contexts retain their original audit evidence. Regenerating artifact or
-trial checksums cannot bypass these checks.
+Available rule contexts must match the outcome dataset's identity, symbol, and
+complete adjustment basis. Source and rule snapshots must contain exactly the
+ordered primary and contextual entries declared by the candidate, with matching
+requirements, completion policies, dataset references, and selected bar IDs.
+Every required timeframe must be available, retain permitted bars, and respect
+its age limit. Bar timestamps cannot exceed the scheduled decision. The primary
+must have a completed latest bar ending at that exact timestamp with zero age.
+Developing contextual bars retain their content-derived identity and causal
+observation boundaries; their expected completion boundary remains in the future.
+Rejected `SKIP` contexts retain their original audit evidence. Regenerating
+artifact or trial checksums cannot bypass these checks.
 
 Validation does not call the context provider or rerun predictions or analysis.
 Schemas and generated IDs are unchanged; compatible existing artifacts still

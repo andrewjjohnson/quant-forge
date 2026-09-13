@@ -255,9 +255,10 @@ def grid(
     factory: FixtureStudyFactory | None = None,
     backend_configuration: PrimitiveMapping | None = None,
     dataset_family_fingerprint: str | None = None,
+    dataset: MarketDataset | None = None,
 ) -> PredictionGridStudy:
     return PredictionGridStudy(
-        dataset=_prediction_dataset(),
+        dataset=dataset or _prediction_dataset(),
         dataset_family_fingerprint=dataset_family_fingerprint
         or provider.family.family_id,
         study_factory=factory or WindowFactory(),
@@ -1943,6 +1944,207 @@ def test_recovered_decision_session_cannot_move_with_its_signal(
     requests, analyses = list(provider.requests), list(analyzer.seen)
     for read in (study.load_result, study.resume):
         with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+@pytest.mark.parametrize(
+    "outcome_session", ["2024-07-10", "2024-07-11", "2024-07-13", "2024-07-15", None]
+)
+def test_recovered_outcome_must_use_the_exact_configured_horizon(
+    tmp_path: Path, outcome_session: str | None
+) -> None:
+    dataset = make_dataset(
+        ("100", "101", "102", "103"),
+        sessions=tuple(date(2024, 7, day) for day in (10, 11, 12, 15)),
+    )
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(tmp_path, provider, analyzer=analyzer, dataset=dataset)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    row = decision["prediction_study"]["rows"][0]
+    row["outcome"]["outcome_session"] = outcome_session
+    row["outcome"]["outcome_id"] = configuration_identity(
+        {
+            **{
+                key: value
+                for key, value in row["outcome"].items()
+                if key != "outcome_id"
+            },
+            "record_type": "prediction_outcome",
+        }
+    )
+    row["evaluation"]["outcome_id"] = row["outcome"]["outcome_id"]
+    row["evaluation"]["evaluation_id"] = configuration_identity(
+        {
+            **{
+                key: value
+                for key, value in row["evaluation"].items()
+                if key != "evaluation_id"
+            },
+            "record_type": "prediction_evaluation",
+            "prediction": row["prediction"]["values"],
+        }
+    )
+    _rewrite_decision_identities(decision)
+    artifact["analysis"]["artifacts"]["row_ids"] = [
+        row["row_id"]
+        for item in artifact["prediction_window"]["decisions"]
+        for row in item["prediction_study"]["rows"]
+    ]
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "prediction_dataset_id",
+        "symbol",
+        "adjustment_mode",
+        "ohlc_basis",
+        "volume_basis",
+        "corporate_action_policy",
+        "adjusted_fields_used",
+    ],
+)
+def test_recovered_rule_context_must_match_the_outcome_dataset(
+    tmp_path: Path, field: str
+) -> None:
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(tmp_path, provider, analyzer=analyzer)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    context = decision["prediction_study"]["manifest"]["prediction_context"]
+    if field in ("prediction_dataset_id", "symbol"):
+        context[field] = "changed"
+    else:
+        context["adjustment_basis"][field] = (
+            True if field == "adjusted_fields_used" else "changed"
+        )
+    _rewrite_decision_identities(decision)
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_entry",
+        "duplicate_entry",
+        "missing",
+        "stale",
+        "future",
+        "age",
+        "empty_bars",
+        "requirement",
+        "completion_policy",
+        "rule_missing_entry",
+        "rule_requirement",
+        "rule_bars",
+        "dataset_reference",
+    ],
+)
+def test_recovered_context_validates_every_declared_timeframe(
+    tmp_path: Path, mutation: str
+) -> None:
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(tmp_path, provider, analyzer=analyzer)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    context = decision["prediction_study"]["manifest"]["prediction_context"]
+    source = context["source_context"]
+    contextual = source["timeframes"][1]
+    if mutation == "missing_entry":
+        source["timeframes"].pop(1)
+    elif mutation == "duplicate_entry":
+        source["timeframes"].append(deepcopy(contextual))
+    elif mutation in ("missing", "stale"):
+        contextual["availability"] = mutation
+    elif mutation == "future":
+        contextual["latest_completed_bar_timestamp"] = END.isoformat()
+    elif mutation == "age":
+        contextual["age_microseconds"] = 0
+    elif mutation == "empty_bars":
+        contextual["visible_bar_ids"] = []
+    elif mutation == "requirement":
+        contextual["requirement"]["maximum_age_microseconds"] = 1
+    elif mutation == "completion_policy":
+        source["completion_policy"] = "developing_bar_as_of"
+    elif mutation == "rule_missing_entry":
+        context["timeframes"].pop(1)
+    elif mutation == "rule_requirement":
+        context["timeframes"][1]["requirement"]["completion_policy"] = (
+            "developing_bar_as_of"
+        )
+    elif mutation == "rule_bars":
+        context["timeframes"][1]["visible_bar_ids"] = []
+    else:
+        contextual["dataset_reference"]["timeframe_configuration_id"] = "changed"
+    _rewrite_decision_identities(decision)
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+def test_recovered_signal_cannot_omit_an_available_outcome(tmp_path: Path) -> None:
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(tmp_path, provider, analyzer=analyzer)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    window = artifact["prediction_window"]
+    for decision in window["decisions"]:
+        decision["prediction_study"]["rows"] = []
+        decision["prediction_study"]["manifest"]["record_counts"]["labeled_rows"] = 0
+        decision["prediction_study"]["manifest"]["record_counts"][
+            "unavailable_outcomes"
+        ] = 1
+    window["manifest"]["record_counts"]["unavailable_outcomes"] = len(
+        window["decisions"]
+    )
+    analysis = artifact["analysis"]
+    analysis["prediction_count"] = 0
+    analysis["metrics"]["accuracy"] = "0"
+    analysis["artifacts"]["row_ids"] = []
+    for field in (
+        "period_comparisons",
+        "weekday_comparisons",
+        "matched_baseline_comparisons",
+    ):
+        for record in analysis[field]:
+            record["count"] = 0
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(
+            PredictionGridPersistenceError, match="omits an available outcome"
+        ):
             read()
     assert provider.requests == requests
     assert analyzer.seen == analyses

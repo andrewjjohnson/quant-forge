@@ -14,7 +14,9 @@ from quantforge.prediction.window import (
     PredictionDecisionSchedule,
     _window_record_counts,  # pyright: ignore[reportPrivateUsage]
 )
-from quantforge.timeframes import BarCompletion
+from quantforge.prediction.window_context_validation import (
+    validate_window_context_snapshot,
+)
 
 
 def _validate_generated_signals(
@@ -78,73 +80,31 @@ def _validate_generated_signals(
         )
 
 
-def _validate_primary_bar(
-    source: PrimitiveMapping,
-    primary_timeframe: PrimitiveMapping,
-    timestamp: str,
-) -> None:
-    timeframes = source.get("timeframes")
-    if configuration_identity(
-        {"timeframe": source.get("primary_timeframe")}
-    ) != configuration_identity({"timeframe": primary_timeframe}) or not isinstance(
-        timeframes, list
-    ):
-        raise InvalidPredictionOutputError(
-            "available context has the wrong primary timeframe"
-        )
-    primary_contexts: list[PrimitiveMapping] = []
-    for timeframe in timeframes:
-        requirement = (
-            timeframe.get("requirement") if isinstance(timeframe, dict) else None
-        )
-        if (
-            isinstance(timeframe, dict)
-            and isinstance(requirement, dict)
-            and configuration_identity({"timeframe": requirement.get("timeframe")})
-            == configuration_identity({"timeframe": primary_timeframe})
-        ):
-            primary_contexts.append(timeframe)
-    if len(primary_contexts) != 1:
-        raise InvalidPredictionOutputError(
-            "available context requires one primary timeframe"
-        )
-    primary = primary_contexts[0]
-    visible_bars = primary.get("visible_bar_ids")
-    completion_state = primary.get("latest_completion_state")
-    if (
-        primary.get("availability") != "available"
-        or primary.get("latest_completed_bar_timestamp") != timestamp
-        or not isinstance(completion_state, str)
-        or completion_state
-        not in {
-            completion.value
-            for completion in BarCompletion
-            if completion is not BarCompletion.DEVELOPING
-        }
-        or type(primary.get("age_microseconds")) is not int
-        or primary["age_microseconds"] != 0
-        or not isinstance(visible_bars, list)
-        or not visible_bars
-        or any(not isinstance(bar_id, str) or not bar_id for bar_id in visible_bars)
-    ):
-        raise InvalidPredictionOutputError(
-            "available context is missing the scheduled primary bar"
-        )
-
-
 def _validate_rows(
     rows: list[Primitive],
     signals: list[Primitive],
     configuration: PrimitiveMapping,
+    session_indexes: dict[str, int],
 ) -> None:
-    signal_ids: set[str] = set()
+    labeler = configuration.get("outcome_labeler")
+    horizon = (
+        labeler.get("required_future_sessions") if isinstance(labeler, dict) else None
+    )
+    if not isinstance(horizon, int) or isinstance(horizon, bool) or horizon < 1:
+        raise InvalidPredictionOutputError(
+            "outcome horizon must be a positive session count"
+        )
+    signal_outcome_indexes: dict[str, int] = {}
     for signal in signals:
         if not isinstance(signal, dict):
             raise InvalidPredictionOutputError("generated signal is not an object")
         signal_id = configuration_identity(signal)
-        if signal_id in signal_ids:
+        if signal_id in signal_outcome_indexes:
             raise InvalidPredictionOutputError("generated signals contain duplicates")
-        signal_ids.add(signal_id)
+        prediction = cast(PrimitiveMapping, signal["prediction"])
+        signal_outcome_indexes[signal_id] = (
+            session_indexes[cast(str, prediction["signal_session"])] + horizon
+        )
 
     for row in rows:
         if not isinstance(row, dict):
@@ -163,11 +123,19 @@ def _validate_rows(
             raise InvalidPredictionOutputError("decision row payload is incomplete")
         row_signal: PrimitiveMapping = {"prediction": prediction, "features": features}
         signal_id = configuration_identity(row_signal)
-        if signal_id not in signal_ids:
+        if signal_id not in signal_outcome_indexes:
             raise InvalidPredictionOutputError(
                 "decision row does not match a distinct generated signal"
             )
-        signal_ids.remove(signal_id)
+        expected_outcome_index = signal_outcome_indexes.pop(signal_id)
+        outcome_session = outcome.get("outcome_session")
+        if (
+            not isinstance(outcome_session, str)
+            or session_indexes.get(outcome_session) != expected_outcome_index
+        ):
+            raise InvalidPredictionOutputError(
+                "outcome session differs from the configured future-session horizon"
+            )
 
         # QF-11 hashes complete outcome/evaluation payloads, excluding their
         # own IDs. Evaluation identity also binds the fixed prediction values;
@@ -241,6 +209,10 @@ def _validate_rows(
                 raise InvalidPredictionOutputError(
                     "decision row component differs from its study configuration"
                 )
+    if any(index < len(session_indexes) for index in signal_outcome_indexes.values()):
+        raise InvalidPredictionOutputError(
+            "generated signal omits an available outcome"
+        )
 
 
 def _validate_decision(
@@ -331,7 +303,7 @@ def _validate_decision(
         session_indexes=session_indexes,
         strategy_parameters=strategy_parameters,
     )
-    _validate_rows(rows, signals, configuration)
+    _validate_rows(rows, signals, configuration, session_indexes)
     if configuration_identity(
         {"counts": manifest.get("record_counts")}
     ) != configuration_identity(
@@ -366,7 +338,6 @@ def _validate_decision(
                 "decision source context identity is inconsistent"
             )
         if not skipped:
-            _validate_primary_bar(source, primary_timeframe, timestamp)
             consistency = source.get("source_consistency")
             if (
                 source.get("as_of") != timestamp
@@ -377,6 +348,14 @@ def _validate_decision(
                 raise InvalidPredictionOutputError(
                     "available context has incompatible provenance"
                 )
+            validate_window_context_snapshot(
+                context=context,
+                source=source,
+                requirements=requirements,
+                market_data=market_data,
+                primary_timeframe=primary_timeframe,
+                timestamp=timestamp,
+            )
     elif source is not None or not skipped or decision.get("context_id") is not None:
         raise InvalidPredictionOutputError(
             "decision source context evidence is invalid"
