@@ -490,6 +490,13 @@ Provide `.env.example` with names and safe placeholders only.
 
 ## Pull-request readiness
 
+Run the deterministic QF-42 historical schedule, multi-decision, provenance,
+window-analysis, and resume regression tests:
+
+```bash
+uv run pytest tests/unit/prediction/test_prediction_window.py
+```
+
 Before opening or updating a PR:
 
 ```bash

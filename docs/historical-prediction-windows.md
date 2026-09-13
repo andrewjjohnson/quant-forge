@@ -1,0 +1,182 @@
+# Historical prediction windows
+
+QF-42 evaluates one QF-11 multi-timeframe `PredictionStudy` at every scheduled
+decision in an explicit historical interval. It returns an ordered collection
+of the original results. Fold selection, frozen configurations, walk-forward
+orchestration, and OOS aggregation remain QF-39/QF-40 responsibilities.
+
+## Decision schedule
+
+`PredictionDecisionSchedule(primary_timeframe, start_timestamp, end_timestamp)`
+uses a **closed interval** of timezone-aware timestamps normalized to UTC.
+Every expected completed primary bar whose **end** lies in that interval is
+scheduled, including a bar that started before the requested boundary. Earlier
+context remains available under QF-28 declarations. Callers requiring purged
+decision boundaries must supply them; this API does not perform QF-8 partitioning.
+
+The schedule reuses QF-18's `intraday_session_windows()` and the existing exchange
+calendar. It respects actual session opens/closes, holidays, early closes, DST,
+session-open or clock anchoring, and explicit extended-hours scope. Completed
+leading and terminal partial-duration bars are eligible at their actual ends.
+Labels never advance availability. The primary must be intraday and
+completed-only, with cross-session bars prohibited, matching the supported QF-28
+contract. Contextual developing bars remain an explicit QF-21/QF-28 policy.
+
+Scheduling consults the calendar, **not observed market rows**. A missing primary
+bar therefore does not remove a decision. Its context must contain a completed
+primary bar ending at exactly the scheduled timestamp; an earlier bar cannot
+substitute for it. Missing, stale, incompatible, or incorrectly timestamped
+contexts follow the existing `FAIL` or `SKIP` policy. `FAIL` returns no partial
+window; `SKIP` retains the QF-11 skipped result. An interval containing no primary
+bar ends produces a valid empty collection.
+
+`decision_timestamps` is an ordered immutable tuple. Boundaries, the full primary
+timeframe/session configuration, schedule policy/schema, and the UTC timestamp
+sequence participate in `schedule_id`.
+
+## Execution and provider contract
+
+`PredictionWindowContextProvider.get_context_at(requirements, *, as_of)` is an
+additive timestamp-aware provider contract. A local provider can compose already
+validated `TimeframeBarSeries` artifacts:
+
+```python
+from dataclasses import dataclass
+from datetime import datetime
+
+from quantforge.data import (
+    MultiTimeframeContext,
+    TimeframeBarSeries,
+    build_multi_timeframe_context,
+)
+from quantforge.prediction import PredictionContextRequirements
+
+
+@dataclass(frozen=True)
+class LocalWindowProvider:
+    series: tuple[TimeframeBarSeries, ...]
+
+    def get_context_at(
+        self, requirements: PredictionContextRequirements, *, as_of: datetime
+    ) -> MultiTimeframeContext:
+        return build_multi_timeframe_context(
+            as_of=as_of,
+            primary_timeframe=requirements.primary.timeframe,
+            required_timeframes=requirements.context_timeframe_requirements(),
+            completion_policy=requirements.context_completion_policy,
+            series=self.series,
+        )
+```
+
+`run_prediction_window()` validates the QF-3 outcome dataset once, then delegates
+each decision to the unchanged `run_prediction_study_in_session()` with a
+provider bound to that UTC timestamp. Context family identity must match the
+declared `dataset_family_fingerprint`. The caller supplies immutable artifacts
+and provider-environment provenance; rules do not download data.
+
+Each decision receives an independent deep copy of one pristine study template.
+Rule, labeler, and evaluator objects must support independent copying while
+retaining their scientific configuration. Future-bearing callback state cannot
+carry into the next decision. QF-11's labeler-validation memo is fresh for each
+component lifetime. QF-11 still owns context validation, normalized indicators,
+causal predictions, outcome labeling, evaluation, warm-up and mutation checks,
+and every per-decision identity.
+
+```python
+from quantforge.prediction import PredictionDecisionSchedule, run_prediction_window
+
+schedule = PredictionDecisionSchedule(primary_timeframe, permitted_start, permitted_end)
+window = run_prediction_window(
+    prediction_dataset,
+    prediction_study,
+    schedule=schedule,
+    context_provider=LocalWindowProvider(validated_series),
+    dataset_family_fingerprint=family.family_id,
+    context_environment={
+        "provider_id": "local_immutable_artifacts",
+        "provider_version": "1",
+        "family_manifest_id": family.manifest_id,
+    },
+)
+```
+
+## Result and provenance
+
+`PredictionWindowResult` contains its schedule and ordered
+`PredictionWindowDecision` values. Each retains the timestamp, original typed
+`PredictionStudyResult`, original context ID when available, and an immutable
+primitive snapshot. `results` exposes the underlying ordered tuple without
+merging rows or assigning a synthetic QF-11 study ID. Intraday decisions in one
+session remain separate observations even when their session-based label is
+identical.
+
+Each serialized decision embeds the unchanged QF-11 result and separately
+preserves all fixed `generated_signals`, including end-of-data signals omitted
+from QF-11's labeled rows. QF-7 accepted, rejected, blocked, and overlapping
+dispositions remain intact. QF-31 `NO_PREDICTION` remains its original rejected
+candidate with explicit reason and condition evidence. The window's
+`no_prediction_decisions` count means a valid context emitted **zero signals**;
+it does not erase rejected candidates. Signals without a disposition contract
+are counted as `unclassified`.
+
+`counts_primitive()` reports scheduled, valid, skipped, empty/no-prediction,
+generated-signal, unavailable-outcome, and supported signal-disposition counts.
+These describe decisions/signals, not independent statistical samples.
+
+`window_id` binds the schedule, QF-11 configuration and engine, QF-3 dataset and
+fingerprint, context family/provider environment, outcome/evaluator/feature
+configuration, and indicator/backend provenance. Optional
+`indicator_backend_environment` binds additional fixed settings; QF-32 supplies
+its existing backend environment automatically. `window_result_id` additionally
+hashes all ordered decision snapshots. Serialization uses the repository's
+canonical JSON and SHA-256 conventions.
+
+Future bars within the **same immutable provenance** cannot change earlier
+contexts or decisions. A newly persisted source snapshot, family, or outcome
+dataset intentionally changes identity even when its historical numerical
+prefix is equal. Existing QF-11 single-decision identities and schemas are unchanged.
+
+## QF-32 analysis, ranking, and resume
+
+Pass `decision_schedule=schedule` to the existing `PredictionGridStudy`, a
+timestamp-aware context provider, and a `PredictionWindowAnalyzer` implementing
+`analyze_window(window)`. Analyzer metadata and returned `PredictionTrialAnalysis`
+use the existing contracts. Single-decision `analyze(result)` callers require no
+changes when the schedule is omitted.
+
+Domain analyzers reuse their observation calculations over `window.decisions`
+and the original result rows, retaining the enclosing UTC timestamp and source
+result/context/row IDs. They analyze the full collection with declared baseline
+and period/weekday semantics. Arbitrary per-decision metrics cannot be averaged
+generically, so the grid does not invent that aggregation. Existing candidate
+enumeration, parameter IDs, backend validation, eligibility constraints, ranking,
+tie breaking, and neighborhood stability are reused. Candidates with a different
+primary timeframe are excluded as incompatible with the fixed schedule.
+
+The grid additionally preserves all decision timestamps, result IDs, and context
+IDs under the reserved analysis-artifact key `prediction_window_sources`.
+Successful artifacts use `artifacts/<trial-id>/prediction-window.json`, embedding
+the full window and analyzer evidence. Single-decision artifacts retain their
+original shape and `prediction-study.json` path. Context-cache keys add the UTC
+decision timestamp; indicator caches retain their existing full context,
+configuration, and backend keys. Native configurations remain native.
+
+Persistence is **incremental per candidate**, using QF-32's atomic writes and
+terminal states. A window succeeds only after every scheduled decision and the
+collection analyzer finish. Resume validates the manifest, candidate definition,
+artifact SHA-256, schedule, ordered decision coverage, result identity, and
+analysis before skipping completed candidates. Changed or truncated artifacts
+are rejected. An interrupted candidate remains pending/running and reruns its
+entire window; partial results cannot be ranked. Failed candidates retain
+sanitized diagnostics and obey the existing fixed `retry_failed` policy.
+
+There are no per-decision checkpoints or typed component deserializers in this
+story. Standalone windows expose `to_primitive()` and `serialize()`; QF-32 owns
+persistence/resume. Work and retained results grow with the decision count.
+Session-based labels can overlap across intraday decisions; this API does not
+deduplicate them or claim independent samples or validated profitability.
+
+The deterministic SPY fixture in
+`tests/unit/prediction/test_prediction_window.py` exercises four decisions per
+candidate, real QF-20/QF-11 execution, complete-collection rankings, abstention,
+missing context, identity safety, and interrupted resume.

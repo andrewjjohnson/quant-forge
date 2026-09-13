@@ -41,6 +41,7 @@ from quantforge.data.intraday_aggregation import (
     IntradayAggregationValidationError,
     MissingConstituentPolicy,
     aggregate_intraday_dataset,
+    intraday_session_windows,
 )
 from quantforge.data.intraday_aggregation_cache import IntradayAggregationCache
 from quantforge.data.intraday_ingestion import (
@@ -221,6 +222,7 @@ __all__ = [
     "aggregate_session_dataset",
     "build_multi_timeframe_context",
     "dataset_identity_matches",
+    "intraday_session_windows",
     "validate_intraday_coverage",
     "validate_market_dataset",
     "validate_source_consistency",
