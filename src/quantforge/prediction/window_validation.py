@@ -1,5 +1,7 @@
 """Offline provenance checks for persisted historical prediction windows."""
 
+from datetime import date
+
 from quantforge.configuration import (
     Primitive,
     PrimitiveMapping,
@@ -8,6 +10,122 @@ from quantforge.configuration import (
 )
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.window import PredictionDecisionSchedule
+from quantforge.timeframes import BarCompletion
+
+
+def _validate_generated_signals(
+    signals: list[Primitive],
+    *,
+    configuration: PrimitiveMapping,
+    market_data: PrimitiveMapping,
+    context: PrimitiveMapping,
+    session_indexes: dict[str, int],
+    strategy_parameters: PrimitiveMapping,
+) -> None:
+    rule = configuration.get("prediction_rule")
+    if not isinstance(rule, dict):
+        raise InvalidPredictionOutputError("prediction rule configuration is missing")
+    warm_up = rule.get("warm_up_observations")
+    if not isinstance(warm_up, int) or isinstance(warm_up, bool) or warm_up < 1:
+        raise InvalidPredictionOutputError("prediction rule warm-up is invalid")
+    sessions: list[str] = []
+    for signal in signals:
+        prediction = signal.get("prediction") if isinstance(signal, dict) else None
+        if (
+            not isinstance(signal, dict)
+            or not isinstance(signal.get("features"), dict)
+            or not isinstance(prediction, dict)
+            or not isinstance(prediction.get("values"), dict)
+        ):
+            raise InvalidPredictionOutputError("generated signal payload is incomplete")
+        session = prediction.get("signal_session")
+        if (
+            not isinstance(session, str)
+            or session not in session_indexes
+            or session != context.get("decision_session")
+            or session_indexes[session] + 1 < warm_up
+            or configuration_identity(
+                {
+                    key: prediction.get(key)
+                    for key in (
+                        "symbol",
+                        "strategy_id",
+                        "strategy_implementation_version",
+                        "strategy_configuration_id",
+                        "strategy_parameters",
+                    )
+                }
+            )
+            != configuration_identity(
+                {
+                    "symbol": market_data["symbol"],
+                    "strategy_id": rule["name"],
+                    "strategy_implementation_version": rule["implementation_version"],
+                    "strategy_configuration_id": rule["configuration_id"],
+                    "strategy_parameters": strategy_parameters,
+                }
+            )
+        ):
+            raise InvalidPredictionOutputError("generated signal provenance is invalid")
+        sessions.append(session)
+    if sessions != sorted(set(sessions)):
+        raise InvalidPredictionOutputError(
+            "generated signals must be ordered and unique per session"
+        )
+
+
+def _validate_primary_bar(
+    source: PrimitiveMapping,
+    primary_timeframe: PrimitiveMapping,
+    timestamp: str,
+) -> None:
+    timeframes = source.get("timeframes")
+    if configuration_identity(
+        {"timeframe": source.get("primary_timeframe")}
+    ) != configuration_identity({"timeframe": primary_timeframe}) or not isinstance(
+        timeframes, list
+    ):
+        raise InvalidPredictionOutputError(
+            "available context has the wrong primary timeframe"
+        )
+    primary_contexts: list[PrimitiveMapping] = []
+    for timeframe in timeframes:
+        requirement = (
+            timeframe.get("requirement") if isinstance(timeframe, dict) else None
+        )
+        if (
+            isinstance(timeframe, dict)
+            and isinstance(requirement, dict)
+            and configuration_identity({"timeframe": requirement.get("timeframe")})
+            == configuration_identity({"timeframe": primary_timeframe})
+        ):
+            primary_contexts.append(timeframe)
+    if len(primary_contexts) != 1:
+        raise InvalidPredictionOutputError(
+            "available context requires one primary timeframe"
+        )
+    primary = primary_contexts[0]
+    visible_bars = primary.get("visible_bar_ids")
+    completion_state = primary.get("latest_completion_state")
+    if (
+        primary.get("availability") != "available"
+        or primary.get("latest_completed_bar_timestamp") != timestamp
+        or not isinstance(completion_state, str)
+        or completion_state
+        not in {
+            completion.value
+            for completion in BarCompletion
+            if completion is not BarCompletion.DEVELOPING
+        }
+        or type(primary.get("age_microseconds")) is not int
+        or primary["age_microseconds"] != 0
+        or not isinstance(visible_bars, list)
+        or not visible_bars
+        or any(not isinstance(bar_id, str) or not bar_id for bar_id in visible_bars)
+    ):
+        raise InvalidPredictionOutputError(
+            "available context is missing the scheduled primary bar"
+        )
 
 
 def _validate_rows(
@@ -122,7 +240,13 @@ def _validate_rows(
 
 
 def _validate_decision(
-    decision: PrimitiveMapping, identity: PrimitiveMapping, timestamp: str
+    decision: PrimitiveMapping,
+    identity: PrimitiveMapping,
+    timestamp: str,
+    *,
+    primary_timeframe: PrimitiveMapping,
+    session_indexes: dict[str, int],
+    strategy_parameters: PrimitiveMapping,
 ) -> None:
     study = decision.get("prediction_study")
     manifest = study.get("manifest") if isinstance(study, dict) else None
@@ -194,6 +318,14 @@ def _validate_decision(
         raise InvalidPredictionOutputError(
             "decision context requirements are inconsistent"
         )
+    _validate_generated_signals(
+        signals,
+        configuration=configuration,
+        market_data=market_data,
+        context=context,
+        session_indexes=session_indexes,
+        strategy_parameters=strategy_parameters,
+    )
     _validate_rows(rows, signals, configuration)
     if configuration_identity(
         {"counts": manifest.get("record_counts")}
@@ -225,6 +357,7 @@ def _validate_decision(
                 "decision source context identity is inconsistent"
             )
         if not skipped:
+            _validate_primary_bar(source, primary_timeframe, timestamp)
             consistency = source.get("source_consistency")
             if (
                 source.get("as_of") != timestamp
@@ -251,8 +384,10 @@ def validate_prediction_window_snapshot(
     *,
     expected_identity: PrimitiveMappingSnapshot,
     schedule: PredictionDecisionSchedule,
+    outcome_sessions: tuple[date, ...],
+    strategy_parameters: PrimitiveMapping,
 ) -> None:
-    """Check scientific identity against the requested candidate without execution."""
+    """Check evidence using validated, ordered dataset sessions and rule parameters."""
     manifest, decisions = snapshot.get("manifest"), snapshot.get("decisions")
     if not isinstance(manifest, dict) or not isinstance(decisions, list):
         raise InvalidPredictionOutputError("window manifest or decisions are missing")
@@ -272,12 +407,26 @@ def validate_prediction_window_snapshot(
         raise InvalidPredictionOutputError(
             "window identity or schedule differs from the candidate"
         )
+    session_indexes = {
+        session.isoformat(): index for index, session in enumerate(outcome_sessions)
+    }
+    primary_timeframe: PrimitiveMapping = {
+        "configuration_id": schedule.primary_timeframe.configuration_id,
+        "configuration": schedule.primary_timeframe.to_primitive(),
+    }
     for decision, timestamp in zip(
         decisions, schedule.decision_timestamps, strict=True
     ):
         if not isinstance(decision, dict):
             raise InvalidPredictionOutputError("window decision is not an object")
-        _validate_decision(decision, identity, timestamp.isoformat())
+        _validate_decision(
+            decision,
+            identity,
+            timestamp.isoformat(),
+            primary_timeframe=primary_timeframe,
+            session_indexes=session_indexes,
+            strategy_parameters=strategy_parameters,
+        )
     if configuration_identity(
         {"window_id": window_id, "decisions": decisions}
     ) != manifest.get("window_result_id"):

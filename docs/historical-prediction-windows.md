@@ -214,7 +214,13 @@ component provenance and correct dataset/signal/outcome references. Every row's
 prediction and features must match a distinct entry in `generated_signals`;
 decision counts must match the signal and row collections. Unlabeled
 end-of-data signals remain valid without a row.
-Available contexts must match the scheduled timestamp and family, while rejected
+Every generated signal, including those without rows, must retain the candidate's
+strategy identity and exact parameter payload, match the dataset symbol and
+context decision session, occur in the validated outcome dataset after warm-up,
+and obey QF-11 ordering and one-signal-per-session rules.
+Available contexts must match the scheduled timestamp, family, and primary
+timeframe. Exactly one available primary entry must retain visible bars and a
+completed latest bar ending at the decision timestamp with zero age. Rejected
 `SKIP` contexts retain their original audit evidence. Regenerating artifact or
 trial checksums cannot bypass these checks.
 

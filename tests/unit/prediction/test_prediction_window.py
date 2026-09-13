@@ -679,6 +679,8 @@ def test_wrong_timestamp_and_family_cannot_enter_historical_results() -> None:
         skipped.to_primitive(),
         expected_identity=skipped.identity_snapshot,
         schedule=skipped.schedule,
+        outcome_sessions=tuple(bar.session_date for bar in _prediction_dataset().bars),
+        strategy_parameters=FixtureParameters().to_primitive(),
     )
     for decision in skipped.decisions:
         source = wrong_timestamp_provider.get_context_at(
@@ -726,6 +728,8 @@ def test_empty_schedule_and_no_signal_are_valid_and_distinct_from_skip() -> None
         result.to_primitive(),
         expected_identity=result.identity_snapshot,
         schedule=result.schedule,
+        outcome_sessions=tuple(bar.session_date for bar in _prediction_dataset().bars),
+        strategy_parameters=FixtureParameters().to_primitive(),
     )
     empty = run_window(
         decision_schedule=schedule(
@@ -1083,12 +1087,36 @@ def test_qf31_candidates_preserve_acceptance_and_explicit_no_prediction(
         result.to_primitive(),
         expected_identity=result.identity_snapshot,
         schedule=result.schedule,
+        outcome_sessions=tuple(bar.session_date for bar in _prediction_dataset().bars),
+        strategy_parameters=study.strategy.parameters.to_primitive(),
     )
 
 
 def test_unavailable_outcomes_keep_generated_signals_and_original_result_identity() -> (
     None
 ):
+    provider = _provider_with_final_session()
+    tomorrow = START + timedelta(days=1)
+    result = run_window(provider, decision_schedule=schedule(tomorrow, tomorrow))
+    assert result.counts_primitive()["generated_predictions"] == 1
+    assert result.counts_primitive()["unavailable_outcomes"] == 1
+    decision = result.decisions[0]
+    assert decision.result.rows == ()
+    assert len(decision.result.signals) == 1
+    assert (
+        len(cast(list[PrimitiveMapping], decision.to_primitive()["generated_signals"]))
+        == 1
+    )
+    validate_prediction_window_snapshot(
+        result.to_primitive(),
+        expected_identity=result.identity_snapshot,
+        schedule=result.schedule,
+        outcome_sessions=tuple(bar.session_date for bar in _prediction_dataset().bars),
+        strategy_parameters=FixtureParameters().to_primitive(),
+    )
+
+
+def _provider_with_final_session() -> WindowProvider:
     provider = WindowProvider()
     tomorrow = START + timedelta(days=1)
     # Select the primary by timeframe, independent of the family's canonical order.
@@ -1113,21 +1141,7 @@ def test_unavailable_outcomes_keep_generated_signals_and_original_result_identit
     provider.series = tuple(
         extended if item is primary else item for item in provider.series
     )
-    result = run_window(provider, decision_schedule=schedule(tomorrow, tomorrow))
-    assert result.counts_primitive()["generated_predictions"] == 1
-    assert result.counts_primitive()["unavailable_outcomes"] == 1
-    decision = result.decisions[0]
-    assert decision.result.rows == ()
-    assert len(decision.result.signals) == 1
-    assert (
-        len(cast(list[PrimitiveMapping], decision.to_primitive()["generated_signals"]))
-        == 1
-    )
-    validate_prediction_window_snapshot(
-        result.to_primitive(),
-        expected_identity=result.identity_snapshot,
-        schedule=result.schedule,
-    )
+    return provider
 
 
 def test_future_bearing_component_state_cannot_reach_the_next_decision() -> None:
@@ -1612,6 +1626,184 @@ def test_recovered_rows_require_nested_ids_and_original_generated_signals(
         artifact["analysis"]["metrics"]["accuracy"] = str(Decimal(correct) / len(rows))
     _rewrite_window_checksums(artifact_path, trial_path, artifact)
     requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+def _rewrite_decision_identities(decision: dict[str, Any]) -> None:
+    manifest = decision["prediction_study"]["manifest"]
+    context = manifest["prediction_context"]
+    source = context["source_context"]
+    source["context_id"] = decision["context_id"] = configuration_identity(
+        {key: value for key, value in source.items() if key != "context_id"}
+    )
+    study_id = configuration_identity(
+        {
+            "component": "quantforge_prediction_study",
+            "engine_version": manifest["engine_version"],
+            "market_data": manifest["market_data"],
+            "study_configuration": manifest["configuration"],
+            "prediction_context": context,
+        }
+    )
+    manifest["study_id"] = decision["prediction_study_id"] = study_id
+    for row in decision["prediction_study"]["rows"]:
+        row["study_id"] = study_id
+        row["row_id"] = configuration_identity(
+            {
+                "evaluation_id": row["evaluation"]["evaluation_id"],
+                "outcome_id": row["outcome"]["outcome_id"],
+                "record_type": "prediction_study_row",
+                "signal": {
+                    "prediction": row["prediction"],
+                    "features": row["features"],
+                },
+                "study_id": study_id,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "primary_timeframe",
+        "missing_primary",
+        "duplicate_primary",
+        "stale",
+        "missing",
+        "old_bar",
+        "developing_bar",
+        "empty_bars",
+        "age",
+    ],
+)
+def test_recovered_context_requires_exact_completed_primary_bar(
+    tmp_path: Path, mutation: str
+) -> None:
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(tmp_path, provider, analyzer=analyzer)
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    source = decision["prediction_study"]["manifest"]["prediction_context"][
+        "source_context"
+    ]
+    primary = next(
+        item
+        for item in source["timeframes"]
+        if item["requirement"]["timeframe"] == source["primary_timeframe"]
+    )
+    if mutation == "primary_timeframe":
+        source["primary_timeframe"]["configuration_id"] = "changed"
+    elif mutation == "missing_primary":
+        source["timeframes"].remove(primary)
+    elif mutation == "duplicate_primary":
+        source["timeframes"].append(deepcopy(primary))
+    elif mutation in ("stale", "missing"):
+        primary["availability"] = mutation
+    elif mutation == "old_bar":
+        primary["latest_completed_bar_timestamp"] = (
+            START - timedelta(minutes=5)
+        ).isoformat()
+    elif mutation == "developing_bar":
+        primary["latest_completion_state"] = "developing"
+    elif mutation == "empty_bars":
+        primary["visible_bar_ids"] = []
+    else:
+        primary["age_microseconds"] = 300_000_000
+    _rewrite_decision_identities(decision)
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="historical window"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "session_outside_dataset",
+        "wrong_decision_session",
+        "before_warm_up",
+        "symbol",
+        "strategy_id",
+        "strategy_implementation_version",
+        "strategy_configuration_id",
+        "strategy_parameters",
+        "duplicate_session",
+        "missing_prediction",
+        "missing_features",
+        "missing_values",
+    ],
+)
+def test_recovered_unlabeled_signals_obey_qf11_invariants(
+    tmp_path: Path, mutation: str
+) -> None:
+    provider, analyzer = _provider_with_final_session(), WindowAnalyzer()
+    tomorrow = START + timedelta(days=1)
+    study = grid(
+        tmp_path,
+        provider,
+        analyzer=analyzer,
+        decision_schedule=schedule(tomorrow, tomorrow),
+    )
+    trial = study.run().trials[0]
+    # Valid unlabeled evidence remains resumable without provider/analyzer work.
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    study.load_result()
+    study.resume()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    decision = artifact["prediction_window"]["decisions"][0]
+    manifest = decision["prediction_study"]["manifest"]
+    assert not decision["prediction_study"]["rows"]
+    signal = decision["generated_signals"][0]
+    prediction = signal["prediction"]
+    if mutation == "session_outside_dataset":
+        prediction["signal_session"] = "1990-01-01"
+    elif mutation == "wrong_decision_session":
+        prediction["signal_session"] = START.date().isoformat()
+    elif mutation == "before_warm_up":
+        prediction["signal_session"] = (
+            _prediction_dataset().bars[0].session_date.isoformat()
+        )
+        manifest["prediction_context"]["decision_session"] = prediction[
+            "signal_session"
+        ]
+    elif mutation == "duplicate_session":
+        duplicate = deepcopy(signal)
+        duplicate["features"]["calls"] = "999"
+        decision["generated_signals"].append(duplicate)
+        manifest["record_counts"]["generated_predictions"] = 2
+        manifest["record_counts"]["unavailable_outcomes"] = 2
+        artifact["prediction_window"]["manifest"]["record_counts"][
+            "generated_predictions"
+        ] = 2
+        artifact["prediction_window"]["manifest"]["record_counts"][
+            "unavailable_outcomes"
+        ] = 2
+    elif mutation == "missing_prediction":
+        signal["prediction"] = None
+    elif mutation == "missing_features":
+        signal["features"] = None
+    elif mutation == "missing_values":
+        prediction["values"] = None
+    elif mutation == "strategy_parameters":
+        prediction["strategy_parameters"] = {"mode": "changed"}
+    else:
+        prediction[mutation] = "changed"
+    _rewrite_decision_identities(decision)
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
     for read in (study.load_result, study.resume):
         with pytest.raises(PredictionGridPersistenceError, match="historical window"):
             read()

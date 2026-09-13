@@ -7,7 +7,7 @@ import os
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import ROUND_CEILING, Decimal, InvalidOperation, localcontext
 from itertools import product
 from pathlib import Path
@@ -1414,6 +1414,8 @@ class _PredictionGridStore:
         schedule: PredictionDecisionSchedule | None = None,
         *,
         window_identity: PrimitiveMappingSnapshot | None = None,
+        outcome_sessions: tuple[date, ...] = (),
+        strategy_parameters: PrimitiveMapping | None = None,
     ) -> None:
         if record.artifact_location is None or record.analysis is None:
             raise PredictionGridPersistenceError(
@@ -1456,7 +1458,11 @@ class _PredictionGridStore:
                 "completed prediction trial artifact is incompatible with its record"
             )
         if schedule is not None:
-            if window_identity is None:
+            if (
+                window_identity is None
+                or strategy_parameters is None
+                or not outcome_sessions
+            ):
                 raise PredictionGridPersistenceError(
                     "historical window validation requires the candidate identity"
                 )
@@ -1465,6 +1471,8 @@ class _PredictionGridStore:
                     prediction_study,
                     expected_identity=window_identity,
                     schedule=schedule,
+                    outcome_sessions=outcome_sessions,
+                    strategy_parameters=strategy_parameters,
                 )
             except InvalidPredictionOutputError as error:
                 raise PredictionGridPersistenceError(
@@ -2365,7 +2373,15 @@ class PredictionGridStudy:
                 )
             )
             self._store.validate_artifact(
-                record, self._decision_schedule, window_identity=window_identity
+                record,
+                self._decision_schedule,
+                window_identity=window_identity,
+                outcome_sessions=tuple(self._prepared.bar_indexes),
+                strategy_parameters=(
+                    None
+                    if self._decision_schedule is None
+                    else candidate.study.strategy.parameters.to_primitive()
+                ),
             )
         if record.status is TrialStatus.FAILED and (
             not record.failure_type or not record.failure_message
