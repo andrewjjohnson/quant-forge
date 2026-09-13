@@ -2383,6 +2383,12 @@ class PredictionGridStudy:
                     else candidate.study.strategy.parameters.to_primitive()
                 ),
             )
+            try:
+                _validate_analysis_for_grid(record.analysis, self._config.ranking)
+            except InvalidPredictionGridConfigurationError as error:
+                raise PredictionGridPersistenceError(
+                    f"completed prediction trial analysis is incompatible: {error}"
+                ) from error
         if record.status is TrialStatus.FAILED and (
             not record.failure_type or not record.failure_message
         ):

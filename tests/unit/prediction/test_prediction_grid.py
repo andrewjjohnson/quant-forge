@@ -582,6 +582,47 @@ def test_load_result_rejects_corrupt_success_artifacts(
         grid.load_result()
 
 
+def test_single_decision_recovery_revalidates_rehashed_analysis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executions: list[int] = []
+
+    def fake_run(
+        prepared: object,
+        study: PredictionStudy[Any, Any, Any],
+        **kwargs: object,
+    ) -> PredictionStudyResult[Any, Any, Any]:
+        del prepared, kwargs
+        window = _window(study)
+        executions.append(window)
+        return cast(PredictionStudyResult[Any, Any, Any], FakeResult(window))
+
+    monkeypatch.setattr(
+        "quantforge.prediction.grid.run_prediction_study_in_session", fake_run
+    )
+    grid = _grid(tmp_path)
+    trial = next(
+        item for item in grid.run().trials if item.status is TrialStatus.SUCCEEDED
+    )
+    artifact_path = tmp_path / grid.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / grid.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    artifact["analysis"]["weekday_comparisons"] = []
+    artifact.pop("artifact_fingerprint")
+    fingerprint = configuration_identity(artifact)
+    artifact["artifact_fingerprint"] = fingerprint
+    artifact_path.write_text(json.dumps(artifact))
+    record = json.loads(trial_path.read_text())
+    record["artifact_fingerprint"] = fingerprint
+    record["analysis"] = artifact["analysis"]
+    trial_path.write_text(json.dumps(record))
+    original_executions = list(executions)
+    for read in (grid.load_result, grid.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="analysis"):
+            read()
+    assert executions == original_executions
+
+
 def test_load_result_rejects_trial_whose_filename_mismatches_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

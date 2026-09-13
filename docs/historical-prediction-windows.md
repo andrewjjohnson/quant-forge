@@ -254,6 +254,12 @@ and stale observations, while malformed audit evidence is rejected. Failures
 without a returned source still retain `source_context: null`. Regenerating
 artifact or trial checksums cannot bypass these checks.
 
+Recovered succeeded trials also pass the same analyzer invariants used during
+execution before they can resume or enter ranking. Nonempty analyses must retain
+period, weekday, and matched-baseline comparisons; every retained matched
+comparison must name the configured baseline. Empty analyses may omit comparisons.
+These shared checks apply to both historical windows and single-decision grids.
+
 Validation does not call the context provider or rerun predictions or analysis.
 Schemas and generated IDs are unchanged; compatible existing artifacts still
 resume. These checks establish provenance consistency, not provider authenticity

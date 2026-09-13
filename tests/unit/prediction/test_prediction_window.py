@@ -2366,6 +2366,82 @@ def test_valid_skipped_source_evidence_still_loads_and_resumes(
     assert analyzer.seen == analyses
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "period",
+        "weekday",
+        "matched_baseline",
+        "baseline_name",
+        "missing_baseline_name",
+        "empty_wrong_baseline",
+    ],
+)
+def test_recovered_window_analysis_reapplies_runtime_invariants(
+    tmp_path: Path, mutation: str
+) -> None:
+    provider, analyzer = WindowProvider(), WindowAnalyzer()
+    study = grid(
+        tmp_path,
+        provider,
+        analyzer=analyzer,
+        decision_schedule=(
+            schedule(START + timedelta(days=2), END + timedelta(days=2))
+            if mutation == "empty_wrong_baseline"
+            else schedule()
+        ),
+    )
+    trial = study.run().trials[0]
+    artifact_path = tmp_path / study.study_id / cast(str, trial.artifact_location)
+    trial_path = tmp_path / study.study_id / "trials" / f"{trial.trial_id}.json"
+    artifact = json.loads(artifact_path.read_text())
+    analysis = artifact["analysis"]
+    if mutation in ("period", "weekday", "matched_baseline"):
+        assert analysis["prediction_count"] > 0
+        analysis[f"{mutation}_comparisons"] = []
+    elif mutation == "missing_baseline_name":
+        analysis["matched_baseline_comparisons"][0].pop("baseline_name")
+    else:
+        analysis["matched_baseline_comparisons"][0]["baseline_name"] = "changed"
+    _rewrite_window_checksums(artifact_path, trial_path, artifact)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    for read in (study.load_result, study.resume):
+        with pytest.raises(PredictionGridPersistenceError, match="analysis"):
+            read()
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
+def test_empty_window_analysis_can_resume_without_comparisons(tmp_path: Path) -> None:
+    class EmptyAnalyzer(WindowAnalyzer):
+        def analyze_window(
+            self, result: PredictionWindowResult[Any, Any, Any]
+        ) -> PredictionTrialAnalysis:
+            analysis = super().analyze_window(result)
+            assert analysis.prediction_count == 0
+            return replace(
+                analysis,
+                period_comparisons=(),
+                weekday_comparisons=(),
+                matched_baseline_comparisons=(),
+            )
+
+    provider, analyzer = WindowProvider(), EmptyAnalyzer()
+    study = grid(
+        tmp_path,
+        provider,
+        analyzer=analyzer,
+        decision_schedule=schedule(START + timedelta(days=2), END + timedelta(days=2)),
+    )
+    result = study.run()
+    assert all(trial.status is TrialStatus.SUCCEEDED for trial in result.trials)
+    requests, analyses = list(provider.requests), list(analyzer.seen)
+    assert study.load_result().trials == result.trials
+    assert study.resume().trials == result.trials
+    assert provider.requests == requests
+    assert analyzer.seen == analyses
+
+
 def test_candidate_primary_mismatch_is_excluded_before_context_execution(
     tmp_path: Path,
 ) -> None:
