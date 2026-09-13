@@ -7,7 +7,7 @@ import os
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import ROUND_CEILING, Decimal, InvalidOperation, localcontext
 from itertools import product
 from pathlib import Path
@@ -46,17 +46,29 @@ from quantforge.prediction.context import (
     PredictionContextRequirements,
     PredictionIndicatorOutputCache,
     PredictionIndicatorRequirement,
+    RejectedPredictionContextError,
 )
 from quantforge.prediction.contracts import PredictionStudy
 from quantforge.prediction.errors import (
     InvalidPredictionConfigurationError,
+    InvalidPredictionOutputError,
     PredictionAnalysisError,
 )
 from quantforge.prediction.study import (
     PredictionStudyResult,
+    _capture_study_configuration,  # pyright: ignore[reportPrivateUsage]
     prepare_prediction_study_dataset,
     run_prediction_study_in_session,
 )
+from quantforge.prediction.window import (
+    PREDICTION_WINDOW_ENGINE_VERSION,
+    PredictionDecisionSchedule,
+    PredictionWindowContextProvider,
+    PredictionWindowResult,
+    _capture_window_identity,  # pyright: ignore[reportPrivateUsage]
+    run_prediction_window_in_session,
+)
+from quantforge.prediction.window_validation import validate_prediction_window_snapshot
 from quantforge.timeframes import Timeframe
 
 PREDICTION_GRID_ENGINE_VERSION = "1"
@@ -219,8 +231,8 @@ class PredictionStudyFactory(Protocol):
     def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]: ...
 
 
-class PredictionTrialAnalyzer(Protocol):
-    """Convert one immutable prediction result into rankable research evidence."""
+class _PredictionAnalyzerConfiguration(Protocol):
+    """Identity shared by single-decision and historical-collection analyzers."""
 
     @property
     def name(self) -> str: ...
@@ -233,8 +245,24 @@ class PredictionTrialAnalyzer(Protocol):
 
     def configuration(self) -> PrimitiveMapping: ...
 
+
+class PredictionTrialAnalyzer(_PredictionAnalyzerConfiguration, Protocol):
+    """Convert one immutable prediction result into rankable research evidence."""
+
     def analyze(
         self, result: PredictionStudyResult[Any, Any, Any]
+    ) -> PredictionTrialAnalysis: ...
+
+
+class PredictionWindowAnalyzer(_PredictionAnalyzerConfiguration, Protocol):
+    """Analyze the complete collection, retaining decision/result provenance.
+
+    Implementations reuse their domain's observation analysis over all decisions;
+    the grid does not average per-decision metrics or fabricate a QF-11 result.
+    """
+
+    def analyze_window(
+        self, result: PredictionWindowResult[Any, Any, Any]
     ) -> PredictionTrialAnalysis: ...
 
 
@@ -826,13 +854,18 @@ class PredictionGridExecutionCache(PredictionIndicatorOutputCache):
         self,
         requirements: PredictionContextRequirements,
         provider: PredictionContextProvider,
+        *,
+        decision_timestamp: datetime | None = None,
     ) -> MultiTimeframeContext:
+        request = requirements.to_primitive()
+        if decision_timestamp is not None:
+            request = {**request, "decision_timestamp": decision_timestamp.isoformat()}
         key = configuration_identity(
             {
                 "component": "prediction_grid_context_cache_key",
                 "dataset_family_fingerprint": self._dataset_family_fingerprint,
                 "context_environment": self._context_environment.to_primitive(),
-                "request": requirements.to_primitive(),
+                "request": request,
             }
         )
         cached = self._contexts.get(key)
@@ -841,10 +874,13 @@ class PredictionGridExecutionCache(PredictionIndicatorOutputCache):
             return cached
         context = provider.get_context(requirements)
         if context.source_consistency.family_id != self._dataset_family_fingerprint:
-            raise PredictionContextError(
+            reason = (
                 "prediction context dataset family does not match the fixed "
                 "prediction-grid dataset family"
             )
+            if decision_timestamp is not None:
+                raise RejectedPredictionContextError(reason, source_context=context)
+            raise PredictionContextError(reason)
         self._contexts[key] = context
         self._context_misses += 1
         return context
@@ -919,6 +955,37 @@ class _CachedContextProvider:
         self, requirements: PredictionContextRequirements
     ) -> MultiTimeframeContext:
         return self.cache.context(requirements, self.source)
+
+
+@dataclass(frozen=True, slots=True)
+class _ContextAtTimestamp:
+    source: PredictionWindowContextProvider
+    as_of: datetime
+
+    def get_context(
+        self, requirements: PredictionContextRequirements
+    ) -> MultiTimeframeContext:
+        context = self.source.get_context_at(requirements, as_of=self.as_of)
+        if not isinstance(cast(object, context), MultiTimeframeContext):
+            raise PredictionContextError(
+                "historical provider returned an invalid context"
+            )
+        return context
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedWindowContextProvider:
+    source: PredictionWindowContextProvider
+    cache: PredictionGridExecutionCache
+
+    def get_context_at(
+        self, requirements: PredictionContextRequirements, *, as_of: datetime
+    ) -> MultiTimeframeContext:
+        return self.cache.context(
+            requirements,
+            _ContextAtTimestamp(self.source, as_of),
+            decision_timestamp=as_of,
+        )
 
 
 def _component_primitive(component: object, label: str) -> PrimitiveMapping:
@@ -1095,6 +1162,7 @@ def _iter_candidates(
     factory_configuration: PrimitiveMapping,
     parameter_order: tuple[str, ...],
     validate_components: Callable[[], None],
+    decision_schedule: PredictionDecisionSchedule | None = None,
 ) -> Iterator[PredictionGridCandidate]:
     ordered = config.search_space.ordered_items(parameter_order)
     axes = tuple(values.values for _, values in ordered)
@@ -1140,6 +1208,20 @@ def _iter_candidates(
         try:
             study = factory.build(parameters.copy())
             definition, indicator_ids = _trial_definition(study, backend)
+            if decision_schedule is not None:
+                requirements = cast(
+                    PredictionContextRequirements,
+                    getattr(study.strategy, "context_requirements"),
+                )
+                if (
+                    requirements.primary.timeframe
+                    != decision_schedule.primary_timeframe
+                ):
+                    raise InvalidPredictionGridParametersError(
+                        "candidate primary timeframe does not match "
+                        "the historical schedule"
+                    )
+                definition["decision_schedule"] = decision_schedule.to_primitive()
         except (
             InvalidPredictionGridParametersError,
             InvalidPredictionConfigurationError,
@@ -1288,17 +1370,32 @@ class _PredictionGridStore:
     def write_artifact(
         self,
         trial_id: str,
-        result: PredictionStudyResult[Any, Any, Any],
+        result: PredictionStudyResult[Any, Any, Any]
+        | PredictionWindowResult[Any, Any, Any],
         analysis: PredictionTrialAnalysis,
     ) -> tuple[str, str]:
-        relative = Path("artifacts") / trial_id / "prediction-study.json"
-        prediction_study = result.to_primitive()
+        window = isinstance(result, PredictionWindowResult)
+        relative = (
+            Path("artifacts")
+            / trial_id
+            / ("prediction-window.json" if window else "prediction-study.json")
+        )
+        result_content: PrimitiveMapping = (
+            {
+                "prediction_window_id": result.window_result_id,
+                "prediction_window": result.to_primitive(),
+            }
+            if isinstance(result, PredictionWindowResult)
+            else {
+                "prediction_study_id": result.study_id,
+                "prediction_study": result.to_primitive(),
+            }
+        )
         content: PrimitiveMapping = {
             "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
             "grid_study_id": self.study_id,
             "trial_id": trial_id,
-            "prediction_study_id": result.study_id,
-            "prediction_study": prediction_study,
+            **result_content,
             "analysis": analysis.to_primitive(),
         }
         artifact_fingerprint = configuration_identity(content)
@@ -1311,7 +1408,15 @@ class _PredictionGridStore:
         )
         return relative.as_posix(), artifact_fingerprint
 
-    def validate_artifact(self, record: PredictionGridTrialRecord) -> None:
+    def validate_artifact(
+        self,
+        record: PredictionGridTrialRecord,
+        schedule: PredictionDecisionSchedule | None = None,
+        *,
+        window_identity: PrimitiveMappingSnapshot | None = None,
+        outcome_sessions: tuple[date, ...] = (),
+        strategy_parameters: PrimitiveMapping | None = None,
+    ) -> None:
         if record.artifact_location is None or record.analysis is None:
             raise PredictionGridPersistenceError(
                 "completed prediction trial has incomplete artifact metadata"
@@ -1323,8 +1428,12 @@ class _PredictionGridStore:
             for key, value in artifact.items()
             if key != "artifact_fingerprint"
         }
-        prediction_study = artifact.get("prediction_study")
-        prediction_study_id = artifact.get("prediction_study_id")
+        prediction_study = artifact.get(
+            "prediction_study" if schedule is None else "prediction_window"
+        )
+        prediction_study_id = artifact.get(
+            "prediction_study_id" if schedule is None else "prediction_window_id"
+        )
         if not isinstance(prediction_study, dict):
             raise PredictionGridPersistenceError(
                 "completed prediction trial artifact has no prediction study"
@@ -1341,12 +1450,58 @@ class _PredictionGridStore:
             or not isinstance(prediction_study_id, str)
             or not prediction_study_id
             or not isinstance(manifest, dict)
-            or manifest.get("study_id") != prediction_study_id
+            or manifest.get("study_id" if schedule is None else "window_result_id")
+            != prediction_study_id
             or artifact.get("analysis") != record.analysis.to_primitive()
         ):
             raise PredictionGridPersistenceError(
                 "completed prediction trial artifact is incompatible with its record"
             )
+        if schedule is not None:
+            if (
+                window_identity is None
+                or strategy_parameters is None
+                or not outcome_sessions
+            ):
+                raise PredictionGridPersistenceError(
+                    "historical window validation requires the candidate identity"
+                )
+            try:
+                validate_prediction_window_snapshot(
+                    prediction_study,
+                    expected_identity=window_identity,
+                    schedule=schedule,
+                    outcome_sessions=outcome_sessions,
+                    strategy_parameters=strategy_parameters,
+                )
+            except InvalidPredictionOutputError as error:
+                raise PredictionGridPersistenceError(
+                    f"historical window artifact is incomplete or incompatible: {error}"
+                ) from error
+            decisions = cast(list[PrimitiveMapping], prediction_study["decisions"])
+            sources: PrimitiveMapping = {
+                "window_result_id": prediction_study_id,
+                "decisions": [
+                    {
+                        key: item[key]
+                        for key in (
+                            "decision_timestamp",
+                            "prediction_study_id",
+                            "context_id",
+                        )
+                    }
+                    for item in decisions
+                ],
+            }
+            if (
+                record.analysis.artifacts_snapshot.to_primitive().get(
+                    "prediction_window_sources"
+                )
+                != sources
+            ):
+                raise PredictionGridPersistenceError(
+                    "historical window analysis references incompatible provenance"
+                )
 
 
 def _metric_value(record: PredictionGridTrialRecord, metric: str) -> Decimal | None:
@@ -1690,12 +1845,23 @@ class PredictionGridStudy:
         dataset: MarketDataset,
         dataset_family_fingerprint: str,
         study_factory: PredictionStudyFactory,
-        analyzer: PredictionTrialAnalyzer,
-        context_provider: PredictionContextProvider,
+        analyzer: PredictionTrialAnalyzer | PredictionWindowAnalyzer,
+        context_provider: PredictionContextProvider | PredictionWindowContextProvider,
         context_environment: PredictionContextEnvironment,
         indicator_backend: PredictionIndicatorBackendEnvironment,
         config: PredictionGridConfig,
+        decision_schedule: PredictionDecisionSchedule | None = None,
     ) -> None:
+        analyzer_method = "analyze" if decision_schedule is None else "analyze_window"
+        provider_method = (
+            "get_context" if decision_schedule is None else "get_context_at"
+        )
+        if not callable(getattr(analyzer, analyzer_method, None)) or not callable(
+            getattr(context_provider, provider_method, None)
+        ):
+            raise InvalidPredictionGridConfigurationError(
+                f"prediction grid requires {analyzer_method}() and {provider_method}()"
+            )
         if not dataset_family_fingerprint:
             raise InvalidPredictionGridConfigurationError(
                 "dataset-family fingerprint is required"
@@ -1773,6 +1939,11 @@ class PredictionGridStudy:
             "ranking": config.ranking.to_primitive(),
             "stability": config.stability.to_primitive(),
         }
+        if decision_schedule is not None:
+            identity["decision_schedule"] = decision_schedule.to_primitive()
+            identity["prediction_window_engine_version"] = (
+                PREDICTION_WINDOW_ENGINE_VERSION
+            )
         self.study_id = configuration_identity(identity)
         self._manifest: PrimitiveMapping = {
             **identity,
@@ -1811,6 +1982,7 @@ class PredictionGridStudy:
         self._context_environment = context_environment
         self._backend = indicator_backend
         self._config = config
+        self._decision_schedule = decision_schedule
         self._store = _PredictionGridStore(config.output_root, self.study_id)
 
     def run(self) -> PredictionGridResult:
@@ -1884,6 +2056,7 @@ class PredictionGridStudy:
             factory_configuration=(self._factory_configuration_snapshot.to_primitive()),
             parameter_order=self._factory_parameter_order,
             validate_components=self._validate_components_unchanged,
+            decision_schedule=self._decision_schedule,
         )
 
     def _trial_id(self, candidate: PredictionGridCandidate) -> str:
@@ -1930,7 +2103,12 @@ class PredictionGridStudy:
             backend=self._backend,
             context_environment=self._context_environment,
         )
-        provider = _CachedContextProvider(self._context_provider, cache)
+        provider = _CachedContextProvider(
+            cast(PredictionContextProvider, self._context_provider), cache
+        )
+        window_provider = _CachedWindowContextProvider(
+            cast(PredictionWindowContextProvider, self._context_provider), cache
+        )
         candidates: list[PredictionGridCandidate] = []
         for candidate in self._iter_candidates():
             candidates.append(candidate)
@@ -1980,13 +2158,56 @@ class PredictionGridStudy:
             )
             self._store.write_trial(started)
             try:
-                result = run_prediction_study_in_session(
-                    self._prepared,
-                    candidate.study,
-                    context_provider=provider,
-                    indicator_output_cache=cache,
+                result: (
+                    PredictionStudyResult[Any, Any, Any]
+                    | PredictionWindowResult[Any, Any, Any]
                 )
-                analysis = self._analyzer.analyze(result)
+                if self._decision_schedule is None:
+                    result = run_prediction_study_in_session(
+                        self._prepared,
+                        candidate.study,
+                        context_provider=provider,
+                        indicator_output_cache=cache,
+                    )
+                    analysis = cast(PredictionTrialAnalyzer, self._analyzer).analyze(
+                        result
+                    )
+                else:
+                    result = run_prediction_window_in_session(
+                        self._prepared,
+                        candidate.study,
+                        schedule=self._decision_schedule,
+                        context_provider=window_provider,
+                        dataset_family_fingerprint=self._dataset_family_fingerprint,
+                        context_environment=self._context_environment.to_primitive(),
+                        indicator_backend_environment=self._backend.to_primitive(),
+                        indicator_output_cache=cache,
+                    )
+                    analysis = cast(
+                        PredictionWindowAnalyzer, self._analyzer
+                    ).analyze_window(result)
+                    artifacts = analysis.artifacts_snapshot.to_primitive()
+                    if "prediction_window_sources" in artifacts:
+                        raise InvalidPredictionGridConfigurationError(
+                            "prediction_window_sources is reserved for grid provenance"
+                        )
+                    artifacts["prediction_window_sources"] = {
+                        "window_result_id": result.window_result_id,
+                        "decisions": [
+                            {
+                                "decision_timestamp": (
+                                    item.decision_timestamp.isoformat()
+                                ),
+                                "prediction_study_id": item.result.study_id,
+                                "context_id": item.context_id,
+                            }
+                            for item in result.decisions
+                        ],
+                    }
+                    analysis = replace(
+                        analysis,
+                        artifacts_snapshot=PrimitiveMappingSnapshot.capture(artifacts),
+                    )
                 _validate_analysis_for_grid(analysis, self._config.ranking)
             except Exception as error:
                 failure_type, failure_message = _sanitize_failure(error)
@@ -2014,11 +2235,11 @@ class PredictionGridStudy:
         candidate_snapshot = tuple(candidates)
         records = self._store.load_trials()
         self._validate_components_unchanged()
-        result = self._result(records, cache.statistics, candidate_snapshot)
+        grid_result = self._result(records, cache.statistics, candidate_snapshot)
         _atomic_json(
-            self._store.study_path / "summary.json", result.summary_primitive()
+            self._store.study_path / "summary.json", grid_result.summary_primitive()
         )
-        return result
+        return grid_result
 
     def _result(
         self,
@@ -2122,7 +2343,13 @@ class PredictionGridStudy:
             )
         if record.status is TrialStatus.SUCCEEDED:
             expected_artifact = (
-                Path("artifacts") / record.trial_id / "prediction-study.json"
+                Path("artifacts")
+                / record.trial_id
+                / (
+                    "prediction-study.json"
+                    if self._decision_schedule is None
+                    else "prediction-window.json"
+                )
             ).as_posix()
             if (
                 record.analysis is None
@@ -2133,7 +2360,35 @@ class PredictionGridStudy:
                 raise PredictionGridPersistenceError(
                     "completed prediction trial artifact is missing or incompatible"
                 )
-            self._store.validate_artifact(record)
+            window_identity = (
+                None
+                if self._decision_schedule is None
+                else _capture_window_identity(
+                    self._prepared,
+                    _capture_study_configuration(candidate.study),
+                    schedule=self._decision_schedule,
+                    dataset_family_fingerprint=self._dataset_family_fingerprint,
+                    context_environment=self._context_environment.to_primitive(),
+                    indicator_backend_environment=self._backend.to_primitive(),
+                )
+            )
+            self._store.validate_artifact(
+                record,
+                self._decision_schedule,
+                window_identity=window_identity,
+                outcome_sessions=tuple(self._prepared.bar_indexes),
+                strategy_parameters=(
+                    None
+                    if self._decision_schedule is None
+                    else candidate.study.strategy.parameters.to_primitive()
+                ),
+            )
+            try:
+                _validate_analysis_for_grid(record.analysis, self._config.ranking)
+            except InvalidPredictionGridConfigurationError as error:
+                raise PredictionGridPersistenceError(
+                    f"completed prediction trial analysis is incompatible: {error}"
+                ) from error
         if record.status is TrialStatus.FAILED and (
             not record.failure_type or not record.failure_message
         ):
@@ -2166,4 +2421,5 @@ __all__ = [
     "PredictionStudyFactory",
     "PredictionTrialAnalysis",
     "PredictionTrialAnalyzer",
+    "PredictionWindowAnalyzer",
 ]

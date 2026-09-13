@@ -89,6 +89,13 @@ and never enters QF-5. Ordinary grids fix one QF-35 backend environment and bind
 its complete identity into study, trial, and cache keys. See
 `docs/prediction-parameter-grids.md`.
 
+QF-42 adds historical decision scheduling and a typed collection of original
+QF-11 results above that same boundary. It reuses exchange-session aggregation
+windows, QF-20/QF-28 validation, and QF-32 analysis/ranking and persistence. Each
+decision retains its timestamp and source identities. See
+`docs/historical-prediction-windows.md` and ADR 0015. Walk-forward orchestration
+and OOS aggregation remain QF-39/QF-40 responsibilities.
+
 QF-34 adds a reporting-only consumer of the immutable multi-timeframe prediction
 branch. It renders exact QF-20/QF-21 bars, QF-28 normalized indicator outputs,
 QF-31 condition evidence, and QF-14/QF-35 provenance into deterministic

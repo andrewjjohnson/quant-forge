@@ -108,8 +108,12 @@ primary-timeframe bar. No rule-visible contextual bar may end after that primary
 decision boundary; a context with a stale primary series and later contextual
 observations fails or skips according to the declared policy. Producing signals
 for earlier sessions requires the caller to run the rule with a separately
-resolved as-of context for each such session. Under `SKIP`, an invalid provider
-return is recorded without source-context evidence and produces zero predictions.
+resolved as-of context for each such session. Under `SKIP`, a provider return
+that is not a `MultiTimeframeContext` is recorded without source-context
+evidence and produces zero predictions. A provider that resolves a context but
+rejects it can raise `RejectedPredictionContextError(reason, source_context=...)`.
+The runner preserves that exact rejected context in the skip manifest and study
+identity without invoking indicators or the rule. `FAIL` still aborts execution.
 
 The exact source-context identity, visible bar IDs, dataset-family references,
 normalized indicator metadata, requirements, and resolution status are stored

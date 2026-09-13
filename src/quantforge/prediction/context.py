@@ -38,6 +38,14 @@ class PredictionContextError(ValueError):
     """Declared prediction context cannot be resolved safely."""
 
 
+class RejectedPredictionContextError(PredictionContextError):
+    """A provider rejected a resolved context, retained only as failure evidence."""
+
+    def __init__(self, reason: str, *, source_context: MultiTimeframeContext) -> None:
+        super().__init__(reason)
+        self.source_context = source_context
+
+
 class PredictionContextAccessError(PredictionContextError):
     """A rule attempted to access an undeclared context input."""
 

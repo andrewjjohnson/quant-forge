@@ -68,6 +68,7 @@ from quantforge.prediction.context import (
     PredictionRuleContext,
     PredictionTimeframeInput,
     PredictionTimeframeRequirement,
+    RejectedPredictionContextError,
     build_prediction_rule_context,
 )
 from quantforge.prediction.contracts import (
@@ -176,6 +177,7 @@ from quantforge.prediction.grid import (
     PredictionStudyFactory,
     PredictionTrialAnalysis,
     PredictionTrialAnalyzer,
+    PredictionWindowAnalyzer,
 )
 from quantforge.prediction.models import (
     PredictionAnalysisResult,
@@ -285,6 +287,16 @@ from quantforge.prediction.technical_confluence import (
     TechnicalConfluencePredictionRule,
     create_reference_technical_confluence_rule,
 )
+from quantforge.prediction.window import (
+    PREDICTION_WINDOW_ENGINE_VERSION,
+    PREDICTION_WINDOW_SCHEMA_VERSION,
+    PredictionDecisionSchedule,
+    PredictionWindowContextProvider,
+    PredictionWindowDecision,
+    PredictionWindowResult,
+    run_prediction_window,
+    run_prediction_window_in_session,
+)
 
 __all__ = [
     "ALL_REASONS",
@@ -318,6 +330,8 @@ __all__ = [
     "PREDICTION_GRID_ENGINE_VERSION",
     "PREDICTION_GRID_SCHEMA_VERSION",
     "PREDICTION_SCANNER_ENGINE_VERSION",
+    "PREDICTION_WINDOW_ENGINE_VERSION",
+    "PREDICTION_WINDOW_SCHEMA_VERSION",
     "RESEARCH_ONLY_DISCLAIMER",
     "RESULT_SCHEMA_VERSION",
     "STUDY_CONTRACT_VERSION",
@@ -396,6 +410,7 @@ __all__ = [
     "PredictionContextFailurePolicy",
     "PredictionContextProvider",
     "PredictionContextRequirements",
+    "PredictionDecisionSchedule",
     "PredictionDirection",
     "PredictionEvaluation",
     "PredictionEvaluator",
@@ -454,7 +469,12 @@ __all__ = [
     "PredictionTrialAnalysis",
     "PredictionTrialAnalyzer",
     "PredictionValues",
+    "PredictionWindowAnalyzer",
+    "PredictionWindowContextProvider",
+    "PredictionWindowDecision",
+    "PredictionWindowResult",
     "PublishedAlertDeduplication",
+    "RejectedPredictionContextError",
     "RsiOversoldUpParameters",
     "RsiOversoldUpPredictionStrategy",
     "RuleSummary",
@@ -517,6 +537,8 @@ __all__ = [
     "run_prediction_analysis",
     "run_prediction_comparison",
     "run_prediction_study",
+    "run_prediction_window",
+    "run_prediction_window_in_session",
     "target_stop_outcome",
     "validate_overnight_gap_backend_comparison_export",
     "validate_prediction_analysis_export",

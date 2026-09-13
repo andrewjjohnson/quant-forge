@@ -33,6 +33,7 @@ Do not create ADRs for routine implementation details that are easy to change.
 - [ADR 0012: Reconstruct developing bars only from causal source intervals](0012-reconstruct-developing-bars-from-causal-source-intervals.md)
 - [ADR 0013: Keep standard indicator definitions backend-neutral](0013-keep-standard-indicators-backend-neutral.md)
 - [ADR 0014: Use fixed validation plans with boundary purging](0014-use-fixed-validation-plans-with-boundary-purging.md)
+- [ADR 0015: Compose historical prediction windows from single decisions](0015-compose-historical-prediction-windows.md)
 
 ## File naming
 

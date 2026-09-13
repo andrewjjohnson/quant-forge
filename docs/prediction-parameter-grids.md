@@ -1,5 +1,11 @@
 # Deterministic prediction parameter grids
 
+QF-42 optionally supplies `decision_schedule` to this same grid and analyzes a
+typed collection through `PredictionWindowAnalyzer.analyze_window()`. Existing
+single-decision behavior is unchanged. See
+[`historical-prediction-windows.md`](historical-prediction-windows.md) for
+scheduling, source identities, artifact shape, and candidate-level resume.
+
 QF-32 adds `quantforge.prediction.PredictionGridStudy` for deterministic,
 in-sample comparison of QF-28/QF-31 multi-timeframe prediction studies. It
 reuses QF-6 finite search spaces, parameter constraints, candidate-index

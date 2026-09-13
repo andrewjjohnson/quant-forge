@@ -577,11 +577,23 @@ def _clock_bucket_end(
     return bucket_start + interval.nominal_duration
 
 
-def _target_session_windows(
+def intraday_session_windows(
     session_date: date,
     timeframe: Timeframe,
 ) -> tuple[IntradayCoverageInterval, ...]:
-    interval = cast(IntradayInterval, timeframe.interval)
+    """Resolve completed exchange-session windows without consulting observations.
+
+    Shared by aggregation and historical prediction scheduling. Cross-session
+    continuation is unsupported, matching the aggregation contract.
+    """
+    interval = timeframe.interval
+    if (
+        not isinstance(interval, IntradayInterval)
+        or interval.cross_session_policy is not CrossSessionPolicy.PROHIBITED
+    ):
+        raise IntradayAggregationValidationError(
+            "session windows require intraday, prohibited cross-session semantics"
+        )
     session = resolve_exchange_session(session_date, timeframe.session_policy)
     start_timestamp = session.open_timestamp
     next_clock_end = (
@@ -921,7 +933,7 @@ def aggregate_intraday_dataset(
     output_bars: list[IntradayBar] = []
     window_quality: list[AggregatedWindowQuality] = []
     for session_report in source_report.sessions:
-        for target_window in _target_session_windows(
+        for target_window in intraday_session_windows(
             session_report.session_date, target_timeframe
         ):
             if not (
@@ -1042,4 +1054,5 @@ __all__ = [
     "IntradayAggregationValidationError",
     "MissingConstituentPolicy",
     "aggregate_intraday_dataset",
+    "intraday_session_windows",
 ]
