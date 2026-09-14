@@ -339,6 +339,64 @@ def test_interrupted_consumption_is_permanent_and_retryable(
     assert ledger.consume(evaluation, run_id="duplicate") == retry
 
 
+def test_retry_requires_successful_marker_sync_before_evaluation(
+    completed_study: CompletedStudy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = HoldoutLedger.create(tmp_path / "ledger")
+    source = completed_study.source
+    ledger.reserve(source)
+    evaluation = prepared(completed_study)
+    marker_path = ledger.root / "exposures" / f"{source.lineage_id}.json"
+    original_sync = holdout_module._sync_directory  # pyright: ignore[reportPrivateUsage]
+    original_evaluate = HoldoutEvaluation._evaluate  # pyright: ignore[reportPrivateUsage]
+    fail_sync = True
+    events: list[str] = []
+
+    def sync(path: Path) -> None:
+        if path == marker_path.parent:
+            if fail_sync:
+                events.append("sync_failed")
+                raise OSError("exposure directory sync failed")
+            original_sync(path)
+            events.append("sync_succeeded")
+        else:
+            original_sync(path)
+
+    def evaluate(self: HoldoutEvaluation, output_root: Path) -> OOSArtifact:
+        assert events[-1] == "sync_succeeded"
+        events.append("evaluate")
+        return original_evaluate(self, output_root)
+
+    monkeypatch.setattr(holdout_module, "_sync_directory", sync)
+    monkeypatch.setattr(HoldoutEvaluation, "_evaluate", evaluate)
+    with pytest.raises(OSError, match="exposure directory sync failed"):
+        ledger.consume(evaluation, run_id="first")
+    original_marker = marker_path.read_bytes()
+    consumed = HoldoutLedger(ledger.root).state(source)
+    assert consumed.state is HoldoutState.CONSUMED
+    assert consumed.result_reference is None
+
+    # A visible marker left by failed fsync cannot authorize either retry mode.
+    for reproduce in (False, True):
+        with pytest.raises(OSError, match="exposure directory sync failed"):
+            ledger.consume(evaluation, run_id="retry", reproduce=reproduce)
+        assert ledger.state(source) == consumed
+        assert marker_path.read_bytes() == original_marker
+    assert events == ["sync_failed"] * 3
+
+    fail_sync = False
+    recovered = ledger.consume(evaluation, run_id="recovery")
+    assert events[-2:] == ["sync_succeeded", "evaluate"]
+    assert recovered.consumption == consumed.consumption
+    assert recovered.result_reference is not None
+    assert marker_path.read_bytes() == original_marker
+    assert ledger.consume(evaluation, run_id="reproduce", reproduce=True) == recovered
+    assert events[3:] == ["sync_succeeded", "evaluate"] * 2
+    assert marker_path.read_bytes() == original_marker
+    assert ledger.consume(evaluation, run_id="cached") == recovered
+    assert events[3:] == ["sync_succeeded", "evaluate"] * 2
+
+
 def test_failure_before_durable_consumption_does_not_evaluate(
     completed_study: CompletedStudy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

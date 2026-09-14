@@ -257,11 +257,16 @@ and the run-directory rename. A failure at either sync leaves the holdout consum
 without a published result; an exact retry validates the export and repeats the sync.
 The current typed `HoldoutConsumptionRecord` always consults this marker; initial
 reservation metadata never overrides it.
+Every retry or explicit reproduction revalidates and fsyncs the original consumed
+marker before invoking the evaluator. A marker that survived a failed directory
+sync only in the filesystem cache does not authorize evaluation. Repeated sync
+failures continue to block evaluation without changing the original run/timestamp.
 
 | Failure/retry | Behavior |
 | --- | --- |
 | Marker write fails before exposure | No evaluator call; if no marker exists, reservation remains unconsumed. |
 | Marker is written but fsync/evaluation/artifact write fails | Consumed, result unavailable; never reset. |
+| Retry after marker sync failure | Revalidate and sync the original marker before evaluation; another sync failure blocks the evaluator again. |
 | Process exits after evaluation but before final result write | Marker remains consumed; exact recovery may rerun the original freeze. |
 | Exact successful request repeated | Verify and return the stored result reference without reevaluating. |
 | Explicit reproduction | Use original request/run/timestamp; artifact and result must match existing immutable bytes. |

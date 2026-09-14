@@ -325,7 +325,9 @@ class HoldoutLedger:
                         "permanent_before_evaluation; interrupted_attempts_are_consumed"
                     ),
                 }
-                _durable_write(marker_path, marker)
+            # A prior failed fsync can leave a visible but nondurable marker.
+            # Revalidate and sync its original bytes before every evaluator call.
+            _durable_write(marker_path, marker)
             root = self.root / "lineages" / source.lineage_id
             artifact = evaluation._evaluate(root / "evaluation")  # pyright: ignore[reportPrivateUsage]
             if isinstance(artifact, PredictionOOSArtifact):
