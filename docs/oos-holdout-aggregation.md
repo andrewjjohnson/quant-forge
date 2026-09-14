@@ -210,11 +210,17 @@ study, and frozen-selection identities remain attached to consumption requests.
 
 Material changes yield different lineage IDs. They do not automatically restore
 research ignorance. A separate conservative exposure registry rejects a pristine
-claim for overlapping calendar-day holdout intervals on the same canonical symbol
+claim for overlapping exchange-session date intervals on the same canonical symbol
 that were consumed by another lineage. This guard spans provider/data revisions,
 study families and backend/parameter changes, and catches trivially shifted
 overlapping intervals. Distinct, nonoverlapping intervals may be reserved. It is
-a local research safeguard, not a statistical independence guarantee.
+a local research safeguard, not a statistical independence guarantee. Timestamp
+intervals resolve the dataset calendar's session-close keys to their session date
+labels, matching QF-39 observation membership even when a close crosses UTC
+midnight. The stored exposure scope declares `exchange_session_labels_v1`.
+Earlier scopes without this date basis are rejected conservatively: preserve their
+consumed evidence rather than creating a fresh ledger or assuming UTC dates prove
+nonoverlap. Automatic migration of ambiguous exposure records is not provided.
 
 Use one permanent ledger for the entire workspace. Moving to a new empty store,
 deleting all evidence, restoring an old backup, or inspecting prices/results

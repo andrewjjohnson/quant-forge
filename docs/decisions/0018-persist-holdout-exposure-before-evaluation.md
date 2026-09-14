@@ -27,6 +27,9 @@ retaining material research inputs. Maintain an independent prior-exposure guard
 for overlapping holdout calendar days on the same canonical symbol. An incompatible
 lineage cannot present an already viewed interval as pristine. Keep the permanent
 ledger distinct from reproducible aggregate exports and QF-9's future manifests.
+Exposure dates use exchange-session labels, resolving timestamp intervals through
+the dataset policy's session-close keys. Reject earlier exposure scopes without an
+explicit date basis rather than infer nonoverlap from ambiguous UTC calendar dates.
 
 OOS aggregation reads QF-39 test artifacts only and remains independent of current
 holdout state. Backtest summaries retain native reset-account results and expose

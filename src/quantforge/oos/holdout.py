@@ -14,6 +14,7 @@ from quantforge.configuration import (
     PrimitiveMappingSnapshot,
     configuration_identity,
 )
+from quantforge.data.calendar import expected_sessions
 from quantforge.oos._records import OOSIntegrityError, mapping, text
 from quantforge.oos.common import provenance
 from quantforge.oos.holdout_evaluation import HoldoutEvaluation
@@ -22,7 +23,8 @@ from quantforge.oos.prediction import (
     prediction_observations,
     summarize_prediction_observations,
 )
-from quantforge.validation import ExchangeSessionBoundary
+from quantforge.timeframes import resolve_exchange_session
+from quantforge.validation import ExchangeSessionBoundary, TimestampBoundary
 from quantforge.walk_forward.models import PredictionOOSArtifact
 from quantforge.walk_forward.persistence import read_record, write_record
 from quantforge.walk_forward.study import (
@@ -76,23 +78,37 @@ def _durable_write(path: Path, payload: PrimitiveMapping) -> None:
 
 def _exposure_scope(source: OOSSource) -> PrimitiveMapping:
     interval = source.plan.final_holdout.window.interval
-    # Conservative calendar-day guard shared across study types, providers and
-    # revised data. Changing a label/backend or shifting overlapping boundaries
-    # must not make previously observed outcomes pristine.
-    start = (
-        interval.start.session_date
-        if isinstance(interval.start, ExchangeSessionBoundary)
-        else interval.start.timestamp.date()
-    )
-    end = (
-        interval.end.session_date
-        if isinstance(interval.end, ExchangeSessionBoundary)
-        else interval.end.timestamp.date()
-    )
-    dataset = source.plan.environment.outcome_dataset.to_primitive()
-    metadata = mapping(dataset["market_data_metadata"])
+    dataset = source.plan.environment.outcome_dataset
+    metadata, timeframe = dataset.market_data_metadata, dataset.standalone_timeframe
+    if metadata is None or timeframe is None:
+        raise OOSIntegrityError("holdout exposure requires a daily dataset policy")
+    if isinstance(interval.start, ExchangeSessionBoundary):
+        assert isinstance(interval.end, ExchangeSessionBoundary)
+        start, end = interval.start.session_date, interval.end.session_date
+    else:
+        # QF-39 timestamp keys are session closes. UTC/local calendar dates can
+        # differ from their session labels, including midnight/overnight closes.
+        sessions = tuple(
+            session
+            for session in expected_sessions(
+                metadata.actual_first_session,
+                metadata.actual_last_session,
+                timeframe.session_policy.calendar_name,
+            )
+            if interval.contains(
+                TimestampBoundary(
+                    resolve_exchange_session(
+                        session, timeframe.session_policy
+                    ).close_timestamp
+                )
+            )
+        )
+        if not sessions:
+            raise OOSIntegrityError("holdout exposure has no dataset session closes")
+        start, end = sessions[0], sessions[-1]
     return {
-        "symbol": metadata["canonical_symbol"],
+        "date_basis": "exchange_session_labels_v1",
+        "symbol": metadata.canonical_symbol,
         "start": start.isoformat(),
         "end": end.isoformat(),
     }
@@ -175,6 +191,13 @@ class HoldoutLedger:
                 != marker["request_id"]
             ):
                 raise OOSIntegrityError("invalid permanent holdout consumption marker")
+            if (
+                mapping(marker["exposure_scope"]).get("date_basis")
+                != "exchange_session_labels_v1"
+            ):
+                raise OOSIntegrityError(
+                    "incompatible holdout exposure scope; preserve consumed evidence"
+                )
 
     def _guard(self, source: OOSSource) -> None:
         provenance(source)
