@@ -150,6 +150,20 @@ Study types never acquire another type's metric requirements. Prediction and
 feature manifests require no capital, transaction costs, fills, or equity.
 The manifest retains material configurations, not result tables. Schema fields
 are copied from their producer; an engine version is not an artifact schema.
+
+For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
+trial-file total and status counts against that summary. Missing or extra trial
+files and contradictory counts are rejected, including failed and excluded
+trials. Without a summary, trial counts remain unknown and the index describes
+only the persisted records; it does not assert completion. Successful trials
+must retain their result reference. Prediction result fingerprints must match
+both their content and the fingerprint in the trial record; the recorded analysis
+and schema must also agree. QF-6 trial metrics, dataset, execution configuration
+and strategy provenance must match the linked
+QF-5 manifest, including its strategy-configuration hash and the grid's recorded
+engine/schema versions. These comparisons use stored values only and do not
+recalculate metrics or reconstruct strategies.
+
 Embedded source-dataset entries reference the producer's recorded dataset
 metadata. Their byte hash verifies that metadata file, not an unavailable source
 cache. To verify original raw/canonical data bytes, explicitly add their files

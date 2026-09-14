@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.experiments._grid_integrity import (
+    validate_backtest_trial,
+    validate_trial_counts,
+)
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
@@ -369,6 +373,7 @@ def inspect_study(
                 )
         if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
             summary_path = source / "summary.json"
+            summary: PrimitiveMapping | None = None
             if summary_path.is_file():
                 summary, _ = read_producer_record(summary_path)
                 if summary.get("study_id") != producer_id:
@@ -377,12 +382,14 @@ def inspect_study(
                     "counts", summary.get("trial_counts")
                 )
             trials: list[str] = []
+            statuses: list[str] = []
             for path in sorted((source / "trials").glob("*.json")):
                 trial, _ = read_producer_record(path)
                 trial_id = text(trial["trial_id"])
                 if path.stem != trial_id or trial["study_id"] != producer_id:
                     raise ManifestError("trial identity is incompatible with study")
                 trials.append(trial_id)
+                statuses.append(text(trial.get("status")))
                 trial_entry = add(
                     path,
                     ArtifactType.TRIAL_RESULT,
@@ -397,11 +404,15 @@ def inspect_study(
                     )
                 )
                 relative = trial.get("artifact_location")
+                if relative is None and trial.get("status") == "succeeded":
+                    raise ManifestError(
+                        "successful trial is missing its result artifact"
+                    )
                 if relative is not None:
                     from quantforge.experiments.artifacts import local_path
 
                     artifact_path = local_path(source, text(relative))
-                    if artifact_path.is_dir():
+                    if study_type is StudyType.OPTIMIZATION:
                         from quantforge.backtesting.export import (
                             validate_backtest_result_artifact,
                         )
@@ -410,10 +421,7 @@ def inspect_study(
                         backtest_manifest, _ = read_producer_record(
                             artifact_path / "manifest.json"
                         )
-                        if backtest_manifest.get("run_id") != trial.get("qf5_run_id"):
-                            raise ManifestError(
-                                "trial refers to an incompatible backtest"
-                            )
+                        validate_backtest_trial(trial, backtest_manifest, configuration)
                         for child in sorted(artifact_path.iterdir()):
                             if child.is_file() and child.suffix in {".json", ".csv"}:
                                 entry = add(
@@ -438,7 +446,9 @@ def inspect_study(
                                 "prediction trial artifact belongs to another study"
                             )
                         claimed = artifact.get("artifact_fingerprint")
-                        if claimed != configuration_identity(
+                        if claimed != trial.get(
+                            "artifact_fingerprint"
+                        ) or claimed != configuration_identity(
                             {
                                 key: value
                                 for key, value in artifact.items()
@@ -447,6 +457,15 @@ def inspect_study(
                         ):
                             raise ManifestError(
                                 "prediction trial artifact fingerprint mismatch"
+                            )
+                        if artifact.get("analysis") != trial.get(
+                            "analysis"
+                        ) or artifact.get("schema_version") != trial.get(
+                            "schema_version"
+                        ):
+                            raise ManifestError(
+                                "prediction trial artifact metadata does not match "
+                                "its record"
                             )
                         entry = add(
                             artifact_path,
@@ -461,6 +480,8 @@ def inspect_study(
                             )
                         )
             observations["trial_ids"] = list(trials)
+            if summary is not None:
+                validate_trial_counts(study_type, summary, statuses)
     elif "rows" in container or "decisions" in container:
         key = "rows" if "rows" in container else "decisions"
         category = (
