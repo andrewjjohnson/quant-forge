@@ -189,13 +189,17 @@ QF-5 manifest, including its strategy-configuration hash and the grid's recorded
 engine/schema versions. These comparisons use stored values only and do not
 recalculate metrics or reconstruct strategies.
 
-Every QF-6 trial also matches its declared Cartesian position in the serialized
+Every QF-6 and QF-32 trial also matches its declared Cartesian position in the serialized
 search space. The combination ID binds those parameters to the recorded strategy
 factory; the trial ID binds the combination to the study, resolved strategy
 metadata, dataset and historical engine/schema versions. These checks include
 failed and excluded trials and use the original axis/value order and primitive
 types. They decode one saved position without enumerating the grid or invoking
 the factory to recreate strategy parameters.
+QF-32 uses its own factory/combination/trial identity format and checks the recorded
+trial definition, backend, dataset-family fingerprint and indicator configuration
+IDs. Historical schema versions and excluded candidates' null definitions are
+preserved; prediction factories and candidate generation are never invoked.
 
 QF-42 inspection requires the complete result snapshot, including decisions.
 It verifies the result identity over the recorded window ID and ordered decisions,
@@ -251,6 +255,10 @@ linked = create_manifest(prediction, execution, validation=validation)
 definitions, purging/embargo, walk-forward study, lineage ID, ordered fold
 statuses, frozen selections and typed test-window artifacts. Completed artifacts
 must match the supplied immutable source snapshots and their stored fold state.
+Each complete persisted fold-state record must match the corresponding captured
+`OOSSource.references` state, including selection, artifact and failure fields.
+Changed records are rejected even when their envelopes have valid new hashes.
+The presence or absence of a pending state record must also match the snapshot.
 Failed or absent folds stay failed or absent; stale files do not become OOS
 observations. No partition memberships are calculated again.
 

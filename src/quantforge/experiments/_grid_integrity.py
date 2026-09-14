@@ -9,14 +9,10 @@ from quantforge.experiments.models import StudyType
 from quantforge.optimization.models import TrialStatus
 
 
-def validate_trial_coordinates(
+def _parameters_at_grid_position(
     trial: PrimitiveMapping, study_configuration: PrimitiveMapping
-) -> None:
-    """Bind QF-6 coordinates and identities using saved metadata only.
-
-    Decode one Cartesian position in the serialized axis order. Never enumerate
-    candidates or invoke a factory to resolve normalized strategy parameters.
-    """
+) -> PrimitiveMapping:
+    """Decode one saved Cartesian position without enumerating candidates."""
     index = trial.get("combination_index")
     axes = mapping(study_configuration.get("search_space")).get("parameters")
     if type(index) is not int or index < 0 or not isinstance(axes, list) or not axes:
@@ -35,6 +31,63 @@ def validate_trial_coordinates(
         mapping(trial.get("parameters"))
     ):
         raise ManifestError("trial parameters do not match grid coordinates")
+    return parameters
+
+
+def validate_prediction_trial_coordinates(
+    trial: PrimitiveMapping, study_configuration: PrimitiveMapping
+) -> None:
+    """Bind QF-32 trial coordinates, identities and recorded component metadata."""
+    parameters = _parameters_at_grid_position(trial, study_configuration)
+    factory = mapping(study_configuration.get("study_factory"))
+    schema_version = text(study_configuration.get("schema_version"))
+    combination_id = configuration_identity(
+        {
+            "component": "quantforge_prediction_grid_combination",
+            "schema_version": schema_version,
+            "factory_name": text(factory.get("name")),
+            "factory_version": text(factory.get("version")),
+            "factory_configuration": mapping(factory.get("configuration")),
+            "parameters": parameters,
+        }
+    )
+    definition = (
+        None
+        if trial.get("status") == "excluded"
+        else mapping(trial.get("trial_definition"))
+    )
+    identity: PrimitiveMapping = {
+        "component": "quantforge_prediction_grid_trial",
+        "schema_version": schema_version,
+        "study_id": configuration_identity(study_configuration),
+        "combination_id": combination_id,
+        "dataset_family_fingerprint": study_configuration.get(
+            "dataset_family_fingerprint"
+        ),
+        "indicator_backend": mapping(study_configuration.get("indicator_backend")),
+        "trial_definition": definition,
+    }
+    expected: PrimitiveMapping = {
+        **{key: value for key, value in identity.items() if key != "component"},
+        "trial_id": configuration_identity(identity),
+        "indicator_configuration_ids": []
+        if definition is None
+        else definition.get("indicator_configuration_ids"),
+    }
+    if any(trial.get(key) != value for key, value in expected.items()):
+        raise ManifestError(
+            "prediction trial identity or metadata differs from grid coordinates"
+        )
+
+
+def validate_trial_coordinates(
+    trial: PrimitiveMapping, study_configuration: PrimitiveMapping
+) -> None:
+    """Bind QF-6 coordinates and identities using saved metadata only.
+
+    Never invoke a factory to resolve normalized strategy parameters.
+    """
+    parameters = _parameters_at_grid_position(trial, study_configuration)
     combination_id = configuration_identity(
         {
             "component": "quantforge_parameter_combination",

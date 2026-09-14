@@ -11,6 +11,7 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._feature_integrity import validate_feature_rows
 from quantforge.experiments._grid_integrity import (
     validate_backtest_trial,
+    validate_prediction_trial_coordinates,
     validate_trial_coordinates,
     validate_trial_counts,
     validate_trial_status,
@@ -525,9 +526,11 @@ def inspect_study(
             observations["trial_ids"] = list(trials)
             if summary is not None:
                 validate_trial_counts(study_type, summary, statuses)
-            if study_type is StudyType.OPTIMIZATION:
-                for trial in trial_records:
+            for trial in trial_records:
+                if study_type is StudyType.OPTIMIZATION:
                     validate_trial_coordinates(trial, configuration)
+                else:
+                    validate_prediction_trial_coordinates(trial, configuration)
     elif "rows" in container or "decisions" in container:
         key = "rows" if "rows" in container else "decisions"
         category = (

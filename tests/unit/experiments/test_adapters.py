@@ -51,6 +51,7 @@ from tests.unit.prediction.test_multi_timeframe_feature_dataset import (
     _build,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.unit.prediction.test_prediction_grid import (
+    FixtureStudyFactory,
     _grid,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -67,6 +68,7 @@ def block_research(monkeypatch: pytest.MonkeyPatch) -> None:
         ("quantforge.backtesting.runner", "run_backtest"),
         ("quantforge.optimization.combinations", "iter_combination_candidates"),
         ("quantforge.optimization.study", "iter_combination_candidates"),
+        ("quantforge.prediction.grid", "_iter_candidates"),
         ("quantforge.oos.prediction", "aggregate_prediction"),
         ("quantforge.oos.prediction", "summarize_prediction_observations"),
         ("quantforge.oos.backtest", "aggregate_backtest"),
@@ -76,6 +78,7 @@ def block_research(monkeypatch: pytest.MonkeyPatch) -> None:
     ):
         monkeypatch.setattr(f"{module_name}.{function}", forbidden)
     monkeypatch.setattr(MovingAverageCrossoverFactory, "build", forbidden)
+    monkeypatch.setattr(FixtureStudyFactory, "build", forbidden)
     for class_name in (
         "quantforge.optimization.study.GridSearchStudy",
         "quantforge.prediction.grid.PredictionGridStudy",

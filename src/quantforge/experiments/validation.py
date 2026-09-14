@@ -120,7 +120,8 @@ def inspect_validation(
 
     window_entries: list[ArtifactEntry] = []
     fold_references: list[Primitive] = []
-    for fold in source.folds:
+    for fold, reference in zip(source.folds, source.references, strict=True):
+        captured_state = reference.to_primitive()["state"]
         if fold.status is FoldStatus.COMPLETED and fold.artifact is None:
             raise ManifestError("completed fold is missing its OOS artifact")
         fold_root = study_path / "folds" / fold.fold_id
@@ -137,11 +138,12 @@ def inspect_validation(
         if state_path.is_file():
             state, state_base = read_producer_record(state_path)
             if (
-                state.get("status") != fold.status.value
+                state != captured_state
+                or state.get("status") != fold.status.value
                 or state.get("fold_id") != fold.fold_id
                 or state.get("study_id") != source.study_id
             ):
-                raise ManifestError("fold status differs from captured source")
+                raise ManifestError("fold state differs from captured source")
             add(
                 state_path,
                 ArtifactType.FOLD_STATE,
@@ -149,7 +151,8 @@ def inspect_validation(
                 location=state_base,
             )
         elif (
-            fold.status is not FoldStatus.PENDING
+            captured_state is not None
+            or fold.status is not FoldStatus.PENDING
             or fold.selection is not None
             or fold.artifact is not None
         ):
