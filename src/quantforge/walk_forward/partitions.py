@@ -2,7 +2,7 @@
 
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
-from typing import cast
+from typing import Protocol, cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data import (
@@ -37,6 +37,21 @@ from quantforge.validation import (
     select_window_observations,
 )
 from quantforge.walk_forward.models import WalkForwardError
+
+
+class EvaluationPartition(Protocol):
+    """Validated boundary shared by test and explicitly consumed holdout adapters."""
+
+    @property
+    def window(self) -> ValidationWindow: ...
+
+    @property
+    def dataset(self) -> MarketDataset: ...
+
+    @property
+    def sessions(self) -> tuple[date, ...]: ...
+
+    def to_primitive(self) -> PrimitiveMapping: ...
 
 
 @dataclass(frozen=True, slots=True)

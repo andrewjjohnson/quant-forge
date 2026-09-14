@@ -519,3 +519,8 @@ QF-39 now executes these explicit folds through separate QF-42 prediction and
 QF-43 backtest adapters. The validation contracts and purge/context calculations
 remain unchanged. See [`walk-forward-studies.md`](walk-forward-studies.md) for
 candidate-universe validation, pre-test freezing and per-fold resume.
+
+QF-40 consumes those test artifacts and owns a separate durable final-holdout
+ledger. QF-8's `FinalHoldout` remains reservation metadata, not evidence of current
+pristine state. Consumers must consult the ledger after any attempted evaluation.
+See [`oos-holdout-aggregation.md`](oos-holdout-aggregation.md).

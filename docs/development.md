@@ -497,6 +497,16 @@ Provide `.env.example` with names and safe placeholders only.
 
 ## Pull-request readiness
 
+Run QF-40 OOS-only aggregation, reset-account stitching, and permanent holdout
+consumption/failure/retry fixtures, together with QF-39 compatibility regressions:
+
+```bash
+uv run pytest tests/unit/oos tests/unit/walk_forward
+```
+
+The offline prediction, backtest, and final-holdout examples and public contracts
+are documented in [`oos-holdout-aggregation.md`](oos-holdout-aggregation.md).
+
 Run the deterministic QF-42 historical schedule, multi-decision, provenance,
 window-analysis, and resume regression tests:
 

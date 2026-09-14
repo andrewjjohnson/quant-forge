@@ -806,3 +806,14 @@ finite candidate universe, immutable pre-test selection, typed per-fold OOS
 artifacts and atomic resume states remain separate from engine and optimizer
 logic. No aggregate OOS result or final holdout consumption is performed. See
 [`walk-forward-studies.md`](walk-forward-studies.md) and ADR 0017.
+
+## OOS aggregation and holdout consumption (QF-40)
+
+`quantforge.oos` reads verified QF-39 test artifacts without running selection or
+evaluation. Separate prediction and backtest aggregates preserve their native
+result families, per-window provenance, missing/failed folds, and configuration
+turnover. A separate explicit holdout ledger persists consumed state before
+evaluation, enforces exact frozen requests and conservative prior-exposure checks,
+and delegates execution to the existing QF-42/QF-43 adapter paths. Structured
+outputs stop before QF-9 manifest infrastructure and QF-41 rendering. See
+[`oos-holdout-aggregation.md`](oos-holdout-aggregation.md) and ADR 0018.
