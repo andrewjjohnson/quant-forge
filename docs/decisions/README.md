@@ -38,6 +38,7 @@ Do not create ADRs for routine implementation details that are easy to change.
 
 - [ADR 0017: Compose walk-forward studies](0017-compose-walk-forward-studies.md)
 - [ADR 0018: Persist holdout exposure before evaluation](0018-persist-holdout-exposure-before-evaluation.md)
+- [ADR 0019: Index existing research artifacts](0019-index-existing-research-artifacts.md)
 
 ## File naming
 
