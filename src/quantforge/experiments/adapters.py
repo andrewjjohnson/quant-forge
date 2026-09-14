@@ -11,8 +11,10 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._grid_integrity import (
     validate_backtest_trial,
     validate_trial_counts,
+    validate_trial_status,
 )
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
+from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
     ArtifactIndex,
@@ -247,6 +249,8 @@ def inspect_study(
     producer_id, configuration, observations, schema = _description(
         study_type, document
     )
+    if study_type is StudyType.PREDICTION_WINDOW:
+        validate_window_snapshot(container)
     entries: list[ArtifactEntry] = []
     edges: list[ArtifactRelationship] = []
 
@@ -388,6 +392,7 @@ def inspect_study(
                 trial_id = text(trial["trial_id"])
                 if path.stem != trial_id or trial["study_id"] != producer_id:
                     raise ManifestError("trial identity is incompatible with study")
+                validate_trial_status(study_type, trial)
                 trials.append(trial_id)
                 statuses.append(text(trial.get("status")))
                 trial_entry = add(
@@ -466,6 +471,10 @@ def inspect_study(
                             raise ManifestError(
                                 "prediction trial artifact metadata does not match "
                                 "its record"
+                            )
+                        if configuration.get("decision_schedule") is not None:
+                            validate_window_snapshot(
+                                mapping(artifact.get("prediction_window"))
                             )
                         entry = add(
                             artifact_path,

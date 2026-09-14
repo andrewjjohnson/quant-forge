@@ -8,6 +8,38 @@ from quantforge.experiments.models import StudyType
 from quantforge.optimization.models import TrialStatus
 
 
+def validate_trial_status(study_type: StudyType, trial: PrimitiveMapping) -> None:
+    """Require diagnostic/exclusion context and reject contradictory outcomes."""
+    try:
+        status = TrialStatus(text(trial.get("status")))
+    except ValueError as error:
+        raise ManifestError("invalid trial status context") from error
+    failure_fields = ("failure_type", "failure_message")
+    result_fields = ("artifact_location", "analysis", "artifact_fingerprint")
+    if study_type is StudyType.OPTIMIZATION:
+        failure_fields += ("failure_category",)
+        result_fields = ("artifact_location", "metrics", "qf5_run_id")
+    exclusion_fields = ("exclusion_code", "exclusion_reason")
+    required = (
+        failure_fields
+        if status is TrialStatus.FAILED
+        else exclusion_fields
+        if status is TrialStatus.EXCLUDED
+        else ()
+    )
+    for field in required:
+        value = trial.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ManifestError("trial has incomplete diagnostic or exclusion context")
+    prohibited = (
+        (() if status is TrialStatus.FAILED else failure_fields)
+        + (() if status is TrialStatus.EXCLUDED else exclusion_fields)
+        + (() if status is TrialStatus.SUCCEEDED else result_fields)
+    )
+    if any(trial.get(field) is not None for field in prohibited):
+        raise ManifestError("trial status contradicts its outcome context")
+
+
 def validate_trial_counts(
     study_type: StudyType, summary: PrimitiveMapping, statuses: list[str]
 ) -> None:

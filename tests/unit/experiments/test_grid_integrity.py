@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 
 from quantforge.backtesting import BacktestConfig, BacktestResult, run_backtest
-from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.data import MarketDataset
 from quantforge.experiments import (
     ManifestError,
@@ -188,6 +188,65 @@ def test_extra_trial_is_rejected_against_completed_summary(
     trial["trial_id"] = "unrecorded-trial"
     write_json(path / "trials" / "unrecorded-trial.json", trial)
     with pytest.raises(ManifestError, match=r"trial.*summary"):
+        inspect_study(study_type, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("status", "field"),
+    [
+        ("failed", "failure_type"),
+        ("failed", "failure_message"),
+        ("excluded", "exclusion_code"),
+        ("excluded", "exclusion_reason"),
+    ],
+)
+@pytest.mark.parametrize("invalid", [None, "", " ", 17])
+def test_trial_status_requires_diagnostic_or_exclusion_context(
+    grid_export: tuple[StudyType, Path],
+    tmp_path: Path,
+    status: str,
+    field: str,
+    invalid: Primitive,
+) -> None:
+    study_type, path = grid_export
+    record_path = trial_path(path, status)
+    trial = read_record(record_path)
+    trial[field] = invalid
+    write_json(record_path, trial)
+    with pytest.raises(ManifestError, match=r"trial.*context"):
+        inspect_study(study_type, path, artifact_root=tmp_path)
+
+
+def test_failed_qf6_trial_requires_failure_category(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    record_path = trial_path(path, "failed")
+    trial = read_record(record_path)
+    trial["failure_category"] = None
+    write_json(record_path, trial)
+    with pytest.raises(ManifestError, match=r"trial.*context"):
+        inspect_study(StudyType.OPTIMIZATION, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("status", "field"),
+    [
+        ("succeeded", "failure_message"),
+        ("failed", "exclusion_reason"),
+        ("excluded", "failure_type"),
+        ("failed", "artifact_location"),
+    ],
+)
+def test_trial_status_rejects_contradictory_outcome_fields(
+    grid_export: tuple[StudyType, Path], tmp_path: Path, status: str, field: str
+) -> None:
+    study_type, path = grid_export
+    record_path = trial_path(path, status)
+    trial = read_record(record_path)
+    trial[field] = "contradictory-outcome"
+    write_json(record_path, trial)
+    with pytest.raises(ManifestError, match="trial status contradicts"):
         inspect_study(study_type, path, artifact_root=tmp_path)
 
 

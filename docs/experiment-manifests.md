@@ -156,13 +156,23 @@ trial-file total and status counts against that summary. Missing or extra trial
 files and contradictory counts are rejected, including failed and excluded
 trials. Without a summary, trial counts remain unknown and the index describes
 only the persisted records; it does not assert completion. Successful trials
-must retain their result reference. Prediction result fingerprints must match
+must retain their result reference. Failed trials require nonempty diagnostic
+type and message (plus QF-6's failure category); excluded trials require their
+exclusion code and reason. Outcome fields must agree with the trial status.
+Prediction result fingerprints must match
 both their content and the fingerprint in the trial record; the recorded analysis
 and schema must also agree. QF-6 trial metrics, dataset, execution configuration
 and strategy provenance must match the linked
 QF-5 manifest, including its strategy-configuration hash and the grid's recorded
 engine/schema versions. These comparisons use stored values only and do not
 recalculate metrics or reconstruct strategies.
+
+QF-42 inspection requires the complete result snapshot, including decisions.
+It verifies the result identity over the recorded window ID and ordered decisions,
+then checks all stored record counts using QF-42's primitive count helper. The
+same checks apply to QF-32's nested window results. Changed or truncated decisions
+cannot retain a stale result identity. This reads existing signals and rows;
+it does not rebuild schedules, contexts, predictions, outcomes or metrics.
 
 Embedded source-dataset entries reference the producer's recorded dataset
 metadata. Their byte hash verifies that metadata file, not an unavailable source
