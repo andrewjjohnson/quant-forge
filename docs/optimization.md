@@ -210,6 +210,39 @@ constraints, initial capital, costs, objective, hard constraints, or stability
 thresholds changes the study ID. A changed study cannot silently resume an old
 directory.
 
+## Explicit evaluation intervals (QF-43)
+
+Set `GridSearchConfig.backtest.evaluation_interval` to the existing QF-5
+`EvaluationInterval`. The study's dataset provides historical context; each
+trial starts a fresh account and returns only evaluation trading/accounting,
+benchmark, and metrics under [QF-43 semantics](backtesting.md). Both sequential
+and process workers pass the same typed `BacktestConfig` to the same runner.
+There is no new optimization path, search algorithm, or metric implementation.
+Rankings remain in-sample relative to the interval being searched; the presence
+of a boundary alone does not establish OOS validity.
+
+The complete interval configuration (inclusive dates, context policy, fresh
+capital/no-positions initialization, and exclusion of context decisions) enters
+the existing study/trial configuration snapshots. Source identity and range,
+capital, costs, action provenance, and strategy configurations remain material.
+Bounded studies additionally record `evaluation_strategy_configurations`, an
+ordered mapping from each valid combination ID to its resolved QF-4 strategy
+configuration ID. This binds the actual indicator/backend configuration and
+versions into study identity even when a factory records only a logical backend
+name. Excluded candidates retain the existing exclusion/combination semantics.
+
+Existing exact manifest, candidate, successful-trial, QF-5 configuration, and
+artifact-integrity comparisons reject incompatible boundaries or reset policies.
+A changed source, context range, interval, capital, or resolved strategy/backend
+cannot reuse completed trials. No alternative carry-in reset policy is supported.
+The version-2 evaluation contract includes `strategy_metadata=causal_prefix_v1`;
+bounded version-1 artifacts that exposed full-source metadata have different
+study/trial identities and fail exact resume validation under the corrected policy.
+Successful bounded trials resume with zero backtest calls. With no explicit
+interval, both new serialized fields are absent and historical study/trial IDs,
+artifact versions, and resume behavior are unchanged. QF-39/QF-40 orchestration,
+aggregation, and holdout consumption are outside this capability.
+
 ## Execution and failure policy
 
 `ExecutionMode.SEQUENTIAL` is the reference mode. It visits combinations in

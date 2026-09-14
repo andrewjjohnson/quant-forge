@@ -154,7 +154,7 @@ class GridSearchStudy:
         return self._candidates
 
     def _scientific_definition(self) -> PrimitiveMapping:
-        return {
+        definition: PrimitiveMapping = {
             "component": "quantforge_grid_search_study",
             "optimization_engine_version": OPTIMIZATION_ENGINE_VERSION,
             "study_schema_version": self.config.schema_version,
@@ -177,6 +177,19 @@ class GridSearchStudy:
             "ranking_configuration": self.config.ranking.to_primitive(),
             "stability_configuration": self.config.stability.to_primitive(),
         }
+        if self.config.backtest.evaluation_interval is not None:
+            # Bind resolved indicator/backend versions even when a factory's
+            # own configuration only records a logical backend name. Leave
+            # historical studies without boundaries byte-for-byte unchanged.
+            definition["evaluation_strategy_configurations"] = [
+                {
+                    "combination_id": candidate.combination_id,
+                    "strategy_configuration_id": candidate.strategy_configuration_id,
+                }
+                for candidate in self._candidates
+                if isinstance(candidate, ParameterCombination)
+            ]
+        return definition
 
     def manifest_primitive(self) -> PrimitiveMapping:
         valid = sum(

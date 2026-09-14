@@ -69,6 +69,13 @@ QF-6 optimization orchestrates repeated strategy runs but does not alter the
 semantics of the underlying QF-4 strategy or QF-5 backtest. See
 `docs/optimization.md` and ADR 0002.
 
+QF-43 adds an optional inclusive evaluation interval to the existing QF-5
+configuration. Earlier source bars provide causal strategy history; only
+evaluation decisions and bars enter fresh-account execution, benchmark, and
+metrics. QF-6 carries the boundary through its existing identities and resume
+checks. See `docs/backtesting.md` and ADR 0016. Walk-forward orchestration and
+OOS aggregation remain QF-39/QF-40 responsibilities.
+
 QF-11 prediction analysis is a separate branch from execution. A generic study
 orchestrator fixes causal predictions before invoking a separately configured
 outcome labeler, then passes each typed prediction/outcome pair to a separately

@@ -101,6 +101,116 @@ for a fixed positive fill price, the model's buy-side cost never decreases as
 whole-share quantity increases. Custom schedules with rebates or discontinuous
 discounts that violate this guarantee are rejected during configuration.
 
+## Historical context and explicit evaluation intervals (QF-43)
+
+Supply a larger immutable source dataset and set an inclusive interval on the
+existing configuration:
+
+```python
+from dataclasses import replace
+from datetime import date
+
+from quantforge.backtesting import EvaluationInterval
+
+evaluation_config = replace(
+    config,
+    evaluation_interval=EvaluationInterval(
+        start_session=date(2024, 7, 8),
+        end_session=date(2024, 7, 19),
+    ),
+)
+result = run_backtest(context_dataset, strategy, evaluation_config)
+```
+
+Both endpoints must be observed sessions in the source. Dates label completed
+daily exchange sessions under the source's existing calendar; datetime values,
+holidays, missing endpoints, reversed bounds, and partial coverage fail closed.
+Single-session intervals are valid. This matches QF-8's closed exchange-session
+membership; it does not add intraday/timestamp execution to the daily QF-5 runner.
+QF-39 can pass the dates from a compatible QF-8 session interval and must supply
+the intended, validated context source. QF-43 does not select training windows,
+purge labels, consume a holdout, or certify that parameters are out of sample.
+
+The source's first observed session through the session before evaluation start
+is **context only**. QF-4 receives the source prefix through evaluation end,
+including evaluation bars, through its unchanged strategy/indicator contracts.
+Trailing indicator history and non-accounting target-state history are retained.
+Warm-up remains a count of supplied bars: unavailable values stay unavailable,
+no values are filled, and strategies keep their existing insufficient-history
+behavior. For the crossover strategy, the first valid pair alone cannot signal;
+the prior pair must also be available. No bars or action records after evaluation
+end enter strategy generation. Strategies remain responsible for causal use of
+their input prefix, as in ordinary QF-4/QF-5 execution.
+
+Only evaluation-originating decisions become result signals/orders. A context
+decision cannot fill at the first evaluation open, and no synthetic entry
+replays a historical long target. A strategy that entered its conceptual long
+state in context may first emit a flat target during evaluation; the fresh
+account records `target_already_flat` under existing rejection semantics. The
+account waits for a new evaluation-period entry decision. A decision at the
+first evaluation close can fill only at the next calendar session's open inside
+the interval. A final-session decision is retained as `unexecuted_end_of_data`
+with `no_later_execution_bar`, even if the full source contains later bars.
+
+The only supported `account_initialization` is
+`configured_capital_no_positions`. Cash, previous equity, and the running peak
+start from `initial_capital`; shares, basis, realized/unrealized P&L, and dividend
+entitlement start at zero. No context orders, costs, cashflows, holdings, or
+trades are simulated or carried. Earlier splits still contribute to the existing
+causal feature normalization. Only evaluation actions enter account ledgers,
+action counts, dividend disclosures, and metrics. A split at evaluation start
+acts on zero shares; a dividend there has no previous-close entitlement for
+either account. Subsequent splits, dividends, costs, and slippage follow the
+unchanged QF-5 sequence. Complete-source validation remains required, including
+the existing strict missing-session/raw-price/action checks and source-wide
+`REJECT_IF_DIVIDENDS` policy; selecting an interval does not bypass data quality.
+
+The benchmark buys at the first evaluation open using configured capital and
+the same costs. Its return starts at that capital, including its first open-to-
+close movement and entry costs. It never normalizes to a context price. The
+strategy's first daily return stays zero because it starts flat. Only evaluation
+positions, equity records, trades, and cashflows reach existing performance
+formulas: CAGR elapsed days, risk-return samples, peaks/drawdowns, exposure
+denominators, and closed/open-trade statistics all use that interval. No
+completed full-period accounting result is sliced afterward.
+
+`market_data` continues to describe the entire immutable source, including its
+full fingerprint/range and action snapshot. Only the internal accounting view
+retains that full-source metadata. The strategy's raw history view has matching
+prefix bounds, bar/action counts, missing sessions, and action-session tuples.
+Its digests, dataset/action IDs, snapshot ID, and canonical paths are rebuilt
+using only permitted prefix contents. Full-source hashes/paths are never exposed
+to strategy code. Retrieval time uses the explicit unavailable sentinel
+`1970-01-01T00:00:00+00:00`, and adapter version is `qf43-causal-prefix-v1`.
+These synthetic view identities describe an in-memory projection; no provider
+retrieval or cache artifacts are created. The raw view passes QF-3 validation.
+Subsequent causal split normalization retains the existing ephemeral feature-view
+contract: its transformed bars are not a raw QF-3 artifact or execution input.
+
+The optional version-2 `evaluation_interval` configuration records the endpoints,
+inclusive membership, context-prefix rule, account initialization, decision
+policy, and `strategy_metadata=causal_prefix_v1`. Version 1 exposed full-source
+metadata even when bars were truncated; its bounded artifacts cannot resume
+under version 2. Source metadata plus these rules identify consumed context
+and evaluation ranges. All existing strategy/indicator/backend, calendar, cost,
+and corporate-action provenance remains intact. The benchmark configuration also
+records the interval and `first_evaluation_session_open` anchoring.
+
+Repeated execution of an unchanged immutable source and configuration produces
+identical results/identities. Appending future bars requires a new QF-3 dataset
+identity; historical decision values and evaluation economics remain stable,
+while source/run/artifact identifiers correctly change. Reusing old metadata
+with appended or edited bars is rejected. Selecting a different source prefix
+also changes provenance even if its resulting trades happen to match.
+
+With `evaluation_interval=None` (the default), the serialized field is omitted:
+existing configuration bytes, engine/result versions, identities, complete-source
+execution, and artifact schemas remain unchanged. No historical configuration
+is migrated. See [optimization.md](optimization.md) for QF-6 identity/resume and
+[ADR 0016](decisions/0016-isolate-backtest-evaluation-accounts.md) for the decision.
+Walk-forward scheduling/selection remains QF-39; OOS aggregation and final
+holdout consumption remain QF-40.
+
 ## Dividend and split policies
 
 `DividendPolicy` is independent of the mandatory `SplitAccountingPolicy`:

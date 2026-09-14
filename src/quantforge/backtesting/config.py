@@ -1,6 +1,7 @@
 """Immutable typed backtest configuration."""
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import cast
@@ -197,6 +198,48 @@ class SplitAccountingPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class EvaluationInterval:
+    """Inclusive daily sessions with a fresh account and evaluation-only decisions.
+
+    Endpoints must occur in the validated source dataset. Earlier source bars
+    supply causal strategy history; later bars are never passed to the strategy.
+    Carry-in portfolios and context-originating orders are unsupported.
+    """
+
+    start_session: date
+    end_session: date
+    account_initialization: str = "configured_capital_no_positions"
+
+    def __post_init__(self) -> None:
+        for session in cast(tuple[object, ...], (self.start_session, self.end_session)):
+            if not isinstance(session, date) or isinstance(session, datetime):
+                raise InvalidBacktestConfigurationError(
+                    "evaluation endpoints must be exchange-session dates"
+                )
+        if self.start_session > self.end_session:
+            raise InvalidBacktestConfigurationError(
+                "evaluation start must not follow evaluation end"
+            )
+        if self.account_initialization != "configured_capital_no_positions":
+            raise InvalidBacktestConfigurationError(
+                "evaluation requires configured capital with no carried positions"
+            )
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "contract_version": "2",
+            "start_session": self.start_session.isoformat(),
+            "end_session": self.end_session.isoformat(),
+            "membership": "inclusive_exchange_sessions",
+            "context": "source_start_through_evaluation_end",
+            "account_initialization": self.account_initialization,
+            "signal_policy": "evaluation_decisions_only_no_context_orders",
+            "strategy_history": "preserve_non_accounting_target_state",
+            "strategy_metadata": "causal_prefix_v1",
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestConfig:
     """All assumptions required for a reportable deterministic MVP backtest."""
 
@@ -212,10 +255,18 @@ class BacktestConfig:
     forced_liquidation: bool = False
     dividend_policy: DividendPolicy = DividendPolicy.REJECT_IF_DIVIDENDS
     split_policy: SplitAccountingPolicy = SplitAccountingPolicy()
+    evaluation_interval: EvaluationInterval | None = None
     engine_version: str = field(default=ENGINE_VERSION, init=False)
     result_schema_version: str = field(default=RESULT_SCHEMA_VERSION, init=False)
 
     def __post_init__(self) -> None:
+        evaluation_interval = cast(object, self.evaluation_interval)
+        if evaluation_interval is not None and not isinstance(
+            evaluation_interval, EvaluationInterval
+        ):
+            raise InvalidBacktestConfigurationError(
+                "evaluation_interval must be an EvaluationInterval or None"
+            )
         try:
             initial_capital = decimal_from(self.initial_capital, "initial capital")
             risk_free_rate = decimal_from(
@@ -302,7 +353,7 @@ class BacktestConfig:
         )
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {
+        configuration: PrimitiveMapping = {
             "initial_capital": decimal_to_primitive(self.initial_capital),
             "execution": self.execution.to_primitive(),
             "commission": _cost_model_configuration(
@@ -338,3 +389,9 @@ class BacktestConfig:
             "result_schema_version": self.result_schema_version,
             "arithmetic": arithmetic_configuration(),
         }
+        # Absence preserves the historical configuration bytes and run identities.
+        if self.evaluation_interval is not None:
+            configuration["evaluation_interval"] = (
+                self.evaluation_interval.to_primitive()
+            )
+        return configuration

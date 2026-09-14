@@ -78,6 +78,13 @@ uv run pytest tests/unit/data/test_tiingo_provider.py \
   tests/unit/backtesting/test_runner.py
 ```
 
+Run QF-43 context/evaluation isolation and QF-6 identity/resume regressions:
+
+```bash
+uv run pytest tests/unit/backtesting/test_evaluation.py \
+  tests/unit/optimization/test_evaluation.py
+```
+
 Run the deterministic offline Tiingo intraday adapter and cache tests:
 
 ```bash
