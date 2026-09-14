@@ -314,6 +314,10 @@ class HoldoutLedger:
                     observations, len(decisions)
                 )
             else:
+                # QF-5 fsyncs export files, but its directory rename is not durable.
+                # Persist file entries and the renamed run before publishing references.
+                _sync_directory(root / "evaluation" / artifact.export_location)
+                _sync_directory(root / "evaluation")
                 summary = mapping(
                     mapping(artifact.snapshot.to_primitive()["manifest"])["performance"]
                 )

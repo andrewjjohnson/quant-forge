@@ -122,6 +122,125 @@ def test_normal_aggregation_does_not_consume_or_claim_pristine(
     assert ledger.state(source).state is HoldoutState.CONSUMED
 
 
+@pytest.mark.parametrize(
+    "below_minimum", [False, True], ids=["at-minimum", "below-minimum"]
+)
+def test_holdout_enforces_minimum_after_excluding_outcome_tail(
+    completed_study: CompletedStudy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    below_minimum: bool,
+) -> None:
+    original = prepared(completed_study)
+    retained_count = len(original.permitted.sessions)
+    study = WalkForwardStudy(
+        replace(
+            completed_study.study.config,
+            minimum_test_observations=retained_count + int(below_minimum),
+        ),
+        completed_study.evaluator,
+        tmp_path / "minimum-study",
+    )
+    study.run()
+    source = load_oos_source(study.config.plan, study.study_path)
+    assert all(fold.artifact for fold in source.folds)
+    selection = source.folds[-1].selection
+    assert selection is not None
+    ledger = HoldoutLedger.create(tmp_path / "minimum-ledger")
+    reserved = ledger.reserve(source)
+    if below_minimum:
+
+        def forbidden(*args: object, **kwargs: object) -> None:
+            pytest.fail("undersized holdout must not be evaluated")
+
+        monkeypatch.setattr(HoldoutEvaluation, "_evaluate", forbidden)
+        with pytest.raises(OOSIntegrityError, match="minimum_test_observations"):
+            HoldoutEvaluation.prepare(
+                source,
+                completed_study.evaluator,
+                selection_fold_id=source.folds[-1].fold_id,
+            )
+        # Consumption must revalidate even a directly constructed evaluation.
+        invalid = replace(original, source=source, selection=selection)
+        with pytest.raises(OOSIntegrityError, match="minimum_test_observations"):
+            ledger.consume(invalid, run_id="undersized")
+        assert ledger.state(source) == reserved
+        assert not tuple((ledger.root / "exposures").iterdir())
+    else:
+        evaluation = HoldoutEvaluation.prepare(
+            source,
+            completed_study.evaluator,
+            selection_fold_id=source.folds[-1].fold_id,
+        )
+        assert len(evaluation.permitted.sessions) == retained_count
+        assert (
+            ledger.consume(evaluation, run_id="at-minimum").result_reference is not None
+        )
+
+
+@pytest.mark.parametrize("failure_directory", [None, "run", "evaluation"])
+def test_backtest_export_directories_are_durable_before_result(
+    backtest_study: CompletedStudy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_directory: str | None,
+) -> None:
+    ledger = HoldoutLedger.create(tmp_path / "ledger")
+    source = backtest_study.source
+    evaluation = prepared(backtest_study)
+    ledger.reserve(source)
+    root = ledger.root / "lineages" / source.lineage_id
+    evaluation_root = root / "evaluation"
+    sync_order: list[str] = []
+    original_sync = holdout_module._sync_directory  # pyright: ignore[reportPrivateUsage]
+    original_write = holdout_module._durable_write  # pyright: ignore[reportPrivateUsage]
+
+    def sync(path: Path) -> None:
+        directory = (
+            "evaluation"
+            if path == evaluation_root
+            else "run"
+            if path.parent == evaluation_root
+            else None
+        )
+        if directory is not None:
+            assert path.is_dir()
+            assert not (root / "result.json").exists()
+            if directory == "run":
+                assert (path / "integrity.json").is_file()
+            if directory == failure_directory:
+                raise OSError("interrupted export directory sync")
+        original_sync(path)
+        if directory is not None:
+            sync_order.append(directory)
+
+    def write(path: Path, payload: PrimitiveMapping) -> None:
+        if path == root / "result.json":
+            assert sync_order == ["run", "evaluation"]
+        original_write(path, payload)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(holdout_module, "_sync_directory", sync)
+        patch.setattr(holdout_module, "_durable_write", write)
+        if failure_directory is None:
+            assert (
+                ledger.consume(evaluation, run_id="first").result_reference is not None
+            )
+        else:
+            with pytest.raises(OSError, match="interrupted export directory sync"):
+                ledger.consume(evaluation, run_id="first")
+            consumed = HoldoutLedger(ledger.root).state(source)
+            assert consumed.state is HoldoutState.CONSUMED
+            assert consumed.result_reference is None
+            assert not (root / "result.json").exists()
+    marker = ledger.state(source).consumption
+    recovered = ledger.consume(evaluation, run_id="retry")
+    assert recovered.consumption == marker
+    assert recovered.result_reference is not None
+    assert ledger.consume(evaluation, run_id="cached") == recovered
+    assert ledger.result(evaluation).to_primitive()["state"] == "consumed"
+
+
 def test_consumed_configuration_cannot_change(
     completed_study: CompletedStudy, tmp_path: Path
 ) -> None:

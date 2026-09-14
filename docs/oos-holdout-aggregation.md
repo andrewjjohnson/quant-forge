@@ -190,8 +190,11 @@ entry point accepts that `HoldoutPartition` through `EvaluationPartition`; exist
 through the same entry point with unchanged membership/results. Prediction calls
 the original QF-42/QF-11 path; backtests call QF-43/QF-5 with a fresh account. The
 holdout's final maximum outcome-horizon sessions supply outcomes only, so every
-prediction label remains inside the reserved interval. Insufficient holdout
-length fails before exposure. QF-40 does not ask QF-8 to purge the final holdout
+prediction label remains inside the reserved interval. After excluding that tail,
+the retained observation count must meet the source study's
+`minimum_test_observations`; warm-up and outcome-only sessions do not count.
+Insufficient holdout length fails during preparation and consumption validation,
+before exposure. QF-40 does not ask QF-8 to purge the final holdout
 against an invented later protected window; its serialized `purge` is explicitly
 `null` and the holdout tail policy is recorded separately.
 
@@ -242,6 +245,10 @@ The immutable consumed marker includes the full request/provenance, exact freeze
 and parameter snapshot, validation plan/study/lineage and holdout identities,
 bounded membership, original consumption run ID and UTC timestamp. Result and
 artifact hashes/references are attached only after durable result persistence.
+For backtests, the exported run directory and its parent `evaluation` directory
+are fsynced before publishing `result.json`, preserving both artifact file entries
+and the run-directory rename. A failure at either sync leaves the holdout consumed
+without a published result; an exact retry validates the export and repeats the sync.
 The current typed `HoldoutConsumptionRecord` always consults this marker; initial
 reservation metadata never overrides it.
 

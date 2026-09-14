@@ -6,7 +6,7 @@ from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data import MarketDataset
-from quantforge.oos._records import OOSIntegrityError
+from quantforge.oos._records import OOSIntegrityError, mapping
 from quantforge.oos.common import provenance
 from quantforge.oos.models import OOSSource
 from quantforge.validation import (
@@ -93,6 +93,14 @@ class HoldoutEvaluation:
         if not retained:
             raise OOSIntegrityError(
                 "holdout is too short for its configured outcome horizon"
+            )
+        minimum = mapping(definition["configuration"])["minimum_test_observations"]
+        if type(minimum) is not int or minimum < 1:
+            raise OOSIntegrityError("invalid minimum_test_observations in source study")
+        if len(retained) < minimum:
+            raise OOSIntegrityError(
+                f"holdout has {len(retained)} observations after excluding the outcome "
+                f"horizon; minimum_test_observations requires {minimum}"
             )
         start_key = (member.warm_up_context or retained)[0]
         start = keys.index(start_key)
