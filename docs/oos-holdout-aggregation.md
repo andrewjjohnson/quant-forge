@@ -189,8 +189,12 @@ QF-8 supplies holdout membership and historical warm-up. A small additive adapte
 entry point accepts that `HoldoutPartition` through `EvaluationPartition`; existing QF-39 test methods delegate
 through the same entry point with unchanged membership/results. Prediction calls
 the original QF-42/QF-11 path; backtests call QF-43/QF-5 with a fresh account. The
-holdout's final maximum outcome-horizon sessions supply outcomes only, so every
-prediction label remains inside the reserved interval. After excluding that tail,
+holdout's final maximum outcome horizon supplies outcomes only, so every
+prediction label remains inside the reserved interval. Session-axis plans exclude
+the configured number of trailing sessions. Timestamp-axis plans retain only
+observations whose timestamp plus the exact elapsed horizon is at or before the
+holdout's closed end boundary; duration horizons are never converted to session
+counts. A horizon ending exactly at that boundary is permitted. After excluding that tail,
 the retained observation count must meet the source study's
 `minimum_test_observations`; warm-up and outcome-only sessions do not count.
 Insufficient holdout length fails during preparation and consumption validation,

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data import MarketDataset
@@ -10,6 +11,7 @@ from quantforge.oos._records import OOSIntegrityError, mapping
 from quantforge.oos.common import provenance
 from quantforge.oos.models import OOSSource
 from quantforge.validation import (
+    TimestampBoundary,
     ValidationWindow,
     WindowObservationSelection,
     select_window_observations,
@@ -84,12 +86,24 @@ class HoldoutEvaluation:
         )
         # All outcomes must end INSIDE the reserved interval. Its final horizon
         # supplies labels only and cannot create decisions needing unseen data.
-        horizon = plan.purge_policy.label_horizon.exchange_sessions or 0
-        retained = (
-            member.study_observations[:-horizon]
-            if horizon
-            else member.study_observations
-        )
+        horizon = plan.purge_policy.label_horizon
+        if horizon.elapsed is not None:
+            end_timestamp = cast(TimestampBoundary, window.interval.end).timestamp
+            final_decision_timestamp = end_timestamp - horizon.elapsed
+            retained = tuple(
+                observation
+                for observation in member.study_observations
+                if cast(TimestampBoundary, observation).timestamp
+                <= final_decision_timestamp
+            )
+        else:
+            horizon_sessions = horizon.exchange_sessions
+            assert horizon_sessions is not None
+            retained = (
+                member.study_observations[:-horizon_sessions]
+                if horizon_sessions
+                else member.study_observations
+            )
         if not retained:
             raise OOSIntegrityError(
                 "holdout is too short for its configured outcome horizon"
