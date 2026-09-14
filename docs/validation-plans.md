@@ -512,3 +512,10 @@ QF-8 does not provide:
 
 Those consumers must use the immutable QF-8 plan and existing research artifacts
 rather than redefining partitions or scientific provenance independently.
+
+## Walk-forward consumer
+
+QF-39 now executes these explicit folds through separate QF-42 prediction and
+QF-43 backtest adapters. The validation contracts and purge/context calculations
+remain unchanged. See [`walk-forward-studies.md`](walk-forward-studies.md) for
+candidate-universe validation, pre-test freezing and per-fold resume.

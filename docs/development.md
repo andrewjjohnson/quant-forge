@@ -533,3 +533,16 @@ When two runs differ unexpectedly, compare:
 10. parallel scheduling or reduction order.
 
 Do not “fix” discrepancies by rounding or dropping rows without identifying the cause.
+
+## Walk-forward acceptance tests (QF-39)
+
+Run the deterministic two-fold prediction/backtest fixtures, exact QF-8
+membership/leakage checks, frozen-selection and interruption/resume cases:
+
+```bash
+uv run pytest tests/unit/walk_forward
+```
+
+These fixtures use existing QF-42/QF-43 engines and local synthetic artifacts.
+They require no provider credentials. See
+[`walk-forward-studies.md`](walk-forward-studies.md).

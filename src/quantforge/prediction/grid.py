@@ -1988,6 +1988,15 @@ class PredictionGridStudy:
     def run(self) -> PredictionGridResult:
         return self._execute(resume=False)
 
+    @property
+    def candidates(self) -> tuple[PredictionGridCandidate, ...]:
+        """Capture the existing validated universe without executing predictions.
+
+        QF-39 uses these same definitions to freeze permitted configurations.
+        Enumeration preserves the grid's constraints and backend checks.
+        """
+        return tuple(self._iter_candidates())
+
     def resume(self) -> PredictionGridResult:
         return self._execute(resume=True)
 

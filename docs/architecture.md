@@ -797,3 +797,12 @@ Use ADRs under `docs/decisions/` for choices that are expensive to reverse, incl
 - broker abstraction;
 - deterministic parallelism;
 - experiment-tracking backend.
+
+## Walk-forward orchestration (QF-39)
+
+`quantforge.walk_forward` consumes QF-8's explicit ordered folds and membership,
+QF-42/QF-32 prediction windows, and QF-43/QF-6 bounded backtest evaluation. Its
+finite candidate universe, immutable pre-test selection, typed per-fold OOS
+artifacts and atomic resume states remain separate from engine and optimizer
+logic. No aggregate OOS result or final holdout consumption is performed. See
+[`walk-forward-studies.md`](walk-forward-studies.md) and ADR 0017.
