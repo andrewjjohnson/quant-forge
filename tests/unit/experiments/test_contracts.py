@@ -346,6 +346,32 @@ def test_credentials_rejected_without_echoing_values(tmp_path: Path, key: str) -
     assert "sensitive-marker-123" not in str(error.value)
 
 
+@pytest.mark.parametrize("account_label", ["benchmark", "strategy"])
+def test_internal_account_labels_are_safe_metadata(
+    tmp_path: Path, account_label: str
+) -> None:
+    record = manifest(tmp_path, {"account_id": account_label})
+    path = write_manifest(record, tmp_path / "manifests", artifact_root=tmp_path)
+    assert read_manifest(path).serialize() == record.serialize()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"broker_account_id": "benchmark"},
+        {"account_id": {"account_id": "benchmark"}},
+        {"account_id": ["strategy"]},
+        {"account_id": "benchmark-sensitive-marker"},
+        {"account_id": "strategy", "api_key": "sensitive-marker"},
+    ],
+)
+def test_simulation_label_allowance_does_not_bypass_credential_guard(
+    tmp_path: Path, payload: PrimitiveMapping
+) -> None:
+    with pytest.raises(ManifestError):
+        manifest(tmp_path, payload)
+
+
 @pytest.mark.parametrize(
     "payload",
     [

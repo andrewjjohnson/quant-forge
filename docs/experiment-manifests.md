@@ -128,6 +128,13 @@ exchange-calendars and PyArrow. Additional distribution names may be supplied
 explicitly. Installed dependency versions do not override historical indicator
 backend/library/runtime/function fields recorded by the study.
 
+Capture rejects a dirty working tree, including staged, unstaged and untracked
+files. Commit the intended source before execution; a commit and a dirty flag
+alone cannot identify different uncommitted implementations. Ignored files are
+outside Git provenance and must not supply research code. Missing Git metadata
+remains explicitly unknown. Existing version-1 records remain readable, including
+historical dirty flags, but those flags do not identify the uncommitted source.
+
 ## Producer coverage
 
 | Input to `inspect_study` | Provenance and indexed output |
@@ -304,7 +311,9 @@ object `__dict__`, process environment, or raw exception text is copied. A
 recursive guard rejects credential-related keys, bearer/private-key material,
 and authenticated/query-bearing URLs in metadata, bindings and read JSON.
 Errors do not echo credentials. Provider/feed identities remain ordinary
-provenance. This guard cannot discover an arbitrary secret disguised as an
+provenance. The exact `account_id` field permits only QF-5's fixed simulation
+labels `benchmark` and `strategy`; other account identifiers remain prohibited.
+This guard cannot discover an arbitrary secret disguised as an
 unrelated free-text value; callers must supply research configuration only.
 
 A fully supplied manifest identifies the original code, dependencies, dataset

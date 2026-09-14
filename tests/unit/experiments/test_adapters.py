@@ -1,12 +1,22 @@
 import ast
 import json
 from dataclasses import replace
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-from quantforge.backtesting import export_backtest_result
+from quantforge.backtesting import (
+    BacktestConfig,
+    BasisPointSlippage,
+    DividendPolicy,
+    ExplicitZeroFees,
+    FixedCommission,
+    export_backtest_result,
+    run_backtest,
+)
 from quantforge.configuration import PrimitiveMapping
 from quantforge.experiments import (
     ArtifactType,
@@ -26,7 +36,11 @@ from quantforge.prediction import (
     create_overnight_gap_prediction_study,
     run_prediction_study,
 )
-from tests.unit.backtesting.test_runner import configured_result
+from quantforge.strategies import (
+    MovingAverageCrossoverParameters,
+    MovingAverageCrossoverStrategy,
+)
+from tests.unit.backtesting.test_runner import PRICES, configured_result
 from tests.unit.experiments.test_contracts import execution, write_json
 from tests.unit.helpers import make_dataset
 from tests.unit.optimization.test_study import (
@@ -128,6 +142,50 @@ def test_backtest_example_keeps_execution_and_native_backend_provenance(
     assert len(bundle.index.entries) == 14
     assert verify_artifacts(bundle.index, tmp_path).valid
     write_manifest(manifest, tmp_path / "experiments", artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("corporate_action", ["dividend", "split"])
+def test_backtest_corporate_actions_can_be_indexed_without_research(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corporate_action: str
+) -> None:
+    session = date(2024, 7, 9)
+    dataset = make_dataset(
+        PRICES,
+        dividend_sessions=(session,) if corporate_action == "dividend" else (),
+        split_sessions=(session,) if corporate_action == "split" else (),
+    )
+    result = run_backtest(
+        dataset,
+        MovingAverageCrossoverStrategy(MovingAverageCrossoverParameters(2, 3)),
+        BacktestConfig(
+            Decimal(100),
+            FixedCommission(Decimal(1)),
+            ExplicitZeroFees(),
+            BasisPointSlippage(Decimal(100)),
+            dividend_policy=DividendPolicy.CASH_DIVIDENDS,
+        ),
+    )
+    strategy_records = (
+        result.dividend_cashflows
+        if corporate_action == "dividend"
+        else result.split_adjustments
+    )
+    benchmark_records = (
+        result.benchmark.dividend_cashflows
+        if corporate_action == "dividend"
+        else result.benchmark.split_adjustments
+    )
+    assert {record.account_id for record in strategy_records} == {"strategy"}
+    assert {record.account_id for record in benchmark_records} == {"benchmark"}
+    exported = export_backtest_result(result, tmp_path / "backtests")
+    block_research(monkeypatch)
+    bundle = inspect_study(StudyType.BACKTEST, exported, artifact_root=tmp_path)
+    manifest = create_manifest(bundle, execution())
+    assert verify_artifacts(bundle.index, tmp_path).valid
+    path = write_manifest(manifest, tmp_path / "experiments", artifact_root=tmp_path)
+    assert (
+        read_manifest(path, artifact_root=tmp_path).serialize() == manifest.serialize()
+    )
 
 
 def test_qf29_features_schema_and_context_lineage_are_preserved(

@@ -27,6 +27,13 @@ def safe_metadata(value: Primitive) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+            # QF-5 uses these fixed labels for simulated corporate-action
+            # accounting. No other account fields or identifiers are safe.
+            simulation_account = (
+                key == "account_id"
+                and isinstance(item, str)
+                and item in {"benchmark", "strategy"}
+            )
             if (
                 any(
                     word in normalized
@@ -41,10 +48,10 @@ def safe_metadata(value: Primitive) -> None:
                         "authorization",
                         "privatekey",
                         "connectionstring",
-                        "accountid",
                     )
                 )
                 or normalized == "token"
+                or ("accountid" in normalized and not simulation_account)
             ):
                 raise ManifestError("credential-bearing metadata is prohibited")
             safe_metadata(item)

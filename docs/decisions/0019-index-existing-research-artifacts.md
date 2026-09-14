@@ -36,6 +36,9 @@ partitions, indicators, outcomes or metrics.
 
 Callers must retain execution-time code/dependency metadata and keep the artifact
 root/layout and original files. Missing historical fields stay unavailable.
+New code-provenance capture rejects dirty working trees because a dirty flag
+cannot fingerprint uncommitted source; callers must commit before execution.
+Historical version-1 dirty flags remain readable with that reproducibility limit.
 Hashes provide consistency, not signatures or independent provider authenticity.
 Old manifests are historical holdout snapshots, so current reports must still
 consult QF-40. QF-41 rendering and a universal replay system remain separate.

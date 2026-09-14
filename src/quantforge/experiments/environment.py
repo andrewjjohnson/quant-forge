@@ -6,7 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping
-from quantforge.experiments._json import snapshot
+from quantforge.experiments._json import ManifestError, snapshot
 from quantforge.experiments.artifacts import file_sha256
 from quantforge.experiments.models import CodeProvenance
 
@@ -25,6 +25,8 @@ def capture_code_provenance(
 
     Reads package metadata, uv.lock, and git status; no environment variable
     values, provider configuration, diff content, or backend imports are read.
+    Raises ManifestError for a dirty working tree: a commit plus a dirty flag
+    cannot identify the uncommitted code. Commit changes before execution.
     """
 
     def installed(name: str) -> str | None:
@@ -45,7 +47,12 @@ def capture_code_provenance(
         except (OSError, subprocess.SubprocessError):
             return None
 
-    status = git("status", "--porcelain")
+    status = git("status", "--porcelain", "--untracked-files=all")
+    if status:
+        raise ManifestError(
+            "cannot capture code provenance from a dirty working tree; "
+            "commit changes before execution"
+        )
     dependencies: PrimitiveMapping = {
         name: installed(name) for name in dependency_names
     }
