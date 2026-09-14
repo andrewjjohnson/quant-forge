@@ -65,6 +65,8 @@ def block_research(monkeypatch: pytest.MonkeyPatch) -> None:
         ("quantforge.prediction.window", "run_prediction_window"),
         ("quantforge.prediction.feature_dataset", "build_signal_feature_dataset"),
         ("quantforge.backtesting.runner", "run_backtest"),
+        ("quantforge.optimization.combinations", "iter_combination_candidates"),
+        ("quantforge.optimization.study", "iter_combination_candidates"),
         ("quantforge.oos.prediction", "aggregate_prediction"),
         ("quantforge.oos.prediction", "summarize_prediction_observations"),
         ("quantforge.oos.backtest", "aggregate_backtest"),
@@ -73,6 +75,7 @@ def block_research(monkeypatch: pytest.MonkeyPatch) -> None:
         ("quantforge.reporting.study_inspection", "export_study_inspection_report"),
     ):
         monkeypatch.setattr(f"{module_name}.{function}", forbidden)
+    monkeypatch.setattr(MovingAverageCrossoverFactory, "build", forbidden)
     for class_name in (
         "quantforge.optimization.study.GridSearchStudy",
         "quantforge.prediction.grid.PredictionGridStudy",

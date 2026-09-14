@@ -162,6 +162,13 @@ reference, bar fingerprint, strategy and execution inputs, including the strateg
 configuration hash. Full export metadata, such as initiation time and warm-up
 diagnostics, does not become a new run-ID input.
 
+QF-7/QF-29 dataset IDs must match the producer's hash of its complete recorded
+`configuration`. Result JSON with rows must reconcile `candidate_count` and every
+accepted/rejected/blocked/overlapping count against the rows' fixed dispositions,
+including any embedded summary. Counts must be nonnegative integers. Directory
+inputs retain declared row counts without loading CSV or Parquet into research
+objects.
+
 Completed QF-6 exports must include `ranking.json`. It is indexed as a required
 parameter-summary artifact, so missing files and changed ranking content fail
 integrity verification.
@@ -182,11 +189,21 @@ QF-5 manifest, including its strategy-configuration hash and the grid's recorded
 engine/schema versions. These comparisons use stored values only and do not
 recalculate metrics or reconstruct strategies.
 
+Every QF-6 trial also matches its declared Cartesian position in the serialized
+search space. The combination ID binds those parameters to the recorded strategy
+factory; the trial ID binds the combination to the study, resolved strategy
+metadata, dataset and historical engine/schema versions. These checks include
+failed and excluded trials and use the original axis/value order and primitive
+types. They decode one saved position without enumerating the grid or invoking
+the factory to recreate strategy parameters.
+
 QF-42 inspection requires the complete result snapshot, including decisions.
 It verifies the result identity over the recorded window ID and ordered decisions,
 then checks all stored record counts using QF-42's primitive count helper. The
 same checks apply to QF-32's nested window results. Changed or truncated decisions
-cannot retain a stale result identity. This reads existing signals and rows;
+cannot retain a stale result identity. Ordered decision timestamps must exactly
+match the recorded schedule, even if the result hash and counts have been updated.
+This reads existing signals and rows;
 it does not rebuild schedules, contexts, predictions, outcomes or metrics.
 
 Embedded source-dataset entries reference the producer's recorded dataset

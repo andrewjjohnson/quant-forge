@@ -9,6 +9,79 @@ from quantforge.experiments.models import StudyType
 from quantforge.optimization.models import TrialStatus
 
 
+def validate_trial_coordinates(
+    trial: PrimitiveMapping, study_configuration: PrimitiveMapping
+) -> None:
+    """Bind QF-6 coordinates and identities using saved metadata only.
+
+    Decode one Cartesian position in the serialized axis order. Never enumerate
+    candidates or invoke a factory to resolve normalized strategy parameters.
+    """
+    index = trial.get("combination_index")
+    axes = mapping(study_configuration.get("search_space")).get("parameters")
+    if type(index) is not int or index < 0 or not isinstance(axes, list) or not axes:
+        raise ManifestError("trial coordinates are invalid")
+    remainder = index
+    parameters: PrimitiveMapping = {}
+    for raw_axis in reversed(axes):
+        axis = mapping(raw_axis)
+        name = text(axis.get("name"))
+        values = axis.get("values")
+        if name in parameters or not isinstance(values, list) or not values:
+            raise ManifestError("trial coordinates have incompatible search axes")
+        remainder, coordinate = divmod(remainder, len(values))
+        parameters[name] = values[coordinate]
+    if remainder or configuration_identity(parameters) != configuration_identity(
+        mapping(trial.get("parameters"))
+    ):
+        raise ManifestError("trial parameters do not match grid coordinates")
+    combination_id = configuration_identity(
+        {
+            "component": "quantforge_parameter_combination",
+            "combination_schema_version": "1",
+            "strategy_name": study_configuration.get("strategy_name"),
+            "strategy_version": study_configuration.get("strategy_version"),
+            "strategy_factory": mapping(study_configuration.get("strategy_factory")),
+            "parameters": parameters,
+        }
+    )
+    dataset = mapping(study_configuration.get("dataset"))
+    trial_identity: PrimitiveMapping = {
+        "component": "quantforge_optimization_trial",
+        "study_id": configuration_identity(study_configuration),
+        "combination_id": combination_id,
+        "dataset_id": dataset.get("dataset_id"),
+        "strategy_configuration_id": trial.get("strategy_configuration_id"),
+        "strategy_parameters": mapping(trial.get("strategy_parameters")),
+        **{
+            key: study_configuration.get(key)
+            for key in (
+                "trial_schema_version",
+                "strategy_name",
+                "strategy_version",
+                "backtest_configuration",
+                "qf5_engine_version",
+                "qf5_result_schema_version",
+                "optimization_engine_version",
+            )
+        },
+    }
+    expected: PrimitiveMapping = {
+        "combination_id": combination_id,
+        "trial_id": configuration_identity(trial_identity),
+        "schema_version": study_configuration.get("trial_schema_version"),
+        **{
+            key: trial_identity[key]
+            for key in ("strategy_name", "strategy_version", "backtest_configuration")
+        },
+    }
+    trial_dataset = mapping(trial.get("dataset"))
+    if any(trial.get(key) != value for key, value in expected.items()) or any(
+        trial_dataset.get(key) != value for key, value in dataset.items()
+    ):
+        raise ManifestError("trial identity is incompatible with grid coordinates")
+
+
 def validate_trial_status(study_type: StudyType, trial: PrimitiveMapping) -> None:
     """Require diagnostic/exclusion context and reject contradictory outcomes."""
     try:

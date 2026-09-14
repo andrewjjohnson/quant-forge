@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.experiments._feature_integrity import validate_feature_rows
 from quantforge.experiments._grid_integrity import (
     validate_backtest_trial,
+    validate_trial_coordinates,
     validate_trial_counts,
     validate_trial_status,
 )
@@ -151,6 +153,10 @@ def _description(
             or document.get("status") != "complete"
         ):
             raise ManifestError("expected a completed QF-7/QF-29 dataset")
+        if configuration_identity(
+            mapping(document.get("configuration"))
+        ) != document.get("dataset_id"):
+            raise ManifestError("feature dataset identity is inconsistent")
         configuration = _pick(
             document, ("engine_version", "configuration", "market_data")
         )
@@ -260,6 +266,8 @@ def inspect_study(
         validate_window_snapshot(container)
     if study_type is StudyType.PREDICTION and "rows" in container:
         validate_prediction_rows(document, container["rows"])
+    if study_type is StudyType.FEATURE_DATASET and "rows" in container:
+        validate_feature_rows(document, container)
     entries: list[ArtifactEntry] = []
     edges: list[ArtifactRelationship] = []
 
@@ -403,6 +411,7 @@ def inspect_study(
                     "counts", summary.get("trial_counts")
                 )
             trials: list[str] = []
+            trial_records: list[PrimitiveMapping] = []
             statuses: list[str] = []
             for path in sorted((source / "trials").glob("*.json")):
                 trial, _ = read_producer_record(path)
@@ -411,6 +420,7 @@ def inspect_study(
                     raise ManifestError("trial identity is incompatible with study")
                 validate_trial_status(study_type, trial)
                 trials.append(trial_id)
+                trial_records.append(trial)
                 statuses.append(text(trial.get("status")))
                 trial_entry = add(
                     path,
@@ -515,6 +525,9 @@ def inspect_study(
             observations["trial_ids"] = list(trials)
             if summary is not None:
                 validate_trial_counts(study_type, summary, statuses)
+            if study_type is StudyType.OPTIMIZATION:
+                for trial in trial_records:
+                    validate_trial_coordinates(trial, configuration)
     elif "rows" in container or "decisions" in container:
         key = "rows" if "rows" in container else "decisions"
         category = (

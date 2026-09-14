@@ -13,6 +13,9 @@ from quantforge.experiments import (
     read_manifest,
     write_manifest,
 )
+from quantforge.prediction.window import (
+    _window_record_counts,  # pyright: ignore[reportPrivateUsage]
+)
 from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import execution, write_json
 from tests.unit.experiments.test_grid_integrity import read_record, trial_path
@@ -102,8 +105,9 @@ def test_complete_and_empty_windows_round_trip_without_research(
     )
 
 
-def test_nested_grid_window_cannot_hide_stale_result_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("rehash_window", [False, True])
+def test_nested_grid_window_cannot_hide_missing_scheduled_decisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rehash_window: bool
 ) -> None:
     study = grid(tmp_path / "grid", WindowProvider())
     result = study.run()
@@ -114,6 +118,14 @@ def test_nested_grid_window_cannot_hide_stale_result_identity(
     artifact = read_record(artifact_path)
     window = cast(PrimitiveMapping, artifact["prediction_window"])
     cast(list[Primitive], window["decisions"]).pop()
+    if rehash_window:
+        manifest = cast(PrimitiveMapping, window["manifest"])
+        manifest["window_result_id"] = configuration_identity(
+            {"window_id": manifest["window_id"], "decisions": window["decisions"]}
+        )
+        manifest["record_counts"] = _window_record_counts(
+            cast(list[PrimitiveMapping], window["decisions"])
+        )
     artifact["artifact_fingerprint"] = configuration_identity(
         {key: value for key, value in artifact.items() if key != "artifact_fingerprint"}
     )
@@ -121,7 +133,10 @@ def test_nested_grid_window_cannot_hide_stale_result_identity(
     write_json(artifact_path, artifact)
     write_json(record_path, trial)
     block_research(monkeypatch)
-    with pytest.raises(ManifestError, match="window result identity"):
+    with pytest.raises(
+        ManifestError,
+        match="declared schedule" if rehash_window else "window result identity",
+    ):
         inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
 
 
@@ -133,4 +148,28 @@ def test_window_requires_complete_result_snapshot(
     path = tmp_path / "incomplete-window.json"
     write_json(path, window_snapshot)
     with pytest.raises(ManifestError):
+        inspect_study(StudyType.PREDICTION_WINDOW, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("change", ["truncate", "reorder", "duplicate", "timestamp"])
+def test_rehashed_window_decisions_must_match_declared_schedule(
+    tmp_path: Path, window_snapshot: PrimitiveMapping, change: str
+) -> None:
+    decisions = cast(list[PrimitiveMapping], window_snapshot["decisions"])
+    if change == "truncate":
+        decisions.pop()
+    elif change == "reorder":
+        decisions.reverse()
+    elif change == "duplicate":
+        decisions.append(decisions[0])
+    else:
+        decisions[0]["decision_timestamp"] = "2000-01-01T00:00:00+00:00"
+    manifest = cast(PrimitiveMapping, window_snapshot["manifest"])
+    manifest["window_result_id"] = configuration_identity(
+        {"window_id": manifest["window_id"], "decisions": window_snapshot["decisions"]}
+    )
+    manifest["record_counts"] = _window_record_counts(decisions)
+    path = tmp_path / "window.json"
+    write_json(path, window_snapshot)
+    with pytest.raises(ManifestError, match=r"decisions.*schedule"):
         inspect_study(StudyType.PREDICTION_WINDOW, path, artifact_root=tmp_path)

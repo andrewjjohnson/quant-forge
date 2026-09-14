@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,7 +15,14 @@ from quantforge.experiments import (
     inspect_study,
     verify_artifacts,
 )
-from quantforge.optimization import GridSearchStudy, MovingAverageCrossoverFactory
+from quantforge.optimization import (
+    CategoricalValues,
+    FloatValues,
+    GridSearchStudy,
+    IntegerValues,
+    MovingAverageCrossoverFactory,
+    ParameterSearchSpace,
+)
 from quantforge.prediction import PredictionStudyResult, PredictionTrialAnalysis
 from quantforge.strategies import Strategy
 from tests.unit.experiments.test_adapters import block_research
@@ -104,6 +112,113 @@ def trial_path(root: Path, status: str = "succeeded") -> Path:
         path
         for path in sorted((root / "trials").glob("*.json"))
         if read_record(path)["status"] == status
+    )
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "excluded"])
+@pytest.mark.parametrize(
+    "change", ["parameters", "combination_id", "combination_index", "trial_id"]
+)
+def test_optimization_trial_must_match_grid_coordinates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str, change: str
+) -> None:
+    root = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    record_path = trial_path(root, status)
+    trial = read_record(record_path)
+    if change == "parameters":
+        cast(PrimitiveMapping, trial["parameters"])["fast_window"] = 99
+    elif change == "combination_index":
+        trial[change] = cast(int, trial[change]) + 1
+    else:
+        trial[change] = "0" * 64
+    if change == "trial_id":
+        # Keep the filename and result location checks satisfied, so identity
+        # validation must detect the renamed trial itself.
+        new_path = record_path.with_name(f"{trial['trial_id']}.json")
+        if status == "succeeded":
+            location = cast(str, trial["artifact_location"])
+            old_directory = root / "backtests" / record_path.stem
+            old_directory.rename(root / "backtests" / cast(str, trial["trial_id"]))
+            trial["artifact_location"] = location.replace(
+                record_path.stem, cast(str, trial["trial_id"])
+            )
+        record_path.unlink()
+        record_path = new_path
+    write_json(record_path, trial)
+    with pytest.raises(ManifestError, match=r"trial.*(coordinates|identity)"):
+        inspect_study(StudyType.OPTIMIZATION, root, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("fast_window", [99, 3])
+def test_rehashed_combination_cannot_change_its_declared_grid_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fast_window: int
+) -> None:
+    root = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    record_path = trial_path(root)
+    trial = read_record(record_path)
+    parameters = cast(PrimitiveMapping, trial["parameters"])
+    parameters["fast_window"] = fast_window
+    configuration = cast(
+        PrimitiveMapping, read_record(root / "manifest.json")["identity_inputs"]
+    )
+    trial["combination_id"] = configuration_identity(
+        {
+            "component": "quantforge_parameter_combination",
+            "combination_schema_version": "1",
+            "strategy_name": configuration["strategy_name"],
+            "strategy_version": configuration["strategy_version"],
+            "strategy_factory": configuration["strategy_factory"],
+            "parameters": parameters,
+        }
+    )
+    write_json(record_path, trial)
+    with pytest.raises(ManifestError, match="parameters do not match grid coordinates"):
+        inspect_study(StudyType.OPTIMIZATION, root, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("invalid", [-1, 4, True, 0.0, "0", None])
+def test_trial_position_must_be_a_bounded_integer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: Primitive
+) -> None:
+    root = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    record_path = trial_path(root)
+    trial = read_record(record_path)
+    trial["combination_index"] = invalid
+    write_json(record_path, trial)
+    with pytest.raises(ManifestError, match="coordinates"):
+        inspect_study(StudyType.OPTIMIZATION, root, artifact_root=tmp_path)
+
+
+def test_grid_position_preserves_declared_order_and_serialized_decimal_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(
+        _study_config(tmp_path / "grid"),
+        search_space=ParameterSearchSpace(
+            {
+                "target_long_weight": FloatValues(["0.75", "0.25"]),
+                "source_field": CategoricalValues(["close"]),
+                "slow_window": IntegerValues([4]),
+                "fast_window": IntegerValues([2, 1]),
+            }
+        ),
+    )
+    study = GridSearchStudy(_dataset(), MovingAverageCrossoverFactory(), config)
+    result = study.run()
+    study.export(result)
+    block_research(monkeypatch)
+    bundle = inspect_study(
+        StudyType.OPTIMIZATION, study.study_path, artifact_root=tmp_path
+    )
+    assert bundle.provenance.producer_study_id == result.study_id
+    assert (
+        len(
+            cast(
+                list[Primitive],
+                bundle.provenance.observations.to_primitive()["trial_ids"],
+            )
+        )
+        == 4
     )
 
 

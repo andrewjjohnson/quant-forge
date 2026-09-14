@@ -39,6 +39,11 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
         {"window_id": window_id, "decisions": snapshot["decisions"]}
     ) != manifest.get("window_result_id"):
         raise ManifestError("window result identity is inconsistent")
+    schedule = mapping(manifest.get("schedule"))
+    if [
+        text(decision.get("decision_timestamp")) for decision in decisions
+    ] != schedule.get("decision_timestamps"):
+        raise ManifestError("window decisions do not match the declared schedule")
     # Validate the shapes consumed by the producer's primitive count helper.
     for decision in decisions:
         if text(decision.get("status")) not in {
