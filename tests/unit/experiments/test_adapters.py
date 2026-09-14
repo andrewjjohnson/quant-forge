@@ -17,7 +17,7 @@ from quantforge.backtesting import (
     export_backtest_result,
     run_backtest,
 )
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments import (
     ArtifactType,
     ManifestError,
@@ -291,6 +291,33 @@ def test_prediction_identity_retains_historical_backend_and_unknown_metadata(
         "library_version": "0.7.0",
         "function_name": "SMA",
     }
+    # A historical configuration must carry its own consistent producer IDs.
+    strategy["strategy_configuration_id"] = configuration_identity(config)
+    market_data = cast(PrimitiveMapping, primitive["market_data"])
+    primitive["run_id"] = configuration_identity(
+        {
+            "component": "quantforge_backtest",
+            "engine_version": primitive["engine_version"],
+            "result_schema_version": primitive["result_schema_version"],
+            "market_data": {
+                key: market_data[key]
+                for key in (
+                    "dataset_id",
+                    "schema_version",
+                    "adjustment_mode",
+                    "calendar",
+                    "corporate_action_snapshot_id",
+                    "bars_fingerprint",
+                )
+            },
+            "strategy": {
+                key: value
+                for key, value in strategy.items()
+                if key != "warm_up_observations"
+            },
+            "backtest_configuration": primitive["backtest_configuration"],
+        }
+    )
     write_json(path, primitive)
     second = create_manifest(
         inspect_study(StudyType.BACKTEST, path, artifact_root=tmp_path), execution()

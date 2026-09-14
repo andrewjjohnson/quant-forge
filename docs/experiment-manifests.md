@@ -37,9 +37,10 @@ content references, separate from their source walk-forward study ID.
 
 The namespaced QF-9 `study_id` hashes the producer ID, study type, complete
 captured material configuration, supplied code environment and random seeds.
-It does not recreate any producer's identity algorithm. The additional binding
-prevents changed supplied configuration from aliasing an experiment even if a
-producer ID was inadvertently reused. Dataset/family, source and derived
+Adapters separately verify supported producer identities against their recorded
+inputs using canonical hashing, preserving historical versions and optional-field
+semantics. Inconsistent producer IDs are rejected. The additional experiment
+binding includes execution-time code and seeds. Dataset/family, source and derived
 timeframe, feed/session/aggregation/completion/adjustment, backend/library,
 rule/outcome, search, execution and validation changes therefore change the
 experiment identity wherever these fields are recorded by the source.
@@ -144,12 +145,26 @@ historical dirty flags, but those flags do not identify the uncommitted source.
 | `FEATURE_DATASET`: QF-7/QF-29 directory or result JSON | Candidate/outcome configuration, feature schema, QF-29 contextual timeframe/backend/family provenance, source fingerprint, contributing prediction IDs, counts; CSV and optional Parquet |
 | `PARAMETER_STUDY`: QF-32 directory | Search space, constraints, factory/analyzer, fixed backend, context family, ranking/stability and optional QF-42 schedule; summary, all persisted trials, successful prediction/window result files |
 | `BACKTEST`: QF-5 directory or manifest | Full strategy/indicators, capital, costs/fees/slippage, execution, corporate actions, QF-43 context/evaluation interval, benchmark configuration and source data; original CSV tables and integrity record |
-| `OPTIMIZATION`: QF-6 directory | Existing scientific identity inputs, grid/constraints, ranking/stability, counts and trial IDs; summaries, trials and original successful QF-5 export files |
+| `OPTIMIZATION`: QF-6 directory | Existing scientific identity inputs, grid/constraints, ranking/stability, counts and trial IDs; summaries, complete `ranking.json`, trials and original successful QF-5 export files |
 
 Study types never acquire another type's metric requirements. Prediction and
 feature manifests require no capital, transaction costs, fills, or equity.
 The manifest retains material configurations, not result tables. Schema fields
 are copied from their producer; an engine version is not an artifact schema.
+
+QF-11 study IDs are verified against the original engine, market data, complete
+study configuration and optional prediction context. When rows are available,
+their length must match `labeled_rows`, and `generated_predictions` must equal
+`labeled_rows + unavailable_outcomes`; all three counts must be nonnegative
+integers. Manifest-only inputs retain producer-declared counts without asserting
+row verification. QF-5 run IDs are verified against their documented market-data
+reference, bar fingerprint, strategy and execution inputs, including the strategy
+configuration hash. Full export metadata, such as initiation time and warm-up
+diagnostics, does not become a new run-ID input.
+
+Completed QF-6 exports must include `ranking.json`. It is indexed as a required
+parameter-summary artifact, so missing files and changed ranking content fail
+integrity verification.
 
 For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
 trial-file total and status counts against that summary. Missing or extra trial

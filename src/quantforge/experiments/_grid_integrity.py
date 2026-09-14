@@ -4,6 +4,7 @@ from collections import Counter
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._producer_integrity import validate_backtest_identity
 from quantforge.experiments.models import StudyType
 from quantforge.optimization.models import TrialStatus
 
@@ -80,6 +81,7 @@ def validate_backtest_trial(
     Use the grid's historical engine/schema versions, not today's defaults.
     The caller verifies the original QF-5 file integrity before this comparison.
     """
+    validate_backtest_identity(backtest)
     strategy = mapping(backtest.get("strategy"))
     configuration = mapping(strategy.get("configuration"))
     run_id = text(backtest.get("run_id"))

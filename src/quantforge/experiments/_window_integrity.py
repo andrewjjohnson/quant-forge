@@ -4,6 +4,10 @@ from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._producer_integrity import (
+    validate_prediction_identity,
+    validate_prediction_rows,
+)
 from quantforge.prediction.window import (
     _window_record_counts,  # pyright: ignore[reportPrivateUsage]
 )
@@ -44,7 +48,11 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
         }:
             raise ManifestError("invalid window decision status")
         signals = _records(decision.get("generated_signals"))
-        rows = _records(mapping(decision.get("prediction_study")).get("rows"))
+        study = mapping(decision.get("prediction_study"))
+        study_manifest = mapping(study.get("manifest"))
+        validate_prediction_identity(study_manifest)
+        validate_prediction_rows(study_manifest, study.get("rows"))
+        rows = _records(study.get("rows"))
         if len(rows) > len(signals):
             raise ManifestError("window rows exceed generated signal records")
         for signal in signals:

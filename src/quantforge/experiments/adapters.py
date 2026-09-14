@@ -14,6 +14,11 @@ from quantforge.experiments._grid_integrity import (
     validate_trial_status,
 )
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
+from quantforge.experiments._producer_integrity import (
+    validate_backtest_identity,
+    validate_prediction_identity,
+    validate_prediction_rows,
+)
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
@@ -116,6 +121,7 @@ def _description(
     if study_type is StudyType.PREDICTION:
         if document.get("component") != "quantforge_prediction_study":
             raise ManifestError("expected a QF-11 prediction study")
+        validate_prediction_identity(document)
         configuration = _pick(
             document,
             ("engine_version", "configuration", "market_data", "prediction_context"),
@@ -156,6 +162,7 @@ def _description(
             text(mapping(document["configuration"])["feature_schema_version"]),
         )
     if study_type is StudyType.BACKTEST:
+        validate_backtest_identity(document)
         configuration = _pick(
             document,
             (
@@ -251,6 +258,8 @@ def inspect_study(
     )
     if study_type is StudyType.PREDICTION_WINDOW:
         validate_window_snapshot(container)
+    if study_type is StudyType.PREDICTION and "rows" in container:
+        validate_prediction_rows(document, container["rows"])
     entries: list[ArtifactEntry] = []
     edges: list[ArtifactRelationship] = []
 
@@ -352,6 +361,14 @@ def inspect_study(
 
     # Index known producer layouts only, not arbitrary neighboring files.
     if source.is_dir():
+        if (
+            study_type is StudyType.OPTIMIZATION
+            and (source / "summary.json").is_file()
+            and not (source / "ranking.json").is_file()
+        ):
+            raise ManifestError(
+                "completed optimization is missing its ranking artifact"
+            )
         if study_type is StudyType.BACKTEST:
             from quantforge.backtesting.export import validate_backtest_result_artifact
 
@@ -476,6 +493,13 @@ def inspect_study(
                             validate_window_snapshot(
                                 mapping(artifact.get("prediction_window"))
                             )
+                        else:
+                            prediction = mapping(artifact.get("prediction_study"))
+                            prediction_manifest = mapping(prediction.get("manifest"))
+                            validate_prediction_identity(prediction_manifest)
+                            validate_prediction_rows(
+                                prediction_manifest, prediction.get("rows")
+                            )
                         entry = add(
                             artifact_path,
                             ArtifactType.PREDICTION_RESULT,
@@ -534,6 +558,7 @@ def _export_category(study_type: StudyType, name: str) -> ArtifactType | None:
             ArtifactType.PARAMETER_SUMMARY
             if name.endswith(".csv")
             or name in {"summary.json", "result.json", "stability.json"}
+            or (study_type is StudyType.OPTIMIZATION and name == "ranking.json")
             else None
         )
     return None

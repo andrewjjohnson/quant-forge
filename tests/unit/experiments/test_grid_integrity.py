@@ -8,6 +8,7 @@ from quantforge.backtesting import BacktestConfig, BacktestResult, run_backtest
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.data import MarketDataset
 from quantforge.experiments import (
+    ArtifactType,
     ManifestError,
     StudyType,
     inspect_study,
@@ -112,6 +113,38 @@ def test_intact_grid_exports_remain_indexable(
     study_type, path = grid_export
     bundle = inspect_study(study_type, path, artifact_root=tmp_path)
     assert verify_artifacts(bundle.index, tmp_path).valid
+
+
+@pytest.mark.parametrize("change", ["delete", "modify"])
+def test_optimization_ranking_artifact_is_integrity_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    path = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    bundle = inspect_study(StudyType.OPTIMIZATION, path, artifact_root=tmp_path)
+    ranking = path / "ranking.json"
+    entries = [
+        entry
+        for entry in bundle.index.entries
+        if entry.path == ranking.relative_to(tmp_path).as_posix()
+    ]
+    assert len(entries) == 1
+    assert entries[0].artifact_type is ArtifactType.PARAMETER_SUMMARY
+    if change == "delete":
+        ranking.unlink()
+    else:
+        content = read_record(ranking)
+        content["eligible_rankings"] = []
+        write_json(ranking, content)
+    assert not verify_artifacts(bundle.index, tmp_path).valid
+
+
+def test_completed_optimization_cannot_omit_ranking_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    (path / "ranking.json").unlink()
+    with pytest.raises(ManifestError, match="ranking"):
+        inspect_study(StudyType.OPTIMIZATION, path, artifact_root=tmp_path)
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "excluded"])
