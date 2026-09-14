@@ -36,6 +36,8 @@ Do not create ADRs for routine implementation details that are easy to change.
 - [ADR 0015: Compose historical prediction windows from single decisions](0015-compose-historical-prediction-windows.md)
 - [ADR 0016: Isolate backtest evaluation accounts from historical context](0016-isolate-backtest-evaluation-accounts.md)
 
+- [ADR 0017: Compose walk-forward studies](0017-compose-walk-forward-studies.md)
+
 ## File naming
 
 ```text

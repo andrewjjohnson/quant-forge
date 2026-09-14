@@ -245,3 +245,10 @@ globals. The factory owns how searched fields create typed QF-31 rules and
 outcome labelers; the analyzer owns the domain meaning of quality metrics and
 the explicit baseline. This keeps orchestration generic while preserving the
 full typed QF-11/QF-28 study definition in every trial.
+
+## Walk-forward universe capture
+
+`PredictionGridStudy.candidates` returns the existing validated, deterministic
+candidate/exclusion tuple without running predictions. QF-39 captures those
+logical definitions before selection and binds each execution's QF-42 schedule
+separately. See [`walk-forward-studies.md`](walk-forward-studies.md).
