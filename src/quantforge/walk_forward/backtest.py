@@ -47,7 +47,11 @@ from quantforge.walk_forward.models import (
     WalkForwardConfig,
     WalkForwardError,
 )
-from quantforge.walk_forward.partitions import PermittedPartition, partition
+from quantforge.walk_forward.partitions import (
+    EvaluationPartition,
+    PermittedPartition,
+    partition,
+)
 
 
 class BacktestEvaluator:
@@ -185,11 +189,25 @@ class BacktestEvaluator:
         selection: FrozenSelection,
         output_root: Path,
     ) -> BacktestOOSArtifact:
+        return self.evaluate_partition(
+            config.plan,
+            self._partition(config, fold_index, test=True),
+            selection,
+            output_root,
+        )
+
+    def evaluate_partition(
+        self,
+        plan: ValidationPlan,
+        permitted: EvaluationPartition,
+        selection: FrozenSelection,
+        output_root: Path,
+    ) -> BacktestOOSArtifact:
+        """Evaluate a prevalidated boundary with the existing frozen candidate."""
         candidate = frozen_candidate(self.universe, selection)
         strategy = deepcopy(self.factory).build(candidate.parameters.to_primitive())
         if strategy.configuration() != candidate.definition.to_primitive():
             raise WalkForwardError("test configuration differs from frozen selection")
-        permitted = self._partition(config, fold_index, test=True)
         bounded = replace(
             self.grid_config.backtest,
             evaluation_interval=EvaluationInterval(
@@ -221,10 +239,26 @@ class BacktestEvaluator:
         artifact: OOSArtifact,
         output_root: Path,
     ) -> None:
+        self.validate_partition_artifact(
+            config.plan,
+            self._partition(config, fold_index, test=True),
+            selection,
+            artifact,
+            output_root,
+        )
+
+    def validate_partition_artifact(
+        self,
+        plan: ValidationPlan,
+        permitted: EvaluationPartition,
+        selection: FrozenSelection,
+        artifact: OOSArtifact,
+        output_root: Path,
+    ) -> None:
+        """Verify an existing artifact against its explicit evaluation boundary."""
         if not isinstance(artifact, BacktestOOSArtifact):
             raise WalkForwardError("expected a typed backtest OOS artifact")
         candidate = frozen_candidate(self.universe, selection)
-        permitted = self._partition(config, fold_index, test=True)
         record = artifact.snapshot.to_primitive()
         manifest = cast(PrimitiveMapping, record["manifest"])
         strategy = cast(PrimitiveMapping, manifest["strategy"])

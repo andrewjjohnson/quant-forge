@@ -456,6 +456,16 @@ Report:
 
 Never splice in-sample portions into the final walk-forward equity curve.
 
+QF-40 aggregates only verified QF-39 test artifacts and labels incomplete studies
+explicitly. Its backtest index chains relative equity from independently reset
+accounts; it does not claim live capital carryover. Final holdout evaluation is a
+separate explicit action with a permanent consumed marker persisted before the
+evaluator runs. Interrupted attempts remain consumed, exact retries retain the
+original freeze, and changing lineage cannot restore pristine status for an
+overlapping previously consumed interval. Preserve one permanent workspace ledger
+and consult it when reporting holdout state. See
+[`oos-holdout-aggregation.md`](oos-holdout-aggregation.md) and ADR 0018.
+
 ## Reproducibility
 
 Every material experiment should record:

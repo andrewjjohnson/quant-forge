@@ -232,3 +232,14 @@ propagates, leaving the last trustworthy state incomplete for recovery.
 
 No cross-window equity, combined prediction statistic, final performance
 conclusion, holdout ledger, report renderer or new optimizer is produced.
+
+QF-40 now provides the separate consumer described in
+[`oos-holdout-aggregation.md`](oos-holdout-aggregation.md). Its explicit holdout
+operation reuses the adapters' additive `evaluate_partition()` and
+`validate_partition_artifact()` entry points with validated final-holdout
+membership. Ordinary QF-39 `evaluate()` and `validate_artifact()` delegate to those
+same paths with their original test membership; no QF-39 state/schema/identity or
+selection behavior changes. The structural `EvaluationPartition` contract accepts
+QF-39's unchanged `PermittedPartition` or QF-40's separate `HoldoutPartition`. The
+latter records its own tail policy instead of inventing a QF-8 purge against a
+later protected window.

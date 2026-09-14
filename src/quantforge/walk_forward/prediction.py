@@ -69,13 +69,17 @@ from quantforge.walk_forward.models import (
     WalkForwardConfig,
     WalkForwardError,
 )
-from quantforge.walk_forward.partitions import PermittedPartition, partition
+from quantforge.walk_forward.partitions import (
+    EvaluationPartition,
+    PermittedPartition,
+    partition,
+)
 
 
 @dataclass(frozen=True)
 class _PermittedContextProvider:
     plan: ValidationPlan
-    permitted: PermittedPartition
+    permitted: EvaluationPartition
     series: tuple[TimeframeBarSeries, ...]
     schedule: PredictionDecisionSchedule
 
@@ -169,7 +173,7 @@ class PredictionEvaluator:
     def _environment(
         self,
         plan: ValidationPlan | None = None,
-        permitted: PermittedPartition | None = None,
+        permitted: EvaluationPartition | None = None,
     ) -> PredictionContextEnvironment:
         return PredictionContextEnvironment.create(
             "qf39_permitted_local_context",
@@ -348,7 +352,7 @@ class PredictionEvaluator:
             ),
         )
 
-    def _schedule(self, permitted: PermittedPartition) -> PredictionDecisionSchedule:
+    def _schedule(self, permitted: EvaluationPartition) -> PredictionDecisionSchedule:
         policy = self.primary_timeframe.session_policy
         schedule = PredictionDecisionSchedule(
             self.primary_timeframe,
@@ -393,8 +397,22 @@ class PredictionEvaluator:
         selection: FrozenSelection,
         output_root: Path,
     ) -> PredictionOOSArtifact:
+        return self.evaluate_partition(
+            config.plan,
+            self._partition(config, fold_index, test=True),
+            selection,
+            output_root,
+        )
+
+    def evaluate_partition(
+        self,
+        plan: ValidationPlan,
+        permitted: EvaluationPartition,
+        selection: FrozenSelection,
+        output_root: Path,
+    ) -> PredictionOOSArtifact:
+        """Evaluate a prevalidated boundary with the existing frozen candidate."""
         candidate = frozen_candidate(self.universe, selection)
-        permitted = self._partition(config, fold_index, test=True)
         schedule = self._schedule(permitted)
         study = deepcopy(self.factory).build(candidate.parameters.to_primitive())
         definition, _ = _trial_definition(study, self.backend)
@@ -405,12 +423,10 @@ class PredictionEvaluator:
             study,
             schedule=schedule,
             context_provider=_PermittedContextProvider(
-                config.plan, permitted, self.series, schedule
+                plan, permitted, self.series, schedule
             ),
             dataset_family_fingerprint=self.series[0].dataset_reference.family_id,
-            context_environment=self._environment(
-                config.plan, permitted
-            ).to_primitive(),
+            context_environment=self._environment(plan, permitted).to_primitive(),
             indicator_backend_environment=self.backend.to_primitive(),
         )
         if not any(
@@ -435,13 +451,29 @@ class PredictionEvaluator:
         artifact: OOSArtifact,
         output_root: Path,
     ) -> None:
+        self.validate_partition_artifact(
+            config.plan,
+            self._partition(config, fold_index, test=True),
+            selection,
+            artifact,
+            output_root,
+        )
+
+    def validate_partition_artifact(
+        self,
+        plan: ValidationPlan,
+        permitted: EvaluationPartition,
+        selection: FrozenSelection,
+        artifact: OOSArtifact,
+        output_root: Path,
+    ) -> None:
+        """Verify an existing artifact against its explicit evaluation boundary."""
         if (
             not isinstance(artifact, PredictionOOSArtifact)
             or artifact.selection_id != selection.selection_id
         ):
             raise WalkForwardError("incompatible prediction OOS artifact")
         candidate = frozen_candidate(self.universe, selection)
-        permitted = self._partition(config, fold_index, test=True)
         schedule = self._schedule(permitted)
         study = deepcopy(self.factory).build(candidate.parameters.to_primitive())
         definition, _ = _trial_definition(study, self.backend)
@@ -452,9 +484,7 @@ class PredictionEvaluator:
             _capture_study_configuration(study),
             schedule=schedule,
             dataset_family_fingerprint=self.series[0].dataset_reference.family_id,
-            context_environment=self._environment(
-                config.plan, permitted
-            ).to_primitive(),
+            context_environment=self._environment(plan, permitted).to_primitive(),
             indicator_backend_environment=self.backend.to_primitive(),
         )
         snapshot = artifact.snapshot.to_primitive()
