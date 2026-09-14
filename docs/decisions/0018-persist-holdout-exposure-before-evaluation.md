@@ -1,7 +1,8 @@
 # ADR 0018: Persist holdout exposure before evaluation
 
 - Status: Accepted
-- Jira: QF-40
+- Jira: [QF-40](https://frostfiredigital-37308542.atlassian.net/browse/QF-40)
+- Pull request: [#40](https://github.com/andrewjjohnson/quant-forge/pull/40)
 
 ## Context
 
