@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.experiments._backtest_artifacts import index_backtest_files
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
+from quantforge.experiments._producer_snapshot import ProducerReadSet
 from quantforge.experiments.adapters import StudyArtifacts
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
@@ -18,7 +19,6 @@ from quantforge.experiments.artifacts import (
     index_artifact,
 )
 from quantforge.experiments.models import StudyProvenance, StudyType
-from quantforge.experiments.persistence import read_producer_record
 
 if TYPE_CHECKING:
     from quantforge.oos.holdout import HoldoutLedger
@@ -79,7 +79,8 @@ def inspect_validation(
     # Existing QF-40 snapshot consistency checks; this function does not
     # calculate stability, partition membership, or aggregate metrics.
     source_provenance(source)
-    definition, base = read_producer_record(study_path / "manifest.json")
+    reads = ProducerReadSet()
+    definition, base = reads.read(study_path / "manifest.json")
     if (
         definition != source.definition.to_primitive()
         or configuration_identity(definition) != source.study_id
@@ -165,7 +166,7 @@ def inspect_validation(
         state: PrimitiveMapping = {}
         state_path = fold_root / "state.json"
         if state_path.is_file():
-            state, state_base = read_producer_record(state_path)
+            state, state_base = reads.read(state_path)
             if (
                 state != captured_state
                 or state.get("status") != fold.status.value
@@ -188,9 +189,7 @@ def inspect_validation(
             raise ManifestError("missing fold state")
         selected = None
         if fold.selection is not None:
-            selection, selected_base = read_producer_record(
-                fold_root / "selection.json"
-            )
+            selection, selected_base = reads.read(fold_root / "selection.json")
             if selection != fold.selection.to_primitive():
                 raise ManifestError("frozen selection differs from captured source")
             selected = add(
@@ -204,7 +203,7 @@ def inspect_validation(
         if fold.artifact is not None:
             if fold.status is not FoldStatus.COMPLETED or selected is None:
                 raise ManifestError("only completed selected fold artifacts are OOS")
-            artifact, artifact_base = read_producer_record(fold_root / "oos.json")
+            artifact, artifact_base = reads.read(fold_root / "oos.json")
             if artifact != fold.artifact.to_primitive() or state.get(
                 "artifact_id"
             ) != configuration_identity(artifact):
@@ -231,7 +230,7 @@ def inspect_validation(
                 _validate_captured_backtest_export(
                     export, fold.artifact.export_fingerprint
                 )
-                backtest, _ = read_producer_record(export / "manifest.json")
+                backtest, _ = reads.read(export / "manifest.json")
                 for entry in index_backtest_files(root, export, backtest, fold.fold_id):
                     entries.append(entry)
                     link(entry, RelationshipType.DERIVED_FROM, window)
@@ -254,7 +253,7 @@ def inspect_validation(
         },
     }
     if aggregate_path is not None:
-        aggregate, aggregate_base = read_producer_record(aggregate_path)
+        aggregate, aggregate_base = reads.read(aggregate_path)
         provenance = mapping(aggregate["provenance"])
         if (
             aggregate.get("schema_version") != "1"
@@ -300,7 +299,7 @@ def inspect_validation(
         reservation_path = (
             ledger.root / "lineages" / source.lineage_id / "reservation.json"
         )
-        reservation, reservation_base = read_producer_record(reservation_path)
+        reservation, reservation_base = reads.read(reservation_path)
         if reservation != current.reservation.to_primitive():
             raise ManifestError("holdout reservation changed during indexing")
         reserved = add(
@@ -320,7 +319,7 @@ def inspect_validation(
         }
         if current.consumption is not None:
             consumed_path = ledger.root / "exposures" / f"{source.lineage_id}.json"
-            consumed, consumed_base = read_producer_record(consumed_path)
+            consumed, consumed_base = reads.read(consumed_path)
             if consumed != current.consumption.to_primitive():
                 raise ManifestError("holdout consumption changed during indexing")
             marker = add(
@@ -337,7 +336,7 @@ def inspect_validation(
             if current.result_reference is not None:
                 reference = current.result_reference.to_primitive()
                 result_path = ledger.root / text(reference["path"])
-                result, result_base = read_producer_record(result_path)
+                result, result_base = reads.read(result_path)
                 if configuration_identity(result) != reference["sha256"]:
                     raise ManifestError("holdout result changed during indexing")
                 validate_holdout_artifact(source, consumed, result)
@@ -358,7 +357,7 @@ def inspect_validation(
                     _validate_captured_backtest_export(
                         export, text(artifact.get("export_fingerprint"))
                     )
-                    backtest, _ = read_producer_record(export / "manifest.json")
+                    backtest, _ = reads.read(export / "manifest.json")
                     if backtest != mapping(
                         mapping(artifact.get("result")).get("manifest")
                     ):
@@ -375,9 +374,11 @@ def inspect_validation(
         # observation. Later consumers still query the ledger for current state.
         if ledger.state(source) != current:
             raise ManifestError("holdout state changed during indexing; retry")
+    index = ArtifactIndex(tuple(entries), tuple(edges))
+    reads.verify(index, root)
     return StudyArtifacts(
         StudyProvenance(
             study_type, source.study_id, snapshot(configuration), snapshot(observations)
         ),
-        ArtifactIndex(tuple(entries), tuple(edges)),
+        index,
     )

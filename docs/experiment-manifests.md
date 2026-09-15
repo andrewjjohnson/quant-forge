@@ -577,6 +577,15 @@ producer exports quiescent while indexing. File hashing reads bytes and JSON
 metadata; there is no metric calculation. QF-9 does not validate statistical
 correctness or recreate a lost source dataset.
 
+Study and validation inspection hash each consumed JSON record from the same byte
+buffer used to parse and validate it, including QF-39/QF-40 envelopes. Repeated
+reads must agree. Before returning, every consumed record must be indexed with
+that exact hash and its file must still match. Concurrent trial completion or
+summary/result replacement raises `ManifestError` and requires a fresh inspection;
+even formatting-only changes are detected. Atomic replacement with identical
+bytes remains valid. These checks do not lock producer directories or prevent
+changes after inspection; publication and later consumers still verify artifacts.
+
 ### Producer contract verification
 
 The adapters check related invariants together. Regression tests change individual

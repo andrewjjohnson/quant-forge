@@ -10,6 +10,7 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import (
     ManifestError,
     mapping,
+    parse_json,
     read_json,
     snapshot,
     text,
@@ -163,7 +164,15 @@ def read_manifest(
 
 def read_producer_record(path: Path) -> tuple[PrimitiveMapping, str]:
     """Unwrap existing QF-39/QF-40 hash envelopes without execution callbacks."""
-    document = read_json(path)
+    try:
+        return decode_producer_record(path.read_bytes())
+    except OSError as error:
+        raise ManifestError("cannot read producer metadata") from error
+
+
+def decode_producer_record(content: bytes) -> tuple[PrimitiveMapping, str]:
+    """Validate a producer record and its envelope from one captured byte buffer."""
+    document = parse_json(content)
     if set(document) == {"payload", "fingerprint"}:
         payload = mapping(document["payload"])
         if configuration_identity(payload) != document["fingerprint"]:

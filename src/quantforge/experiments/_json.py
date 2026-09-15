@@ -116,10 +116,18 @@ def _pairs(pairs: list[tuple[str, Primitive]]) -> PrimitiveMapping:
 
 def read_json(path: Path) -> PrimitiveMapping:
     try:
-        result = mapping(json.loads(path.read_bytes(), object_pairs_hook=_pairs))
+        return parse_json(path.read_bytes())
+    except OSError as error:
+        raise ManifestError("invalid, unsafe, or unreadable JSON artifact") from error
+
+
+def parse_json(content: bytes) -> PrimitiveMapping:
+    """Parse and validate exactly the supplied bytes, without another file read."""
+    try:
+        result = mapping(json.loads(content, object_pairs_hook=_pairs))
         snapshot(result)
         return result
-    except (OSError, ValueError, TypeError) as error:
+    except (ValueError, TypeError) as error:
         raise ManifestError("invalid, unsafe, or unreadable JSON artifact") from error
 
 

@@ -14,6 +14,7 @@ from quantforge.experiments._json import ManifestError, mapping, snapshot, text
 from quantforge.experiments._prediction_trial_integrity import (
     validate_prediction_trial_result,
 )
+from quantforge.experiments._producer_snapshot import ProducerReadSet
 from quantforge.experiments._ranking_integrity import (
     validate_optimization_summaries,
     validate_prediction_summary,
@@ -36,7 +37,6 @@ from quantforge.experiments.models import (
     StudyProvenance,
     StudyType,
 )
-from quantforge.experiments.persistence import read_producer_record
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,7 +294,8 @@ def inspect_study(
     ):
         source = source.parent
     manifest_path = source / "manifest.json" if source.is_dir() else source
-    document, location = read_producer_record(manifest_path)
+    reads = ProducerReadSet()
+    document, location = reads.read(manifest_path)
     container = document
     if "manifest" in document:
         document = mapping(document["manifest"])
@@ -384,7 +385,7 @@ def inspect_study(
     # Only provenance is copied. Research result rows/metrics stay in their files.
     if study_type is StudyType.FEATURE_DATASET:
         if source.is_dir():
-            feature_schema, _ = read_producer_record(source / "schema.json")
+            feature_schema, _ = reads.read(source / "schema.json")
             validate_feature_schema(document, feature_schema)
             schema_entry = add(
                 source / "schema.json",
@@ -439,7 +440,7 @@ def inspect_study(
                     study_type is StudyType.FEATURE_DATASET
                     and path.name == "summary.json"
                 ):
-                    feature_summary, summary_base = read_producer_record(path)
+                    feature_summary, summary_base = reads.read(path)
                     validate_feature_summary(document, feature_summary)
                     bindings = {
                         summary_base + "/" + key: count
@@ -449,7 +450,7 @@ def inspect_study(
                     "ranking.json",
                     "stability.json",
                 }:
-                    owned_summary, summary_base = read_producer_record(path)
+                    owned_summary, summary_base = reads.read(path)
                     if owned_summary.get("study_id") != producer_id:
                         raise ManifestError(
                             "optimization summary belongs to another study"
@@ -468,7 +469,7 @@ def inspect_study(
             summary_path = source / "summary.json"
             summary: PrimitiveMapping | None = None
             if summary_path.is_file():
-                summary, _ = read_producer_record(summary_path)
+                summary, _ = reads.read(summary_path)
                 if summary.get("study_id") != producer_id:
                     raise ManifestError("parameter summary belongs to another study")
                 observations["trial_counts"] = summary.get(
@@ -477,7 +478,7 @@ def inspect_study(
             trials: list[str] = []
             trial_records: list[PrimitiveMapping] = []
             for path in sorted((source / "trials").glob("*.json")):
-                trial, _ = read_producer_record(path)
+                trial, _ = reads.read(path)
                 trial_id = text(trial["trial_id"])
                 if path.stem != trial_id or trial["study_id"] != producer_id:
                     raise ManifestError("trial identity is incompatible with study")
@@ -512,7 +513,7 @@ def inspect_study(
                         )
 
                         validate_backtest_result_artifact(artifact_path)
-                        backtest_manifest, _ = read_producer_record(
+                        backtest_manifest, _ = reads.read(
                             artifact_path / "manifest.json"
                         )
                         validate_backtest_trial(trial, backtest_manifest, configuration)
@@ -528,7 +529,7 @@ def inspect_study(
                                 )
                             )
                     else:
-                        artifact, _ = read_producer_record(artifact_path)
+                        artifact, _ = reads.read(artifact_path)
                         if (
                             artifact.get("grid_study_id") != producer_id
                             or artifact.get("trial_id") != trial_id
@@ -613,13 +614,13 @@ def inspect_study(
                 config_entry.artifact_id,
             )
         )
-    if read_producer_record(manifest_path)[0] != container:
-        raise ManifestError("producer metadata changed during indexing")
+    index = ArtifactIndex(tuple(entries), tuple(edges))
+    reads.verify(index, root)
     return StudyArtifacts(
         StudyProvenance(
             study_type, producer_id, snapshot(configuration), snapshot(observations)
         ),
-        ArtifactIndex(tuple(entries), tuple(edges)),
+        index,
     )
 
 
