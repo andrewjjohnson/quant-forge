@@ -180,10 +180,24 @@ daily sessions: the recorded calendar, first/last session and bar count establis
 that session sequence using the existing calendar helper. Outcome sessions must
 be exactly the configured number of exchange sessions after their signals,
 including holidays and weekends. No label values or price metrics are calculated.
+Standalone QF-11 results and manifest-only inputs also reconcile QF-28 context
+status and requirements, source identity, selected bars and indicator metadata.
+Available contexts bind the primary bar's exchange session and reject selected
+bars after that bar's decision boundary. The source may have a later `as_of`;
+staleness remains measured at that recorded capture time. Skipped contexts require
+the explicit skip policy, a reason and zero generated predictions. Their rejected
+source evidence is retained and checked internally, without treating it as usable
+rule input; a missing provider result may have no source snapshot.
 QF-5 run IDs are verified against their documented market-data
 reference, bar fingerprint, strategy and execution inputs, including the strategy
 configuration hash. Full export metadata, such as initiation time and warm-up
 diagnostics, does not become a new run-ID input.
+Execution provenance must include position sizing. The supported QF-5 version-4
+buy-and-hold benchmark configuration and deterministic benchmark ID must agree
+with recorded capital, costs, corporate-action policies, snapshot and optional
+evaluation interval. These checks derive only fixed metadata; no benchmark,
+fills or performance metrics are calculated, and absent historical evaluation
+intervals remain absent.
 
 QF-7/QF-29 dataset IDs must match the producer's hash of its complete recorded
 `configuration`. Result JSON with rows must reconcile `candidate_count` and every

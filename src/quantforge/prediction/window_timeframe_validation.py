@@ -25,7 +25,7 @@ def _local_time(value: Primitive) -> time | None:
     return None if value is None else time.fromisoformat(cast(str, value))
 
 
-def validate_source_timeframe_definition(snapshot: PrimitiveMapping) -> None:
+def validate_source_timeframe_definition(snapshot: PrimitiveMapping) -> Timeframe:
     """Reject malformed definitions even when the provider's context was skipped."""
     try:
         configuration = cast(PrimitiveMapping, snapshot["configuration"])
@@ -75,3 +75,4 @@ def validate_source_timeframe_definition(snapshot: PrimitiveMapping) -> None:
         raise InvalidPredictionOutputError(
             "source timeframe definition is noncanonical"
         )
+    return canonical

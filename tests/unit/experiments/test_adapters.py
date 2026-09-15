@@ -68,6 +68,9 @@ def block_research(monkeypatch: pytest.MonkeyPatch) -> None:
         ("quantforge.prediction.context", "build_prediction_rule_context"),
         ("quantforge.prediction.feature_dataset", "build_signal_feature_dataset"),
         ("quantforge.backtesting.runner", "run_backtest"),
+        ("quantforge.backtesting.benchmark", "run_buy_and_hold_benchmark"),
+        ("quantforge.backtesting.runner", "run_buy_and_hold_benchmark"),
+        ("quantforge.backtesting.benchmark", "calculate_performance"),
         ("quantforge.optimization.combinations", "iter_combination_candidates"),
         ("quantforge.optimization.study", "iter_combination_candidates"),
         ("quantforge.optimization.ranking", "rank_trials"),
@@ -330,6 +333,14 @@ def test_prediction_identity_retains_historical_backend_and_unknown_metadata(
                 if key != "warm_up_observations"
             },
             "backtest_configuration": primitive["backtest_configuration"],
+        }
+    )
+    benchmark = cast(PrimitiveMapping, primitive["benchmark"])
+    benchmark["benchmark_id"] = configuration_identity(
+        {
+            "run_id": primitive["run_id"],
+            "record_type": "benchmark",
+            "configuration": benchmark["configuration"],
         }
     )
     write_json(path, primitive)

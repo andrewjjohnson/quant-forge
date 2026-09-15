@@ -9,6 +9,7 @@ from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._backtest_artifacts import index_backtest_files
+from quantforge.experiments._backtest_provenance import benchmark_configuration
 from quantforge.experiments._feature_integrity import (
     validate_feature_rows,
     validate_feature_summary,
@@ -25,6 +26,9 @@ from quantforge.experiments._grid_integrity import (
     validate_trial_status,
 )
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
+from quantforge.experiments._prediction_context_integrity import (
+    validate_prediction_context,
+)
 from quantforge.experiments._prediction_trial_integrity import (
     validate_prediction_trial_result,
 )
@@ -156,6 +160,7 @@ def _description(
             raise ManifestError("expected a QF-11 prediction study")
         validate_prediction_identity(document)
         validate_prediction_counts(document)
+        validate_prediction_context(document)
         configuration = _pick(
             document,
             ("engine_version", "configuration", "market_data", "prediction_context"),
@@ -212,21 +217,7 @@ def _description(
                 "backtest_configuration",
             ),
         )
-        costs = mapping(document["backtest_configuration"])
-        for key in (
-            "initial_capital",
-            "commission",
-            "fees",
-            "slippage",
-            "execution",
-            "dividend_policy",
-            "split_policy",
-        ):
-            if key not in costs:
-                raise ManifestError("backtest execution provenance is incomplete")
-        configuration["benchmark_configuration"] = mapping(document["benchmark"])[
-            "configuration"
-        ]
+        configuration["benchmark_configuration"] = benchmark_configuration(document)
         return (
             text(document["run_id"]),
             configuration,
