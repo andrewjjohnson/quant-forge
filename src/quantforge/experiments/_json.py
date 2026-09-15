@@ -47,7 +47,13 @@ def safe_metadata(value: Primitive) -> None:
                     "privatekey",
                     "connectionstring",
                 )
-            ) or ("accountid" in normalized and not simulation_account):
+            ) or (
+                re.search(
+                    r"account(?:id|number|num|no|name|holder|code|ref)|accounts?$",
+                    normalized,
+                )
+                and not simulation_account
+            ):
                 raise ManifestError("credential-bearing metadata is prohibited")
             safe_metadata(item)
     elif isinstance(value, list):

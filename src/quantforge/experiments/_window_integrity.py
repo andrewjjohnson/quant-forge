@@ -8,6 +8,7 @@ from quantforge.experiments._producer_integrity import (
     validate_prediction_identity,
     validate_prediction_rows,
 )
+from quantforge.experiments._window_context_integrity import validate_decision_context
 from quantforge.prediction.window import (
     _window_record_counts,  # pyright: ignore[reportPrivateUsage]
 )
@@ -17,6 +18,26 @@ def _records(value: object) -> list[PrimitiveMapping]:
     if not isinstance(value, list):
         raise ManifestError("window decision records must be arrays")
     return [mapping(item) for item in cast(list[object], value)]
+
+
+def _validate_signal_rows(
+    signals: list[PrimitiveMapping], rows: list[PrimitiveMapping]
+) -> None:
+    signal_ids: set[str] = set()
+    for signal in signals:
+        mapping(signal.get("features"))
+        mapping(mapping(signal.get("prediction")).get("values"))
+        signal_id = configuration_identity(signal)
+        if signal_id in signal_ids:
+            raise ManifestError("window generated signals contain duplicates")
+        signal_ids.add(signal_id)
+    for row in rows:
+        signal_id = configuration_identity(
+            {"features": row.get("features"), "prediction": row.get("prediction")}
+        )
+        if signal_id not in signal_ids:
+            raise ManifestError("window row does not match a distinct generated signal")
+        signal_ids.remove(signal_id)
 
 
 def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
@@ -68,8 +89,19 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
         rows = _records(study.get("rows"))
         if len(rows) > len(signals):
             raise ManifestError("window rows exceed generated signal records")
-        for signal in signals:
-            mapping(mapping(signal.get("prediction")).get("values"))
+        skipped = validate_decision_context(decision, manifest, study_manifest)
+        expected_status = (
+            "skipped" if skipped else "evaluated" if signals else "no_prediction"
+        )
+        if decision.get("status") != expected_status or (skipped and (signals or rows)):
+            raise ManifestError(
+                "window decision status contradicts its context or signals"
+            )
+        if mapping(study_manifest.get("record_counts")).get(
+            "generated_predictions"
+        ) != len(signals):
+            raise ManifestError("decision record counts differ from generated signals")
+        _validate_signal_rows(signals, rows)
     if configuration_identity(
         {"counts": manifest.get("record_counts")}
     ) != configuration_identity({"counts": _window_record_counts(decisions)}):

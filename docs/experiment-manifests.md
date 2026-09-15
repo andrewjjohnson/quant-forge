@@ -232,6 +232,17 @@ Each nested QF-11 manifest must also match the window's recorded configuration,
 market data and prediction-engine version, and its study ID must match the
 decision's `prediction_study_id`. A self-consistent result from another study
 cannot be substituted by updating the window's result hash or counts.
+Each decision's context ID must match its retained QF-20 source snapshot, and its
+requirements must match the window configuration. Available contexts must match
+the decision timestamp and dataset family; existing offline producer validators
+check source/selected timeframe, completion, bar-time, dataset and indicator
+metadata without constructing market context or calculating indicators.
+Skipped decisions retain rejected source evidence, which may have the wrong
+timestamp/family or be absent, but require the explicit skip policy and empty
+signals/rows. That evidence remains subject to internal source validation.
+Decision status and generated counts must agree with the context and signals.
+Every labeled row's stored features and prediction must match a distinct
+generated signal; duplicate signals and substitutions are rejected.
 
 Embedded source-dataset entries reference the producer's recorded dataset
 metadata. Their byte hash verifies that metadata file, not an unavailable source
@@ -404,6 +415,10 @@ and authenticated/query-bearing URLs in metadata, bindings and read JSON.
 Errors do not echo credentials. Provider/feed identities remain ordinary
 provenance. The exact `account_id` field permits only QF-5's fixed simulation
 labels `benchmark` and `strategy`; other account identifiers remain prohibited.
+Account identifier/number/name/reference aliases, including `account_number`,
+`broker_account` and `trading_account`, are rejected across construction, JSON
+reading and metadata bindings. This does not reject accounting-policy fields
+such as `account_initialization` and `corporate_action_accounting`.
 The field-name guard conservatively rejects normalized keys containing `token`,
 including compound names such as `api_token`, `auth_token` and `session_token`,
 with the same policy for nested records and metadata bindings.

@@ -64,6 +64,8 @@ def block_research(monkeypatch: pytest.MonkeyPatch) -> None:
         ("quantforge.prediction.study", "run_prediction_study"),
         ("quantforge.prediction.study", "run_prediction_study_in_session"),
         ("quantforge.prediction.window", "run_prediction_window"),
+        ("quantforge.data.multi_timeframe", "build_multi_timeframe_context"),
+        ("quantforge.prediction.context", "build_prediction_rule_context"),
         ("quantforge.prediction.feature_dataset", "build_signal_feature_dataset"),
         ("quantforge.backtesting.runner", "run_backtest"),
         ("quantforge.optimization.combinations", "iter_combination_candidates"),

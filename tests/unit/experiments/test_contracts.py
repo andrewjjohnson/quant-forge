@@ -344,6 +344,12 @@ def test_symlink_escape_rejected(tmp_path: Path) -> None:
         "connection_string",
         "Authorization",
         "account_id",
+        "account_number",
+        "broker_account",
+        "trading_account",
+        "brokerAccountNumber",
+        "ACCOUNT-NO",
+        "provider.account_identifier",
     ],
 )
 def test_credentials_rejected_without_echoing_values(tmp_path: Path, key: str) -> None:
@@ -352,9 +358,22 @@ def test_credentials_rejected_without_echoing_values(tmp_path: Path, key: str) -
     assert "sensitive-marker-123" not in str(error.value)
 
 
-@pytest.mark.parametrize("key", ["api_token", "auth_token", "session_token"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "api_token",
+        "auth_token",
+        "session_token",
+        "account_number",
+        "broker_account",
+        "trading_account",
+        "brokerAccountNumber",
+        "ACCOUNT-NO",
+        "provider.account_identifier",
+    ],
+)
 @pytest.mark.parametrize("in_binding", [False, True])
-def test_compound_tokens_are_rejected_in_json_and_bindings(
+def test_credential_fields_are_rejected_in_json_and_bindings(
     tmp_path: Path, key: str, in_binding: bool
 ) -> None:
     payload: PrimitiveMapping = {"provider": [{key: "sensitive-marker-123"}]}
@@ -394,6 +413,9 @@ def test_internal_account_labels_are_safe_metadata(
     "payload",
     [
         {"broker_account_id": "benchmark"},
+        {"account_number": "benchmark"},
+        {"broker_account": "strategy"},
+        {"trading_account": "benchmark"},
         {"account_id": {"account_id": "benchmark"}},
         {"account_id": ["strategy"]},
         {"account_id": "benchmark-sensitive-marker"},
@@ -405,6 +427,17 @@ def test_simulation_label_allowance_does_not_bypass_credential_guard(
 ) -> None:
     with pytest.raises(ManifestError):
         manifest(tmp_path, payload)
+
+
+def test_accounting_policy_fields_remain_reproducible_metadata(tmp_path: Path) -> None:
+    configuration: PrimitiveMapping = {
+        "account_initialization": "configured_capital_no_positions",
+        "corporate_action_accounting": {"dividends": "pay_date"},
+        "dividend_accounting": {"cash_credited": "0"},
+    }
+    original = manifest(tmp_path, configuration)
+    path = write_manifest(original, tmp_path / "manifests", artifact_root=tmp_path)
+    assert read_manifest(path).serialize() == original.serialize()
 
 
 @pytest.mark.parametrize(
