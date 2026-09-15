@@ -422,20 +422,20 @@ def inspect_study(
         optimization_summaries: dict[str, PrimitiveMapping] = {}
         summary: PrimitiveMapping | None = None
         trial_snapshots: list[tuple[Path, PrimitiveMapping]] = []
-        stale_prediction_summary = False
+        stale_grid_summary = False
         if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
             trial_snapshots = [
                 (path, reads.read(path)[0])
                 for path in sorted((source / "trials").glob("*.json"))
             ]
-            # QF-32 retains its previous summary while retrying failed trials.
+            # Both grids retain their previous exports while retrying failed trials.
             # Bind this decision to the same records validated and indexed below.
-            stale_prediction_summary = study_type is StudyType.PARAMETER_STUDY and any(
+            stale_grid_summary = any(
                 trial.get("status") in ("pending", "running")
                 for _, trial in trial_snapshots
             )
             summary_path = source / "summary.json"
-            if summary_path.is_file() and not stale_prediction_summary:
+            if summary_path.is_file() and not stale_grid_summary:
                 summary, _ = reads.read(summary_path)
                 if summary.get("study_id") != producer_id:
                     raise ManifestError("parameter summary belongs to another study")
@@ -482,7 +482,7 @@ def inspect_study(
         for path in sorted(source.iterdir()):
             if not path.is_file() or path.name in {"manifest.json", "schema.json"}:
                 continue
-            if stale_prediction_summary:
+            if stale_grid_summary:
                 # Derived exports do not describe this unfinished trial snapshot.
                 continue
             if (

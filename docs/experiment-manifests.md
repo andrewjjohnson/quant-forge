@@ -244,7 +244,8 @@ Each outcome's `configuration_id` must equal the canonical hash of its saved
 ID, row IDs and table bytes cannot hide a contradictory component identity.
 Every feature manifest, including directory inputs, requires one valid contributing
 prediction-study digest per configured outcome; rows are not needed to check this
-lineage declaration.
+lineage declaration. Outcome namespaces must be unique even when their field names
+are disjoint, so two configured outcomes cannot collapse into one lineage entry.
 Directory inputs require the checkpoint directory, including for an empty dataset.
 Checkpoint filenames must equal their row IDs, and checkpoint counts must match
 the manifest. CSV and QF-29 Parquet bytes must equal the native producer serialization
@@ -293,8 +294,9 @@ Without `summary.json`, the directory remains resumable and potentially stale CS
 and derived `ranking.json`/`stability.json` files are omitted from the index.
 The producer writes these before its completion summary, so either or both may
 be absent, stale or interrupted without preventing inspection of saved trials.
-Once the captured completion summary exists, both JSON summaries and all seven
-CSVs are required and reconciled. Unrecognized neighboring CSVs are always omitted.
+Once all saved trials are terminal and the captured completion summary exists,
+both JSON summaries and all seven CSVs are required and reconciled. Unrecognized
+neighboring CSVs are always omitted.
 
 QF-32 inspection supports study schema `"1"`, matching the producer's explicit
 schema contract. Unsupported, missing, or non-string versions are rejected before
@@ -312,8 +314,8 @@ exclusion evidence cannot be hidden by decrementing summary or manifest counts.
 This counts axes and checks saved coordinates without enumerating candidates or
 reapplying constraints. Without a summary, incomplete grids remain indexable,
 positions must still be unique and bounded, and final trial counts remain unknown.
-QF-32 can retain an old summary while retrying a failed trial. When saved trials
-include a pending or running record, inspection omits that stale summary and
+QF-32 and QF-6 can retain old summaries while retrying a failed trial. When saved
+trials include a pending or running record, inspection omits that stale summary and
 derived exports and leaves final counts unknown. Trial validation and indexing use
 the same captured bytes that establish this state; changes during inspection are
 rejected. A completed retry's replacement summary is validated and indexed normally.
@@ -323,6 +325,11 @@ only the persisted records; it does not assert completion. Successful trials
 must retain their result reference. Failed trials require nonempty diagnostic
 type and message (plus QF-6's failure category); excluded trials require their
 exclusion code and reason. Outcome fields must agree with the trial status.
+Every trial must also pass its producer's pure record deserializer. Required
+nullable keys must be present even when their value is null, including QF-6
+`metrics` and QF-32 `analysis` on pending/running trials. Documented producer
+defaults for omitted `failed_attempts` and non-success QF-32 artifact fingerprints
+remain supported; inspection does not replace missing required fields with defaults.
 Failed QF-32 trials additionally require nonempty string `started_at` and
 `finished_at` values, including in directories without a final summary, because
 the producer needs both to archive a retry. Inspection preserves these timestamps

@@ -6,11 +6,13 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._producer_integrity import validate_backtest_identity
 from quantforge.experiments.models import StudyType
-from quantforge.optimization.models import FailedTrialAttempt, TrialStatus
+from quantforge.optimization.errors import StudyPersistenceError
+from quantforge.optimization.models import FailedTrialAttempt, TrialRecord, TrialStatus
 from quantforge.prediction.grid import (
     PredictionGridError,
     PredictionGridFailedAttempt,
     PredictionGridPersistenceError,
+    PredictionGridTrialRecord,
     PredictionTrialAnalysis,
 )
 
@@ -220,6 +222,17 @@ def validate_trial_status(study_type: StudyType, trial: PrimitiveMapping) -> Non
         if study_type is StudyType.PARAMETER_STUDY:
             for field in ("started_at", "finished_at"):
                 text(record.get(field))
+    # Nullable fields are still required when the producer's reader requires
+    # them. Deserialize only saved metadata, retaining documented legacy defaults.
+    try:
+        if study_type is StudyType.OPTIMIZATION:
+            TrialRecord.from_primitive(trial)
+        else:
+            PredictionGridTrialRecord.from_primitive(trial)
+    except (StudyPersistenceError, PredictionGridError) as error:
+        raise ManifestError(
+            "trial record metadata does not match its producer schema"
+        ) from error
 
 
 def validate_trial_counts(

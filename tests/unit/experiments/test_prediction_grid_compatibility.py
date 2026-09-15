@@ -129,16 +129,25 @@ def test_interrupted_prediction_retry_omits_stale_summary_and_can_resume(
 
 @pytest.mark.parametrize("status", ["pending", "running"])
 @pytest.mark.parametrize("change", ["none", "coordinates", "completion"])
+@pytest.mark.parametrize(
+    "study_type", [StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION]
+)
 def test_stale_summary_decision_keeps_trial_validation_and_snapshot_integrity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str, change: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    change: str,
+    study_type: StudyType,
 ) -> None:
-    root = build_grid_export(tmp_path, StudyType.PARAMETER_STUDY, monkeypatch)
+    root = build_grid_export(tmp_path, study_type, monkeypatch)
     path = trial_path(root, "failed")
     completed = path.read_bytes()
     trial = read_record(path)
     trial.update(
         status=status, failure_type=None, failure_message=None, finished_at=None
     )
+    if study_type is StudyType.OPTIMIZATION:
+        trial["failure_category"] = None
     if change == "coordinates":
         trial["combination_index"] = 99
     write_json(path, trial)
@@ -152,9 +161,7 @@ def test_stale_summary_decision_keeps_trial_validation_and_snapshot_integrity(
     if change == "completion":
         monkeypatch.setattr(_grid_integrity, "validate_trial_status", finish_trial)
     if change == "none":
-        inspected = inspect_study(
-            StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path
-        )
+        inspected = inspect_study(study_type, root, artifact_root=tmp_path)
         assert "trial_counts" not in inspected.provenance.observations.to_primitive()
         assert not any(
             entry.artifact_type is ArtifactType.PARAMETER_SUMMARY
@@ -165,4 +172,4 @@ def test_stale_summary_decision_keeps_trial_validation_and_snapshot_integrity(
             "coordinates" if change == "coordinates" else "changed during indexing"
         )
         with pytest.raises(ManifestError, match=message):
-            inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
+            inspect_study(study_type, root, artifact_root=tmp_path)

@@ -106,6 +106,8 @@ def feature_prediction_studies(manifest: PrimitiveMapping) -> PrimitiveMapping:
         text(outcome.get("namespace"))
         for outcome in _records(configuration.get("outcomes"))
     ]
+    if len(set(namespaces)) != len(namespaces):
+        raise ManifestError("feature outcome namespaces must be unique")
     study_ids = manifest.get("prediction_study_ids")
     if not isinstance(study_ids, list) or len(study_ids) != len(namespaces):
         raise ManifestError("feature prediction-study references are incomplete")
