@@ -1,6 +1,6 @@
 """Reconcile stored grid summaries without ranking or calculating stability."""
 
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_CEILING, Decimal, InvalidOperation, localcontext
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping
@@ -130,6 +130,32 @@ def _trial_references(
     return references
 
 
+def _optimization_order_key(
+    trial: PrimitiveMapping, configuration: PrimitiveMapping
+) -> tuple[tuple[tuple[bool, Decimal], ...], str]:
+    """Compare saved QF-6 metrics using the producer's ordered tie breakers."""
+    if configuration.get("final_tie_breaker") != "combination_id_ascending":
+        raise ManifestError("optimization final tie breaker is unsupported")
+    criteria: list[PrimitiveMapping] = [
+        {
+            "metric": configuration.get("objective"),
+            "direction": configuration.get("direction"),
+        },
+        *_records(configuration.get("tie_breakers")),
+    ]
+    metrics = mapping(trial.get("metrics"))
+    values: list[tuple[bool, Decimal]] = []
+    for criterion in criteria:
+        direction = criterion.get("direction")
+        if direction not in ("maximize", "minimize"):
+            raise ManifestError("optimization ranking direction is invalid")
+        raw = metrics.get(text(criterion.get("metric")))
+        number = Decimal(0) if raw is None else _number(raw)
+        # Undefined tie-break metrics sort last in either direction, as in QF-6.
+        values.append((raw is None, -number if direction == "maximize" else number))
+    return tuple(values), text(trial.get("combination_id"))
+
+
 def validate_optimization_summaries(
     configuration: PrimitiveMapping,
     trials: list[PrimitiveMapping],
@@ -138,8 +164,8 @@ def validate_optimization_summaries(
 ) -> None:
     """Compare configurations, membership, ranks and saved summary projections.
 
-    Objective values are compared with existing trial metrics. Eligibility,
-    ranking order, neighbor statistics and recommendation rules are not rerun.
+    Ordering and the recommendation are checked against existing metrics and
+    stability records. Eligibility and neighbor statistics are not recalculated.
     """
     ranking = mapping(derived.get("ranking.json"))
     stability = mapping(derived.get("stability.json"))
@@ -169,9 +195,9 @@ def validate_optimization_summaries(
         or stable_by_id.keys() != eligible_by_id.keys()
     ):
         raise ManifestError("optimization summary trial coverage is inconsistent")
-    objective = text(
-        mapping(configuration.get("ranking_configuration")).get("objective")
-    )
+    ranking_configuration = mapping(configuration.get("ranking_configuration"))
+    objective = text(ranking_configuration.get("objective"))
+    previous_objective: tuple[tuple[tuple[bool, Decimal], ...], str] | None = None
     for rank, record in enumerate(eligible, 1):
         trial = by_id[text(record.get("trial_id"))]
         if (
@@ -184,6 +210,10 @@ def validate_optimization_summaries(
             raise ManifestError(
                 "optimization ranking differs from recorded trial metrics or ranks"
             )
+        order_key = _optimization_order_key(trial, ranking_configuration)
+        if previous_objective is not None and order_key < previous_objective:
+            raise ManifestError("optimization ranking order contradicts saved metrics")
+        previous_objective = order_key
     for record in ineligible:
         reasons = record.get("reasons")
         if (
@@ -194,6 +224,7 @@ def validate_optimization_summaries(
             )
         ):
             raise ManifestError("optimization summary is missing ineligibility reasons")
+    previous_stability: tuple[Decimal, int, str] | None = None
     for rank, record in enumerate(stable, 1):
         objective_record = eligible_by_id[text(record.get("trial_id"))]
         if (
@@ -205,6 +236,14 @@ def validate_optimization_summaries(
             or type(record.get("is_isolated_peak")) is not bool
         ):
             raise ManifestError("optimization stability differs from recorded ranking")
+        stability_key = (
+            -_number(record.get("stability_score")),
+            cast(int, record["objective_rank"]),
+            text(record.get("combination_id")),
+        )
+        if previous_stability is not None and stability_key < previous_stability:
+            raise ManifestError("optimization stability order contradicts saved scores")
+        previous_stability = stability_key
     if summary is None:
         return
     expected_counts = {
@@ -227,14 +266,37 @@ def validate_optimization_summaries(
         != (stable[0]["trial_id"] if stable else None)
     ):
         raise ManifestError("optimization selected trials differ from summary")
-    recommended = summary.get("recommended_robust_trial_id")
-    if recommended is not None:
-        record = stable_by_id.get(text(recommended))
-        if (
-            record is None
-            or record.get("classification") != "stable"
-            or record.get("is_isolated_peak") is not False
-        ):
-            raise ManifestError(
-                "optimization recommendation has incompatible trial reference"
+    fraction = _number(
+        mapping(configuration.get("stability_configuration")).get(
+            "robust_recommendation_top_fraction"
+        )
+    )
+    if not 0 <= fraction <= 1:
+        raise ManifestError("optimization recommendation fraction is outside [0, 1]")
+    # Match QF-6's ceiling cutoff and precision, including a zero-sized shortlist.
+    cutoff = 0
+    if eligible and fraction != 0:
+        with localcontext() as context:
+            context.prec = 34
+            cutoff = max(
+                1,
+                int(
+                    (Decimal(len(eligible)) * fraction).to_integral_value(
+                        rounding=ROUND_CEILING
+                    )
+                ),
             )
+    expected_recommendation = next(
+        (
+            record["trial_id"]
+            for record in stable
+            if cast(int, record["objective_rank"]) <= cutoff
+            and record.get("classification") == "stable"
+            and record["is_isolated_peak"] is False
+        ),
+        None,
+    )
+    if summary.get("recommended_robust_trial_id") != expected_recommendation:
+        raise ManifestError(
+            "optimization recommendation differs from saved qualifying trials"
+        )

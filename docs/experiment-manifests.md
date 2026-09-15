@@ -216,8 +216,16 @@ beyond the summary's top ten. Eligible and ineligible lists must cover the saved
 successful trials; stability must cover the eligible list. Stored objective
 values, ranks, counts, top-ten projections and selected trial references must
 agree across the artifacts, trial records and summary. Empty eligible lists are
-valid. Inspection compares persisted metadata and metrics without rerunning
-eligibility, ranking, stability statistics or recommendation rules.
+valid. Objective ranks must follow the configured direction, each configured
+tie breaker's metric/direction, then ascending combination ID. Undefined tie-break
+metrics sort last in either direction. Stability ranks must follow descending
+stored stability score, then objective rank and combination ID. The robust
+recommendation must be the first stability-ranked record that is classified
+stable, is not isolated, and lies within the configured ceiling-rounded fraction
+of eligible objective ranks. A zero fraction or absence of qualifying records
+requires a null recommendation. These checks compare existing metrics, scores
+and classifications; they do not rerun eligibility, calculate neighbor statistics,
+reclassify trials, sort/rewrite artifacts or invoke the ranking/stability engines.
 
 For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
 trial-file total and status counts against that summary. Missing or extra trial
