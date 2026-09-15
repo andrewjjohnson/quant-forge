@@ -53,9 +53,21 @@ def test_prediction_provenance_cannot_retain_stale_study_id(
         inspect_study(StudyType.PREDICTION, path, artifact_root=tmp_path)
 
 
-@pytest.mark.parametrize("change", ["truncate", "generated", "unavailable"])
+@pytest.mark.parametrize(
+    ("change", "manifest_only"),
+    [
+        ("truncate", False),
+        ("generated", False),
+        ("unavailable", False),
+        ("generated", True),
+        ("unavailable", True),
+    ],
+)
 def test_prediction_rows_must_agree_with_record_counts(
-    tmp_path: Path, prediction_snapshot: PrimitiveMapping, change: str
+    tmp_path: Path,
+    prediction_snapshot: PrimitiveMapping,
+    change: str,
+    manifest_only: bool,
 ) -> None:
     manifest = cast(PrimitiveMapping, prediction_snapshot["manifest"])
     counts = cast(PrimitiveMapping, manifest["record_counts"])
@@ -67,19 +79,63 @@ def test_prediction_rows_must_agree_with_record_counts(
         )
         counts[field] = cast(int, counts[field]) + 1
     path = tmp_path / "prediction.json"
-    write_json(path, prediction_snapshot)
+    write_json(path, manifest if manifest_only else prediction_snapshot)
     with pytest.raises(ManifestError, match="prediction record counts"):
         inspect_study(StudyType.PREDICTION, path, artifact_root=tmp_path)
 
 
-@pytest.mark.parametrize("invalid", [None, -1, True, "4"])
+@pytest.mark.parametrize("manifest_only", [False, True])
+@pytest.mark.parametrize(
+    "field", ["generated_predictions", "labeled_rows", "unavailable_outcomes"]
+)
+@pytest.mark.parametrize("invalid", [None, -1, True, "4", 4.0])
 def test_prediction_counts_are_nonnegative_integers(
-    tmp_path: Path, prediction_snapshot: PrimitiveMapping, invalid: Primitive
+    tmp_path: Path,
+    prediction_snapshot: PrimitiveMapping,
+    invalid: Primitive,
+    field: str,
+    manifest_only: bool,
 ) -> None:
     manifest = cast(PrimitiveMapping, prediction_snapshot["manifest"])
-    cast(PrimitiveMapping, manifest["record_counts"])["labeled_rows"] = invalid
+    cast(PrimitiveMapping, manifest["record_counts"])[field] = invalid
     path = tmp_path / "prediction.json"
-    write_json(path, prediction_snapshot)
+    write_json(path, manifest if manifest_only else prediction_snapshot)
+    with pytest.raises(ManifestError, match="prediction record counts"):
+        inspect_study(StudyType.PREDICTION, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize(("labeled", "unavailable"), [(0, 0), (0, 2), (3, 1)])
+def test_prediction_manifest_retains_consistent_counts_without_claiming_rows(
+    tmp_path: Path,
+    prediction_snapshot: PrimitiveMapping,
+    labeled: int,
+    unavailable: int,
+) -> None:
+    manifest = cast(PrimitiveMapping, prediction_snapshot["manifest"])
+    counts: PrimitiveMapping = {
+        "generated_predictions": labeled + unavailable,
+        "labeled_rows": labeled,
+        "unavailable_outcomes": unavailable,
+    }
+    manifest["record_counts"] = counts
+    path = tmp_path / "prediction.json"
+    write_json(path, manifest)
+    study = inspect_study(StudyType.PREDICTION, path, artifact_root=tmp_path)
+    assert study.provenance.observations.to_primitive()["record_counts"] == counts
+
+
+@pytest.mark.parametrize(
+    "field", ["generated_predictions", "labeled_rows", "unavailable_outcomes"]
+)
+def test_prediction_manifest_requires_each_declared_count(
+    tmp_path: Path,
+    prediction_snapshot: PrimitiveMapping,
+    field: str,
+) -> None:
+    manifest = cast(PrimitiveMapping, prediction_snapshot["manifest"])
+    del cast(PrimitiveMapping, manifest["record_counts"])[field]
+    path = tmp_path / "prediction.json"
+    write_json(path, manifest)
     with pytest.raises(ManifestError, match="prediction record counts"):
         inspect_study(StudyType.PREDICTION, path, artifact_root=tmp_path)
 

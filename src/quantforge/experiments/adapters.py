@@ -30,6 +30,7 @@ from quantforge.experiments._prediction_trial_integrity import (
 )
 from quantforge.experiments._producer_integrity import (
     validate_backtest_identity,
+    validate_prediction_counts,
     validate_prediction_identity,
     validate_prediction_rows,
 )
@@ -140,6 +141,7 @@ def _description(
         if document.get("component") != "quantforge_prediction_study":
             raise ManifestError("expected a QF-11 prediction study")
         validate_prediction_identity(document)
+        validate_prediction_counts(document)
         configuration = _pick(
             document,
             ("engine_version", "configuration", "market_data", "prediction_context"),
@@ -266,10 +268,18 @@ def inspect_study(
     """Index QF-11/42/7/29/32/5/6 persisted outputs without loading an engine.
 
     `source` is an export directory, or a JSON result with its existing
-    `manifest` member. Relative artifact paths are rooted at `artifact_root`.
+    `manifest` member. A QF-5 `manifest.json` selects its complete parent export;
+    a detached QF-5 manifest must use another filename and indexes metadata only.
+    Relative artifact paths are rooted at `artifact_root`.
     """
     source = source.resolve()
     root = artifact_root.resolve()
+    if (
+        study_type is StudyType.BACKTEST
+        and not source.is_dir()
+        and source.name == "manifest.json"
+    ):
+        source = source.parent
     manifest_path = source / "manifest.json" if source.is_dir() else source
     document, location = read_producer_record(manifest_path)
     container = document

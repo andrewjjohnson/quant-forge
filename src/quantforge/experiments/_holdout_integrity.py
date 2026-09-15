@@ -1,5 +1,8 @@
 """Bind consumed result evidence to the retained QF-40 request without evaluation."""
 
+from datetime import date
+
+from quantforge.backtesting.config import EvaluationInterval
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._producer_integrity import validate_backtest_identity
@@ -84,5 +87,44 @@ def validate_holdout_artifact(
         validate_backtest_identity(manifest)
         if artifact.get("result_id") != manifest.get("run_id"):
             raise ManifestError("holdout backtest result identity is inconsistent")
+        membership = mapping(request.get("evaluation_membership"))
+        labels = membership.get("evaluation_sessions")
+        if not isinstance(labels, list) or not labels:
+            raise ManifestError("holdout request evaluation sessions are invalid")
+        try:
+            # Serialize the producer's pure boundary contract; no partition or
+            # backtest is built, and the frozen execution settings stay intact.
+            interval = EvaluationInterval(
+                date.fromisoformat(text(labels[0])),
+                date.fromisoformat(text(labels[-1])),
+            ).to_primitive()
+        except ValueError as error:
+            raise ManifestError(
+                "holdout request evaluation sessions are invalid"
+            ) from error
+        execution = source.plan.environment.execution
+        if execution is None:
+            raise ManifestError("holdout request has no frozen backtest configuration")
+        expected_configuration = {
+            **execution.configuration.configuration_snapshot.to_primitive(),
+            "evaluation_interval": interval,
+        }
+        if (
+            mapping(manifest.get("strategy")).get("configuration") != definition
+            or manifest.get("backtest_configuration") != expected_configuration
+            or any(
+                manifest.get(key) != expected_configuration.get(key)
+                for key in ("engine_version", "result_schema_version")
+            )
+        ):
+            raise ManifestError("holdout backtest differs from frozen configuration")
+        market = mapping(manifest.get("market_data"))
+        if (
+            market.get("dataset_id") != membership.get("bounded_dataset_id")
+            # QF-5's independent bars_fingerprint uses a different serialization
+            # from the QF-3 data_sha256 retained by the partition request.
+            or market.get("data_sha256") != membership.get("bounded_data_sha256")
+        ):
+            raise ManifestError("holdout backtest differs from requested dataset")
     else:
         raise ManifestError("holdout artifact kind differs from its request")

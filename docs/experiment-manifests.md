@@ -144,7 +144,7 @@ historical dirty flags, but those flags do not identify the uncommitted source.
 | `PREDICTION_WINDOW`: QF-42 result JSON | Original schedule, window configuration/result IDs, context/data/backend requirements and decision collection |
 | `FEATURE_DATASET`: QF-7/QF-29 directory or result JSON | Candidate/outcome configuration, feature schema, QF-29 contextual timeframe/backend/family provenance, source fingerprint, contributing prediction IDs, counts; CSV and optional Parquet |
 | `PARAMETER_STUDY`: QF-32 directory | Search space, constraints, factory/analyzer, fixed backend, context family, ranking/stability and optional QF-42 schedule; summary, all persisted trials, successful prediction/window result files |
-| `BACKTEST`: QF-5 directory or manifest | Full strategy/indicators, capital, costs/fees/slippage, execution, corporate actions, QF-43 context/evaluation interval, benchmark configuration and source data; original CSV tables and integrity record |
+| `BACKTEST`: QF-5 directory or its `manifest.json`; detached manifest under another filename | Full strategy/indicators, capital, costs/fees/slippage, execution, corporate actions, QF-43 context/evaluation interval, benchmark configuration and source data; export inputs include original CSV tables and integrity record; detached manifests index metadata only |
 | `OPTIMIZATION`: QF-6 directory | Existing scientific identity inputs, grid/constraints, ranking/stability, counts and trial IDs; summaries, complete `ranking.json`, trials and original successful QF-5 export files |
 
 Study types never acquire another type's metric requirements. Prediction and
@@ -157,12 +157,18 @@ inside an optimization, fold or holdout. Nested backtest files use the same
 indexing helper and retain `DERIVED_FROM` relationships to the enclosing trial,
 window or holdout result. The outer study's manifest and trial records retain
 their own producer identity and schema.
+Passing a QF-5 export's `manifest.json` selects the same complete artifact set
+and integrity-sidecar validation as passing its directory. Missing or modified
+sibling files fail inspection, including a missing sidecar. For metadata-only
+inspection, save a detached manifest under another filename, such as
+`backtest.json`; this does not assert export completeness or table integrity.
 
 QF-11 study IDs are verified against the original engine, market data, complete
-study configuration and optional prediction context. When rows are available,
-their length must match `labeled_rows`, and `generated_predictions` must equal
+study configuration and optional prediction context. For both complete results
+and manifest-only inputs, `generated_predictions` must equal
 `labeled_rows + unavailable_outcomes`; all three counts must be nonnegative
-integers. Each row must reference that study and dataset, match the recorded
+integers, excluding booleans. When rows are available, their length must also
+match `labeled_rows`. Each row must reference that study and dataset, match the recorded
 rule/outcome/evaluator metadata, and retain valid outcome, evaluation and row
 identities. Duplicate row identities are rejected. These checks hash stored
 fields; they do not regenerate predictions, labels or evaluations. Manifest-only
@@ -356,8 +362,15 @@ Consumed holdout artifacts must match the frozen selection retained in their
 permanent request and the captured source study. Prediction results receive the
 same nested window checks as standalone results, bind their result IDs and stored
 candidate definitions, and match the request's recorded partition, bounded dataset
-and allowed decision sessions. Backtest result snapshots must match the indexed
-export manifest. These checks do not prepare/evaluate a holdout, rebuild membership
+and allowed decision sessions. Backtests must match the frozen candidate's full
+strategy definition and the plan's recorded execution configuration, engine and
+result schema. Their QF-43 evaluation interval must use the request's first/last
+evaluation sessions and the producer's boundary contract. Dataset IDs and QF-3
+`data_sha256` must match the requested bounded dataset; QF-5's independently
+serialized `bars_fingerprint` is a different hash. Backtest result snapshots
+must also match the indexed export manifest. A self-consistent replacement run
+cannot change those frozen inputs by retaining the original selection ID.
+These checks do not prepare/evaluate a holdout, rebuild membership
 or recompute the holdout summary; consumed state remains authoritative.
 Failed or absent folds stay failed or absent; stale files do not become OOS
 observations. No partition memberships are calculated again.

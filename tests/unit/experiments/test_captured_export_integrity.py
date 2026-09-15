@@ -4,7 +4,12 @@ from typing import cast
 
 import pytest
 
-from quantforge.backtesting import validate_backtest_result_artifact
+from quantforge.backtesting import (
+    ResultExportError,
+    export_backtest_result,
+    validate_backtest_result_artifact,
+)
+from quantforge.backtesting.export import BACKTEST_ARTIFACT_FILENAMES
 from quantforge.configuration import PrimitiveMapping
 from quantforge.experiments import (
     ArtifactRelationship,
@@ -18,10 +23,50 @@ from quantforge.experiments import (
 from quantforge.experiments.persistence import read_producer_record
 from quantforge.oos import HoldoutEvaluation, HoldoutLedger
 from quantforge.walk_forward.models import BacktestOOSArtifact
+from tests.unit.backtesting.test_runner import configured_result
 from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
 from tests.unit.experiments.test_grid_integrity import build_grid_export, read_record
 from tests.unit.oos.conftest import complete_study
+
+
+def test_backtest_export_manifest_and_directory_have_identical_complete_indexes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    export = export_backtest_result(configured_result(), tmp_path)
+    block_research(monkeypatch)
+    directory = inspect_study(StudyType.BACKTEST, export, artifact_root=tmp_path)
+    manifest = inspect_study(
+        StudyType.BACKTEST, export / "manifest.json", artifact_root=tmp_path
+    )
+    assert manifest == directory
+    assert {Path(entry.path).name for entry in manifest.index.entries} == set(
+        BACKTEST_ARTIFACT_FILENAMES
+    )
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["orders.csv", "fills.csv", "trades.csv", "equity.csv", "integrity.json"],
+)
+@pytest.mark.parametrize("missing", [False, True], ids=["modified", "missing"])
+def test_backtest_manifest_input_requires_intact_sibling_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    missing: bool,
+) -> None:
+    export = export_backtest_result(configured_result(), tmp_path)
+    if missing:
+        (export / filename).unlink()
+    else:
+        (export / filename).write_text("tampered\n")
+    block_research(monkeypatch)
+    with pytest.raises(ResultExportError):
+        inspect_study(
+            StudyType.BACKTEST, export / "manifest.json", artifact_root=tmp_path
+        )
 
 
 @pytest.mark.parametrize("holdout", [False, True], ids=["fold", "holdout"])

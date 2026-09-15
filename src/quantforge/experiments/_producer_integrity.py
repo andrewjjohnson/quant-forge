@@ -35,14 +35,8 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
             raise ManifestError("prediction study component identity is inconsistent")
 
 
-def validate_prediction_rows(
-    manifest: PrimitiveMapping, rows: object
-) -> dict[str, int]:
-    """Check row counts and provenance without generating or evaluating results."""
-    if not isinstance(rows, list) or any(
-        not isinstance(row, dict) for row in cast(list[object], rows)
-    ):
-        raise ManifestError("prediction result rows must be an array of records")
+def validate_prediction_counts(manifest: PrimitiveMapping) -> int:
+    """Validate declared counts even when result rows are unavailable."""
     counts = mapping(manifest.get("record_counts"))
     fields = ("generated_predictions", "labeled_rows", "unavailable_outcomes")
     for field in fields:
@@ -51,10 +45,20 @@ def validate_prediction_rows(
             raise ManifestError("prediction record counts must be nonnegative integers")
     labeled = cast(int, counts["labeled_rows"])
     unavailable = cast(int, counts["unavailable_outcomes"])
-    if (
-        labeled != len(cast(list[object], rows))
-        or counts["generated_predictions"] != labeled + unavailable
+    if counts["generated_predictions"] != labeled + unavailable:
+        raise ManifestError("prediction record counts are internally inconsistent")
+    return labeled
+
+
+def validate_prediction_rows(
+    manifest: PrimitiveMapping, rows: object
+) -> dict[str, int]:
+    """Check row counts and provenance without generating or evaluating results."""
+    if not isinstance(rows, list) or any(
+        not isinstance(row, dict) for row in cast(list[object], rows)
     ):
+        raise ManifestError("prediction result rows must be an array of records")
+    if validate_prediction_counts(manifest) != len(cast(list[object], rows)):
         raise ManifestError(
             "prediction record counts are inconsistent with result rows"
         )
