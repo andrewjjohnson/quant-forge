@@ -1,7 +1,60 @@
 """Bind persisted QF-32 results to their recorded candidate definition."""
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping
+
+
+def frozen_prediction_components(
+    definition: PrimitiveMapping, study: PrimitiveMapping
+) -> PrimitiveMapping:
+    """Read complete v2 wrappers or explicit declarations from legacy records."""
+    from quantforge.experiments._producer_integrity import (
+        validate_outcome_contract,
+        validate_prediction_warm_up,
+    )
+
+    version = definition.get("contract_version", "1")
+    if version not in ("1", "2") or version != study.get(
+        "trial_definition_version", "1"
+    ):
+        raise ManifestError("unsupported or inconsistent trial definition version")
+    components: PrimitiveMapping = {}
+    for name, required in (
+        ("prediction_rule", ("warm_up_observations",)),
+        (
+            "outcome_labeler",
+            (
+                "required_future_sessions",
+                "required_market_fields",
+                "result_schema_version",
+            ),
+        ),
+        ("evaluator", ("result_schema_version",)),
+    ):
+        component = dict(mapping(definition.get(name)))
+        captured = mapping(component.get("configuration"))
+        for field in required:
+            if field not in component:
+                if version == "1" and field in captured:
+                    component[field] = captured[field]
+                elif (
+                    version == "1"
+                    and field == "required_future_sessions"
+                    and (
+                        isinstance(parameters := captured.get("parameters"), dict)
+                        and "future_sessions" in parameters
+                    )
+                ):
+                    component[field] = parameters["future_sessions"]
+                else:
+                    raise ManifestError(
+                        "trial definition contract metadata is unavailable: "
+                        f"{name}.{field}"
+                    )
+        components[name] = component
+    validate_prediction_warm_up(components)
+    validate_outcome_contract(components)
+    return components
 
 
 def validate_prediction_trial_result(
@@ -14,11 +67,14 @@ def validate_prediction_trial_result(
     )
     manifest = mapping(result.get("manifest"))
     definition = mapping(trial.get("trial_definition"))
+    components = frozen_prediction_components(definition, study)
     configuration = mapping(manifest.get("configuration"))
     for name in ("prediction_rule", "outcome_labeler", "evaluator"):
         component = mapping(configuration.get(name))
-        expected = mapping(definition.get(name))
-        if any(component.get(key) != value for key, value in expected.items()):
+        expected = mapping(components[name])
+        if configuration_identity(
+            {key: component.get(key) for key in expected}
+        ) != configuration_identity(expected):
             raise ManifestError("prediction result differs from its trial definition")
     if (
         manifest.get("market_data") != study.get("dataset")

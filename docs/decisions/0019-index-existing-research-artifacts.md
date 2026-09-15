@@ -28,8 +28,14 @@ reserve or consume holdouts and never infer pristine state from a QF-8 plan.
 
 ## Consequences
 
-Existing execution, result schemas, numeric semantics, historical backend
-configurations and producer persistence remain unchanged. Backtests retain costs
+Research execution, result-row schemas, numeric semantics and historical backend
+configurations remain unchanged. A small QF-32 metadata hook reuses the existing
+QF-11 configuration snapshot to freeze all component wrapper fields in trial
+definition contract version 2. The version participates in grid identity, so new
+grids and trials cannot silently reuse legacy stores. QF-9 reads version-1
+definitions only when their saved declarations supply the required contract;
+it does not infer missing historical values or rewrite producer files.
+Backtests retain costs
 and timing; predictions and features need no trading metrics. A manifest links
 results to validation evidence without accessing future prices or recomputing
 partitions, indicators, outcomes or metrics.

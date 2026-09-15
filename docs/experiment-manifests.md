@@ -275,7 +275,11 @@ The expected bytes are checked against both the index and the file before return
 The completion decision uses the captured summary; its removal during inspection
 cannot bypass table reconciliation.
 Without `summary.json`, the directory remains resumable and potentially stale CSVs
-are omitted from the index. Unrecognized neighboring CSVs are always omitted.
+and derived `ranking.json`/`stability.json` files are omitted from the index.
+The producer writes these before its completion summary, so either or both may
+be absent, stale or interrupted without preventing inspection of saved trials.
+Once the captured completion summary exists, both JSON summaries and all seven
+CSVs are required and reconciled. Unrecognized neighboring CSVs are always omitted.
 
 For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
 trial-file total and status counts against that summary. Missing or extra trial
@@ -330,6 +334,22 @@ QF-32 uses its own factory/combination/trial identity format and checks the reco
 trial definition, backend, dataset-family fingerprint and indicator configuration
 IDs. Historical schema versions and excluded candidates' null definitions are
 preserved; prediction factories and candidate generation are never invoked.
+New QF-32 candidates capture the existing QF-11 configuration snapshot as trial
+definition contract version `2`. This includes rule warm-up, outcome horizon and
+market fields, and outcome/evaluator result schemas even when generic component
+configurations omit duplicate declarations. The grid records
+`trial_definition_version: "2"` in its identity; the definition records the same
+`contract_version`. All executable trial records require those wrapper fields,
+and successful nested results must match their frozen values exactly. Rehashing
+a changed result cannot change its candidate contract.
+Absent version markers denote legacy version `1`. QF-9 reads legacy wrappers
+from explicit declarations in the saved component configuration, including
+`parameters.future_sessions`; it never constructs a component to infer them.
+Legacy records without enough captured information raise `ManifestError` naming
+the unavailable contract field. Historical files and identities are not migrated
+or rewritten. New producer grids have distinct study/trial identities and cannot
+resume a legacy store across this boundary; use its recorded producer version.
+QF-9 manifest schemas and prediction result-row schemas remain unchanged.
 Every trial's `schema_version` must equal the study's recorded version, including
 failed/excluded records and directories without a final summary. Successful QF-32
 trials require a complete canonical analysis record, validated by the producer's

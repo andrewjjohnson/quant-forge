@@ -84,6 +84,12 @@ def validate_prediction_trial_coordinates(
         raise ManifestError(
             "prediction trial identity or metadata differs from grid coordinates"
         )
+    if definition is not None:
+        from quantforge.experiments._prediction_trial_integrity import (
+            frozen_prediction_components,
+        )
+
+        frozen_prediction_components(definition, study_configuration)
 
 
 def validate_trial_coordinates(

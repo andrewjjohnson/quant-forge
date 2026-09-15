@@ -443,6 +443,13 @@ def inspect_study(
         for path in sorted(source.iterdir()):
             if not path.is_file() or path.name in {"manifest.json", "schema.json"}:
                 continue
+            if (
+                study_type is StudyType.OPTIMIZATION
+                and summary is None
+                and path.name in {"ranking.json", "stability.json"}
+            ):
+                # QF-6 writes derived exports before its completion summary.
+                continue
             if study_type is StudyType.OPTIMIZATION and path.suffix == ".csv":
                 from quantforge.experiments._optimization_csv_integrity import (
                     OPTIMIZATION_CSV_NAMES,
