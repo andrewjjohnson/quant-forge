@@ -207,7 +207,11 @@ def _description(
             text(document["result_schema_version"]),
         )
     if study_type is StudyType.OPTIMIZATION:
+        from quantforge.optimization.models import STUDY_SCHEMA_VERSION
+
         configuration = mapping(document["identity_inputs"])
+        if configuration.get("study_schema_version") != STUDY_SCHEMA_VERSION:
+            raise ManifestError("unsupported QF-6 study schema")
         if (
             configuration.get("component") != "quantforge_grid_search_study"
             or configuration_identity(configuration) != document["study_id"]

@@ -1,7 +1,7 @@
-"""Inspect only supported QF-32 schemas and authoritative completion exports."""
+"""Inspect only supported grid schemas and authoritative completion exports."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -30,41 +30,53 @@ from tests.unit.prediction.test_prediction_grid import (
 
 @pytest.mark.parametrize("layout", ["directory", "manifest", "snapshot"])
 @pytest.mark.parametrize("schema", ["1", "2", "1.0", "", None, 1, True, "missing"])
-def test_prediction_study_schema_is_checked_before_indexing(
+@pytest.mark.parametrize(
+    "study_type", [StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION]
+)
+def test_grid_study_schema_is_checked_before_indexing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     layout: str,
     schema: Primitive,
+    study_type: StudyType,
 ) -> None:
-    root = build_grid_export(tmp_path, StudyType.PARAMETER_STUDY, monkeypatch)
+    root = build_grid_export(tmp_path, study_type, monkeypatch)
     manifest = read_record(root / "manifest.json")
-    if schema == "missing":
-        manifest.pop("schema_version")
+    configuration = manifest
+    if study_type is StudyType.OPTIMIZATION:
+        configuration = cast(PrimitiveMapping, manifest["identity_inputs"])
+        schema_key = "study_schema_version"
+        records = (manifest, configuration)
     else:
-        manifest["schema_version"] = schema
-    manifest["study_id"] = configuration_identity(
-        {
+        schema_key = "schema_version"
+        records = (manifest,)
+    for record in records:
+        if schema == "missing":
+            record.pop(schema_key)
+        else:
+            record[schema_key] = schema
+    if study_type is StudyType.PARAMETER_STUDY:
+        configuration = {
             key: value
             for key, value in manifest.items()
             if key not in {"study_id", "execution", "cache_policy", "interpretation"}
         }
-    )
+    manifest["study_id"] = configuration_identity(configuration)
     export = tmp_path / "metadata"
     export.mkdir()
     path = export / "manifest.json"
     write_json(path, {"manifest": manifest} if layout == "snapshot" else manifest)
     source = export if layout == "directory" else path
     if schema == "1":
-        inspected = inspect_study(
-            StudyType.PARAMETER_STUDY, source, artifact_root=tmp_path
-        )
-        assert (
-            inspected.provenance.configuration.to_primitive()["schema_version"] == "1"
-        )
+        inspected = inspect_study(study_type, source, artifact_root=tmp_path)
+        assert inspected.provenance.configuration.to_primitive()[schema_key] == "1"
         assert "trial_counts" not in inspected.provenance.observations.to_primitive()
+        assert verify_artifacts(inspected.index, tmp_path).valid
     else:
-        with pytest.raises(ManifestError, match="unsupported QF-32 study schema"):
-            inspect_study(StudyType.PARAMETER_STUDY, source, artifact_root=tmp_path)
+        before = path.read_bytes()
+        with pytest.raises(ManifestError, match=r"unsupported QF-(6|32) study schema"):
+            inspect_study(study_type, source, artifact_root=tmp_path)
+        assert path.read_bytes() == before
 
 
 def interrupt_prediction(*args: Any, **kwargs: Any) -> None:

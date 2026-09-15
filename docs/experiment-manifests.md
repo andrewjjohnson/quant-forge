@@ -350,10 +350,12 @@ references must cover the ranked trials in objective order and retain their rank
 and objective values. Ineligible references require recorded reasons; an empty
 ranking with all successful trials ineligible remains valid. These checks do not
 reapply eligibility constraints or recalculate neighborhood/stability statistics.
-QF-6's advertised `study_schema_version` must match the version in its hashed
-`identity_inputs`; the manifest index binds that same recorded schema field.
-This applies to both directory and manifest-only inputs, preserving the original
-version rather than substituting the installed producer's version.
+QF-6 inspection supports study schema `"1"`, matching the producer's explicit
+contract. Its hashed `identity_inputs` must declare that supported version, and
+the outer `study_schema_version` must match it; the index binds that same field.
+This applies to directory and manifest-only inputs, including empty resumable
+stores. Rehashing unsupported, missing, or non-string versions does not make them
+supported. Inspection does not migrate or substitute a recorded schema version.
 An indexed QF-6 completion summary must retain that same `study_schema_version`;
 missing, malformed, or different versions are rejected. Stale summaries omitted
 during pending/running retries do not supply a schema contract for the index.
