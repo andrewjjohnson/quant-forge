@@ -5,7 +5,12 @@ from typing import cast
 import pytest
 
 from quantforge.configuration import Primitive, PrimitiveMapping
-from quantforge.experiments import ManifestError, StudyType, inspect_study
+from quantforge.experiments import (
+    ManifestError,
+    StudyType,
+    inspect_study,
+    verify_artifacts,
+)
 from quantforge.optimization import (
     GridSearchStudy,
     IntegerValues,
@@ -30,6 +35,78 @@ from tests.unit.optimization.test_study import (
 @pytest.fixture
 def optimization_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+
+
+@pytest.mark.parametrize(
+    "schema", ["current", "2", "missing", None, "", 1, True, {}, []]
+)
+def test_optimization_summary_schema_matches_recorded_study(
+    tmp_path: Path, optimization_root: Path, schema: Primitive
+) -> None:
+    manifest = read_record(optimization_root / "manifest.json")
+    recorded_schema = cast(PrimitiveMapping, manifest["identity_inputs"])[
+        "study_schema_version"
+    ]
+    path = optimization_root / "summary.json"
+    summary = read_record(path)
+    assert summary["study_schema_version"] == recorded_schema
+    if schema == "missing":
+        del summary["study_schema_version"]
+    else:
+        summary["study_schema_version"] = (
+            recorded_schema if schema == "current" else schema
+        )
+    write_json(path, summary)
+    before = path.read_bytes()
+    if schema == "current":
+        inspected = inspect_study(
+            StudyType.OPTIMIZATION, optimization_root, artifact_root=tmp_path
+        )
+        entry = next(
+            item
+            for item in inspected.index.entries
+            if Path(item.path).name == "summary.json"
+        )
+        assert entry.schema_version == recorded_schema
+        assert verify_artifacts(inspected.index, tmp_path).valid
+    else:
+        with pytest.raises(
+            ManifestError, match="optimization summary schema differs from study"
+        ):
+            inspect_study(
+                StudyType.OPTIMIZATION, optimization_root, artifact_root=tmp_path
+            )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_unfinished_optimization_omits_stale_summary_schema(
+    tmp_path: Path, optimization_root: Path, status: str
+) -> None:
+    path = trial_path(optimization_root, "failed")
+    trial = read_record(path)
+    trial.update(
+        status=status,
+        failure_category=None,
+        failure_type=None,
+        failure_message=None,
+        finished_at=None,
+    )
+    write_json(path, trial)
+    summary_path = optimization_root / "summary.json"
+    summary = read_record(summary_path)
+    summary["study_schema_version"] = "unsupported stale schema"
+    write_json(summary_path, summary)
+    before = {item: item.read_bytes() for item in (path, summary_path)}
+    inspected = inspect_study(
+        StudyType.OPTIMIZATION, optimization_root, artifact_root=tmp_path
+    )
+    assert "trial_counts" not in inspected.provenance.observations.to_primitive()
+    assert not any(
+        Path(item.path).name == "summary.json" for item in inspected.index.entries
+    )
+    assert verify_artifacts(inspected.index, tmp_path).valid
+    assert {item: item.read_bytes() for item in before} == before
 
 
 @pytest.mark.parametrize("filename", ["ranking.json", "stability.json"])

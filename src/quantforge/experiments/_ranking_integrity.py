@@ -167,6 +167,10 @@ def validate_optimization_summaries(
     Ordering and the recommendation are checked against existing metrics and
     stability records. Eligibility and neighbor statistics are not recalculated.
     """
+    if summary is not None and summary.get("study_schema_version") != configuration.get(
+        "study_schema_version"
+    ):
+        raise ManifestError("optimization summary schema differs from study")
     ranking = mapping(derived.get("ranking.json"))
     stability = mapping(derived.get("stability.json"))
     for name, document in (

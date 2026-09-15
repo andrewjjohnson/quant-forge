@@ -354,6 +354,9 @@ QF-6's advertised `study_schema_version` must match the version in its hashed
 `identity_inputs`; the manifest index binds that same recorded schema field.
 This applies to both directory and manifest-only inputs, preserving the original
 version rather than substituting the installed producer's version.
+An indexed QF-6 completion summary must retain that same `study_schema_version`;
+missing, malformed, or different versions are rejected. Stale summaries omitted
+during pending/running retries do not supply a schema contract for the index.
 QF-6 trial metrics, dataset, execution configuration
 and strategy provenance must match the linked
 QF-5 manifest, including its strategy-configuration hash and the grid's recorded
