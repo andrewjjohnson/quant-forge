@@ -5,12 +5,14 @@ import pytest
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.experiments import ManifestError, StudyType, inspect_study
+from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
 from tests.unit.experiments.test_grid_integrity import (
     build_grid_export,
     read_record,
     trial_path,
 )
+from tests.unit.prediction.test_prediction_window import WindowProvider, grid
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "excluded"])
@@ -102,4 +104,37 @@ def test_rehashed_prediction_combination_still_matches_its_grid_position(
     with pytest.raises(
         ManifestError, match="trial parameters do not match grid coordinates"
     ):
+        inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("window", [False, True])
+def test_rehashed_success_artifact_cannot_be_replaced_by_another_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, window: bool
+) -> None:
+    if window:
+        study = grid(tmp_path / "prediction", WindowProvider())
+        result = study.run()
+        root = tmp_path / "prediction" / result.study_id
+        block_research(monkeypatch)
+    else:
+        root = build_grid_export(tmp_path, StudyType.PARAMETER_STUDY, monkeypatch)
+    successes = [
+        path
+        for path in sorted((root / "trials").glob("*.json"))
+        if read_record(path)["status"] == "succeeded"
+    ]
+    assert len(successes) >= 2
+    target = read_record(successes[0])
+    foreign = read_record(successes[1])
+    artifact = read_record(root / cast(str, foreign["artifact_location"]))
+    artifact["grid_study_id"] = target["study_id"]
+    artifact["trial_id"] = target["trial_id"]
+    target["analysis"] = artifact["analysis"]
+    artifact["artifact_fingerprint"] = configuration_identity(
+        {key: value for key, value in artifact.items() if key != "artifact_fingerprint"}
+    )
+    target["artifact_fingerprint"] = artifact["artifact_fingerprint"]
+    write_json(root / cast(str, target["artifact_location"]), artifact)
+    write_json(successes[0], target)
+    with pytest.raises(ManifestError, match="result differs from its trial definition"):
         inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)

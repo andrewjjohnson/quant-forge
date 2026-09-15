@@ -198,6 +198,22 @@ def change_decision_provenance(
             }
         )
         decision["prediction_study_id"] = manifest["study_id"]
+        for row in cast(list[PrimitiveMapping], study["rows"]):
+            row["study_id"] = manifest["study_id"]
+            row["row_id"] = configuration_identity(
+                {
+                    "record_type": "prediction_study_row",
+                    "study_id": manifest["study_id"],
+                    "evaluation_id": cast(PrimitiveMapping, row["evaluation"])[
+                        "evaluation_id"
+                    ],
+                    "outcome_id": cast(PrimitiveMapping, row["outcome"])["outcome_id"],
+                    "signal": {
+                        "features": row["features"],
+                        "prediction": row["prediction"],
+                    },
+                }
+            )
     outer = cast(PrimitiveMapping, window["manifest"])
     outer["window_result_id"] = configuration_identity(
         {"window_id": outer["window_id"], "decisions": window["decisions"]}

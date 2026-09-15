@@ -4,6 +4,7 @@ from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_row_integrity import validate_prediction_row
 
 
 def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
@@ -23,7 +24,7 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
 
 
 def validate_prediction_rows(manifest: PrimitiveMapping, rows: object) -> None:
-    """Reconcile stored row counts; do not generate outcomes or evaluate rows."""
+    """Check row counts and provenance without generating or evaluating results."""
     if not isinstance(rows, list) or any(
         not isinstance(row, dict) for row in cast(list[object], rows)
     ):
@@ -43,6 +44,12 @@ def validate_prediction_rows(manifest: PrimitiveMapping, rows: object) -> None:
         raise ManifestError(
             "prediction record counts are inconsistent with result rows"
         )
+    identifiers = [
+        validate_prediction_row(manifest, mapping(row))
+        for row in cast(list[object], rows)
+    ]
+    if len(set(identifiers)) != len(identifiers):
+        raise ManifestError("duplicate prediction row identity")
 
 
 def validate_backtest_identity(manifest: PrimitiveMapping) -> None:

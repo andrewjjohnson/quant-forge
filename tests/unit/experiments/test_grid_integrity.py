@@ -290,12 +290,13 @@ def test_optimization_ranking_artifact_is_integrity_checked(
     assert not verify_artifacts(bundle.index, tmp_path).valid
 
 
-def test_completed_optimization_cannot_omit_ranking_artifact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("name", ["ranking", "stability"])
+def test_completed_optimization_cannot_omit_derived_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     path = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
-    (path / "ranking.json").unlink()
-    with pytest.raises(ManifestError, match="ranking"):
+    (path / f"{name}.json").unlink()
+    with pytest.raises(ManifestError, match=name):
         inspect_study(StudyType.OPTIMIZATION, path, artifact_root=tmp_path)
 
 

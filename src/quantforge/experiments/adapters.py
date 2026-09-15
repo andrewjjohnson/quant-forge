@@ -17,11 +17,15 @@ from quantforge.experiments._grid_integrity import (
     validate_trial_status,
 )
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
+from quantforge.experiments._prediction_trial_integrity import (
+    validate_prediction_trial_result,
+)
 from quantforge.experiments._producer_integrity import (
     validate_backtest_identity,
     validate_prediction_identity,
     validate_prediction_rows,
 )
+from quantforge.experiments._ranking_integrity import validate_optimization_summaries
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
@@ -370,14 +374,13 @@ def inspect_study(
 
     # Index known producer layouts only, not arbitrary neighboring files.
     if source.is_dir():
-        if (
-            study_type is StudyType.OPTIMIZATION
-            and (source / "summary.json").is_file()
-            and not (source / "ranking.json").is_file()
-        ):
-            raise ManifestError(
-                "completed optimization is missing its ranking artifact"
-            )
+        optimization_summaries: dict[str, PrimitiveMapping] = {}
+        if study_type is StudyType.OPTIMIZATION and (source / "summary.json").is_file():
+            for name in ("ranking", "stability"):
+                if not (source / f"{name}.json").is_file():
+                    raise ManifestError(
+                        f"completed optimization is missing its {name} artifact"
+                    )
         if study_type is StudyType.BACKTEST:
             from quantforge.backtesting.export import validate_backtest_result_artifact
 
@@ -404,6 +407,7 @@ def inspect_study(
                             "optimization summary belongs to another study"
                         )
                     bindings = {summary_base + "/study_id": producer_id}
+                    optimization_summaries[path.name] = owned_summary
                 entry = add(path, category, path.name, bindings=bindings)
                 edges.append(
                     ArtifactRelationship(
@@ -522,6 +526,8 @@ def inspect_study(
                             validate_prediction_rows(
                                 prediction_manifest, prediction.get("rows")
                             )
+                        validate_prediction_trial_coordinates(trial, configuration)
+                        validate_prediction_trial_result(trial, artifact, configuration)
                         entry = add(
                             artifact_path,
                             ArtifactType.PREDICTION_RESULT,
@@ -540,8 +546,12 @@ def inspect_study(
             for trial in trial_records:
                 if study_type is StudyType.OPTIMIZATION:
                     validate_trial_coordinates(trial, configuration)
-                else:
+                elif trial.get("status") != "succeeded":
                     validate_prediction_trial_coordinates(trial, configuration)
+            if study_type is StudyType.OPTIMIZATION and optimization_summaries:
+                validate_optimization_summaries(
+                    configuration, trial_records, summary, optimization_summaries
+                )
     elif "rows" in container or "decisions" in container:
         key = "rows" if "rows" in container else "decisions"
         category = (

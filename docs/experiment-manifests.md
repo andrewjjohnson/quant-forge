@@ -156,8 +156,12 @@ QF-11 study IDs are verified against the original engine, market data, complete
 study configuration and optional prediction context. When rows are available,
 their length must match `labeled_rows`, and `generated_predictions` must equal
 `labeled_rows + unavailable_outcomes`; all three counts must be nonnegative
-integers. Manifest-only inputs retain producer-declared counts without asserting
-row verification. QF-5 run IDs are verified against their documented market-data
+integers. Each row must reference that study and dataset, match the recorded
+rule/outcome/evaluator metadata, and retain valid outcome, evaluation and row
+identities. Duplicate row identities are rejected. These checks hash stored
+fields; they do not regenerate predictions, labels or evaluations. Manifest-only
+inputs retain producer-declared counts without asserting row verification.
+QF-5 run IDs are verified against their documented market-data
 reference, bar fingerprint, strategy and execution inputs, including the strategy
 configuration hash. Full export metadata, such as initiation time and warm-up
 diagnostics, does not become a new run-ID input.
@@ -169,10 +173,18 @@ including any embedded summary. Counts must be nonnegative integers. Directory
 inputs retain declared row counts without loading CSV or Parquet into research
 objects.
 
-Completed QF-6 exports must include `ranking.json`. It is indexed as a required
-parameter-summary artifact, so missing files and changed ranking content fail
-integrity verification. Both `ranking.json` and `stability.json` must declare the
+Completed QF-6 exports must include `ranking.json` and `stability.json`. They are
+indexed as required artifacts, so missing files and changed content fail integrity
+verification. Both `ranking.json` and `stability.json` must declare the
 inspected study's ID; that ownership is also retained as an index metadata binding.
+Their configurations must match the study and summary. All ranking and stability
+entries must reference unique compatible successful trials, including entries
+beyond the summary's top ten. Eligible and ineligible lists must cover the saved
+successful trials; stability must cover the eligible list. Stored objective
+values, ranks, counts, top-ten projections and selected trial references must
+agree across the artifacts, trial records and summary. Empty eligible lists are
+valid. Inspection compares persisted metadata and metrics without rerunning
+eligibility, ranking, stability statistics or recommendation rules.
 
 For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
 trial-file total and status counts against that summary. Missing or extra trial
@@ -201,6 +213,12 @@ QF-32 uses its own factory/combination/trial identity format and checks the reco
 trial definition, backend, dataset-family fingerprint and indicator configuration
 IDs. Historical schema versions and excluded candidates' null definitions are
 preserved; prediction factories and candidate generation are never invoked.
+Successful plain-prediction and window artifacts must also match the trial's
+recorded component definitions, context requirements, feature configuration and
+result schema, and the grid's dataset and backend. Window results additionally
+match the grid's schedule, context environment, dataset family and window engine.
+Each artifact's prediction-study/window-result reference must match its nested
+result. Rehashing a result from another candidate does not establish that binding.
 
 QF-42 inspection requires the complete result snapshot, including decisions.
 It verifies the result identity over the recorded window ID and ordered decisions,
