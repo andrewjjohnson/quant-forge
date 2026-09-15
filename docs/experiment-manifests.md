@@ -206,6 +206,10 @@ with recorded capital, costs, corporate-action policies, snapshot and optional
 evaluation interval. These checks derive only fixed metadata; no benchmark,
 fills or performance metrics are calculated, and absent historical evaluation
 intervals remain absent.
+The shared nested-export indexer applies the same benchmark contract to QF-6
+trials and QF-39/QF-40 fold and holdout backtests. Refreshing file hashes,
+captured export fingerprints or enclosing record hashes cannot bypass this
+reconciliation, including optimization directories without a final summary.
 
 QF-7/QF-29 dataset IDs must match the producer's hash of its complete recorded
 `configuration`. Result JSON with rows must reconcile `candidate_count` and every
