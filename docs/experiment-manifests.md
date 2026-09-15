@@ -228,12 +228,12 @@ QF-7/QF-29 dataset IDs must match the producer's hash of its complete recorded
 `configuration`. Result JSON with rows must reconcile `candidate_count` and every
 accepted/rejected/blocked/overlapping count against the rows' fixed dispositions,
 including any embedded summary. Counts must be nonnegative integers. Directory
-inputs retain declared row counts without loading CSV or Parquet into research
-objects. Their required `summary.json` must exactly match the manifest's
+inputs validate persisted `rows/*.json` checkpoints without generating features
+or outcome labels. Their required `summary.json` must exactly match the manifest's
 `record_counts`: every disposition count is a nonnegative integer and their sum
 equals `candidate_count`. The index binds these summary counts to their stored
 JSON fields. Equal totals with redistributed dispositions are still rejected.
-Direct result rows additionally bind dataset/source fingerprints, candidate-rule
+Both direct result rows and directory checkpoints additionally bind dataset/source fingerprints, candidate-rule
 configuration, parameters, schema versions and namespace-specific prediction
 study references. Candidate/row IDs, unique ordered sessions and disposition
 evidence are verified. The schema must match the persisted feature/outcome
@@ -242,8 +242,18 @@ nullability. Directory schema metadata receives the same definition check.
 Every feature manifest, including directory inputs, requires one valid contributing
 prediction-study digest per configured outcome; rows are not needed to check this
 lineage declaration.
-These checks reuse producer row hashing and schema-value validation; they do not
-evaluate causal features or future outcomes.
+Directory inputs require the checkpoint directory, including for an empty dataset.
+Checkpoint filenames must equal their row IDs, and checkpoint counts must match
+the manifest. CSV and QF-29 Parquet bytes must equal the native producer serialization
+of these validated rows in session order, including headers, schema metadata and
+nulls. A neighboring Parquet file in a QF-7 export is not a producer artifact and
+is omitted. Every consumed checkpoint is indexed with its row/study binding;
+tables and summary entries reference those rows through `DERIVED_FROM` edges.
+The read-set check binds both checkpoints and table bytes through inspection.
+Parquet byte compatibility requires the historical dependency environment, as
+with the producer's completed-result loader. Inspection never rewrites exports.
+These checks reuse producer serialization, row hashing and schema-value
+validation; they do not evaluate causal features or future outcomes.
 
 Completed QF-6 exports must include `ranking.json` and `stability.json`. They are
 indexed as required artifacts, so missing files and changed content fail integrity
@@ -254,8 +264,10 @@ entries must reference unique compatible successful trials, including entries
 beyond the summary's top ten. Eligible and ineligible lists must cover the saved
 successful trials; stability must cover the eligible list. Stored objective
 values, ranks, counts, top-ten projections and selected trial references must
-agree across the artifacts, trial records and summary. Empty eligible lists are
-valid. Objective ranks must follow the configured direction, each configured
+agree across the artifacts, trial records and summary. The summary's
+`objective_distribution` must have exactly a nonnegative integer count and the
+minimum/maximum of the saved eligible objective values; empty eligible lists
+require count zero and null extrema. No objective metric is recalculated. Objective ranks must follow the configured direction, each configured
 tie breaker's metric/direction, then ascending combination ID. Undefined tie-break
 metrics sort last in either direction. Stability ranks must follow descending
 stored stability score, then objective rank and combination ID. The robust
@@ -495,6 +507,17 @@ A self-consistent replacement run cannot change those frozen inputs by retaining
 the original selection ID.
 These checks do not prepare/evaluate a holdout, rebuild membership
 or recompute the holdout summary; consumed state remains authoritative.
+For prediction holdouts, QF-40 now captures its already-computed summary in the
+artifact wrapper's `holdout_summary` extension (`schema_version: "1"`,
+`window_result_id`, `summary`). The existing `artifact_sha256` covers this evidence
+and binds it to the captured window. QF-9 requires the supported extension, matching
+window identity and exact top-level summary equality. This is a metadata export
+hook; the QF-40 calculation, QF-42 window, prediction rows, ledger state and outer
+result schema remain unchanged. A legacy prediction result without this extension
+reports `holdout prediction summary evidence is unavailable`; QF-9 neither infers
+its metrics nor writes a migration or reevaluates the holdout. Retain the historical
+producer/environment for legacy reproduction. The authoritative ledger continues
+to expose that lineage as consumed even when QF-9 cannot validate its result.
 Failed or absent folds stay failed or absent; stale files do not become OOS
 observations. No partition memberships are calculated again.
 
@@ -634,7 +657,7 @@ enclosing hashes so that consistency checks are exercised beyond hash mismatch.
 | --- | --- | --- |
 | QF-11 | Study/component IDs, dataset/parameter provenance, ordered unique signal sessions, warm-up, captured outcome horizons/fields/schemas, row/outcome/evaluation IDs and counts | Calendar metadata validation only; no labeling or evaluation |
 | QF-42 / nested QF-32 | Window/result/schedule identities and coverage, decision/context lineage and status, generated-signal provenance, distinct signal-to-row membership and unavailable outcomes | Reuses offline source/context checks; no context or indicator execution |
-| QF-7/QF-29 | Dataset/candidate/row IDs, source/rule/schema versions, prediction-study references, schema definitions/types, dispositions and matching manifest/directory-summary counts | Existing values are validated structurally; features and outcomes are not recalculated |
+| QF-7/QF-29 | Dataset/candidate/row IDs, source/rule/schema versions, prediction-study references, schema definitions/types, dispositions, counts and native CSV/Parquet equality with indexed checkpoints | Existing values are validated and serialized; features and outcomes are not recalculated |
 | QF-6/QF-32 grids | Coordinates, candidate/trial identity, status payloads, result bindings, recorded metrics, ranking/stability references, eligibility coverage/counts and summary projections; QF-6 CSVs match saved JSON records | No factory construction, candidate enumeration or research selection; native CSV serialization only |
 | QF-5 standalone / optimization / validation exports | Run provenance, original integrity sidecar, captured fold/holdout fingerprints, original schema versions and producing QF-5 run IDs on every backtest file | No execution or accounting |
 | QF-8/QF-39/QF-40 lineage | Captured source and fold state, selections, aggregates and permanent holdout-ledger state | No partition, aggregate or holdout computation |

@@ -246,6 +246,22 @@ def validate_optimization_summaries(
         previous_stability = stability_key
     if summary is None:
         return
+    distribution = mapping(summary.get("objective_distribution"))
+    objective_values = [_number(record["objective_value"]) for record in eligible]
+    if (
+        set(distribution) != {"count", "minimum", "maximum"}
+        or type(distribution.get("count")) is not int
+        or distribution["count"] != len(objective_values)
+        or any(
+            (
+                _number(distribution.get(key)) != extremum(objective_values)
+                if objective_values
+                else distribution.get(key) is not None
+            )
+            for key, extremum in (("minimum", min), ("maximum", max))
+        )
+    ):
+        raise ManifestError("optimization objective distribution differs from rankings")
     expected_counts = {
         "eligible": len(eligible),
         "ineligible_successful": len(ineligible),

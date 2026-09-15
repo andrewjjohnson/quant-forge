@@ -82,6 +82,7 @@ def block_research(monkeypatch: pytest.MonkeyPatch) -> None:
         ("quantforge.prediction.grid", "_stability"),
         ("quantforge.oos.prediction", "aggregate_prediction"),
         ("quantforge.oos.prediction", "summarize_prediction_observations"),
+        ("quantforge.oos.holdout", "summarize_prediction_observations"),
         ("quantforge.oos.backtest", "aggregate_backtest"),
         ("quantforge.oos.common", "configuration_stability"),
         ("quantforge.reporting.study_inspection", "build_study_inspection_report"),

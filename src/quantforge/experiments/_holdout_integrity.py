@@ -114,6 +114,19 @@ def validate_holdout_artifact(
             or market.get("bars_fingerprint") != membership.get("bounded_data_sha256")
         ):
             raise ManifestError("holdout prediction differs from requested partition")
+        captured = artifact.get("holdout_summary")
+        if captured is None:
+            raise ManifestError("holdout prediction summary evidence is unavailable")
+        captured = mapping(captured)
+        if (
+            captured.get("schema_version") != "1"
+            or captured.get("window_result_id") != manifest.get("window_result_id")
+            or configuration_identity({"summary": result.get("summary")})
+            != configuration_identity({"summary": mapping(captured.get("summary"))})
+        ):
+            raise ManifestError(
+                "holdout prediction summary differs from captured evidence"
+            )
     elif (
         artifact.get("kind") == "backtest" and adapter.get("adapter") == "qf39_backtest"
     ):

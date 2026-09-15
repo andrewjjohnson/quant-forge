@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import Primitive, PrimitiveMapping
 from quantforge.experiments import ManifestError, StudyType, inspect_study
 from quantforge.optimization import (
     GridSearchStudy,
@@ -104,8 +104,9 @@ def test_summary_selection_references_must_match_derived_records(
         inspect_study(StudyType.OPTIMIZATION, optimization_root, artifact_root=tmp_path)
 
 
+@pytest.mark.parametrize("invalid_field", [None, "minimum", "maximum", "count"])
 def test_all_ineligible_trials_preserve_empty_rankings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_field: str | None
 ) -> None:
     study = GridSearchStudy(
         _dataset(),
@@ -121,6 +122,19 @@ def test_all_ineligible_trials_preserve_empty_rankings(
     assert ranking["eligible_rankings"] == []
     assert len(cast(list[PrimitiveMapping], ranking["ineligible_trials"])) == 3
     inspect_study(StudyType.OPTIMIZATION, study.study_path, artifact_root=tmp_path)
+    summary = read_record(study.study_path / "summary.json")
+    assert summary["objective_distribution"] == {
+        "count": 0,
+        "minimum": None,
+        "maximum": None,
+    }
+    if invalid_field is not None:
+        cast(PrimitiveMapping, summary["objective_distribution"])[invalid_field] = 1
+        write_json(study.study_path / "summary.json", summary)
+        with pytest.raises(ManifestError, match="objective distribution"):
+            inspect_study(
+                StudyType.OPTIMIZATION, study.study_path, artifact_root=tmp_path
+            )
 
 
 def test_trial_references_beyond_top_ten_are_verified(
@@ -151,3 +165,28 @@ def test_trial_references_beyond_top_ten_are_verified(
     write_json(study.study_path / "ranking.json", ranking)
     with pytest.raises(ManifestError, match=r"optimization summary.*trial references"):
         inspect_study(StudyType.OPTIMIZATION, study.study_path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("count", 999),
+        ("count", True),
+        ("count", "3"),
+        ("count", 3.0),
+        ("minimum", "-999"),
+        ("maximum", "999"),
+        ("minimum", None),
+        ("maximum", None),
+        ("minimum", "NaN"),
+        ("maximum", True),
+    ],
+)
+def test_objective_distribution_matches_saved_eligible_values(
+    tmp_path: Path, optimization_root: Path, field: str, invalid: Primitive
+) -> None:
+    document = read_record(optimization_root / "summary.json")
+    cast(PrimitiveMapping, document["objective_distribution"])[field] = invalid
+    write_json(optimization_root / "summary.json", document)
+    with pytest.raises(ManifestError):
+        inspect_study(StudyType.OPTIMIZATION, optimization_root, artifact_root=tmp_path)

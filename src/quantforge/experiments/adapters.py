@@ -382,6 +382,7 @@ def inspect_study(
             dataset_entry.artifact_id,
         )
     )
+    feature_schema: PrimitiveMapping = {}
     # Only provenance is copied. Research result rows/metrics stay in their files.
     if study_type is StudyType.FEATURE_DATASET:
         if source.is_dir():
@@ -413,6 +414,7 @@ def inspect_study(
 
     # Index known producer layouts only, not arbitrary neighboring files.
     if source.is_dir():
+        feature_rows: list[ArtifactEntry] = []
         optimization_summaries: dict[str, PrimitiveMapping] = {}
         summary: PrimitiveMapping | None = None
         if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
@@ -440,8 +442,35 @@ def inspect_study(
                 required_names.add("features.parquet")
             if any(not (source / name).is_file() for name in required_names):
                 raise ManifestError("completed feature dataset is missing an artifact")
+            from quantforge.experiments._feature_table_integrity import (
+                validate_feature_tables,
+            )
+
+            for path in validate_feature_tables(
+                source, document, feature_schema, reads
+            ):
+                row_entry = add(
+                    path,
+                    ArtifactType.FEATURE_DATASET,
+                    "rows/" + path.stem,
+                    bindings={"/row_id": path.stem, "/study_id": producer_id},
+                )
+                feature_rows.append(row_entry)
+                edges.append(
+                    ArtifactRelationship(
+                        row_entry.artifact_id,
+                        RelationshipType.CONFIGURED_BY,
+                        config_entry.artifact_id,
+                    )
+                )
         for path in sorted(source.iterdir()):
             if not path.is_file() or path.name in {"manifest.json", "schema.json"}:
+                continue
+            if (
+                study_type is StudyType.FEATURE_DATASET
+                and path.name == "features.parquet"
+                and document["engine_version"] != "35"
+            ):
                 continue
             if (
                 study_type is StudyType.OPTIMIZATION
@@ -483,6 +512,14 @@ def inspect_study(
                     bindings = {summary_base + "/study_id": producer_id}
                     optimization_summaries[path.name] = owned_summary
                 entry = add(path, category, path.name, bindings=bindings)
+                edges.extend(
+                    ArtifactRelationship(
+                        entry.artifact_id,
+                        RelationshipType.DERIVED_FROM,
+                        row.artifact_id,
+                    )
+                    for row in feature_rows
+                )
                 edges.append(
                     ArtifactRelationship(
                         entry.artifact_id,

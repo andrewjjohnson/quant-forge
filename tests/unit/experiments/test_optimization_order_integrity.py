@@ -115,6 +115,11 @@ def producer_documents(
     }
     summary: PrimitiveMapping = {
         **configuration,
+        "objective_distribution": {
+            "count": len(ranking.rankings),
+            "minimum": str(min(item.objective_value for item in ranking.rankings)),
+            "maximum": str(max(item.objective_value for item in ranking.rankings)),
+        },
         "counts": {
             "eligible": len(ranking.rankings),
             "ineligible_successful": len(ranking.ineligible_trials),

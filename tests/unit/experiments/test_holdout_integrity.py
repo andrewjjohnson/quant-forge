@@ -34,10 +34,11 @@ from tests.unit.oos.conftest import complete_study
 @pytest.mark.parametrize(
     "change", ["metric", "missing_metric", "extra_metric", "empty", "null"]
 )
-def test_consumed_backtest_summary_must_match_captured_performance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+@pytest.mark.parametrize("prediction", [False, True], ids=["backtest", "prediction"])
+def test_consumed_summary_must_match_captured_performance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str, prediction: bool
 ) -> None:
-    completed = complete_study(tmp_path, prediction=False)
+    completed = complete_study(tmp_path, prediction=prediction)
     source = completed.source
     ledger = HoldoutLedger.create(tmp_path / "ledger")
     ledger.reserve(source)
@@ -56,10 +57,11 @@ def test_consumed_backtest_summary_must_match_captured_performance(
         source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
     )
     summary = cast(PrimitiveMapping, result["summary"])
+    metric = "accuracy" if prediction else "total_return"
     if change == "metric":
-        summary["total_return"] = "999"
+        summary[metric] = "999"
     elif change == "missing_metric":
-        del summary["total_return"]
+        del summary[metric]
     elif change == "extra_metric":
         summary["foreign_metric"] = "999"
     else:
@@ -69,7 +71,7 @@ def test_consumed_backtest_summary_must_match_captured_performance(
     state = ledger.state(source)
     assert state.state.value == "consumed"
     assert state.result_reference != consumed.result_reference
-    with pytest.raises(ManifestError, match="holdout backtest summary"):
+    with pytest.raises(ManifestError, match=r"holdout (backtest|prediction) summary"):
         inspect_validation(
             source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
         )
@@ -308,3 +310,45 @@ def test_consumed_prediction_rejects_rehashed_foreign_or_inconsistent_window(
         inspect_validation(
             source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
         )
+
+
+@pytest.mark.parametrize("change", ["missing", "version", "window", "summary"])
+def test_prediction_holdout_requires_bound_captured_summary_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    completed = complete_study(tmp_path, prediction=True)
+    source = completed.source
+    ledger = HoldoutLedger.create(tmp_path / "ledger")
+    ledger.reserve(source)
+    consumed = ledger.consume(
+        HoldoutEvaluation.prepare(
+            source, completed.evaluator, selection_fold_id=source.folds[-1].fold_id
+        ),
+        run_id="captured-summary",
+    )
+    assert consumed.result_reference is not None
+    path = ledger.root / cast(str, consumed.result_reference.to_primitive()["path"])
+    result = read_record(path)
+    artifact = cast(PrimitiveMapping, result["artifact"])
+    captured = cast(PrimitiveMapping, artifact["holdout_summary"])
+    assert captured["summary"] == result["summary"]
+    assert captured["window_result_id"] == artifact["result_id"]
+    if change == "missing":
+        del artifact["holdout_summary"]
+    elif change == "version":
+        captured["schema_version"] = "future"
+    elif change == "window":
+        captured["window_result_id"] = "0" * 64
+    else:
+        cast(PrimitiveMapping, captured["summary"])["accuracy"] = "999"
+    result["artifact_sha256"] = configuration_identity(artifact)
+    write_record(path, result)
+    state = ledger.state(source)
+    assert state.state.value == "consumed"
+    block_research(monkeypatch)
+    with pytest.raises(ManifestError, match="holdout prediction summary"):
+        inspect_validation(
+            source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
+        )
+    assert ledger.state(source) == state
+    assert read_record(path) == result

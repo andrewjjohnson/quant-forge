@@ -35,6 +35,12 @@ definition contract version 2. The version participates in grid identity, so new
 grids and trials cannot silently reuse legacy stores. QF-9 reads version-1
 definitions only when their saved declarations supply the required contract;
 it does not infer missing historical values or rewrite producer files.
+A QF-40 metadata hook also retains the already-computed prediction holdout
+summary beside its captured window under the existing artifact hash. QF-9 compares
+that evidence without invoking the summarizer; legacy results without it are
+explicitly unavailable for result validation and remain consumed in the ledger.
+Feature tables reuse the existing producer serializers over validated saved row
+checkpoints, which are now indexed alongside the tables.
 Backtests retain costs
 and timing; predictions and features need no trading metrics. A manifest links
 results to validation evidence without accessing future prices or recomputing

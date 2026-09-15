@@ -2471,23 +2471,32 @@ def _empty_dataset_study_ids(
 
 
 def _render_csv(result: SignalFeatureDatasetResult) -> str:
+    return _render_csv_rows(result.schema, result.rows)
+
+
+def _render_csv_rows(
+    schema: SignalFeatureSchema, rows: tuple[SignalFeatureRow, ...]
+) -> str:
+    """Serialize existing checkpoint rows without generating features or outcomes."""
     stream = io.StringIO(newline="")
-    writer = csv.DictWriter(
-        stream, fieldnames=result.schema.column_names, lineterminator="\n"
-    )
+    writer = csv.DictWriter(stream, fieldnames=schema.column_names, lineterminator="\n")
     writer.writeheader()
-    for row in result.rows:
+    for row in rows:
         primitive = row.to_primitive()
         writer.writerow(
-            {
-                name: _csv_value(primitive.get(name))
-                for name in result.schema.column_names
-            }
+            {name: _csv_value(primitive.get(name)) for name in schema.column_names}
         )
     return stream.getvalue()
 
 
 def _render_parquet(result: SignalFeatureDatasetResult) -> bytes:
+    return _render_parquet_rows(result.dataset_id, result.schema, result.rows)
+
+
+def _render_parquet_rows(
+    dataset_id: str, schema: SignalFeatureSchema, rows: tuple[SignalFeatureRow, ...]
+) -> bytes:
+    """Serialize existing checkpoint rows with the native Parquet contract."""
     arrow_fields = [
         pa.field(
             field.name,
@@ -2500,10 +2509,10 @@ def _render_parquet(result: SignalFeatureDatasetResult) -> bytes:
             ),
             nullable=field.nullable,
         )
-        for field in result.schema.fields
+        for field in schema.fields
     ]
     schema_metadata = json.dumps(
-        result.schema.to_primitive(),
+        schema.to_primitive(),
         ensure_ascii=True,
         allow_nan=False,
         separators=(",", ":"),
@@ -2512,18 +2521,18 @@ def _render_parquet(result: SignalFeatureDatasetResult) -> bytes:
     arrow_schema = pa.schema(
         arrow_fields,
         metadata={
-            b"quantforge_dataset_id": result.dataset_id.encode("ascii"),
+            b"quantforge_dataset_id": dataset_id.encode("ascii"),
             b"quantforge_schema": schema_metadata.encode("utf-8"),
         },
     )
-    rows = [
+    primitive_rows = [
         {
             name: _parquet_value(row.to_primitive().get(name))
-            for name in result.schema.column_names
+            for name in schema.column_names
         }
-        for row in result.rows
+        for row in rows
     ]
-    table = pa.Table.from_pylist(rows, schema=arrow_schema)
+    table = pa.Table.from_pylist(primitive_rows, schema=arrow_schema)
     sink = pa.BufferOutputStream()
     pq.write_table(
         table,
