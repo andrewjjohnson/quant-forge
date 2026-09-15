@@ -351,7 +351,15 @@ with no failed/excluded trials or foreign combination IDs. Eligible counts,
 configured objective names, values from saved trial analyses, consecutive ranks,
 declared objective order and combination-ID tie breaks must agree. Stability
 references must cover the ranked trials in objective order and retain their ranks
-and objective values. Ineligible references require recorded reasons; an empty
+and objective values. Each stability record must have exactly the fields emitted
+by `PredictionStabilitySummary`, with nonnegative integer neighbor counts,
+finite decimal strings (or null for optional statistics), boolean flags, a known
+classification and a nullable nonempty isolation reason. Ranks must be positive,
+dispersion nonnegative, and constraint fractions within `[0, 1]`. Eligible-neighbor
+counts must match the stored objective array and not exceed valid-neighbor counts;
+an isolated peak requires a reason. These checks validate recorded types and
+internal consistency without computing neighbors, statistics or classifications.
+Ineligible references require recorded reasons; an empty
 ranking with all successful trials ineligible remains valid. These checks do not
 reapply eligibility constraints or recalculate neighborhood/stability statistics.
 QF-6 inspection supports study schema `"1"`, matching the producer's explicit

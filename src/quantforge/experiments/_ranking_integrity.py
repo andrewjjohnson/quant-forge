@@ -13,11 +13,17 @@ def validate_prediction_summary(
     summary: PrimitiveMapping,
 ) -> None:
     """Bind QF-32 selections to existing analyses without rerunning selection."""
+    from quantforge.experiments._prediction_stability_integrity import (
+        validate_prediction_stability,
+    )
+
     if summary.get("schema_version") != configuration.get("schema_version"):
         raise ManifestError("prediction summary schema differs from study")
     eligible = _records(summary.get("rankings"))
     ineligible = _records(summary.get("ineligible_trials"))
     stable = _records(summary.get("stability"))
+    for record in stable:
+        validate_prediction_stability(record)
     by_id = {text(trial.get("trial_id")): trial for trial in trials}
     eligible_by_id = _trial_references(eligible, by_id)
     ineligible_by_id = _trial_references(ineligible, by_id)
