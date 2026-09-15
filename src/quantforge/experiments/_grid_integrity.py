@@ -195,10 +195,52 @@ def validate_trial_status(study_type: StudyType, trial: PrimitiveMapping) -> Non
 
 
 def validate_trial_counts(
-    study_type: StudyType, summary: PrimitiveMapping, statuses: list[str]
+    study_type: StudyType,
+    manifest: PrimitiveMapping,
+    configuration: PrimitiveMapping,
+    trials: list[PrimitiveMapping],
+    summary: PrimitiveMapping | None,
 ) -> None:
-    """Reconcile persisted trial coverage with the producer's summary."""
+    """Bind complete exports to the Cartesian size without enumerating trials."""
+    axes = mapping(configuration.get("search_space")).get("parameters")
+    if not isinstance(axes, list) or not axes:
+        raise ManifestError("Cartesian search axes are invalid")
+    total = 1
+    names: set[str] = set()
+    for raw_axis in axes:
+        axis = mapping(raw_axis)
+        name = text(axis.get("name"))
+        values = axis.get("values")
+        if name in names or not isinstance(values, list) or not values:
+            raise ManifestError("Cartesian search axes are invalid")
+        names.add(name)
+        total *= len(values)
+    if summary is not None and len(trials) != total:
+        raise ManifestError("Cartesian trial coverage differs from completed summary")
+    positions = [trial.get("combination_index") for trial in trials]
+    if any(
+        type(position) is not int or not 0 <= position < total for position in positions
+    ):
+        raise ManifestError("Cartesian trial coordinates are invalid")
+    if len(set(positions)) != len(positions):
+        raise ManifestError("Cartesian trial coordinates must be unique")
+    declared: dict[str, int] = {}
+    if study_type is StudyType.OPTIMIZATION:
+        recorded = mapping(manifest.get("combination_counts"))
+        for key in ("total_cartesian", "valid", "excluded"):
+            count = recorded.get(key)
+            if type(count) is not int or count < 0:
+                raise ManifestError("Cartesian manifest counts are invalid")
+            declared[key] = count
+        if (
+            declared["total_cartesian"] != total
+            or declared["valid"] + declared["excluded"] != total
+        ):
+            raise ManifestError("Cartesian manifest counts differ from search space")
+    if summary is None:
+        return
     counts = mapping(summary.get("counts"))
+    statuses = [text(trial.get("status")) for trial in trials]
     observed = Counter(statuses)
     if set(observed) - {status.value for status in TrialStatus}:
         raise ManifestError("trial status is incompatible with grid summary")
@@ -211,6 +253,13 @@ def validate_trial_counts(
         if observed[TrialStatus.PENDING] or observed[TrialStatus.RUNNING]:
             raise ManifestError("unfinished trial is incompatible with grid summary")
     else:
+        if (
+            type(counts.get("total_cartesian_combinations")) is not int
+            or counts["total_cartesian_combinations"] != total
+            or declared["excluded"] != observed[TrialStatus.EXCLUDED]
+            or declared["valid"] != total - observed[TrialStatus.EXCLUDED]
+        ):
+            raise ManifestError("Cartesian summary and manifest counts disagree")
         expected.update(
             recorded_trials=len(statuses),
             successful=observed[TrialStatus.SUCCEEDED],

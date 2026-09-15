@@ -38,6 +38,10 @@ from quantforge.experiments._ranking_integrity import (
     validate_optimization_summaries,
     validate_prediction_summary,
 )
+from quantforge.experiments._validation_attachment import (
+    captured_validation_result,
+    merge_validation_artifacts,
+)
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
@@ -70,7 +74,7 @@ def create_manifest(
     relationships: tuple[ArtifactRelationship, ...] = (),
     validation: StudyArtifacts | None = None,
 ) -> ExperimentManifest:
-    """Assemble snapshots and references; validation is file integrity only."""
+    """Assemble indexed results and attach only their captured validation evidence."""
     provenance = study.provenance
     entries = study.index.entries + additional_artifacts
     edges = study.index.relationships + relationships
@@ -83,6 +87,9 @@ def create_manifest(
             raise ManifestError(
                 "validation attachment must contain validation evidence"
             )
+        captured = captured_validation_result(
+            provenance, validation.provenance, validation.index
+        )
         provenance = StudyProvenance(
             provenance.study_type,
             provenance.producer_study_id,
@@ -99,8 +106,6 @@ def create_manifest(
                 }
             ),
         )
-        entries += validation.index.entries
-        edges += validation.index.relationships
         plans = [
             entry
             for entry in validation.index.entries
@@ -120,6 +125,15 @@ def create_manifest(
             for configuration in configurations
             for plan in plans
         )
+        edges += tuple(
+            ArtifactRelationship(
+                captured.artifact_id,
+                RelationshipType.VALIDATES,
+                configuration.artifact_id,
+            )
+            for configuration in configurations
+        )
+        entries, edges = merge_validation_artifacts(entries, edges, validation.index)
     return ExperimentManifest(
         provenance,
         execution,
@@ -467,7 +481,6 @@ def inspect_study(
                 )
             trials: list[str] = []
             trial_records: list[PrimitiveMapping] = []
-            statuses: list[str] = []
             for path in sorted((source / "trials").glob("*.json")):
                 trial, _ = read_producer_record(path)
                 trial_id = text(trial["trial_id"])
@@ -476,7 +489,6 @@ def inspect_study(
                 validate_trial_status(study_type, trial)
                 trials.append(trial_id)
                 trial_records.append(trial)
-                statuses.append(text(trial.get("status")))
                 trial_entry = add(
                     path,
                     ArtifactType.TRIAL_RESULT,
@@ -577,8 +589,9 @@ def inspect_study(
                             )
                         )
             observations["trial_ids"] = list(trials)
-            if summary is not None:
-                validate_trial_counts(study_type, summary, statuses)
+            validate_trial_counts(
+                study_type, document, configuration, trial_records, summary
+            )
             for trial in trial_records:
                 if study_type is StudyType.OPTIMIZATION:
                     validate_trial_coordinates(trial, configuration)

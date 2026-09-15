@@ -15,6 +15,7 @@ from quantforge.experiments import (
     inspect_study,
     verify_artifacts,
 )
+from quantforge.experiments._grid_integrity import validate_trial_counts
 from quantforge.optimization import (
     CategoricalValues,
     FloatValues,
@@ -265,6 +266,91 @@ def test_intact_grid_exports_remain_indexable(
     study_type, path = grid_export
     bundle = inspect_study(study_type, path, artifact_root=tmp_path)
     assert verify_artifacts(bundle.index, tmp_path).valid
+
+
+@pytest.mark.parametrize("status", ["failed", "excluded"])
+@pytest.mark.parametrize("rewrite_declared_total", [False, True])
+def test_complete_grid_cannot_drop_trials_by_rewriting_summary_counts(
+    grid_export: tuple[StudyType, Path],
+    tmp_path: Path,
+    status: str,
+    rewrite_declared_total: bool,
+) -> None:
+    study_type, root = grid_export
+    trial_path(root, status).unlink()
+    summary = read_record(root / "summary.json")
+    counts = cast(PrimitiveMapping, summary["counts"])
+    counts[status] = cast(int, counts[status]) - 1
+    total_field = (
+        "recorded_trials" if study_type is StudyType.OPTIMIZATION else "trials"
+    )
+    counts[total_field] = cast(int, counts[total_field]) - 1
+    if rewrite_declared_total and study_type is StudyType.OPTIMIZATION:
+        counts["total_cartesian_combinations"] = counts["recorded_trials"]
+        manifest = read_record(root / "manifest.json")
+        declared = cast(PrimitiveMapping, manifest["combination_counts"])
+        declared["total_cartesian"] = counts["recorded_trials"]
+        field = "excluded" if status == "excluded" else "valid"
+        declared[field] = cast(int, declared[field]) - 1
+        write_json(root / "manifest.json", manifest)
+    write_json(root / "summary.json", summary)
+    with pytest.raises(ManifestError, match="Cartesian"):
+        inspect_study(study_type, root, artifact_root=tmp_path)
+
+
+def test_incomplete_grid_without_summary_keeps_only_observed_trials(
+    grid_export: tuple[StudyType, Path], tmp_path: Path
+) -> None:
+    study_type, root = grid_export
+    trial_path(root, "failed").unlink()
+    (root / "summary.json").unlink()
+    # An interrupted study has no final ranking/stability export either.
+    for name in ("ranking.json", "stability.json"):
+        (root / name).unlink(missing_ok=True)
+    bundle = inspect_study(study_type, root, artifact_root=tmp_path)
+    observations = bundle.provenance.observations.to_primitive()
+    assert "trial_counts" not in observations
+    assert len(cast(list[Primitive], observations["trial_ids"])) == len(
+        list((root / "trials").glob("*.json"))
+    )
+
+
+def test_grid_count_cannot_hide_a_repeated_cartesian_position(
+    grid_export: tuple[StudyType, Path],
+) -> None:
+    study_type, root = grid_export
+    manifest = read_record(root / "manifest.json")
+    configuration = (
+        cast(PrimitiveMapping, manifest["identity_inputs"])
+        if study_type is StudyType.OPTIMIZATION
+        else manifest
+    )
+    trials = [read_record(path) for path in sorted((root / "trials").glob("*.json"))]
+    trials[0]["combination_index"] = trials[1]["combination_index"]
+    with pytest.raises(
+        ManifestError, match="Cartesian trial coordinates must be unique"
+    ):
+        validate_trial_counts(
+            study_type,
+            manifest,
+            configuration,
+            trials,
+            read_record(root / "summary.json"),
+        )
+
+
+@pytest.mark.parametrize("field", ["total_cartesian", "valid", "excluded"])
+@pytest.mark.parametrize("invalid", [True, -1])
+def test_optimization_cartesian_declarations_require_nonnegative_integer_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, invalid: Primitive
+) -> None:
+    root = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    path = root / "manifest.json"
+    manifest = read_record(path)
+    cast(PrimitiveMapping, manifest["combination_counts"])[field] = invalid
+    write_json(path, manifest)
+    with pytest.raises(ManifestError, match="Cartesian manifest counts"):
+        inspect_study(StudyType.OPTIMIZATION, root, artifact_root=tmp_path)
 
 
 @pytest.mark.parametrize("change", ["delete", "modify"])

@@ -230,7 +230,15 @@ reclassify trials, sort/rewrite artifacts or invoke the ranking/stability engine
 For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
 trial-file total and status counts against that summary. Missing or extra trial
 files and contradictory counts are rejected, including failed and excluded
-trials. Without a summary, trial counts remain unknown and the index describes
+trials. A final summary requires one persisted trial at every Cartesian position:
+the total is the product of the serialized axis lengths, and positions must be
+unique and bounded. QF-6's manifest total/valid/excluded declarations and summary
+total must agree with that grid and the recorded statuses. Deleting failure or
+exclusion evidence cannot be hidden by decrementing summary or manifest counts.
+This counts axes and checks saved coordinates without enumerating candidates or
+reapplying constraints. Without a summary, incomplete grids remain indexable,
+positions must still be unique and bounded, and final trial counts remain unknown.
+The index describes
 only the persisted records; it does not assert completion. Successful trials
 must retain their result reference. Failed trials require nonempty diagnostic
 type and message (plus QF-6's failure category); excluded trials require their
@@ -355,10 +363,22 @@ write_manifest(
     artifact_root=root,
 )
 
-# An explicit attachment binds validation configuration/lineage into a
-# prediction or backtest experiment identity and preserves the same index.
+# prediction must be an inspected result captured in this validation bundle.
+# QF-42 windows match by window_result_id; backtests match by their QF-5 run_id.
 linked = create_manifest(prediction, execution, validation=validation)
 ```
+
+Validation attachments require a prediction or backtest primary study of the
+matching research family. Its result ID must match an indexed completed fold or
+consumed holdout result in the validation bundle; a shared configuration, symbol
+or dataset is insufficient. QF-42 uses its result ID, not its window configuration
+ID. A standalone QF-11 result is not a captured QF-42 window. Feature datasets,
+grids and validation studies cannot receive a `validation=` attachment.
+The captured fold/holdout entry explicitly `VALIDATES` the primary configuration.
+When both bundles reference the same QF-5 export files, the combined index reuses
+the primary entries and redirects validation edges to them. Shared files must
+agree on content hash, schema and producing study/run; all nested bindings must
+already be retained by the primary entry. Conflicting aliases are rejected.
 
 `inspect_validation` records the original plan/environment, boundary and warm-up
 definitions, purging/embargo, walk-forward study, lineage ID, ordered fold
