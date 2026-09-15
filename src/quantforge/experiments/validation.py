@@ -4,6 +4,7 @@ from pathlib import Path
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.experiments._backtest_artifacts import index_backtest_files
+from quantforge.experiments._holdout_integrity import validate_holdout_artifact
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
 from quantforge.experiments.adapters import StudyArtifacts
 from quantforge.experiments.artifacts import (
@@ -323,6 +324,7 @@ def inspect_validation(
                 result, result_base = read_producer_record(result_path)
                 if configuration_identity(result) != reference["sha256"]:
                     raise ManifestError("holdout result changed during indexing")
+                validate_holdout_artifact(source, consumed, result)
                 result_entry = add(
                     result_path,
                     ArtifactType.HOLDOUT_RESULT,
@@ -341,6 +343,12 @@ def inspect_validation(
                         export, text(artifact.get("export_fingerprint"))
                     )
                     backtest, _ = read_producer_record(export / "manifest.json")
+                    if backtest != mapping(
+                        mapping(artifact.get("result")).get("manifest")
+                    ):
+                        raise ManifestError(
+                            "holdout backtest snapshot differs from its export"
+                        )
                     for entry in index_backtest_files(
                         root, export, backtest, source.lineage_id + "/holdout"
                     ):

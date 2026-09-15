@@ -194,6 +194,9 @@ study references. Candidate/row IDs, unique ordered sessions and disposition
 evidence are verified. The schema must match the persisted feature/outcome
 definitions, and every row must have exactly those columns with valid types and
 nullability. Directory schema metadata receives the same definition check.
+Every feature manifest, including directory inputs, requires one valid contributing
+prediction-study digest per configured outcome; rows are not needed to check this
+lineage declaration.
 These checks reuse producer row hashing and schema-value validation; they do not
 evaluate causal features or future outcomes.
 
@@ -218,6 +221,11 @@ only the persisted records; it does not assert completion. Successful trials
 must retain their result reference. Failed trials require nonempty diagnostic
 type and message (plus QF-6's failure category); excluded trials require their
 exclusion code and reason. Outcome fields must agree with the trial status.
+Archived `failed_attempts` must be an array of producer-specific diagnostic records
+for every current trial status. Existing QF-6 and QF-32 attempt readers validate
+their fields; text fields are also checked explicitly. An omitted history retains
+the producers' legacy empty-history default, and QF-6 nullable timestamps remain
+supported. History is observed without retrying trials.
 Prediction result fingerprints must match
 both their content and the fingerprint in the trial record; the recorded analysis
 and schema must also agree. A QF-32 summary must retain the study's schema and
@@ -261,6 +269,11 @@ cannot retain a stale result identity. Ordered decision timestamps must exactly
 match the recorded schedule, even if the result hash and counts have been updated.
 The separate `schedule_id` must equal the hash of the complete recorded schedule;
 missing or stale schedule identities are rejected in standalone and grid windows.
+Each scheduled instant is mapped to its exchange session using the recorded
+calendar and regular/extended-hours policy. Available contexts and their signals
+must use that session, even after nested hashes are refreshed. Exchange open/close
+boundaries preserve overnight trade-date labels and terminal bars at midnight;
+this lookup does not generate a new decision schedule or market observations.
 This reads existing signals and rows;
 it does not rebuild schedules, contexts, predictions, outcomes or metrics.
 Each nested QF-11 manifest must also match the window's recorded configuration,
@@ -339,6 +352,13 @@ Nested backtest files retain their QF-5 manifest's `result_schema_version` and
 producing `run_id`, matching standalone and optimization inspection; the
 surrounding QF-39/QF-40 envelope version and study identity describe the enclosing
 validation records.
+Consumed holdout artifacts must match the frozen selection retained in their
+permanent request and the captured source study. Prediction results receive the
+same nested window checks as standalone results, bind their result IDs and stored
+candidate definitions, and match the request's recorded partition, bounded dataset
+and allowed decision sessions. Backtest result snapshots must match the indexed
+export manifest. These checks do not prepare/evaluate a holdout, rebuild membership
+or recompute the holdout summary; consumed state remains authoritative.
 Failed or absent folds stay failed or absent; stale files do not become OOS
 observations. No partition memberships are calculated again.
 

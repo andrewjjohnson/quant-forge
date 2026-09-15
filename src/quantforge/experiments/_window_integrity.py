@@ -10,6 +10,7 @@ from quantforge.experiments._producer_integrity import (
     validate_prediction_rows,
 )
 from quantforge.experiments._window_context_integrity import validate_decision_context
+from quantforge.experiments._window_sessions import scheduled_sessions
 from quantforge.prediction.window import (
     _window_record_counts,  # pyright: ignore[reportPrivateUsage]
 )
@@ -91,6 +92,7 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
         text(decision.get("decision_timestamp")) for decision in decisions
     ] != schedule.get("decision_timestamps"):
         raise ManifestError("window decisions do not match the declared schedule")
+    sessions = scheduled_sessions(schedule)
     # Validate the shapes consumed by the producer's primitive count helper.
     for decision in decisions:
         if text(decision.get("status")) not in {
@@ -115,7 +117,12 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
         rows = _records(study.get("rows"))
         if len(rows) > len(signals):
             raise ManifestError("window rows exceed generated signal records")
-        skipped = validate_decision_context(decision, manifest, study_manifest)
+        skipped = validate_decision_context(
+            decision,
+            manifest,
+            study_manifest,
+            sessions[text(decision["decision_timestamp"])],
+        )
         expected_status = (
             "skipped" if skipped else "evaluated" if signals else "no_prediction"
         )

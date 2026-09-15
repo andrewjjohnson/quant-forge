@@ -13,6 +13,7 @@ def validate_decision_context(
     decision: PrimitiveMapping,
     window: PrimitiveMapping,
     study: PrimitiveMapping,
+    scheduled_session: str,
 ) -> bool:
     """Check stored context identities and timing; return whether it was skipped.
 
@@ -28,6 +29,8 @@ def validate_decision_context(
     ):
         raise ManifestError("decision context requirements are inconsistent")
     skipped = context["status"] == "skipped"
+    if not skipped and context.get("decision_session") != scheduled_session:
+        raise ManifestError("decision session differs from scheduled exchange session")
     if skipped:
         if requirements.get("failure_policy") != "skip":
             raise ManifestError(

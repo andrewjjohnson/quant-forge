@@ -90,6 +90,21 @@ def validate_feature_schema(
     return fields
 
 
+def feature_prediction_studies(manifest: PrimitiveMapping) -> PrimitiveMapping:
+    """Validate contributing-study references without loading feature rows."""
+    configuration = mapping(manifest.get("configuration"))
+    namespaces = [
+        text(outcome.get("namespace"))
+        for outcome in _records(configuration.get("outcomes"))
+    ]
+    study_ids = manifest.get("prediction_study_ids")
+    if not isinstance(study_ids, list) or len(study_ids) != len(namespaces):
+        raise ManifestError("feature prediction-study references are incomplete")
+    return {
+        name: digest(value) for name, value in zip(namespaces, study_ids, strict=True)
+    }
+
+
 def validate_feature_row_provenance(
     manifest: PrimitiveMapping, result: PrimitiveMapping, rows: list[PrimitiveMapping]
 ) -> None:
@@ -100,16 +115,7 @@ def validate_feature_row_provenance(
     strategy = mapping(
         mapping(configuration.get("prediction_study_template")).get("strategy")
     )
-    namespaces = [
-        text(outcome.get("namespace"))
-        for outcome in _records(configuration.get("outcomes"))
-    ]
-    study_ids = manifest.get("prediction_study_ids")
-    if not isinstance(study_ids, list) or len(study_ids) != len(namespaces):
-        raise ManifestError("feature prediction-study references are incomplete")
-    expected_studies: PrimitiveMapping = {
-        name: digest(value) for name, value in zip(namespaces, study_ids, strict=True)
-    }
+    expected_studies = feature_prediction_studies(manifest)
     expected: PrimitiveMapping = {
         "study_id": manifest.get("dataset_id"),
         "source_dataset_id": market.get("dataset_id"),

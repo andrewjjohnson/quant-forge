@@ -13,7 +13,10 @@ from quantforge.experiments._feature_integrity import (
     validate_feature_rows,
     validate_feature_summary,
 )
-from quantforge.experiments._feature_row_integrity import validate_feature_schema
+from quantforge.experiments._feature_row_integrity import (
+    feature_prediction_studies,
+    validate_feature_schema,
+)
 from quantforge.experiments._grid_integrity import (
     validate_backtest_trial,
     validate_prediction_trial_coordinates,
@@ -173,6 +176,7 @@ def _description(
         configuration = _pick(
             document, ("engine_version", "configuration", "market_data")
         )
+        feature_prediction_studies(document)
         observations["prediction_study_ids"] = document["prediction_study_ids"]
         return (
             text(document["dataset_id"]),

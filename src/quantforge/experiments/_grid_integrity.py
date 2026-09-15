@@ -6,7 +6,11 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._producer_integrity import validate_backtest_identity
 from quantforge.experiments.models import StudyType
-from quantforge.optimization.models import TrialStatus
+from quantforge.optimization.models import FailedTrialAttempt, TrialStatus
+from quantforge.prediction.grid import (
+    PredictionGridFailedAttempt,
+    PredictionGridPersistenceError,
+)
 
 
 def _parameters_at_grid_position(
@@ -165,6 +169,29 @@ def validate_trial_status(study_type: StudyType, trial: PrimitiveMapping) -> Non
     )
     if any(trial.get(field) is not None for field in prohibited):
         raise ManifestError("trial status contradicts its outcome context")
+    attempts = trial.get("failed_attempts", [])
+    if not isinstance(attempts, list):
+        raise ManifestError("archived trial attempts must be an array")
+    for attempt in attempts:
+        record = mapping(attempt)
+        try:
+            if study_type is StudyType.OPTIMIZATION:
+                FailedTrialAttempt.from_primitive(record)
+            else:
+                PredictionGridFailedAttempt.from_primitive(record)
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            PredictionGridPersistenceError,
+        ) as error:
+            raise ManifestError("archived trial attempt is invalid") from error
+        # QF-32's reader checks presence; require the declared text types too.
+        for field in failure_fields:
+            text(record.get(field))
+        if study_type is StudyType.PARAMETER_STUDY:
+            for field in ("started_at", "finished_at"):
+                text(record.get(field))
 
 
 def validate_trial_counts(

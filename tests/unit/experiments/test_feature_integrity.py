@@ -190,3 +190,21 @@ def test_intact_directory_summary_retains_count_bindings(
         "/" + key: count for key, count in feature_result.summary.to_primitive().items()
     }
     assert verify_artifacts(bundle.index, tmp_path).valid
+
+
+@pytest.mark.parametrize(
+    "references", [None, "not-an-array", [], ["bad"], "extra", [True]]
+)
+def test_directory_feature_prediction_references_match_configured_outcomes(
+    tmp_path: Path, feature_result: SignalFeatureDatasetResult, references: Primitive
+) -> None:
+    root = tmp_path / "features" / feature_result.dataset_id
+    manifest = read_record(root / "manifest.json")
+    manifest["prediction_study_ids"] = (
+        [*cast(list[Primitive], manifest["prediction_study_ids"]), "a" * 64]
+        if references == "extra"
+        else references
+    )
+    write_json(root / "manifest.json", manifest)
+    with pytest.raises(ManifestError):
+        inspect_study(StudyType.FEATURE_DATASET, root, artifact_root=tmp_path)
