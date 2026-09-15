@@ -3,7 +3,14 @@
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.experiments._aggregate_schema import (
+    validate_configuration_stability,
+    validate_equity_rows,
+)
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_summary_integrity import (
+    validate_prediction_aggregate_summary,
+)
 from quantforge.oos.models import OOSSource
 from quantforge.validation import ResearchStudyType
 from quantforge.walk_forward.models import BacktestOOSArtifact, PredictionOOSArtifact
@@ -108,8 +115,10 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
             observations.extend(_prediction_records(artifact, fold.fold_id))
         windows.append(window)
     summary_windows = _records(mapping(aggregate.get("summary")).get("windows"))
+    validate_configuration_stability(aggregate.get("stability"), source)
     if backtest:
         _same_records(aggregate.get("native_windows"), native, "native windows")
+        validate_equity_rows(aggregate.get("normalized_equity"))
         fields = ("fold_id", "run_id", "session", "timestamp_semantics", "window_start")
         _same_records(
             [
@@ -121,6 +130,7 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
         )
         _same_records(summary_windows, windows, "window summaries")
     else:
+        validate_prediction_aggregate_summary(aggregate.get("summary"))
         _same_records(
             aggregate.get("observations"), observations, "prediction observations"
         )

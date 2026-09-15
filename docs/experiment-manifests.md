@@ -586,14 +586,31 @@ Backtest `native_windows` must match the complete captured fold payloads, frozen
 selections, export locations and fingerprints in source order. Normalized-equity
 fold/run/session membership and window-start markers must match native equity;
 per-window performance copies must match the captured backtest manifests.
+Every normalized-equity row must retain all ten producer fields. Index and
+window-start values are finite nonnegative decimal strings; strategy and benchmark
+drawdowns are finite decimal strings in `[-1, 0]`. Window-start flags are booleans
+and timing remains `exchange_session_close`. These checks do not rebuild the
+normalized return chain or drawdowns.
 Prediction observations must retain the source fold, selection, window result,
 decision/context/study references, generated signals and matching stored rows.
 Missing, duplicate, reordered or foreign records are rejected even under a new
 aggregate content hash. Window summary membership and availability must preserve
 failed and missing folds, including partial and empty aggregates.
-Its stability section receives an index entry using a JSON pointer. Normalized
-index values, prediction summary statistics and stability calculations remain
-producer-owned; these checks bind copied evidence without recalculating metrics.
+Prediction summaries require the complete top-level and per-window producer
+schemas, including counts, direction distributions, nullable accuracy and outcome
+metrics, Wilson intervals, matched baselines, event counts/rates, field bindings,
+window consistency, completeness and warnings. Nested records validate exact keys,
+integer counts, finite decimal strings, supported statuses and value domains.
+Unavailable samples retain null statistics; custom metric-field bindings remain
+supported. No summary statistics or confidence intervals are recalculated.
+The stability section must match `ConfigurationStabilitySummary` before receiving
+an index entry using a JSON pointer. Transition/selection/parameter-change counters
+must be nonnegative integers, frequency records must have their supported nullable
+ratio domains, and the descriptive interpretation must be retained. Its windows,
+candidates and neighborhood evidence must match the captured frozen selections.
+Normalized index values, prediction summary statistics and stability calculations
+remain producer-owned; these checks validate schema and copied evidence without
+recalculating metrics or configuration turnover.
 The graph links aggregate to contributing test artifacts, test artifacts to
 frozen selections, selections to the plan, and the plan to source provenance.
 
