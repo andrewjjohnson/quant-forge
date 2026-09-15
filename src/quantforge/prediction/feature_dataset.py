@@ -2497,6 +2497,22 @@ def _render_parquet_rows(
     dataset_id: str, schema: SignalFeatureSchema, rows: tuple[SignalFeatureRow, ...]
 ) -> bytes:
     """Serialize existing checkpoint rows with the native Parquet contract."""
+    table = _parquet_table(dataset_id, schema, rows)
+    sink = pa.BufferOutputStream()
+    pq.write_table(
+        table,
+        sink,
+        compression="zstd",
+        use_dictionary=False,
+        write_statistics=True,
+    )
+    return sink.getvalue().to_pybytes()
+
+
+def _parquet_table(
+    dataset_id: str, schema: SignalFeatureSchema, rows: tuple[SignalFeatureRow, ...]
+) -> object:
+    """Expose the logical export table without choosing a Parquet encoding."""
     arrow_fields = [
         pa.field(
             field.name,
@@ -2532,16 +2548,7 @@ def _render_parquet_rows(
         }
         for row in rows
     ]
-    table = pa.Table.from_pylist(primitive_rows, schema=arrow_schema)
-    sink = pa.BufferOutputStream()
-    pq.write_table(
-        table,
-        sink,
-        compression="zstd",
-        use_dictionary=False,
-        write_statistics=True,
-    )
-    return sink.getvalue().to_pybytes()
+    return pa.Table.from_pylist(primitive_rows, schema=arrow_schema)
 
 
 def _parquet_value(value: Primitive) -> str | int | bool | None:
