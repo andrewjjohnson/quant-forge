@@ -57,6 +57,7 @@ def inspect_validation(
     # Importing the metadata API must not initialize research producer packages.
     from quantforge.experiments._aggregate_integrity import validate_aggregate_folds
     from quantforge.experiments._holdout_integrity import validate_holdout_artifact
+    from quantforge.experiments._producer_integrity import validate_backtest_identity
     from quantforge.experiments._window_integrity import validate_window_snapshot
     from quantforge.oos.common import provenance as source_provenance
     from quantforge.walk_forward.models import (
@@ -231,6 +232,7 @@ def inspect_validation(
                     export, fold.artifact.export_fingerprint
                 )
                 backtest, _ = reads.read(export / "manifest.json")
+                validate_backtest_identity(backtest)
                 for entry in index_backtest_files(root, export, backtest, fold.fold_id):
                     entries.append(entry)
                     link(entry, RelationshipType.DERIVED_FROM, window)

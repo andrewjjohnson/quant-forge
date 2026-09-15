@@ -1,5 +1,6 @@
 """Reconcile stored grid summaries without ranking or calculating stability."""
 
+from dataclasses import fields
 from decimal import ROUND_CEILING, Decimal, InvalidOperation, localcontext
 from typing import cast
 
@@ -13,12 +14,21 @@ def validate_prediction_summary(
     summary: PrimitiveMapping,
 ) -> None:
     """Bind QF-32 selections to existing analyses without rerunning selection."""
-    from quantforge.experiments._prediction_stability_integrity import (
+    from quantforge.experiments._stability_integrity import (
         validate_prediction_stability,
     )
+    from quantforge.prediction.grid import PredictionGridCacheStatistics
 
     if summary.get("schema_version") != configuration.get("schema_version"):
         raise ManifestError("prediction summary schema differs from study")
+    counters = summary.get("cache_statistics")
+    if (
+        not isinstance(counters, dict)
+        or set(counters)
+        != {field.name for field in fields(PredictionGridCacheStatistics)}
+        or any(type(value) is not int or value < 0 for value in counters.values())
+    ):
+        raise ManifestError("prediction summary cache statistics are invalid")
     eligible = _records(summary.get("rankings"))
     ineligible = _records(summary.get("ineligible_trials"))
     stable = _records(summary.get("stability"))
@@ -173,6 +183,10 @@ def validate_optimization_summaries(
     Ordering and the recommendation are checked against existing metrics and
     stability records. Eligibility and neighbor statistics are not recalculated.
     """
+    from quantforge.experiments._stability_integrity import (
+        validate_optimization_stability,
+    )
+
     if summary is not None and summary.get("study_schema_version") != configuration.get(
         "study_schema_version"
     ):
@@ -190,6 +204,8 @@ def validate_optimization_summaries(
     eligible = _records(ranking.get("eligible_rankings"))
     ineligible = _records(ranking.get("ineligible_trials"))
     stable = _records(stability.get("summaries"))
+    for record in stable:
+        validate_optimization_stability(record)
     by_id = {text(trial.get("trial_id")): trial for trial in trials}
     eligible_by_id = _trial_references(eligible, by_id)
     ineligible_by_id = _trial_references(ineligible, by_id)

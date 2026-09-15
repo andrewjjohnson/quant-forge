@@ -265,7 +265,15 @@ verification. Both `ranking.json` and `stability.json` must declare the
 inspected study's ID; that ownership is also retained as an index metadata binding.
 Their configurations must match the study and summary. All ranking and stability
 entries must reference unique compatible successful trials, including entries
-beyond the summary's top ten. Eligible and ineligible lists must cover the saved
+beyond the summary's top ten. QF-6 stability entries must retain the complete
+`StabilitySummary` field set. They share QF-32's checks for integer counts/ranks,
+finite decimal strings, nullable statistics, boolean flags, classification and
+isolation reasons. The eligible-neighbor count must match the objective array and
+not exceed the valid-neighbor count; standard deviation must be nonnegative and
+constraint fractions and stability scores must lie within `[0, 1]`. Completed
+entries require an assigned positive stability rank. Updating summary and CSV
+projections does not make an incomplete or malformed record valid.
+Eligible and ineligible lists must cover the saved
 successful trials; stability must cover the eligible list. Stored objective
 values, ranks, counts, top-ten projections and selected trial references must
 agree across the artifacts, trial records and summary. The summary's
@@ -346,6 +354,10 @@ supported. History is observed without retrying trials.
 Prediction result fingerprints must match
 both their content and the fingerprint in the trial record; the recorded analysis
 and schema must also agree. A QF-32 summary must retain the study's schema and
+its exact `PredictionGridCacheStatistics` record: `context_hits`, `context_misses`,
+`indicator_hits` and `indicator_misses` must all be nonnegative integers, not
+booleans or numeric strings. Cache usage remains recorded diagnostics and is not
+reconstructed from trials. The summary must
 partition all successful trials between unique ranking and ineligible references,
 with no failed/excluded trials or foreign combination IDs. Eligible counts,
 configured objective names, values from saved trial analyses, consecutive ranks,
@@ -529,7 +541,10 @@ attributed to the captured OOS result.
 Nested backtest files retain their QF-5 manifest's `result_schema_version` and
 producing `run_id`, matching standalone and optimization inspection; the
 surrounding QF-39/QF-40 envelope version and study identity describe the enclosing
-validation records.
+validation records. Fold and holdout backtest run IDs must also equal QF-5's hash
+of the recorded code/schema versions, dataset, strategy and backtest configuration.
+Renaming an export and refreshing its sidecar and parent fingerprints cannot
+substitute an arbitrary run ID.
 Consumed holdout artifacts must match the frozen selection retained in their
 permanent request and the captured source study. Prediction results receive the
 same nested window checks as standalone results, bind their result IDs and stored
