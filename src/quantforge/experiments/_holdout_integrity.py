@@ -126,5 +126,11 @@ def validate_holdout_artifact(
             or market.get("data_sha256") != membership.get("bounded_data_sha256")
         ):
             raise ManifestError("holdout backtest differs from requested dataset")
+        if configuration_identity(
+            {"summary": result.get("summary")}
+        ) != configuration_identity({"summary": mapping(manifest.get("performance"))}):
+            raise ManifestError(
+                "holdout backtest summary differs from captured performance"
+            )
     else:
         raise ManifestError("holdout artifact kind differs from its request")

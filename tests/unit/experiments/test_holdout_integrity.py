@@ -31,6 +31,52 @@ from tests.unit.helpers import make_dataset
 from tests.unit.oos.conftest import complete_study
 
 
+@pytest.mark.parametrize(
+    "change", ["metric", "missing_metric", "extra_metric", "empty", "null"]
+)
+def test_consumed_backtest_summary_must_match_captured_performance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    completed = complete_study(tmp_path, prediction=False)
+    source = completed.source
+    ledger = HoldoutLedger.create(tmp_path / "ledger")
+    ledger.reserve(source)
+    consumed = ledger.consume(
+        HoldoutEvaluation.prepare(
+            source, completed.evaluator, selection_fold_id=source.folds[-1].fold_id
+        ),
+        run_id="summary-holdout",
+    )
+    assert consumed.result_reference is not None
+    path = ledger.root / cast(str, consumed.result_reference.to_primitive()["path"])
+    result = read_record(path)
+    artifact = deepcopy(result["artifact"])
+    block_research(monkeypatch)
+    inspect_validation(
+        source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
+    )
+    summary = cast(PrimitiveMapping, result["summary"])
+    if change == "metric":
+        summary["total_return"] = "999"
+    elif change == "missing_metric":
+        del summary["total_return"]
+    elif change == "extra_metric":
+        summary["foreign_metric"] = "999"
+    else:
+        result["summary"] = {} if change == "empty" else None
+    write_record(path, result)
+    assert read_record(path)["artifact"] == artifact
+    state = ledger.state(source)
+    assert state.state.value == "consumed"
+    assert state.result_reference != consumed.result_reference
+    with pytest.raises(ManifestError, match="holdout backtest summary"):
+        inspect_validation(
+            source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
+        )
+    assert ledger.state(source) == state
+    assert read_record(path) == result
+
+
 def test_consumed_backtest_binds_dataset_hash_even_when_run_id_is_unchanged(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

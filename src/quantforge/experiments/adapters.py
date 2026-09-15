@@ -226,6 +226,10 @@ def _description(
             or configuration_identity(configuration) != document["study_id"]
         ):
             raise ManifestError("incompatible QF-6 study identity")
+        if document.get("study_schema_version") != configuration.get(
+            "study_schema_version"
+        ):
+            raise ManifestError("optimization schema differs from identity inputs")
         observations.update(
             _pick(
                 document,
@@ -330,6 +334,7 @@ def inspect_study(
         "run_id",
         "engine_version",
         "result_schema_version",
+        "study_schema_version",
         "schema_version",
     )
     config_entry = add(

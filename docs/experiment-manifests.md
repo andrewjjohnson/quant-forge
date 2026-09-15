@@ -251,6 +251,10 @@ references must cover the ranked trials in objective order and retain their rank
 and objective values. Ineligible references require recorded reasons; an empty
 ranking with all successful trials ineligible remains valid. These checks do not
 reapply eligibility constraints or recalculate neighborhood/stability statistics.
+QF-6's advertised `study_schema_version` must match the version in its hashed
+`identity_inputs`; the manifest index binds that same recorded schema field.
+This applies to both directory and manifest-only inputs, preserving the original
+version rather than substituting the installed producer's version.
 QF-6 trial metrics, dataset, execution configuration
 and strategy provenance must match the linked
 QF-5 manifest, including its strategy-configuration hash and the grid's recorded
@@ -382,8 +386,11 @@ result schema. Their QF-43 evaluation interval must use the request's first/last
 evaluation sessions and the producer's boundary contract. Dataset IDs and QF-3
 `data_sha256` must match the requested bounded dataset; QF-5's independently
 serialized `bars_fingerprint` is a different hash. Backtest result snapshots
-must also match the indexed export manifest. A self-consistent replacement run
-cannot change those frozen inputs by retaining the original selection ID.
+must also match the indexed export manifest. The final backtest holdout summary
+must exactly match the captured manifest's `performance`, as copied by QF-40;
+changed, missing or extra metrics remain invalid under a refreshed ledger envelope.
+A self-consistent replacement run cannot change those frozen inputs by retaining
+the original selection ID.
 These checks do not prepare/evaluate a holdout, rebuild membership
 or recompute the holdout summary; consumed state remains authoritative.
 Failed or absent folds stay failed or absent; stale files do not become OOS

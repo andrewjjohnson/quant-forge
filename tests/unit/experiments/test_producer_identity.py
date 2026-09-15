@@ -4,7 +4,7 @@ from typing import cast
 import pytest
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
-from quantforge.experiments import ManifestError, StudyType, inspect_study
+from quantforge.experiments import ArtifactType, ManifestError, StudyType, inspect_study
 from quantforge.prediction import (
     AlwaysUpParameters,
     AlwaysUpPredictionStrategy,
@@ -270,3 +270,39 @@ def test_rehashed_grid_cannot_hide_stale_nested_prediction_identity(
     write_json(artifact_path, artifact)
     with pytest.raises(ManifestError, match="prediction study identity"):
         inspect_study(StudyType.PARAMETER_STUDY, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("manifest_only", [False, True], ids=["directory", "manifest"])
+@pytest.mark.parametrize("change", ["version", "missing", "null", "numeric"])
+def test_optimization_schema_must_match_hashed_identity_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    manifest_only: bool,
+    change: str,
+) -> None:
+    root = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    path = root / "manifest.json"
+    source = path if manifest_only else root
+    document = read_record(path)
+    configuration = cast(PrimitiveMapping, document["identity_inputs"])
+    schema = configuration["study_schema_version"]
+    bundle = inspect_study(StudyType.OPTIMIZATION, source, artifact_root=tmp_path)
+    manifest_entry = next(
+        entry
+        for entry in bundle.index.entries
+        if entry.artifact_type is ArtifactType.CONFIGURATION
+    )
+    assert manifest_entry.schema_version == schema
+    assert manifest_entry.bindings.to_primitive()["/study_schema_version"] == schema
+    if change == "missing":
+        del document["study_schema_version"]
+    else:
+        document["study_schema_version"] = {
+            "version": "foreign-version",
+            "null": None,
+            "numeric": 1,
+        }[change]
+    write_json(path, document)
+    assert configuration_identity(configuration) == document["study_id"]
+    with pytest.raises(ManifestError, match="optimization schema"):
+        inspect_study(StudyType.OPTIMIZATION, source, artifact_root=tmp_path)
