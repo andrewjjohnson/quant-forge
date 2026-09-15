@@ -14,6 +14,7 @@ from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._prediction_summary_integrity import (
     validate_prediction_aggregate_summary,
 )
+from quantforge.oos.common import completeness as source_completeness
 from quantforge.oos.models import OOSSource
 from quantforge.validation import ResearchStudyType
 from quantforge.walk_forward.models import BacktestOOSArtifact, PredictionOOSArtifact
@@ -72,6 +73,12 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
         "backtest_oos_aggregate" if backtest else "prediction_oos_aggregate"
     ):
         raise ManifestError("OOS aggregate kind differs from captured research family")
+    summary = mapping(aggregate.get("summary"))
+    # This producer helper projects captured status metadata, not research metrics.
+    if configuration_identity(
+        mapping(summary.get("completeness"))
+    ) != configuration_identity(source_completeness(source)):
+        raise ManifestError("OOS aggregate completeness differs from captured folds")
     native: list[PrimitiveMapping] = []
     equity_references: list[PrimitiveMapping] = []
     observations: list[PrimitiveMapping] = []
@@ -117,7 +124,7 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
                 raise ManifestError("OOS aggregate has incompatible fold artifacts")
             observations.extend(_prediction_records(artifact, fold.fold_id))
         windows.append(window)
-    summary_windows = _records(mapping(aggregate.get("summary")).get("windows"))
+    summary_windows = _records(summary.get("windows"))
     validate_configuration_stability(aggregate.get("stability"), source)
     if backtest:
         validate_backtest_aggregate_summary(aggregate.get("summary"))

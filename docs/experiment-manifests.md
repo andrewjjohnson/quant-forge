@@ -618,6 +618,13 @@ decision/context/study references, generated signals and matching stored rows.
 Missing, duplicate, reordered or foreign records are rejected even under a new
 aggregate content hash. Window summary membership and availability must preserve
 failed and missing folds, including partial and empty aggregates.
+For both aggregate families, the entire completeness record must equal QF-40's
+projection of the captured plan, fold states and references. Expected/completed
+counts, the complete flag, ordered missing/failed/incomplete fold lists and the
+interpretation must agree. Missing references remain distinct from persisted
+pending folds. Refreshing an aggregate's content hash cannot present partial or
+failed validation as complete. This comparison reads status metadata only; it
+does not aggregate research results or calculate performance.
 Prediction summaries require the complete top-level and per-window producer
 schemas, including counts, direction distributions, nullable accuracy and outcome
 metrics, Wilson intervals, matched baselines, event counts/rates, field bindings,
