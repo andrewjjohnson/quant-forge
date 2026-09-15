@@ -234,8 +234,12 @@ def _description(
             text(document["study_schema_version"]),
         )
     if study_type is StudyType.PARAMETER_STUDY:
+        from quantforge.prediction.grid import PREDICTION_GRID_SCHEMA_VERSION
+
         if document.get("component") != "quantforge_prediction_parameter_grid":
             raise ManifestError("expected a QF-32 parameter study")
+        if document.get("schema_version") != PREDICTION_GRID_SCHEMA_VERSION:
+            raise ManifestError("unsupported QF-32 study schema")
         configuration = {
             key: value
             for key, value in document.items()
@@ -417,9 +421,21 @@ def inspect_study(
         feature_rows: list[ArtifactEntry] = []
         optimization_summaries: dict[str, PrimitiveMapping] = {}
         summary: PrimitiveMapping | None = None
+        trial_snapshots: list[tuple[Path, PrimitiveMapping]] = []
+        stale_prediction_summary = False
         if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
+            trial_snapshots = [
+                (path, reads.read(path)[0])
+                for path in sorted((source / "trials").glob("*.json"))
+            ]
+            # QF-32 retains its previous summary while retrying failed trials.
+            # Bind this decision to the same records validated and indexed below.
+            stale_prediction_summary = study_type is StudyType.PARAMETER_STUDY and any(
+                trial.get("status") in ("pending", "running")
+                for _, trial in trial_snapshots
+            )
             summary_path = source / "summary.json"
-            if summary_path.is_file():
+            if summary_path.is_file() and not stale_prediction_summary:
                 summary, _ = reads.read(summary_path)
                 if summary.get("study_id") != producer_id:
                     raise ManifestError("parameter summary belongs to another study")
@@ -465,6 +481,9 @@ def inspect_study(
                 )
         for path in sorted(source.iterdir()):
             if not path.is_file() or path.name in {"manifest.json", "schema.json"}:
+                continue
+            if stale_prediction_summary:
+                # Derived exports do not describe this unfinished trial snapshot.
                 continue
             if (
                 study_type is StudyType.FEATURE_DATASET
@@ -530,8 +549,7 @@ def inspect_study(
         if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
             trials: list[str] = []
             trial_records: list[PrimitiveMapping] = []
-            for path in sorted((source / "trials").glob("*.json")):
-                trial, _ = reads.read(path)
+            for path, trial in trial_snapshots:
                 trial_id = text(trial["trial_id"])
                 if path.stem != trial_id or trial["study_id"] != producer_id:
                     raise ManifestError("trial identity is incompatible with study")

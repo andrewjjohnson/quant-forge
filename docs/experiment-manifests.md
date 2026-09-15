@@ -296,7 +296,12 @@ be absent, stale or interrupted without preventing inspection of saved trials.
 Once the captured completion summary exists, both JSON summaries and all seven
 CSVs are required and reconciled. Unrecognized neighboring CSVs are always omitted.
 
-For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
+QF-32 inspection supports study schema `"1"`, matching the producer's explicit
+schema contract. Unsupported, missing, or non-string versions are rejected before
+study/trial validation, including empty resumable directories and manifest-only
+inputs; rehashing a future schema's identity does not make it supported.
+
+For QF-32 and QF-6 grids with a current persisted summary, inspection reconciles the
 trial-file total and status counts against that summary. Missing or extra trial
 files and contradictory counts are rejected, including failed and excluded
 trials. A final summary requires one persisted trial at every Cartesian position:
@@ -307,6 +312,12 @@ exclusion evidence cannot be hidden by decrementing summary or manifest counts.
 This counts axes and checks saved coordinates without enumerating candidates or
 reapplying constraints. Without a summary, incomplete grids remain indexable,
 positions must still be unique and bounded, and final trial counts remain unknown.
+QF-32 can retain an old summary while retrying a failed trial. When saved trials
+include a pending or running record, inspection omits that stale summary and
+derived exports and leaves final counts unknown. Trial validation and indexing use
+the same captured bytes that establish this state; changes during inspection are
+rejected. A completed retry's replacement summary is validated and indexed normally.
+Inspection does not remove or rewrite producer files or retry any trial.
 The index describes
 only the persisted records; it does not assert completion. Successful trials
 must retain their result reference. Failed trials require nonempty diagnostic
