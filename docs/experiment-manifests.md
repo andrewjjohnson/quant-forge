@@ -178,6 +178,12 @@ rule/outcome/evaluator metadata, and retain valid outcome, evaluation and row
 identities. Duplicate row identities are rejected. These checks hash stored
 fields; they do not regenerate predictions, labels or evaluations. Manifest-only
 inputs retain producer-declared counts without asserting row verification.
+Every prediction-rule wrapper requires a positive integer warm-up, excluding
+booleans. When the captured rule configuration also declares warm-up, the two
+values must agree. This shared check covers standalone, manifest-only and nested
+QF-32/QF-39/QF-40 results, including window headers without decisions. Generic
+rule configurations that omit a duplicate declaration retain the validated
+wrapper value; inspection never constructs a rule to infer missing metadata.
 The rule, labeler and evaluator configuration IDs also bind their complete stored
 definitions. Row and generated-signal checks share the same symbol, component,
 parameter, session and warm-up validation. QF-11 requires contiguous observed
@@ -433,8 +439,12 @@ validation records.
 Consumed holdout artifacts must match the frozen selection retained in their
 permanent request and the captured source study. Prediction results receive the
 same nested window checks as standalone results, bind their result IDs and stored
-candidate definitions, and match the request's recorded partition, bounded dataset
-and allowed decision sessions. Backtests must match the frozen candidate's full
+candidate definitions, and match the request's recorded partition and bounded dataset.
+The full prediction schedule must equal QF-40's calendar-derived schedule from
+the first requested session's open through the last requested session's close,
+using the frozen primary timeframe. A canonical subset, empty replacement or
+narrowed interval with unchanged decisions is insufficient, even after rehashing.
+Backtests must match the frozen candidate's full
 strategy definition and the plan's recorded execution configuration, engine and
 result schema. Their QF-43 evaluation interval must use the request's first/last
 evaluation sessions and the producer's boundary contract. Dataset IDs and QF-3

@@ -44,6 +44,23 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
             != definition.get("implementation_version")
         ):
             raise ManifestError("prediction study component identity is inconsistent")
+    validate_prediction_warm_up(configuration)
+
+
+def validate_prediction_warm_up(configuration: PrimitiveMapping) -> None:
+    """Reconcile the result wrapper with any captured rule warm-up declaration."""
+    rule = mapping(configuration.get("prediction_rule"))
+    warm_up = rule.get("warm_up_observations")
+    if type(warm_up) is not int or warm_up < 1:
+        raise ManifestError("prediction rule warm-up must be a positive integer")
+    definition = mapping(rule.get("configuration"))
+    if "warm_up_observations" in definition and (
+        type(definition["warm_up_observations"]) is not int
+        or definition["warm_up_observations"] != warm_up
+    ):
+        raise ManifestError(
+            "prediction rule warm-up differs from captured configuration"
+        )
 
 
 def validate_prediction_counts(manifest: PrimitiveMapping) -> int:

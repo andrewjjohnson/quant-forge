@@ -7,8 +7,9 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._producer_integrity import validate_backtest_identity
 from quantforge.experiments._window_integrity import validate_window_snapshot
-from quantforge.experiments._window_sessions import scheduled_sessions
 from quantforge.oos.models import OOSSource
+from quantforge.prediction import PredictionDecisionSchedule
+from quantforge.timeframes import resolve_exchange_session
 
 
 def validate_holdout_artifact(
@@ -64,9 +65,44 @@ def validate_holdout_artifact(
             raise ManifestError("holdout prediction differs from frozen candidate")
         membership = mapping(request.get("evaluation_membership"))
         labels = membership.get("evaluation_sessions")
-        if not isinstance(labels, list):
+        if not isinstance(labels, list) or not labels:
             raise ManifestError("holdout request evaluation sessions are invalid")
-        permitted_sessions = {text(label) for label in labels}
+        universe = mapping(adapter.get("universe"))
+        primary_configuration = mapping(universe.get("grid_definition")).get(
+            "primary_timeframe"
+        )
+        primary = next(
+            (
+                timeframe
+                for timeframe in source.plan.environment.timeframes
+                if timeframe.to_primitive() == primary_configuration
+            ),
+            None,
+        )
+        if primary is None:
+            raise ManifestError(
+                "holdout prediction primary timeframe is not in its plan"
+            )
+        try:
+            # QF-40 derives the complete closed schedule from the requested
+            # partition and frozen primary timeframe, without generating research.
+            expected_schedule = PredictionDecisionSchedule(
+                primary,
+                resolve_exchange_session(
+                    date.fromisoformat(text(labels[0])), primary.session_policy
+                ).open_timestamp,
+                resolve_exchange_session(
+                    date.fromisoformat(text(labels[-1])), primary.session_policy
+                ).close_timestamp,
+            )
+        except ValueError as error:
+            raise ManifestError(
+                "holdout request evaluation sessions are invalid"
+            ) from error
+        if configuration_identity(
+            mapping(manifest.get("schedule"))
+        ) != configuration_identity(expected_schedule.to_primitive()):
+            raise ManifestError("holdout prediction differs from requested schedule")
         context = mapping(
             mapping(manifest.get("context_environment")).get("configuration")
         )
@@ -76,9 +112,6 @@ def validate_holdout_artifact(
             or context.get("plan_id") != source.plan.plan_id
             or market.get("dataset_id") != membership.get("bounded_dataset_id")
             or market.get("bars_fingerprint") != membership.get("bounded_data_sha256")
-            or not set(
-                scheduled_sessions(mapping(manifest.get("schedule"))).values()
-            ).issubset(permitted_sessions)
         ):
             raise ManifestError("holdout prediction differs from requested partition")
     elif (
