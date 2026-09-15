@@ -556,6 +556,11 @@ validation records. Fold and holdout backtest run IDs must also equal QF-5's has
 of the recorded code/schema versions, dataset, strategy and backtest configuration.
 Renaming an export and refreshing its sidecar and parent fingerprints cannot
 substitute an arbitrary run ID.
+Both prediction and backtest final-holdout results must retain the producer's
+top-level `schema_version: "1"`, `kind: "final_holdout_result"` and
+`state: "consumed"` before indexing. Missing, malformed or unsupported values
+remain invalid after refreshing envelope hashes and ledger result references.
+Rejecting incompatible evidence never changes the ledger's consumed state.
 Consumed holdout artifacts must match the frozen selection retained in their
 permanent request and the captured source study. Prediction results receive the
 same nested window checks as standalone results, bind their result IDs and stored

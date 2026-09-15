@@ -15,6 +15,12 @@ from quantforge.timeframes import resolve_exchange_session
 def validate_holdout_artifact(
     source: OOSSource, consumption: PrimitiveMapping, result: PrimitiveMapping
 ) -> None:
+    if (
+        result.get("schema_version") != "1"
+        or result.get("kind") != "final_holdout_result"
+        or result.get("state") != "consumed"
+    ):
+        raise ManifestError("unsupported holdout result envelope")
     request = mapping(consumption.get("request"))
     frozen = mapping(request.get("frozen_selection"))
     if not any(
