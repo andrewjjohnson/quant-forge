@@ -393,7 +393,18 @@ def inspect_study(
                 continue
             category = _export_category(study_type, path.name)
             if category is not None:
-                entry = add(path, category, path.name)
+                bindings: PrimitiveMapping | None = None
+                if study_type is StudyType.OPTIMIZATION and path.name in {
+                    "ranking.json",
+                    "stability.json",
+                }:
+                    owned_summary, summary_base = read_producer_record(path)
+                    if owned_summary.get("study_id") != producer_id:
+                        raise ManifestError(
+                            "optimization summary belongs to another study"
+                        )
+                    bindings = {summary_base + "/study_id": producer_id}
+                entry = add(path, category, path.name, bindings=bindings)
                 edges.append(
                     ArtifactRelationship(
                         entry.artifact_id,

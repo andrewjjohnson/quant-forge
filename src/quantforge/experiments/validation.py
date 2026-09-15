@@ -21,6 +21,20 @@ from quantforge.oos.models import OOSSource
 from quantforge.walk_forward.models import BacktestOOSArtifact, FoldStatus
 
 
+def _validate_captured_backtest_export(export: Path, fingerprint: str) -> None:
+    """Bind existing QF-5 tables to the QF-39/40 captured sidecar fingerprint."""
+    from quantforge.backtesting.export import validate_backtest_result_artifact
+
+    validate_backtest_result_artifact(export)
+    try:
+        # The producer hashes the original sidecar text, not parsed/reformatted JSON.
+        integrity = (export / "integrity.json").read_text()
+    except (OSError, UnicodeError) as error:
+        raise ManifestError("cannot read captured backtest export integrity") from error
+    if configuration_identity({"integrity": integrity}) != fingerprint:
+        raise ManifestError("backtest export differs from captured fingerprint")
+
+
 def inspect_validation(
     source: OOSSource,
     study_path: Path,
@@ -196,12 +210,10 @@ def inspect_validation(
             window_entries.append(window)
             link(window, RelationshipType.SELECTED_BY, selected)
             if isinstance(fold.artifact, BacktestOOSArtifact):
-                from quantforge.backtesting.export import (
-                    validate_backtest_result_artifact,
-                )
-
                 export = fold_root / "test" / fold.artifact.export_location
-                validate_backtest_result_artifact(export)
+                _validate_captured_backtest_export(
+                    export, fold.artifact.export_fingerprint
+                )
                 for path in sorted(export.iterdir()):
                     if path.is_file() and path.suffix in {".csv", ".json"}:
                         entry = add(
@@ -324,14 +336,13 @@ def inspect_validation(
                 holdout["result_artifact_id"] = result_entry.artifact_id
                 artifact = mapping(result["artifact"])
                 if artifact["kind"] == "backtest":
-                    from quantforge.backtesting.export import (
-                        validate_backtest_result_artifact,
-                    )
                     from quantforge.experiments.artifacts import local_path
 
                     export_root = result_path.parent / "evaluation"
                     export = local_path(export_root, text(artifact["export_location"]))
-                    validate_backtest_result_artifact(export)
+                    _validate_captured_backtest_export(
+                        export, text(artifact.get("export_fingerprint"))
+                    )
                     for path in sorted(export.iterdir()):
                         if path.is_file() and path.suffix in {".json", ".csv"}:
                             entry = add(

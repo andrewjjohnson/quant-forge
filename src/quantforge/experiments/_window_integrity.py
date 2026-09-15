@@ -56,6 +56,14 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
         study = mapping(decision.get("prediction_study"))
         study_manifest = mapping(study.get("manifest"))
         validate_prediction_identity(study_manifest)
+        if (
+            study_manifest.get("configuration") != manifest.get("configuration")
+            or study_manifest.get("market_data") != manifest.get("market_data")
+            or study_manifest.get("engine_version")
+            != manifest.get("prediction_engine_version")
+            or decision.get("prediction_study_id") != study_manifest.get("study_id")
+        ):
+            raise ManifestError("decision study does not match its window provenance")
         validate_prediction_rows(study_manifest, study.get("rows"))
         rows = _records(study.get("rows"))
         if len(rows) > len(signals):

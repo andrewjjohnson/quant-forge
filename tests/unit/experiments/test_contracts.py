@@ -332,6 +332,12 @@ def test_symlink_escape_rejected(tmp_path: Path) -> None:
         "TIINGO_API_KEY",
         "accessToken",
         "refresh_token",
+        "api_token",
+        "auth_token",
+        "session_token",
+        "providerApiToken",
+        "AUTH-TOKEN",
+        "session.token",
         "password",
         "provider_secret",
         "credentials",
@@ -343,6 +349,35 @@ def test_symlink_escape_rejected(tmp_path: Path) -> None:
 def test_credentials_rejected_without_echoing_values(tmp_path: Path, key: str) -> None:
     with pytest.raises(ManifestError) as error:
         manifest(tmp_path, {"provider": {key: "sensitive-marker-123"}})
+    assert "sensitive-marker-123" not in str(error.value)
+
+
+@pytest.mark.parametrize("key", ["api_token", "auth_token", "session_token"])
+@pytest.mark.parametrize("in_binding", [False, True])
+def test_compound_tokens_are_rejected_in_json_and_bindings(
+    tmp_path: Path, key: str, in_binding: bool
+) -> None:
+    payload: PrimitiveMapping = {"provider": [{key: "sensitive-marker-123"}]}
+    write_json(tmp_path / "artifact.json", {"safe": True} if in_binding else payload)
+    if in_binding:
+        entry = manifest(tmp_path).artifacts.entries[0]
+        with pytest.raises(ManifestError) as error:
+            replace(
+                entry,
+                bindings=PrimitiveMappingSnapshot.capture(
+                    {f"/{key}": "sensitive-marker-123"}
+                ),
+            )
+    else:
+        with pytest.raises(ManifestError) as error:
+            index_artifact(
+                tmp_path,
+                path="artifact.json",
+                artifact_type=ArtifactType.REPORT,
+                schema_version="1",
+                producer_study_id="study",
+                producer_artifact_id="result",
+            )
     assert "sensitive-marker-123" not in str(error.value)
 
 

@@ -171,7 +171,8 @@ objects.
 
 Completed QF-6 exports must include `ranking.json`. It is indexed as a required
 parameter-summary artifact, so missing files and changed ranking content fail
-integrity verification.
+integrity verification. Both `ranking.json` and `stability.json` must declare the
+inspected study's ID; that ownership is also retained as an index metadata binding.
 
 For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
 trial-file total and status counts against that summary. Missing or extra trial
@@ -209,6 +210,10 @@ cannot retain a stale result identity. Ordered decision timestamps must exactly
 match the recorded schedule, even if the result hash and counts have been updated.
 This reads existing signals and rows;
 it does not rebuild schedules, contexts, predictions, outcomes or metrics.
+Each nested QF-11 manifest must also match the window's recorded configuration,
+market data and prediction-engine version, and its study ID must match the
+decision's `prediction_study_id`. A self-consistent result from another study
+cannot be substituted by updating the window's result hash or counts.
 
 Embedded source-dataset entries reference the producer's recorded dataset
 metadata. Their byte hash verifies that metadata file, not an unavailable source
@@ -259,6 +264,10 @@ Each complete persisted fold-state record must match the corresponding captured
 `OOSSource.references` state, including selection, artifact and failure fields.
 Changed records are rejected even when their envelopes have valid new hashes.
 The presence or absence of a pending state record must also match the snapshot.
+Backtest tables must match their existing QF-5 integrity sidecar, and the sidecar's
+original text must match the captured QF-39 export fingerprint. This applies to
+both fold and holdout exports, preventing rehashed table changes from being
+attributed to the captured OOS result.
 Failed or absent folds stay failed or absent; stale files do not become OOS
 observations. No partition memberships are calculated again.
 
@@ -377,6 +386,9 @@ and authenticated/query-bearing URLs in metadata, bindings and read JSON.
 Errors do not echo credentials. Provider/feed identities remain ordinary
 provenance. The exact `account_id` field permits only QF-5's fixed simulation
 labels `benchmark` and `strategy`; other account identifiers remain prohibited.
+The field-name guard conservatively rejects normalized keys containing `token`,
+including compound names such as `api_token`, `auth_token` and `session_token`,
+with the same policy for nested records and metadata bindings.
 This guard cannot discover an arbitrary secret disguised as an
 unrelated free-text value; callers must supply research configuration only.
 

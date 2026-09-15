@@ -222,6 +222,43 @@ def test_grid_position_preserves_declared_order_and_serialized_decimal_values(
     )
 
 
+@pytest.mark.parametrize("filename", ["ranking.json", "stability.json"])
+def test_optimization_summary_cannot_come_from_another_study(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str
+) -> None:
+    roots: list[Path] = []
+    for commission in ("1", "2"):
+        study = GridSearchStudy(
+            _dataset(),
+            MovingAverageCrossoverFactory(),
+            _study_config(tmp_path / "optimization", commission=commission),
+        )
+        study.export(study.run())
+        roots.append(study.study_path)
+    assert roots[0] != roots[1]
+    (roots[0] / filename).write_bytes((roots[1] / filename).read_bytes())
+    block_research(monkeypatch)
+    with pytest.raises(ManifestError, match="summary belongs to another study"):
+        inspect_study(StudyType.OPTIMIZATION, roots[0], artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("filename", ["ranking.json", "stability.json"])
+def test_optimization_summaries_require_and_bind_study_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str
+) -> None:
+    root = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    bundle = inspect_study(StudyType.OPTIMIZATION, root, artifact_root=tmp_path)
+    entry = next(
+        item for item in bundle.index.entries if item.path.endswith("/" + filename)
+    )
+    assert entry.bindings.to_primitive() == {"/study_id": root.name}
+    summary = read_record(root / filename)
+    summary.pop("study_id")
+    write_json(root / filename, summary)
+    with pytest.raises(ManifestError, match="summary belongs to another study"):
+        inspect_study(StudyType.OPTIMIZATION, root, artifact_root=tmp_path)
+
+
 def test_intact_grid_exports_remain_indexable(
     grid_export: tuple[StudyType, Path], tmp_path: Path
 ) -> None:

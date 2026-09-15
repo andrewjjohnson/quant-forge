@@ -34,25 +34,20 @@ def safe_metadata(value: Primitive) -> None:
                 and isinstance(item, str)
                 and item in {"benchmark", "strategy"}
             )
-            if (
-                any(
-                    word in normalized
-                    for word in (
-                        "apikey",
-                        "accesstoken",
-                        "refreshtoken",
-                        "password",
-                        "passwd",
-                        "secret",
-                        "credential",
-                        "authorization",
-                        "privatekey",
-                        "connectionstring",
-                    )
+            if any(
+                word in normalized
+                for word in (
+                    "apikey",
+                    "token",
+                    "password",
+                    "passwd",
+                    "secret",
+                    "credential",
+                    "authorization",
+                    "privatekey",
+                    "connectionstring",
                 )
-                or normalized == "token"
-                or ("accountid" in normalized and not simulation_account)
-            ):
+            ) or ("accountid" in normalized and not simulation_account):
                 raise ManifestError("credential-bearing metadata is prohibited")
             safe_metadata(item)
     elif isinstance(value, list):

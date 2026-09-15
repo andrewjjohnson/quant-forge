@@ -173,3 +173,76 @@ def test_rehashed_window_decisions_must_match_declared_schedule(
     write_json(path, window_snapshot)
     with pytest.raises(ManifestError, match=r"decisions.*schedule"):
         inspect_study(StudyType.PREDICTION_WINDOW, path, artifact_root=tmp_path)
+
+
+def change_decision_provenance(
+    window: PrimitiveMapping, field: str
+) -> PrimitiveMapping:
+    decision = cast(list[PrimitiveMapping], window["decisions"])[0]
+    study = cast(PrimitiveMapping, decision["prediction_study"])
+    manifest = cast(PrimitiveMapping, study["manifest"])
+    if field == "prediction_study_id":
+        decision[field] = "unrelated-study"
+    else:
+        if field == "engine_version":
+            manifest[field] = "historical-different-engine"
+        else:
+            cast(PrimitiveMapping, manifest[field])["changed"] = True
+        manifest["study_id"] = configuration_identity(
+            {
+                "component": "quantforge_prediction_study",
+                "engine_version": manifest["engine_version"],
+                "market_data": manifest["market_data"],
+                "study_configuration": manifest["configuration"],
+                "prediction_context": manifest["prediction_context"],
+            }
+        )
+        decision["prediction_study_id"] = manifest["study_id"]
+    outer = cast(PrimitiveMapping, window["manifest"])
+    outer["window_result_id"] = configuration_identity(
+        {"window_id": outer["window_id"], "decisions": window["decisions"]}
+    )
+    outer["record_counts"] = _window_record_counts(
+        cast(list[PrimitiveMapping], window["decisions"])
+    )
+    return study
+
+
+@pytest.mark.parametrize(
+    "field", ["configuration", "market_data", "engine_version", "prediction_study_id"]
+)
+def test_self_consistent_decision_must_belong_to_its_window(
+    tmp_path: Path, window_snapshot: PrimitiveMapping, field: str
+) -> None:
+    study = change_decision_provenance(window_snapshot, field)
+    standalone = tmp_path / "standalone.json"
+    write_json(standalone, study)
+    inspect_study(StudyType.PREDICTION, standalone, artifact_root=tmp_path)
+    path = tmp_path / "window.json"
+    write_json(path, window_snapshot)
+    with pytest.raises(ManifestError, match=r"decision.*window"):
+        inspect_study(StudyType.PREDICTION_WINDOW, path, artifact_root=tmp_path)
+
+
+def test_nested_grid_window_rejects_rehashed_unrelated_decision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    study = grid(tmp_path / "grid", WindowProvider())
+    result = study.run()
+    root = tmp_path / "grid" / result.study_id
+    record_path = trial_path(root)
+    trial = read_record(record_path)
+    artifact_path = root / cast(str, trial["artifact_location"])
+    artifact = read_record(artifact_path)
+    change_decision_provenance(
+        cast(PrimitiveMapping, artifact["prediction_window"]), "configuration"
+    )
+    artifact["artifact_fingerprint"] = configuration_identity(
+        {key: value for key, value in artifact.items() if key != "artifact_fingerprint"}
+    )
+    trial["artifact_fingerprint"] = artifact["artifact_fingerprint"]
+    write_json(artifact_path, artifact)
+    write_json(record_path, trial)
+    block_research(monkeypatch)
+    with pytest.raises(ManifestError, match=r"decision.*window"):
+        inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
