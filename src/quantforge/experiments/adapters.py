@@ -502,14 +502,13 @@ def inspect_study(
             ):
                 # QF-6 writes derived exports before its completion summary.
                 continue
-            if study_type is StudyType.OPTIMIZATION and path.suffix == ".csv":
-                from quantforge.experiments._optimization_csv_integrity import (
-                    OPTIMIZATION_CSV_NAMES,
-                )
-
+            if (
+                study_type is StudyType.OPTIMIZATION
+                and summary is None
+                and path.suffix == ".csv"
+            ):
                 # Resumable directories can retain stale exports from a prior run.
-                if path.name not in OPTIMIZATION_CSV_NAMES or summary is None:
-                    continue
+                continue
             category = _export_category(study_type, path.name)
             if category is not None:
                 bindings: PrimitiveMapping | None = None
@@ -726,12 +725,17 @@ def _export_category(study_type: StudyType, name: str) -> ArtifactType | None:
             if name.endswith(".csv") or name == "integrity.json"
             else None
         )
-    if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
+    if study_type is StudyType.PARAMETER_STUDY:
+        return ArtifactType.PARAMETER_SUMMARY if name == "summary.json" else None
+    if study_type is StudyType.OPTIMIZATION:
+        from quantforge.experiments._optimization_csv_integrity import (
+            OPTIMIZATION_CSV_NAMES,
+        )
+
         return (
             ArtifactType.PARAMETER_SUMMARY
-            if name.endswith(".csv")
-            or name in {"summary.json", "result.json", "stability.json"}
-            or (study_type is StudyType.OPTIMIZATION and name == "ranking.json")
+            if name in OPTIMIZATION_CSV_NAMES
+            or name in {"summary.json", "ranking.json", "stability.json"}
             else None
         )
     return None

@@ -296,7 +296,11 @@ The producer writes these before its completion summary, so either or both may
 be absent, stale or interrupted without preventing inspection of saved trials.
 Once all saved trials are terminal and the captured completion summary exists,
 both JSON summaries and all seven CSVs are required and reconciled. Unrecognized
-neighboring CSVs are always omitted.
+neighboring files are always omitted. QF-6 summary indexing allows only these
+seven CSV filenames and `summary.json`, `ranking.json` and `stability.json`.
+QF-32 emits only `summary.json` as a top-level summary. Neighboring CSVs,
+`result.json` and other unrecognized files are not treated as grid summaries,
+whether the directory is complete or resumable.
 
 QF-32 inspection supports study schema `"1"`, matching the producer's explicit
 schema contract. Unsupported, missing, or non-string versions are rejected before
@@ -408,9 +412,11 @@ Each artifact's prediction-study/window-result reference must match its nested
 result. Rehashing a result from another candidate does not establish that binding.
 
 QF-42 inspection requires the complete result snapshot, including decisions,
-and explicitly supports window and schedule schema version `1`. Unknown, future
-or corrupt versions are rejected before their contents can be indexed; a new
-version requires an explicit adapter or migration.
+the producer component `quantforge_prediction_window`, and explicitly supports
+window and schedule schema version `1`. A missing, malformed or foreign component
+is rejected even when the window and result identities have been rehashed.
+Unknown, future or corrupt versions are rejected before their contents can be
+indexed; a new version requires an explicit adapter or migration.
 It verifies the result identity over the recorded window ID and ordered decisions,
 then checks all stored record counts using QF-42's primitive count helper. The
 same checks apply to QF-32's nested windows and captured fold/holdout windows.

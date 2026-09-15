@@ -74,6 +74,8 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
     context, feature, outcome, prediction or research metric is generated.
     """
     manifest = mapping(snapshot.get("manifest"))
+    if manifest.get("component") != "quantforge_prediction_window":
+        raise ManifestError("unsupported prediction window component")
     if manifest.get("schema_version") != "1":
         raise ManifestError("unsupported prediction window schema version")
     validate_prediction_warm_up(mapping(manifest.get("configuration")))
