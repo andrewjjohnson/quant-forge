@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.experiments._backtest_artifacts import index_backtest_files
 from quantforge.experiments._feature_integrity import validate_feature_rows
 from quantforge.experiments._feature_row_integrity import validate_feature_schema
 from quantforge.experiments._grid_integrity import (
@@ -294,6 +295,7 @@ def inspect_study(
             artifact_type=category,
             schema_version=version,
             producer_study_id=producer_id,
+            producer_run_id=producer_id if study_type is StudyType.BACKTEST else None,
             producer_artifact_id=logical_id,
             json_pointer=json_pointer,
             bindings=bindings,
@@ -472,20 +474,17 @@ def inspect_study(
                             artifact_path / "manifest.json"
                         )
                         validate_backtest_trial(trial, backtest_manifest, configuration)
-                        for child in sorted(artifact_path.iterdir()):
-                            if child.is_file() and child.suffix in {".json", ".csv"}:
-                                entry = add(
-                                    child,
-                                    ArtifactType.BACKTEST_RESULT,
-                                    trial_id + "/" + child.name,
+                        for entry in index_backtest_files(
+                            root, artifact_path, backtest_manifest, trial_id
+                        ):
+                            entries.append(entry)
+                            edges.append(
+                                ArtifactRelationship(
+                                    entry.artifact_id,
+                                    RelationshipType.DERIVED_FROM,
+                                    trial_entry.artifact_id,
                                 )
-                                edges.append(
-                                    ArtifactRelationship(
-                                        entry.artifact_id,
-                                        RelationshipType.DERIVED_FROM,
-                                        trial_entry.artifact_id,
-                                    )
-                                )
+                            )
                     else:
                         artifact, _ = read_producer_record(artifact_path)
                         if (

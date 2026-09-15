@@ -151,6 +151,12 @@ Study types never acquire another type's metric requirements. Prediction and
 feature manifests require no capital, transaction costs, fills, or equity.
 The manifest retains material configurations, not result tables. Schema fields
 are copied from their producer; an engine version is not an artifact schema.
+QF-5 artifacts retain their recorded `result_schema_version` and `run_id` in
+both `producer_study_id` and `producer_run_id`, whether indexed standalone or
+inside an optimization, fold or holdout. Nested backtest files use the same
+indexing helper and retain `DERIVED_FROM` relationships to the enclosing trial,
+window or holdout result. The outer study's manifest and trial records retain
+their own producer identity and schema.
 
 QF-11 study IDs are verified against the original engine, market data, complete
 study configuration and optional prediction context. When rows are available,
@@ -241,6 +247,8 @@ then checks all stored record counts using QF-42's primitive count helper. The
 same checks apply to QF-32's nested window results. Changed or truncated decisions
 cannot retain a stale result identity. Ordered decision timestamps must exactly
 match the recorded schedule, even if the result hash and counts have been updated.
+The separate `schedule_id` must equal the hash of the complete recorded schedule;
+missing or stale schedule identities are rejected in standalone and grid windows.
 This reads existing signals and rows;
 it does not rebuild schedules, contexts, predictions, outcomes or metrics.
 Each nested QF-11 manifest must also match the window's recorded configuration,
@@ -315,9 +323,10 @@ Backtest tables must match their existing QF-5 integrity sidecar, and the sideca
 original text must match the captured QF-39 export fingerprint. This applies to
 both fold and holdout exports, preventing rehashed table changes from being
 attributed to the captured OOS result.
-Nested backtest files retain their QF-5 manifest's `result_schema_version`, matching
-standalone inspection; the surrounding QF-39/QF-40 envelope version does not
-replace the backtest table schema.
+Nested backtest files retain their QF-5 manifest's `result_schema_version` and
+producing `run_id`, matching standalone and optimization inspection; the
+surrounding QF-39/QF-40 envelope version and study identity describe the enclosing
+validation records.
 Failed or absent folds stay failed or absent; stale files do not become OOS
 observations. No partition memberships are calculated again.
 
@@ -436,10 +445,10 @@ enclosing hashes so that consistency checks are exercised beyond hash mismatch.
 | Contract family | Stored evidence checked | Boundary |
 | --- | --- | --- |
 | QF-11 | Study/component IDs, dataset/parameter provenance, ordered unique signal sessions, warm-up, outcome horizons, row/outcome/evaluation IDs and counts | Calendar metadata validation only; no labeling or evaluation |
-| QF-42 / nested QF-32 | Window/schedule coverage, decision/context lineage and status, generated-signal provenance, distinct signal-to-row membership and unavailable outcomes | Reuses offline source/context checks; no context or indicator execution |
+| QF-42 / nested QF-32 | Window/result/schedule identities and coverage, decision/context lineage and status, generated-signal provenance, distinct signal-to-row membership and unavailable outcomes | Reuses offline source/context checks; no context or indicator execution |
 | QF-7/QF-29 | Dataset/candidate/row IDs, source/rule/schema versions, prediction-study references, schema definitions/types, dispositions and counts | Existing values are validated structurally; features and outcomes are not recalculated |
 | QF-6/QF-32 grids | Coordinates, candidate/trial identity, status payloads, result bindings, recorded metrics, ranking/stability references and summary projections | No factory construction, candidate enumeration or research selection |
-| QF-5 and validation exports | Run provenance, original integrity sidecar, captured fold/holdout fingerprints and original nested schema versions | No execution or accounting |
+| QF-5 standalone / optimization / validation exports | Run provenance, original integrity sidecar, captured fold/holdout fingerprints, original schema versions and producing QF-5 run IDs on every backtest file | No execution or accounting |
 | QF-8/QF-39/QF-40 lineage | Captured source and fold state, selections, aggregates and permanent holdout-ledger state | No partition, aggregate or holdout computation |
 | Credential metadata | Recursive normalized field-name and recognizable-value rejection at construction, JSON and binding boundaries | Conservative field filtering cannot discover arbitrary disguised secrets |
 

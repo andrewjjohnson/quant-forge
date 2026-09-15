@@ -151,6 +151,55 @@ def test_window_requires_complete_result_snapshot(
         inspect_study(StudyType.PREDICTION_WINDOW, path, artifact_root=tmp_path)
 
 
+@pytest.mark.parametrize("nested", [False, True], ids=["standalone", "grid"])
+@pytest.mark.parametrize("change", ["missing", "null", "malformed", "foreign"])
+def test_window_schedule_identity_must_match_recorded_schedule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nested: bool, change: str
+) -> None:
+    def corrupt_schedule_identity(window: PrimitiveMapping) -> None:
+        manifest = cast(PrimitiveMapping, window["manifest"])
+        if change == "missing":
+            manifest.pop("schedule_id")
+        elif change == "null":
+            manifest["schedule_id"] = None
+        elif change == "malformed":
+            manifest["schedule_id"] = "not-a-digest"
+        else:
+            manifest["schedule_id"] = schedule(
+                START + timedelta(seconds=1), START + timedelta(seconds=2)
+            ).schedule_id
+
+    if nested:
+        study = grid(tmp_path / "grid", WindowProvider())
+        result = study.run()
+        root = tmp_path / "grid" / result.study_id
+        record_path = trial_path(root)
+        trial = read_record(record_path)
+        artifact_path = root / cast(str, trial["artifact_location"])
+        artifact = read_record(artifact_path)
+        window = cast(PrimitiveMapping, artifact["prediction_window"])
+        corrupt_schedule_identity(window)
+        artifact["artifact_fingerprint"] = configuration_identity(
+            {
+                key: value
+                for key, value in artifact.items()
+                if key != "artifact_fingerprint"
+            }
+        )
+        trial["artifact_fingerprint"] = artifact["artifact_fingerprint"]
+        write_json(artifact_path, artifact)
+        write_json(record_path, trial)
+        source, study_type = root, StudyType.PARAMETER_STUDY
+    else:
+        window = run_window().to_primitive()
+        corrupt_schedule_identity(window)
+        source, study_type = tmp_path / "window.json", StudyType.PREDICTION_WINDOW
+        write_json(source, window)
+    block_research(monkeypatch)
+    with pytest.raises(ManifestError, match="window schedule identity"):
+        inspect_study(study_type, source, artifact_root=tmp_path)
+
+
 @pytest.mark.parametrize("change", ["truncate", "reorder", "duplicate", "timestamp"])
 def test_rehashed_window_decisions_must_match_declared_schedule(
     tmp_path: Path, window_snapshot: PrimitiveMapping, change: str

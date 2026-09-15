@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
+from quantforge.experiments._backtest_artifacts import index_backtest_files
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
 from quantforge.experiments.adapters import StudyArtifacts
 from quantforge.experiments.artifacts import (
@@ -83,7 +84,6 @@ def inspect_validation(
         *,
         location: str = "",
         bindings: PrimitiveMapping | None = None,
-        schema_version: str = "1",
     ) -> ArtifactEntry:
         path = path.resolve()
         if not path.is_relative_to(root):
@@ -92,7 +92,7 @@ def inspect_validation(
             root,
             path=path.relative_to(root).as_posix(),
             artifact_type=category,
-            schema_version=schema_version,
+            schema_version="1",
             producer_study_id=source.study_id,
             producer_artifact_id=logical_id,
             json_pointer=location,
@@ -216,16 +216,9 @@ def inspect_validation(
                     export, fold.artifact.export_fingerprint
                 )
                 backtest, _ = read_producer_record(export / "manifest.json")
-                backtest_schema = text(backtest.get("result_schema_version"))
-                for path in sorted(export.iterdir()):
-                    if path.is_file() and path.suffix in {".csv", ".json"}:
-                        entry = add(
-                            path,
-                            ArtifactType.BACKTEST_RESULT,
-                            fold.fold_id + "/" + path.name,
-                            schema_version=backtest_schema,
-                        )
-                        link(entry, RelationshipType.DERIVED_FROM, window)
+                for entry in index_backtest_files(root, export, backtest, fold.fold_id):
+                    entries.append(entry)
+                    link(entry, RelationshipType.DERIVED_FROM, window)
         fold_references.append(record)
 
     configuration: PrimitiveMapping = {
@@ -348,16 +341,11 @@ def inspect_validation(
                         export, text(artifact.get("export_fingerprint"))
                     )
                     backtest, _ = read_producer_record(export / "manifest.json")
-                    backtest_schema = text(backtest.get("result_schema_version"))
-                    for path in sorted(export.iterdir()):
-                        if path.is_file() and path.suffix in {".json", ".csv"}:
-                            entry = add(
-                                path,
-                                ArtifactType.BACKTEST_RESULT,
-                                source.lineage_id + "/holdout/" + path.name,
-                                schema_version=backtest_schema,
-                            )
-                            link(entry, RelationshipType.DERIVED_FROM, result_entry)
+                    for entry in index_backtest_files(
+                        root, export, backtest, source.lineage_id + "/holdout"
+                    ):
+                        entries.append(entry)
+                        link(entry, RelationshipType.DERIVED_FROM, result_entry)
         observations["holdout"] = holdout
         # A consumption racing with this read cannot publish a stale pristine
         # observation. Later consumers still query the ledger for current state.

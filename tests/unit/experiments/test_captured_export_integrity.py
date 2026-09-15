@@ -7,7 +7,10 @@ import pytest
 from quantforge.backtesting import validate_backtest_result_artifact
 from quantforge.configuration import PrimitiveMapping
 from quantforge.experiments import (
+    ArtifactRelationship,
+    ArtifactType,
     ManifestError,
+    RelationshipType,
     StudyType,
     inspect_study,
     inspect_validation,
@@ -17,7 +20,7 @@ from quantforge.oos import HoldoutEvaluation, HoldoutLedger
 from quantforge.walk_forward.models import BacktestOOSArtifact
 from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
-from tests.unit.experiments.test_grid_integrity import read_record
+from tests.unit.experiments.test_grid_integrity import build_grid_export, read_record
 from tests.unit.oos.conftest import complete_study
 
 
@@ -69,7 +72,7 @@ def test_rehashed_backtest_tables_must_match_captured_export(
 
 
 @pytest.mark.parametrize("holdout", [False, True], ids=["fold", "holdout"])
-def test_nested_backtest_files_retain_the_standalone_result_schema(
+def test_nested_backtest_files_retain_the_standalone_schema_and_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, holdout: bool
 ) -> None:
     completed = complete_study(tmp_path, prediction=False)
@@ -109,18 +112,90 @@ def test_nested_backtest_files_retain_the_standalone_result_schema(
     nested = inspect_validation(
         source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
     )
-    expected_schema = cast(
-        str, read_record(export / "manifest.json")["result_schema_version"]
-    )
+    backtest = read_record(export / "manifest.json")
+    expected_schema = cast(str, backtest["result_schema_version"])
+    expected_run = cast(str, backtest["run_id"])
     files = {
-        entry.path: entry.schema_version
+        entry.path: (
+            entry.schema_version,
+            entry.producer_study_id,
+            entry.producer_run_id,
+        )
         for entry in standalone.index.entries
         if not entry.json_pointer
     }
     assert files
-    assert set(files.values()) == {expected_schema}
+    assert set(files.values()) == {(expected_schema, expected_run, expected_run)}
     assert {
-        entry.path: entry.schema_version
+        entry.path: (
+            entry.schema_version,
+            entry.producer_study_id,
+            entry.producer_run_id,
+        )
         for entry in nested.index.entries
         if entry.path in files
     } == files
+    entries = {entry.artifact_id: entry for entry in nested.index.entries}
+    for entry in nested.index.entries:
+        if entry.path in files:
+            parents = [
+                entries[edge.target_id]
+                for edge in nested.index.relationships
+                if edge.source_id == entry.artifact_id
+                and edge.relationship is RelationshipType.DERIVED_FROM
+            ]
+            assert len(parents) == 1
+            assert parents[0].artifact_type is (
+                ArtifactType.HOLDOUT_RESULT
+                if holdout
+                else ArtifactType.WALK_FORWARD_WINDOW
+            )
+
+
+def test_optimization_backtests_retain_each_run_schema_and_trial_relationship(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = build_grid_export(tmp_path, StudyType.OPTIMIZATION, monkeypatch)
+    bundle = inspect_study(StudyType.OPTIMIZATION, root, artifact_root=tmp_path)
+    run_ids: set[str] = set()
+    for trial_entry in bundle.index.entries:
+        if trial_entry.artifact_type is not ArtifactType.TRIAL_RESULT:
+            continue
+        trial = read_record(tmp_path / trial_entry.path)
+        assert trial_entry.producer_study_id == bundle.provenance.producer_study_id
+        assert trial_entry.producer_run_id is None
+        if trial["status"] != "succeeded":
+            continue
+        export = root / cast(str, trial["artifact_location"])
+        backtest = read_record(export / "manifest.json")
+        run_id = cast(str, backtest["run_id"])
+        run_ids.add(run_id)
+        standalone = inspect_study(StudyType.BACKTEST, export, artifact_root=tmp_path)
+        files = {
+            entry.path: entry
+            for entry in standalone.index.entries
+            if not entry.json_pointer
+        }
+        nested = {
+            entry.path: entry for entry in bundle.index.entries if entry.path in files
+        }
+        assert files
+        assert set(nested) == set(files)
+        for path, entry in nested.items():
+            assert (
+                entry.schema_version
+                == files[path].schema_version
+                == backtest["result_schema_version"]
+            )
+            assert entry.producer_study_id == files[path].producer_study_id == run_id
+            assert entry.producer_run_id == files[path].producer_run_id == run_id
+            assert entry.sha256 == files[path].sha256
+            assert (
+                ArtifactRelationship(
+                    entry.artifact_id,
+                    RelationshipType.DERIVED_FROM,
+                    trial_entry.artifact_id,
+                )
+                in bundle.index.relationships
+            )
+    assert len(run_ids) >= 2

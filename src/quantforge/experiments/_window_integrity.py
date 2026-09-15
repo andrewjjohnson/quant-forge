@@ -85,6 +85,8 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
     ) != manifest.get("window_result_id"):
         raise ManifestError("window result identity is inconsistent")
     schedule = mapping(manifest.get("schedule"))
+    if manifest.get("schedule_id") != configuration_identity(schedule):
+        raise ManifestError("window schedule identity is inconsistent")
     if [
         text(decision.get("decision_timestamp")) for decision in decisions
     ] != schedule.get("decision_timestamps"):
