@@ -5,15 +5,18 @@ from typing import cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import Primitive, PrimitiveMapping
 from quantforge.experiments import ManifestError, StudyType, inspect_study
+from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
 from tests.unit.experiments.test_grid_integrity import (
-    grid_export as grid_export,
-)
-from tests.unit.experiments.test_grid_integrity import (
+    FixtureTrialAnalyzer,
+    build_grid_export,
     read_record,
     trial_path,
+)
+from tests.unit.experiments.test_grid_integrity import (
+    grid_export as grid_export,
 )
 
 
@@ -96,3 +99,64 @@ def test_archived_failures_follow_producer_schema_for_every_trial_status(
     else:
         with pytest.raises(ManifestError):
             inspect_study(study_type, root, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("complete", [False, True], ids=["resumable", "completed"])
+@pytest.mark.parametrize("field", ["started_at", "finished_at"])
+@pytest.mark.parametrize("invalid", ["missing", None, "", "  ", 123, True])
+def test_failed_prediction_trial_requires_retry_timestamps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    complete: bool,
+    field: str,
+    invalid: Primitive,
+) -> None:
+    root = build_grid_export(tmp_path, StudyType.PARAMETER_STUDY, monkeypatch)
+    if not complete:
+        (root / "summary.json").unlink()
+    path = trial_path(root, "failed")
+    trial = read_record(path)
+    assert isinstance(trial[field], str)
+    assert trial[field]
+    if invalid == "missing":
+        del trial[field]
+    else:
+        trial[field] = invalid
+    write_json(path, trial)
+    before = path.read_bytes()
+    with pytest.raises(ManifestError, match="retry timestamps"):
+        inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("complete", [False, True], ids=["resumable", "completed"])
+def test_valid_failed_prediction_trial_remains_retryable_after_inspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, complete: bool
+) -> None:
+    from tests.unit.prediction.test_prediction_grid import (
+        _grid,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    grid = _grid(
+        tmp_path / "prediction", analyzer=FixtureTrialAnalyzer(), retry_failed=True
+    )
+    result = grid.run()
+    root = tmp_path / "prediction" / result.study_id
+    if not complete:
+        (root / "summary.json").unlink()
+    path = trial_path(root, "failed")
+    failed = read_record(path)
+    before = path.read_bytes()
+    with monkeypatch.context() as inspection:
+        block_research(inspection)
+        inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
+    assert path.read_bytes() == before
+    grid.resume()
+    retried = read_record(path)
+    assert retried["status"] == "succeeded"
+    attempt = cast(list[PrimitiveMapping], retried["failed_attempts"])[0]
+    assert {name: attempt[name] for name in ("started_at", "finished_at")} == {
+        name: failed[name] for name in ("started_at", "finished_at")
+    }
+    block_research(monkeypatch)
+    inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)

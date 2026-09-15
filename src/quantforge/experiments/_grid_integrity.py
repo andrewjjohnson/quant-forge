@@ -170,6 +170,14 @@ def validate_trial_status(study_type: StudyType, trial: PrimitiveMapping) -> Non
         value = trial.get(field)
         if not isinstance(value, str) or not value.strip():
             raise ManifestError("trial has incomplete diagnostic or exclusion context")
+    if study_type is StudyType.PARAMETER_STUDY and status is TrialStatus.FAILED:
+        # QF-32 must archive both timestamps before it can retry a failed trial.
+        for field in ("started_at", "finished_at"):
+            value = trial.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ManifestError(
+                    "failed prediction trial has invalid retry timestamps"
+                )
     prohibited = (
         (() if status is TrialStatus.FAILED else failure_fields)
         + (() if status is TrialStatus.EXCLUDED else exclusion_fields)

@@ -239,6 +239,9 @@ study references. Candidate/row IDs, unique ordered sessions and disposition
 evidence are verified. The schema must match the persisted feature/outcome
 definitions, and every row must have exactly those columns with valid types and
 nullability. Directory schema metadata receives the same definition check.
+Each outcome's `configuration_id` must equal the canonical hash of its saved
+`component_configuration` before schema derivation. Refreshing the outer dataset
+ID, row IDs and table bytes cannot hide a contradictory component identity.
 Every feature manifest, including directory inputs, requires one valid contributing
 prediction-study digest per configured outcome; rows are not needed to check this
 lineage declaration.
@@ -309,6 +312,10 @@ only the persisted records; it does not assert completion. Successful trials
 must retain their result reference. Failed trials require nonempty diagnostic
 type and message (plus QF-6's failure category); excluded trials require their
 exclusion code and reason. Outcome fields must agree with the trial status.
+Failed QF-32 trials additionally require nonempty string `started_at` and
+`finished_at` values, including in directories without a final summary, because
+the producer needs both to archive a retry. Inspection preserves these timestamps
+without retrying the trial. Other statuses and QF-6 retain their existing contracts.
 Archived `failed_attempts` must be an array of producer-specific diagnostic records
 for every current trial status. Existing QF-6 and QF-32 attempt readers validate
 their fields; text fields are also checked explicitly. An omitted history retains

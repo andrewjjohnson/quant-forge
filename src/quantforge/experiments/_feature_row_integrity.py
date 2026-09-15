@@ -51,6 +51,15 @@ def validate_feature_schema(
         "engine_version"
     ) != configuration.get("engine_version"):
         raise ManifestError("feature dataset provenance differs from its configuration")
+    outcomes = _records(configuration.get("outcomes"))
+    for outcome in outcomes:
+        component = outcome.get("component_configuration")
+        if not isinstance(component, dict) or outcome.get(
+            "configuration_id"
+        ) != configuration_identity(component):
+            raise ManifestError(
+                "feature outcome configuration identity is inconsistent"
+            )
     features = [
         *(
             _field(field)
@@ -76,7 +85,7 @@ def validate_feature_schema(
                 + "_"
                 + text(field.get("field_name")),
             )
-            for outcome in _records(configuration.get("outcomes"))
+            for outcome in outcomes
             for field in _records(outcome.get("fields"))
         ),
     )
