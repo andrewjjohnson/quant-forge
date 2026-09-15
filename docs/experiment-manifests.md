@@ -184,7 +184,10 @@ QF-7/QF-29 dataset IDs must match the producer's hash of its complete recorded
 accepted/rejected/blocked/overlapping count against the rows' fixed dispositions,
 including any embedded summary. Counts must be nonnegative integers. Directory
 inputs retain declared row counts without loading CSV or Parquet into research
-objects.
+objects. Their required `summary.json` must exactly match the manifest's
+`record_counts`: every disposition count is a nonnegative integer and their sum
+equals `candidate_count`. The index binds these summary counts to their stored
+JSON fields. Equal totals with redistributed dispositions are still rejected.
 Direct result rows additionally bind dataset/source fingerprints, candidate-rule
 configuration, parameters, schema versions and namespace-specific prediction
 study references. Candidate/row IDs, unique ordered sessions and disposition
@@ -217,7 +220,16 @@ type and message (plus QF-6's failure category); excluded trials require their
 exclusion code and reason. Outcome fields must agree with the trial status.
 Prediction result fingerprints must match
 both their content and the fingerprint in the trial record; the recorded analysis
-and schema must also agree. QF-6 trial metrics, dataset, execution configuration
+and schema must also agree. A QF-32 summary must retain the study's schema and
+partition all successful trials between unique ranking and ineligible references,
+with no failed/excluded trials or foreign combination IDs. Eligible counts,
+configured objective names, values from saved trial analyses, consecutive ranks,
+declared objective order and combination-ID tie breaks must agree. Stability
+references must cover the ranked trials in objective order and retain their ranks
+and objective values. Ineligible references require recorded reasons; an empty
+ranking with all successful trials ineligible remains valid. These checks do not
+reapply eligibility constraints or recalculate neighborhood/stability statistics.
+QF-6 trial metrics, dataset, execution configuration
 and strategy provenance must match the linked
 QF-5 manifest, including its strategy-configuration hash and the grid's recorded
 engine/schema versions. These comparisons use stored values only and do not
@@ -446,8 +458,8 @@ enclosing hashes so that consistency checks are exercised beyond hash mismatch.
 | --- | --- | --- |
 | QF-11 | Study/component IDs, dataset/parameter provenance, ordered unique signal sessions, warm-up, outcome horizons, row/outcome/evaluation IDs and counts | Calendar metadata validation only; no labeling or evaluation |
 | QF-42 / nested QF-32 | Window/result/schedule identities and coverage, decision/context lineage and status, generated-signal provenance, distinct signal-to-row membership and unavailable outcomes | Reuses offline source/context checks; no context or indicator execution |
-| QF-7/QF-29 | Dataset/candidate/row IDs, source/rule/schema versions, prediction-study references, schema definitions/types, dispositions and counts | Existing values are validated structurally; features and outcomes are not recalculated |
-| QF-6/QF-32 grids | Coordinates, candidate/trial identity, status payloads, result bindings, recorded metrics, ranking/stability references and summary projections | No factory construction, candidate enumeration or research selection |
+| QF-7/QF-29 | Dataset/candidate/row IDs, source/rule/schema versions, prediction-study references, schema definitions/types, dispositions and matching manifest/directory-summary counts | Existing values are validated structurally; features and outcomes are not recalculated |
+| QF-6/QF-32 grids | Coordinates, candidate/trial identity, status payloads, result bindings, recorded metrics, ranking/stability references, eligibility coverage/counts and summary projections | No factory construction, candidate enumeration or research selection |
 | QF-5 standalone / optimization / validation exports | Run provenance, original integrity sidecar, captured fold/holdout fingerprints, original schema versions and producing QF-5 run IDs on every backtest file | No execution or accounting |
 | QF-8/QF-39/QF-40 lineage | Captured source and fold state, selections, aggregates and permanent holdout-ledger state | No partition, aggregate or holdout computation |
 | Credential metadata | Recursive normalized field-name and recognizable-value rejection at construction, JSON and binding boundaries | Conservative field filtering cannot discover arbitrary disguised secrets |

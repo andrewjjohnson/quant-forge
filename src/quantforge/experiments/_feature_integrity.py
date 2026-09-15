@@ -3,12 +3,30 @@
 from collections import Counter
 from typing import cast
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._feature_row_integrity import (
     validate_feature_row_provenance,
 )
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.prediction.signal_feature_models import SignalDisposition
+
+
+def validate_feature_summary(
+    manifest: PrimitiveMapping, summary: PrimitiveMapping
+) -> None:
+    """Reconcile producer count declarations without reading CSV or Parquet rows."""
+    counts = mapping(manifest.get("record_counts"))
+    dispositions = {f"{item.value}_count" for item in SignalDisposition}
+    for record in (counts, summary):
+        if (
+            set(record) != {"candidate_count", *dispositions}
+            or any(type(count) is not int or count < 0 for count in record.values())
+            or record["candidate_count"]
+            != sum(cast(int, record[key]) for key in dispositions)
+        ):
+            raise ManifestError("feature record counts are invalid or inconsistent")
+    if configuration_identity(counts) != configuration_identity(summary):
+        raise ManifestError("feature record counts differ between summary and manifest")
 
 
 def validate_feature_rows(manifest: PrimitiveMapping, result: PrimitiveMapping) -> None:
@@ -26,12 +44,11 @@ def validate_feature_rows(manifest: PrimitiveMapping, result: PrimitiveMapping) 
             for item in SignalDisposition
         },
     }
-    declarations = [mapping(manifest.get("record_counts"))]
     if "summary" in result:
-        declarations.append(mapping(result["summary"]))
+        validate_feature_summary(manifest, mapping(result["summary"]))
+    counts = mapping(manifest.get("record_counts"))
     if any(
         type(counts.get(key)) is not int or cast(int, counts[key]) != count
-        for counts in declarations
         for key, count in expected.items()
     ):
         raise ManifestError("feature record counts are inconsistent with result rows")

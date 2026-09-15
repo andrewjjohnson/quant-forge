@@ -4,10 +4,16 @@ from typing import cast
 import pytest
 
 from quantforge.configuration import Primitive, PrimitiveMapping
-from quantforge.experiments import ManifestError, StudyType, inspect_study
+from quantforge.experiments import (
+    ManifestError,
+    StudyType,
+    inspect_study,
+    verify_artifacts,
+)
 from quantforge.prediction import SignalDisposition, SignalFeatureDatasetResult
 from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
+from tests.unit.experiments.test_grid_integrity import read_record
 from tests.unit.helpers import make_dataset
 from tests.unit.prediction.test_feature_dataset import (
     FixtureCandidateRule,
@@ -126,3 +132,61 @@ def test_empty_feature_snapshot_is_valid(
     )
     block_research(monkeypatch)
     test_intact_feature_snapshot_preserves_counts_without_research(tmp_path, result)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "candidate_count",
+        "accepted_count",
+        "rejected_count",
+        "blocked_count",
+        "overlapping_count",
+        "missing",
+        "extra",
+        "redistributed",
+        "float",
+        "bool",
+    ],
+)
+def test_directory_feature_summary_must_match_manifest_counts(
+    tmp_path: Path, feature_result: SignalFeatureDatasetResult, change: str
+) -> None:
+    root = tmp_path / "features" / feature_result.dataset_id
+    summary = read_record(root / "summary.json")
+    if change == "missing":
+        summary.pop("accepted_count")
+    elif change == "extra":
+        summary["unexpected_count"] = 0
+    elif change == "redistributed":
+        nonempty = next(
+            key
+            for key in summary
+            if key != "candidate_count" and cast(int, summary[key]) > 0
+        )
+        target = "blocked_count" if nonempty != "blocked_count" else "accepted_count"
+        summary[nonempty] = cast(int, summary[nonempty]) - 1
+        summary[target] = cast(int, summary[target]) + 1
+    elif change == "float":
+        summary["candidate_count"] = float(cast(int, summary["candidate_count"]))
+    elif change == "bool":
+        summary["candidate_count"] = True
+    else:
+        summary[change] = cast(int, summary[change]) + 1
+    write_json(root / "summary.json", summary)
+    with pytest.raises(ManifestError, match="feature record counts"):
+        inspect_study(StudyType.FEATURE_DATASET, root, artifact_root=tmp_path)
+
+
+def test_intact_directory_summary_retains_count_bindings(
+    tmp_path: Path, feature_result: SignalFeatureDatasetResult
+) -> None:
+    root = tmp_path / "features" / feature_result.dataset_id
+    bundle = inspect_study(StudyType.FEATURE_DATASET, root, artifact_root=tmp_path)
+    summary = next(
+        entry for entry in bundle.index.entries if entry.path.endswith("/summary.json")
+    )
+    assert summary.bindings.to_primitive() == {
+        "/" + key: count for key, count in feature_result.summary.to_primitive().items()
+    }
+    assert verify_artifacts(bundle.index, tmp_path).valid

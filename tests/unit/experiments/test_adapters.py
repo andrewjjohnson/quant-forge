@@ -75,6 +75,8 @@ def block_research(monkeypatch: pytest.MonkeyPatch) -> None:
         ("quantforge.optimization.study", "rank_trials"),
         ("quantforge.optimization.study", "analyze_stability"),
         ("quantforge.prediction.grid", "_iter_candidates"),
+        ("quantforge.prediction.grid", "_rank"),
+        ("quantforge.prediction.grid", "_stability"),
         ("quantforge.oos.prediction", "aggregate_prediction"),
         ("quantforge.oos.prediction", "summarize_prediction_observations"),
         ("quantforge.oos.backtest", "aggregate_backtest"),

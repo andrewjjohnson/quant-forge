@@ -9,7 +9,10 @@ from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._backtest_artifacts import index_backtest_files
-from quantforge.experiments._feature_integrity import validate_feature_rows
+from quantforge.experiments._feature_integrity import (
+    validate_feature_rows,
+    validate_feature_summary,
+)
 from quantforge.experiments._feature_row_integrity import validate_feature_schema
 from quantforge.experiments._grid_integrity import (
     validate_backtest_trial,
@@ -27,7 +30,10 @@ from quantforge.experiments._producer_integrity import (
     validate_prediction_identity,
     validate_prediction_rows,
 )
-from quantforge.experiments._ranking_integrity import validate_optimization_summaries
+from quantforge.experiments._ranking_integrity import (
+    validate_optimization_summaries,
+    validate_prediction_summary,
+)
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
@@ -401,6 +407,16 @@ def inspect_study(
             category = _export_category(study_type, path.name)
             if category is not None:
                 bindings: PrimitiveMapping | None = None
+                if (
+                    study_type is StudyType.FEATURE_DATASET
+                    and path.name == "summary.json"
+                ):
+                    feature_summary, summary_base = read_producer_record(path)
+                    validate_feature_summary(document, feature_summary)
+                    bindings = {
+                        summary_base + "/" + key: count
+                        for key, count in feature_summary.items()
+                    }
                 if study_type is StudyType.OPTIMIZATION and path.name in {
                     "ranking.json",
                     "stability.json",
@@ -553,6 +569,8 @@ def inspect_study(
                 validate_optimization_summaries(
                     configuration, trial_records, summary, optimization_summaries
                 )
+            elif study_type is StudyType.PARAMETER_STUDY and summary is not None:
+                validate_prediction_summary(configuration, trial_records, summary)
     elif "rows" in container or "decisions" in container:
         key = "rows" if "rows" in container else "decisions"
         category = (

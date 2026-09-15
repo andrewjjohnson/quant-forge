@@ -1,10 +1,95 @@
-"""Reconcile stored QF-6 summaries without ranking or calculating stability."""
+"""Reconcile stored grid summaries without ranking or calculating stability."""
 
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping
 from quantforge.experiments._json import ManifestError, mapping, text
+
+
+def validate_prediction_summary(
+    configuration: PrimitiveMapping,
+    trials: list[PrimitiveMapping],
+    summary: PrimitiveMapping,
+) -> None:
+    """Bind QF-32 selections to existing analyses without rerunning selection."""
+    if summary.get("schema_version") != configuration.get("schema_version"):
+        raise ManifestError("prediction summary schema differs from study")
+    eligible = _records(summary.get("rankings"))
+    ineligible = _records(summary.get("ineligible_trials"))
+    stable = _records(summary.get("stability"))
+    by_id = {text(trial.get("trial_id")): trial for trial in trials}
+    eligible_by_id = _trial_references(eligible, by_id)
+    ineligible_by_id = _trial_references(ineligible, by_id)
+    stable_by_id = _trial_references(stable, by_id)
+    successful = {
+        trial_id
+        for trial_id, trial in by_id.items()
+        if trial.get("status") == "succeeded"
+    }
+    count = mapping(summary.get("counts")).get("eligible")
+    if (
+        eligible_by_id.keys() & ineligible_by_id.keys()
+        or eligible_by_id.keys() | ineligible_by_id.keys() != successful
+        or stable_by_id.keys() != eligible_by_id.keys()
+        or type(count) is not int
+        or count != len(eligible)
+    ):
+        raise ManifestError(
+            "prediction summary trial coverage or counts are inconsistent"
+        )
+    ranking_config = mapping(configuration.get("ranking"))
+    objective = text(ranking_config.get("objective_metric"))
+    direction = ranking_config.get("direction")
+    if direction not in {"maximize", "minimize"}:
+        raise ManifestError("prediction summary ranking direction is invalid")
+    previous: tuple[Decimal, str] | None = None
+    for rank, record in enumerate(eligible, 1):
+        trial = by_id[text(record.get("trial_id"))]
+        metrics = mapping(mapping(trial.get("analysis")).get("metrics"))
+        objective_value = _number(record.get("objective_value"))
+        combination_id = text(record.get("combination_id"))
+        if (
+            type(record.get("rank")) is not int
+            or record["rank"] != rank
+            or record.get("objective_metric") != objective
+            or objective_value != _number(metrics.get(objective))
+        ):
+            raise ManifestError(
+                "prediction ranking differs from trial metrics or ranks"
+            )
+        if previous is not None and (
+            (
+                objective_value > previous[0]
+                if direction == "maximize"
+                else objective_value < previous[0]
+            )
+            or (objective_value == previous[0] and combination_id < previous[1])
+        ):
+            raise ManifestError(
+                "prediction ranking order contradicts recorded objectives"
+            )
+        previous = objective_value, combination_id
+    for record in ineligible:
+        reasons = record.get("reasons")
+        if (
+            not isinstance(reasons, list)
+            or not reasons
+            or any(
+                not isinstance(reason, str) or not reason.strip() for reason in reasons
+            )
+        ):
+            raise ManifestError("prediction summary is missing ineligibility reasons")
+    for rank, record in enumerate(stable, 1):
+        ranked = eligible_by_id[text(record.get("trial_id"))]
+        if (
+            type(record.get("objective_rank")) is not int
+            or record["objective_rank"] != rank
+            or record["objective_rank"] != ranked.get("rank")
+            or _number(record.get("objective_value"))
+            != _number(ranked.get("objective_value"))
+        ):
+            raise ManifestError("prediction stability differs from recorded ranking")
 
 
 def _records(value: object) -> list[PrimitiveMapping]:
