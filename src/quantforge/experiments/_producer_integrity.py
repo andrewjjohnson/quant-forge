@@ -8,6 +8,17 @@ from quantforge.experiments._prediction_row_integrity import validate_prediction
 from quantforge.experiments._prediction_sessions import recorded_session_indexes
 
 
+def validate_prediction_manifest(manifest: PrimitiveMapping) -> None:
+    """Share QF-11 identity, count and context checks across direct/grid inputs."""
+    from quantforge.experiments._prediction_context_integrity import (
+        validate_prediction_context,
+    )
+
+    validate_prediction_identity(manifest)
+    validate_prediction_counts(manifest)
+    validate_prediction_context(manifest)
+
+
 def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
     """Use QF-11's original version and optional-context identity semantics."""
     configuration = mapping(manifest.get("configuration"))

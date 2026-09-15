@@ -128,6 +128,11 @@ environment variable values. Relevant packages default to TA-Lib, NumPy,
 exchange-calendars and PyArrow. Additional distribution names may be supplied
 explicitly. Installed dependency versions do not override historical indicator
 backend/library/runtime/function fields recorded by the study.
+Public experiment imports, provenance capture, manifest assembly and manifest/index
+read/write/hash verification do not import NumPy, TA-Lib, PyArrow or research
+producer packages. Producer-specific validators load when `inspect_study` or
+`inspect_validation` inspects existing research exports. They check persisted
+metadata without executing research calculations.
 
 Capture rejects a dirty working tree, including staged, unstaged and untracked
 files. Commit the intended source before execution; a commit and a dirty flag
@@ -188,6 +193,9 @@ staleness remains measured at that recorded capture time. Skipped contexts requi
 the explicit skip policy, a reason and zero generated predictions. Their rejected
 source evidence is retained and checked internally, without treating it as usable
 rule input; a missing provider result may have no source snapshot.
+Direct inputs and QF-32 trials without a decision schedule use the same QF-11
+manifest validator for identity, counts and context. Refreshing a nested study's
+row IDs and artifact fingerprints cannot bypass these context checks.
 QF-5 run IDs are verified against their documented market-data
 reference, bar fingerprint, strategy and execution inputs, including the strategy
 configuration hash. Full export metadata, such as initiation time and warm-up

@@ -1,13 +1,13 @@
 """Index QF-8/39/40 evidence, consulting the original holdout authority."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
-from quantforge.experiments._aggregate_integrity import validate_aggregate_folds
 from quantforge.experiments._backtest_artifacts import index_backtest_files
-from quantforge.experiments._holdout_integrity import validate_holdout_artifact
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
-from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.experiments.adapters import StudyArtifacts
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
@@ -19,14 +19,10 @@ from quantforge.experiments.artifacts import (
 )
 from quantforge.experiments.models import StudyProvenance, StudyType
 from quantforge.experiments.persistence import read_producer_record
-from quantforge.oos.common import provenance as source_provenance
-from quantforge.oos.holdout import HoldoutLedger
-from quantforge.oos.models import OOSSource
-from quantforge.walk_forward.models import (
-    BacktestOOSArtifact,
-    FoldStatus,
-    PredictionOOSArtifact,
-)
+
+if TYPE_CHECKING:
+    from quantforge.oos.holdout import HoldoutLedger
+    from quantforge.oos.models import OOSSource
 
 
 def _validate_captured_backtest_export(export: Path, fingerprint: str) -> None:
@@ -58,6 +54,17 @@ def inspect_validation(
     explicitly unknown, never unconsumed. A supplied ledger must already contain
     this reservation; errors propagate rather than restoring pristine state.
     """
+    # Importing the metadata API must not initialize research producer packages.
+    from quantforge.experiments._aggregate_integrity import validate_aggregate_folds
+    from quantforge.experiments._holdout_integrity import validate_holdout_artifact
+    from quantforge.experiments._window_integrity import validate_window_snapshot
+    from quantforge.oos.common import provenance as source_provenance
+    from quantforge.walk_forward.models import (
+        BacktestOOSArtifact,
+        FoldStatus,
+        PredictionOOSArtifact,
+    )
+
     if study_type not in {
         StudyType.WALK_FORWARD,
         StudyType.OOS_VALIDATION,

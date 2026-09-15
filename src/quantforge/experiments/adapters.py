@@ -10,33 +10,9 @@ from pathlib import Path
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._backtest_artifacts import index_backtest_files
 from quantforge.experiments._backtest_provenance import benchmark_configuration
-from quantforge.experiments._feature_integrity import (
-    validate_feature_rows,
-    validate_feature_summary,
-)
-from quantforge.experiments._feature_row_integrity import (
-    feature_prediction_studies,
-    validate_feature_schema,
-)
-from quantforge.experiments._grid_integrity import (
-    validate_backtest_trial,
-    validate_prediction_trial_coordinates,
-    validate_trial_coordinates,
-    validate_trial_counts,
-    validate_trial_status,
-)
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
-from quantforge.experiments._prediction_context_integrity import (
-    validate_prediction_context,
-)
 from quantforge.experiments._prediction_trial_integrity import (
     validate_prediction_trial_result,
-)
-from quantforge.experiments._producer_integrity import (
-    validate_backtest_identity,
-    validate_prediction_counts,
-    validate_prediction_identity,
-    validate_prediction_rows,
 )
 from quantforge.experiments._ranking_integrity import (
     validate_optimization_summaries,
@@ -46,7 +22,6 @@ from quantforge.experiments._validation_attachment import (
     captured_validation_result,
     merge_validation_artifacts,
 )
-from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
     ArtifactIndex,
@@ -154,13 +129,16 @@ def _pick(document: PrimitiveMapping, keys: tuple[str, ...]) -> PrimitiveMapping
 def _description(
     study_type: StudyType, document: PrimitiveMapping
 ) -> tuple[str, PrimitiveMapping, PrimitiveMapping, str]:
+    from quantforge.experiments._producer_integrity import (
+        validate_backtest_identity,
+        validate_prediction_manifest,
+    )
+
     observations = _pick(document, ("record_counts", "initiated_at"))
     if study_type is StudyType.PREDICTION:
         if document.get("component") != "quantforge_prediction_study":
             raise ManifestError("expected a QF-11 prediction study")
-        validate_prediction_identity(document)
-        validate_prediction_counts(document)
-        validate_prediction_context(document)
+        validate_prediction_manifest(document)
         configuration = _pick(
             document,
             ("engine_version", "configuration", "market_data", "prediction_context"),
@@ -197,6 +175,10 @@ def _description(
         configuration = _pick(
             document, ("engine_version", "configuration", "market_data")
         )
+        from quantforge.experiments._feature_row_integrity import (
+            feature_prediction_studies,
+        )
+
         feature_prediction_studies(document)
         observations["prediction_study_ids"] = document["prediction_study_ids"]
         return (
@@ -281,6 +263,28 @@ def inspect_study(
     a detached QF-5 manifest must use another filename and indexes metadata only.
     Relative artifact paths are rooted at `artifact_root`.
     """
+    # Producer packages may initialize numerical backends on import. Load their
+    # validators only for inspection, keeping metadata imports/assembly inert.
+    from quantforge.experiments._feature_integrity import (
+        validate_feature_rows,
+        validate_feature_summary,
+    )
+    from quantforge.experiments._feature_row_integrity import (
+        validate_feature_schema,
+    )
+    from quantforge.experiments._grid_integrity import (
+        validate_backtest_trial,
+        validate_prediction_trial_coordinates,
+        validate_trial_coordinates,
+        validate_trial_counts,
+        validate_trial_status,
+    )
+    from quantforge.experiments._producer_integrity import (
+        validate_prediction_manifest,
+        validate_prediction_rows,
+    )
+    from quantforge.experiments._window_integrity import validate_window_snapshot
+
     source = source.resolve()
     root = artifact_root.resolve()
     if (
@@ -561,7 +565,7 @@ def inspect_study(
                         else:
                             prediction = mapping(artifact.get("prediction_study"))
                             prediction_manifest = mapping(prediction.get("manifest"))
-                            validate_prediction_identity(prediction_manifest)
+                            validate_prediction_manifest(prediction_manifest)
                             validate_prediction_rows(
                                 prediction_manifest, prediction.get("rows")
                             )
