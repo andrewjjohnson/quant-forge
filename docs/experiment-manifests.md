@@ -538,6 +538,11 @@ Backtest tables must match their existing QF-5 integrity sidecar, and the sideca
 original text must match the captured QF-39 export fingerprint. This applies to
 both fold and holdout exports, preventing rehashed table changes from being
 attributed to the captured OOS result.
+Standalone, optimization, fold and holdout inspections capture the sidecar bytes
+before producer validation and bind every named file digest to both the index and
+the final bytes on disk. Atomic CSV or sidecar replacements during inspection
+therefore fail even after the initial producer check; identical-byte replacements
+remain valid. Captured fold/holdout fingerprints use that same sidecar snapshot.
 Nested backtest files retain their QF-5 manifest's `result_schema_version` and
 producing `run_id`, matching standalone and optimization inspection; the
 surrounding QF-39/QF-40 envelope version and study identity describe the enclosing
@@ -591,6 +596,12 @@ window-start values are finite nonnegative decimal strings; strategy and benchma
 drawdowns are finite decimal strings in `[-1, 0]`. Window-start flags are booleans
 and timing remains `exchange_session_close`. These checks do not rebuild the
 normalized return chain or drawdowns.
+Backtest aggregate summaries require every producer field, including completeness,
+stitching semantics, returns, drawdowns, trade counts, costs, exposure and warnings.
+Counts are nonnegative integers, decimal statistics are finite strings with their
+supported domains, and metrics without completed windows or samples retain nulls.
+Completeness uses the same schema checks as prediction aggregates. These checks
+do not recompute backtest performance or costs.
 Prediction observations must retain the source fold, selection, window result,
 decision/context/study references, generated signals and matching stored rows.
 Missing, duplicate, reordered or foreign records are rejected even under a new

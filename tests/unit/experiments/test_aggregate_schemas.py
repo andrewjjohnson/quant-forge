@@ -74,6 +74,8 @@ def inspect_record(captured: Captured, document: PrimitiveMapping) -> None:
     ("prediction", "path"),
     [
         (False, ("normalized_equity", 0)),
+        (False, ("summary",)),
+        (False, ("summary", "completeness")),
         (True, ("summary",)),
         (True, ("summary", "windows", 0)),
         (True, ("summary", "windows", 0, "summary")),
@@ -132,6 +134,77 @@ def test_normalized_equity_requires_finite_decimal_domains(
     captured = exports[False]
     document = deepcopy(captured[1])
     at(document, ("normalized_equity", 0))[field] = invalid
+    with pytest.raises(ManifestError):
+        inspect_record(captured, document)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "ending_index",
+        "total_return",
+        "maximum_drawdown",
+        "benchmark_total_return",
+        "benchmark_maximum_drawdown",
+        "win_rate",
+        "profit_factor",
+        "gross_profit",
+        "gross_loss",
+        "profitable_window_fraction",
+        "exposure",
+        "native_commissions",
+        "native_fees",
+        "native_slippage_cost",
+        "native_dividend_income",
+    ],
+)
+@pytest.mark.parametrize("invalid", [True, 1, "NaN", "invalid"])
+def test_backtest_summary_decimal_fields(
+    exports: dict[bool, Captured], field: str, invalid: Primitive
+) -> None:
+    captured = exports[False]
+    document = deepcopy(captured[1])
+    at(document, ("summary",))[field] = invalid
+    with pytest.raises(ManifestError):
+        inspect_record(captured, document)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("stitching", "foreign"),
+        ("starting_index", 1),
+        ("profitable_window_denominator", "all_windows"),
+        ("trade_count", True),
+        ("open_trade_count", -1),
+        ("winning_trades", "1"),
+        ("losing_trades", None),
+        ("oos_session_count", 1.5),
+        ("ending_index", "-1"),
+        ("total_return", "-2"),
+        ("maximum_drawdown", "0.1"),
+        ("benchmark_total_return", "-2"),
+        ("benchmark_maximum_drawdown", "-2"),
+        ("win_rate", "2"),
+        ("profit_factor", "-1"),
+        ("gross_profit", "-1"),
+        ("gross_loss", "1"),
+        ("profitable_window_fraction", "2"),
+        ("exposure", "2"),
+        ("native_commissions", "-1"),
+        ("native_fees", "-1"),
+        ("native_slippage_cost", "-1"),
+        ("warnings", "warning"),
+        ("warnings", cast(Primitive, [1])),
+        ("completeness", None),
+    ],
+)
+def test_backtest_summary_domains(
+    exports: dict[bool, Captured], field: str, invalid: Primitive
+) -> None:
+    captured = exports[False]
+    document = deepcopy(captured[1])
+    at(document, ("summary",))[field] = invalid
     with pytest.raises(ManifestError):
         inspect_record(captured, document)
 

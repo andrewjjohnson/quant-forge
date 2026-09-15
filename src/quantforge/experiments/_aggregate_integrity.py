@@ -7,6 +7,9 @@ from quantforge.experiments._aggregate_schema import (
     validate_configuration_stability,
     validate_equity_rows,
 )
+from quantforge.experiments._backtest_summary_integrity import (
+    validate_backtest_aggregate_summary,
+)
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._prediction_summary_integrity import (
     validate_prediction_aggregate_summary,
@@ -117,6 +120,7 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
     summary_windows = _records(mapping(aggregate.get("summary")).get("windows"))
     validate_configuration_stability(aggregate.get("stability"), source)
     if backtest:
+        validate_backtest_aggregate_summary(aggregate.get("summary"))
         _same_records(aggregate.get("native_windows"), native, "native windows")
         validate_equity_rows(aggregate.get("normalized_equity"))
         fields = ("fold_id", "run_id", "session", "timestamp_semantics", "window_start")

@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.experiments._backtest_artifacts import index_backtest_files
+from quantforge.experiments._backtest_artifacts import (
+    index_backtest_files,
+    validate_backtest_files,
+)
 from quantforge.experiments._backtest_provenance import benchmark_configuration
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
 from quantforge.experiments._prediction_trial_integrity import (
@@ -453,9 +456,7 @@ def inspect_study(
                         f"completed optimization is missing its {name} artifact"
                     )
         if study_type is StudyType.BACKTEST:
-            from quantforge.backtesting.export import validate_backtest_result_artifact
-
-            validate_backtest_result_artifact(source)
+            validate_backtest_files(source, reads)
         if study_type is StudyType.FEATURE_DATASET:
             required_names = {"features.csv", "schema.json", "summary.json"}
             if document["engine_version"] == "35":
@@ -582,11 +583,7 @@ def inspect_study(
 
                     artifact_path = local_path(source, text(relative))
                     if study_type is StudyType.OPTIMIZATION:
-                        from quantforge.backtesting.export import (
-                            validate_backtest_result_artifact,
-                        )
-
-                        validate_backtest_result_artifact(artifact_path)
+                        validate_backtest_files(artifact_path, reads)
                         backtest_manifest, _ = reads.read(
                             artifact_path / "manifest.json"
                         )

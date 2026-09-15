@@ -155,3 +155,31 @@ def validate_configuration_stability(value: object, source: OOSSource) -> None:
             raise ManifestError(
                 "OOS aggregate stability window differs from captured selection"
             )
+
+
+def validate_completeness(value: object) -> PrimitiveMapping:
+    completeness = record(
+        value,
+        {
+            "expected_windows",
+            "completed_windows",
+            "complete",
+            "missing_windows",
+            "failed_windows",
+            "incomplete_windows",
+            "interpretation",
+        },
+        "completeness",
+    )
+    for field in ("expected_windows", "completed_windows"):
+        counter(completeness[field])
+    if type(completeness["complete"]) is not bool or completeness[
+        "interpretation"
+    ] not in (
+        "all_planned_windows",
+        "partial_observed_windows_only; failures_are_not_zero_returns",
+    ):
+        raise ManifestError("OOS aggregate completeness metadata is invalid")
+    for field in ("missing_windows", "failed_windows", "incomplete_windows"):
+        strings(completeness[field])
+    return completeness

@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
-from quantforge.experiments._backtest_artifacts import index_backtest_files
+from quantforge.experiments._backtest_artifacts import (
+    index_backtest_files,
+    validate_backtest_files,
+)
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
 from quantforge.experiments._producer_snapshot import ProducerReadSet
 from quantforge.experiments.adapters import StudyArtifacts
@@ -25,16 +28,12 @@ if TYPE_CHECKING:
     from quantforge.oos.models import OOSSource
 
 
-def _validate_captured_backtest_export(export: Path, fingerprint: str) -> None:
+def _validate_captured_backtest_export(
+    export: Path, fingerprint: str, reads: ProducerReadSet
+) -> None:
     """Bind existing QF-5 tables to the QF-39/40 captured sidecar fingerprint."""
-    from quantforge.backtesting.export import validate_backtest_result_artifact
-
-    validate_backtest_result_artifact(export)
-    try:
-        # The producer hashes the original sidecar text, not parsed/reformatted JSON.
-        integrity = (export / "integrity.json").read_text()
-    except (OSError, UnicodeError) as error:
-        raise ManifestError("cannot read captured backtest export integrity") from error
+    # The producer hashes original sidecar text, not parsed/reformatted JSON.
+    integrity = validate_backtest_files(export, reads)
     if configuration_identity({"integrity": integrity}) != fingerprint:
         raise ManifestError("backtest export differs from captured fingerprint")
 
@@ -229,7 +228,7 @@ def inspect_validation(
             if isinstance(fold.artifact, BacktestOOSArtifact):
                 export = fold_root / "test" / fold.artifact.export_location
                 _validate_captured_backtest_export(
-                    export, fold.artifact.export_fingerprint
+                    export, fold.artifact.export_fingerprint, reads
                 )
                 backtest, _ = reads.read(export / "manifest.json")
                 validate_backtest_identity(backtest)
@@ -357,7 +356,7 @@ def inspect_validation(
                     export_root = result_path.parent / "evaluation"
                     export = local_path(export_root, text(artifact["export_location"]))
                     _validate_captured_backtest_export(
-                        export, text(artifact.get("export_fingerprint"))
+                        export, text(artifact.get("export_fingerprint")), reads
                     )
                     backtest, _ = reads.read(export / "manifest.json")
                     if backtest != mapping(

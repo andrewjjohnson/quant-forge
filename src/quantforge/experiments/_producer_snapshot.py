@@ -27,8 +27,11 @@ class ProducerReadSet:
 
     def expect(self, path: Path, content: bytes) -> None:
         """Bind an index entry to consumed or expected native export bytes."""
+        self.expect_sha256(path, sha256(content).hexdigest())
+
+    def expect_sha256(self, path: Path, fingerprint: str) -> None:
+        """Bind a producer sidecar's file digest to indexed and final bytes."""
         path = path.resolve()
-        fingerprint = sha256(content).hexdigest()
         if self._hashes.setdefault(path, fingerprint) != fingerprint:
             raise ManifestError("producer metadata changed during indexing; retry")
 

@@ -9,6 +9,7 @@ from quantforge.experiments._aggregate_schema import (
     record,
     records,
     strings,
+    validate_completeness,
 )
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.oos.prediction import PredictionMetricFields
@@ -163,30 +164,7 @@ def validate_prediction_aggregate_summary(value: object) -> None:
         metric_fields["baseline_correct"] is None
     ):
         raise ManifestError("OOS aggregate baseline fields must be paired")
-    completeness = record(
-        summary["completeness"],
-        {
-            "expected_windows",
-            "completed_windows",
-            "complete",
-            "missing_windows",
-            "failed_windows",
-            "incomplete_windows",
-            "interpretation",
-        },
-        "completeness",
-    )
-    for field in ("expected_windows", "completed_windows"):
-        counter(completeness[field])
-    if type(completeness["complete"]) is not bool or completeness[
-        "interpretation"
-    ] not in (
-        "all_planned_windows",
-        "partial_observed_windows_only; failures_are_not_zero_returns",
-    ):
-        raise ManifestError("OOS aggregate completeness metadata is invalid")
-    for field in ("missing_windows", "failed_windows", "incomplete_windows"):
-        strings(completeness[field])
+    validate_completeness(summary["completeness"])
     for field in ("window_accuracy_consistency", "window_signed_outcome_consistency"):
         _metric(summary[field])
     strings(summary["warnings"])
