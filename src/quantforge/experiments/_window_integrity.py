@@ -4,6 +4,7 @@ from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_row_integrity import validate_prediction_signal
 from quantforge.experiments._producer_integrity import (
     validate_prediction_identity,
     validate_prediction_rows,
@@ -21,16 +22,26 @@ def _records(value: object) -> list[PrimitiveMapping]:
 
 
 def _validate_signal_rows(
-    signals: list[PrimitiveMapping], rows: list[PrimitiveMapping]
+    signals: list[PrimitiveMapping],
+    rows: list[PrimitiveMapping],
+    manifest: PrimitiveMapping,
+    indexes: dict[str, int],
 ) -> None:
     signal_ids: set[str] = set()
+    sessions: list[str] = []
     for signal in signals:
         mapping(signal.get("features"))
-        mapping(mapping(signal.get("prediction")).get("values"))
+        sessions.append(
+            validate_prediction_signal(
+                manifest, mapping(signal.get("prediction")), indexes
+            )
+        )
         signal_id = configuration_identity(signal)
         if signal_id in signal_ids:
             raise ManifestError("window generated signals contain duplicates")
         signal_ids.add(signal_id)
+    if sessions != sorted(set(sessions)):
+        raise ManifestError("window signals must have ordered unique sessions")
     for row in rows:
         signal_id = configuration_identity(
             {"features": row.get("features"), "prediction": row.get("prediction")}
@@ -38,6 +49,19 @@ def _validate_signal_rows(
         if signal_id not in signal_ids:
             raise ManifestError("window row does not match a distinct generated signal")
         signal_ids.remove(signal_id)
+    horizon = mapping(
+        mapping(manifest.get("configuration")).get("outcome_labeler")
+    ).get("required_future_sessions")
+    if type(horizon) is not int or horizon < 1:
+        raise ManifestError("prediction outcome horizon must be positive")
+    if any(
+        configuration_identity(signal) in signal_ids
+        and indexes[text(mapping(signal.get("prediction")).get("signal_session"))]
+        + horizon
+        < len(indexes)
+        for signal in signals
+    ):
+        raise ManifestError("window signal is missing an available outcome row")
 
 
 def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
@@ -85,7 +109,7 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
             or decision.get("prediction_study_id") != study_manifest.get("study_id")
         ):
             raise ManifestError("decision study does not match its window provenance")
-        validate_prediction_rows(study_manifest, study.get("rows"))
+        indexes = validate_prediction_rows(study_manifest, study.get("rows"))
         rows = _records(study.get("rows"))
         if len(rows) > len(signals):
             raise ManifestError("window rows exceed generated signal records")
@@ -101,7 +125,7 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
             "generated_predictions"
         ) != len(signals):
             raise ManifestError("decision record counts differ from generated signals")
-        _validate_signal_rows(signals, rows)
+        _validate_signal_rows(signals, rows, study_manifest, indexes)
     if configuration_identity(
         {"counts": manifest.get("record_counts")}
     ) != configuration_identity({"counts": _window_record_counts(decisions)}):

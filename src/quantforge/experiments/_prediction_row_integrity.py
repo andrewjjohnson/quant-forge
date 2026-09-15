@@ -2,24 +2,25 @@
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_sessions import (
+    validate_outcome_session,
+    validate_signal_session,
+)
 
 
 def _require_fields(record: PrimitiveMapping, expected: PrimitiveMapping) -> None:
-    if any(record.get(key) != value for key, value in expected.items()):
+    if configuration_identity(
+        {key: record.get(key) for key in expected}
+    ) != configuration_identity(expected):
         raise ManifestError("prediction row provenance differs from its manifest")
 
 
-def validate_prediction_row(manifest: PrimitiveMapping, row: PrimitiveMapping) -> str:
-    """Check existing dataset/component references and the producer's three hashes."""
+def validate_prediction_signal(
+    manifest: PrimitiveMapping, prediction: PrimitiveMapping, indexes: dict[str, int]
+) -> str:
+    """Check all predictions, including end-of-data signals without labeled rows."""
     market_data = mapping(manifest.get("market_data"))
-    configuration = mapping(manifest.get("configuration"))
-    dataset: PrimitiveMapping = {
-        "dataset_id": market_data.get("dataset_id"),
-        "dataset_fingerprint": market_data.get("bars_fingerprint"),
-    }
-    _require_fields(row, {**dataset, "study_id": manifest.get("study_id")})
-    prediction = mapping(row.get("prediction"))
-    rule = mapping(configuration.get("prediction_rule"))
+    rule = mapping(mapping(manifest.get("configuration")).get("prediction_rule"))
     _require_fields(
         prediction,
         {
@@ -29,13 +30,43 @@ def validate_prediction_row(manifest: PrimitiveMapping, row: PrimitiveMapping) -
             "symbol": market_data.get("symbol"),
         },
     )
+    mapping(prediction.get("values"))
+    mapping(prediction.get("strategy_parameters"))
     rule_configuration = mapping(rule.get("configuration"))
     if "parameters" in rule_configuration:
         _require_fields(
             prediction, {"strategy_parameters": rule_configuration["parameters"]}
         )
+    context = manifest.get("prediction_context")
+    decision_session = None
+    if context is not None and mapping(context).get("status") == "available":
+        decision_session = text(mapping(context).get("decision_session"))
+    return validate_signal_session(
+        prediction, rule, indexes, decision_session=decision_session
+    )
+
+
+def validate_prediction_row(
+    manifest: PrimitiveMapping, row: PrimitiveMapping, indexes: dict[str, int]
+) -> str:
+    """Check existing dataset/component references and the producer's three hashes."""
+    market_data = mapping(manifest.get("market_data"))
+    configuration = mapping(manifest.get("configuration"))
+    dataset: PrimitiveMapping = {
+        "dataset_id": market_data.get("dataset_id"),
+        "dataset_fingerprint": market_data.get("bars_fingerprint"),
+    }
+    _require_fields(row, {**dataset, "study_id": manifest.get("study_id")})
+    prediction = mapping(row.get("prediction"))
+    signal = validate_prediction_signal(manifest, prediction, indexes)
     outcome = mapping(row.get("outcome"))
     labeler = mapping(configuration.get("outcome_labeler"))
+    validate_outcome_session(
+        signal,
+        outcome.get("outcome_session"),
+        labeler.get("required_future_sessions"),
+        indexes,
+    )
     _require_fields(
         outcome,
         {

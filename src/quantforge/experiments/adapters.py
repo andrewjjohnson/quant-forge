@@ -9,6 +9,7 @@ from pathlib import Path
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._feature_integrity import validate_feature_rows
+from quantforge.experiments._feature_row_integrity import validate_feature_schema
 from quantforge.experiments._grid_integrity import (
     validate_backtest_trial,
     validate_prediction_trial_coordinates,
@@ -348,6 +349,7 @@ def inspect_study(
     if study_type is StudyType.FEATURE_DATASET:
         if source.is_dir():
             feature_schema, _ = read_producer_record(source / "schema.json")
+            validate_feature_schema(document, feature_schema)
             schema_entry = add(
                 source / "schema.json",
                 ArtifactType.FEATURE_SCHEMA,

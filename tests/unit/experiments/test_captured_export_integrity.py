@@ -6,7 +6,12 @@ import pytest
 
 from quantforge.backtesting import validate_backtest_result_artifact
 from quantforge.configuration import PrimitiveMapping
-from quantforge.experiments import ManifestError, inspect_validation
+from quantforge.experiments import (
+    ManifestError,
+    StudyType,
+    inspect_study,
+    inspect_validation,
+)
 from quantforge.experiments.persistence import read_producer_record
 from quantforge.oos import HoldoutEvaluation, HoldoutLedger
 from quantforge.walk_forward.models import BacktestOOSArtifact
@@ -61,3 +66,61 @@ def test_rehashed_backtest_tables_must_match_captured_export(
         inspect_validation(
             source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
         )
+
+
+@pytest.mark.parametrize("holdout", [False, True], ids=["fold", "holdout"])
+def test_nested_backtest_files_retain_the_standalone_result_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, holdout: bool
+) -> None:
+    completed = complete_study(tmp_path, prediction=False)
+    source = completed.source
+    ledger = None
+    if holdout:
+        ledger = HoldoutLedger.create(tmp_path / "ledger")
+        ledger.reserve(source)
+        consumed = ledger.consume(
+            HoldoutEvaluation.prepare(
+                source, completed.evaluator, selection_fold_id=source.folds[-1].fold_id
+            ),
+            run_id="schema-holdout",
+        )
+        assert consumed.result_reference is not None
+        result_path = ledger.root / cast(
+            str, consumed.result_reference.to_primitive()["path"]
+        )
+        result, _ = read_producer_record(result_path)
+        export = (
+            result_path.parent
+            / "evaluation"
+            / cast(str, cast(PrimitiveMapping, result["artifact"])["export_location"])
+        )
+    else:
+        fold = source.folds[0]
+        assert isinstance(fold.artifact, BacktestOOSArtifact)
+        export = (
+            completed.study.study_path
+            / "folds"
+            / fold.fold_id
+            / "test"
+            / fold.artifact.export_location
+        )
+    block_research(monkeypatch)
+    standalone = inspect_study(StudyType.BACKTEST, export, artifact_root=tmp_path)
+    nested = inspect_validation(
+        source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
+    )
+    expected_schema = cast(
+        str, read_record(export / "manifest.json")["result_schema_version"]
+    )
+    files = {
+        entry.path: entry.schema_version
+        for entry in standalone.index.entries
+        if not entry.json_pointer
+    }
+    assert files
+    assert set(files.values()) == {expected_schema}
+    assert {
+        entry.path: entry.schema_version
+        for entry in nested.index.entries
+        if entry.path in files
+    } == files

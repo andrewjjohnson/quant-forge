@@ -161,6 +161,13 @@ rule/outcome/evaluator metadata, and retain valid outcome, evaluation and row
 identities. Duplicate row identities are rejected. These checks hash stored
 fields; they do not regenerate predictions, labels or evaluations. Manifest-only
 inputs retain producer-declared counts without asserting row verification.
+The rule, labeler and evaluator configuration IDs also bind their complete stored
+definitions. Row and generated-signal checks share the same symbol, component,
+parameter, session and warm-up validation. QF-11 requires contiguous observed
+daily sessions: the recorded calendar, first/last session and bar count establish
+that session sequence using the existing calendar helper. Outcome sessions must
+be exactly the configured number of exchange sessions after their signals,
+including holidays and weekends. No label values or price metrics are calculated.
 QF-5 run IDs are verified against their documented market-data
 reference, bar fingerprint, strategy and execution inputs, including the strategy
 configuration hash. Full export metadata, such as initiation time and warm-up
@@ -172,6 +179,14 @@ accepted/rejected/blocked/overlapping count against the rows' fixed dispositions
 including any embedded summary. Counts must be nonnegative integers. Directory
 inputs retain declared row counts without loading CSV or Parquet into research
 objects.
+Direct result rows additionally bind dataset/source fingerprints, candidate-rule
+configuration, parameters, schema versions and namespace-specific prediction
+study references. Candidate/row IDs, unique ordered sessions and disposition
+evidence are verified. The schema must match the persisted feature/outcome
+definitions, and every row must have exactly those columns with valid types and
+nullability. Directory schema metadata receives the same definition check.
+These checks reuse producer row hashing and schema-value validation; they do not
+evaluate causal features or future outcomes.
 
 Completed QF-6 exports must include `ranking.json` and `stability.json`. They are
 indexed as required artifacts, so missing files and changed content fail integrity
@@ -243,6 +258,9 @@ signals/rows. That evidence remains subject to internal source validation.
 Decision status and generated counts must agree with the context and signals.
 Every labeled row's stored features and prediction must match a distinct
 generated signal; duplicate signals and substitutions are rejected.
+Unlabeled end-of-data signals receive the same provenance/session checks as
+labeled signals. A missing row is permitted only when the configured future
+session lies beyond the recorded dataset range.
 
 Embedded source-dataset entries reference the producer's recorded dataset
 metadata. Their byte hash verifies that metadata file, not an unavailable source
@@ -297,6 +315,9 @@ Backtest tables must match their existing QF-5 integrity sidecar, and the sideca
 original text must match the captured QF-39 export fingerprint. This applies to
 both fold and holdout exports, preventing rehashed table changes from being
 attributed to the captured OOS result.
+Nested backtest files retain their QF-5 manifest's `result_schema_version`, matching
+standalone inspection; the surrounding QF-39/QF-40 envelope version does not
+replace the backtest table schema.
 Failed or absent folds stay failed or absent; stale files do not become OOS
 observations. No partition memberships are calculated again.
 
@@ -406,6 +427,27 @@ producer exports quiescent while indexing. File hashing reads bytes and JSON
 metadata; there is no metric calculation. QF-9 does not validate statistical
 correctness or recreate a lost source dataset.
 
+### Producer contract verification
+
+The adapters check related invariants together. Regression tests change individual
+fields, replace records with outputs from other real studies, and recompute
+enclosing hashes so that consistency checks are exercised beyond hash mismatch.
+
+| Contract family | Stored evidence checked | Boundary |
+| --- | --- | --- |
+| QF-11 | Study/component IDs, dataset/parameter provenance, ordered unique signal sessions, warm-up, outcome horizons, row/outcome/evaluation IDs and counts | Calendar metadata validation only; no labeling or evaluation |
+| QF-42 / nested QF-32 | Window/schedule coverage, decision/context lineage and status, generated-signal provenance, distinct signal-to-row membership and unavailable outcomes | Reuses offline source/context checks; no context or indicator execution |
+| QF-7/QF-29 | Dataset/candidate/row IDs, source/rule/schema versions, prediction-study references, schema definitions/types, dispositions and counts | Existing values are validated structurally; features and outcomes are not recalculated |
+| QF-6/QF-32 grids | Coordinates, candidate/trial identity, status payloads, result bindings, recorded metrics, ranking/stability references and summary projections | No factory construction, candidate enumeration or research selection |
+| QF-5 and validation exports | Run provenance, original integrity sidecar, captured fold/holdout fingerprints and original nested schema versions | No execution or accounting |
+| QF-8/QF-39/QF-40 lineage | Captured source and fold state, selections, aggregates and permanent holdout-ledger state | No partition, aggregate or holdout computation |
+| Credential metadata | Recursive normalized field-name and recognizable-value rejection at construction, JSON and binding boundaries | Conservative field filtering cannot discover arbitrary disguised secrets |
+
+Some producer facts require original bars, strategy objects or research execution
+to verify. They are not inferred from a self-consistent replacement of all records.
+For example, missing source-rule definitions remain unavailable; schema-correct
+feature values are not evidence that the feature calculation itself was correct.
+
 ## Secrets and reproducibility
 
 Only explicit primitive research snapshots are accepted. No provider object,
@@ -422,6 +464,8 @@ such as `account_initialization` and `corporate_action_accounting`.
 The field-name guard conservatively rejects normalized keys containing `token`,
 including compound names such as `api_token`, `auth_token` and `session_token`,
 with the same policy for nested records and metadata bindings.
+Access-key aliases such as `access_key` and `aws_access_key_id` are also rejected
+after normalization of case and separators.
 This guard cannot discover an arbitrary secret disguised as an
 unrelated free-text value; callers must supply research configuration only.
 

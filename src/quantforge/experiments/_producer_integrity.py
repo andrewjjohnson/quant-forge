@@ -5,15 +5,17 @@ from typing import cast
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._prediction_row_integrity import validate_prediction_row
+from quantforge.experiments._prediction_sessions import recorded_session_indexes
 
 
 def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
     """Use QF-11's original version and optional-context identity semantics."""
+    configuration = mapping(manifest.get("configuration"))
     identity: PrimitiveMapping = {
         "component": "quantforge_prediction_study",
         "engine_version": text(manifest.get("engine_version")),
         "market_data": mapping(manifest.get("market_data")),
-        "study_configuration": mapping(manifest.get("configuration")),
+        "study_configuration": configuration,
     }
     if "prediction_context" in manifest:
         identity["prediction_context"] = mapping(manifest["prediction_context"])
@@ -21,9 +23,21 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
         "study_id"
     ) != configuration_identity(identity):
         raise ManifestError("prediction study identity is inconsistent")
+    for name in ("prediction_rule", "outcome_labeler", "evaluator"):
+        component = mapping(configuration.get(name))
+        definition = mapping(component.get("configuration"))
+        if (
+            component.get("configuration_id") != configuration_identity(definition)
+            or component.get("name") != definition.get("component_name")
+            or component.get("implementation_version")
+            != definition.get("implementation_version")
+        ):
+            raise ManifestError("prediction study component identity is inconsistent")
 
 
-def validate_prediction_rows(manifest: PrimitiveMapping, rows: object) -> None:
+def validate_prediction_rows(
+    manifest: PrimitiveMapping, rows: object
+) -> dict[str, int]:
     """Check row counts and provenance without generating or evaluating results."""
     if not isinstance(rows, list) or any(
         not isinstance(row, dict) for row in cast(list[object], rows)
@@ -44,12 +58,20 @@ def validate_prediction_rows(manifest: PrimitiveMapping, rows: object) -> None:
         raise ManifestError(
             "prediction record counts are inconsistent with result rows"
         )
+    indexes = recorded_session_indexes(mapping(manifest.get("market_data")))
     identifiers = [
-        validate_prediction_row(manifest, mapping(row))
+        validate_prediction_row(manifest, mapping(row), indexes)
         for row in cast(list[object], rows)
     ]
     if len(set(identifiers)) != len(identifiers):
         raise ManifestError("duplicate prediction row identity")
+    sessions = [
+        text(mapping(mapping(row).get("prediction")).get("signal_session"))
+        for row in cast(list[object], rows)
+    ]
+    if sessions != sorted(set(sessions)):
+        raise ManifestError("prediction rows must have ordered unique signal sessions")
+    return indexes
 
 
 def validate_backtest_identity(manifest: PrimitiveMapping) -> None:

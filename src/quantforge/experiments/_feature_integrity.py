@@ -4,6 +4,9 @@ from collections import Counter
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping
+from quantforge.experiments._feature_row_integrity import (
+    validate_feature_row_provenance,
+)
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.prediction.signal_feature_models import SignalDisposition
 
@@ -32,3 +35,4 @@ def validate_feature_rows(manifest: PrimitiveMapping, result: PrimitiveMapping) 
         for key, count in expected.items()
     ):
         raise ManifestError("feature record counts are inconsistent with result rows")
+    validate_feature_row_provenance(manifest, result, [mapping(row) for row in rows])

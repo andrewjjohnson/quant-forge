@@ -38,6 +38,7 @@ def safe_metadata(value: Primitive) -> None:
                 word in normalized
                 for word in (
                     "apikey",
+                    "accesskey",
                     "token",
                     "password",
                     "passwd",
