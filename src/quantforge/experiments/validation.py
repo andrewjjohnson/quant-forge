@@ -3,9 +3,11 @@
 from pathlib import Path
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
+from quantforge.experiments._aggregate_integrity import validate_aggregate_folds
 from quantforge.experiments._backtest_artifacts import index_backtest_files
 from quantforge.experiments._holdout_integrity import validate_holdout_artifact
 from quantforge.experiments._json import ManifestError, mapping, snapshot, text
+from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.experiments.adapters import StudyArtifacts
 from quantforge.experiments.artifacts import (
     ArtifactEntry,
@@ -20,7 +22,11 @@ from quantforge.experiments.persistence import read_producer_record
 from quantforge.oos.common import provenance as source_provenance
 from quantforge.oos.holdout import HoldoutLedger
 from quantforge.oos.models import OOSSource
-from quantforge.walk_forward.models import BacktestOOSArtifact, FoldStatus
+from quantforge.walk_forward.models import (
+    BacktestOOSArtifact,
+    FoldStatus,
+    PredictionOOSArtifact,
+)
 
 
 def _validate_captured_backtest_export(export: Path, fingerprint: str) -> None:
@@ -64,7 +70,7 @@ def inspect_validation(
         raise ManifestError("holdout validation requires the authoritative ledger")
     root, study_path = artifact_root.resolve(), study_path.resolve()
     # Existing QF-40 snapshot consistency checks; this function does not
-    # calculate stability, partition membership, or aggregate observations.
+    # calculate stability, partition membership, or aggregate metrics.
     source_provenance(source)
     definition, base = read_producer_record(study_path / "manifest.json")
     if (
@@ -196,6 +202,8 @@ def inspect_validation(
                 "artifact_id"
             ) != configuration_identity(artifact):
                 raise ManifestError("fold artifact differs from captured source")
+            if isinstance(fold.artifact, PredictionOOSArtifact):
+                validate_window_snapshot(fold.artifact.snapshot.to_primitive())
             record["result_id"] = artifact["result_id"]
             window = add(
                 fold_root / "oos.json",
@@ -254,6 +262,7 @@ def inspect_validation(
             != [item.to_primitive() for item in source.references]
         ):
             raise ManifestError("OOS aggregate has incompatible source provenance")
+        validate_aggregate_folds(source, aggregate)
         aggregate_id = aggregate_path.stem
         observations["aggregate_id"] = aggregate_id
         configuration["aggregate_kind"] = aggregate["kind"]

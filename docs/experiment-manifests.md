@@ -275,21 +275,27 @@ match the grid's schedule, context environment, dataset family and window engine
 Each artifact's prediction-study/window-result reference must match its nested
 result. Rehashing a result from another candidate does not establish that binding.
 
-QF-42 inspection requires the complete result snapshot, including decisions.
+QF-42 inspection requires the complete result snapshot, including decisions,
+and explicitly supports window and schedule schema version `1`. Unknown, future
+or corrupt versions are rejected before their contents can be indexed; a new
+version requires an explicit adapter or migration.
 It verifies the result identity over the recorded window ID and ordered decisions,
 then checks all stored record counts using QF-42's primitive count helper. The
-same checks apply to QF-32's nested window results. Changed or truncated decisions
+same checks apply to QF-32's nested windows and captured fold/holdout windows.
+Changed or truncated decisions
 cannot retain a stale result identity. Ordered decision timestamps must exactly
 match the recorded schedule, even if the result hash and counts have been updated.
 The separate `schedule_id` must equal the hash of the complete recorded schedule;
 missing or stale schedule identities are rejected in standalone and grid windows.
-Each scheduled instant is mapped to its exchange session using the recorded
-calendar and regular/extended-hours policy. Available contexts and their signals
-must use that session, even after nested hashes are refreshed. Exchange open/close
-boundaries preserve overnight trade-date labels and terminal bars at midnight;
-this lookup does not generate a new decision schedule or market observations.
-This reads existing signals and rows;
-it does not rebuild schedules, contexts, predictions, outcomes or metrics.
+The recorded timeframe and closed start/end interval are validated with QF-42's
+pure `PredictionDecisionSchedule` calendar contract. Every completed primary-bar
+boundary must be present, including leading/terminal partial-duration bars;
+deleting a timestamp and its decision cannot be hidden by refreshing all hashes.
+Regular/extended-hours policies, clock anchors, holidays, empty intervals,
+overnight trade-date labels and terminal bars at midnight retain the producer's
+semantics. Available contexts and their signals must use the resulting exchange
+session. Only expected calendar boundaries are derived: no market observations,
+contexts, decisions, predictions, outcomes or research metrics are generated.
 Each nested QF-11 manifest must also match the window's recorded configuration,
 market data and prediction-engine version, and its study ID must match the
 decision's `prediction_study_id`. A self-consistent result from another study
@@ -384,8 +390,19 @@ Failed or absent folds stay failed or absent; stale files do not become OOS
 observations. No partition memberships are calculated again.
 
 An existing QF-40 aggregate must have the expected content ID and exact source
-plan/study/lineage/fold references. Its stability section receives an index entry
-using a JSON pointer; neither stability nor any aggregate metric is recalculated.
+plan/study/lineage/fold references, and its family must match the source study.
+Backtest `native_windows` must match the complete captured fold payloads, frozen
+selections, export locations and fingerprints in source order. Normalized-equity
+fold/run/session membership and window-start markers must match native equity;
+per-window performance copies must match the captured backtest manifests.
+Prediction observations must retain the source fold, selection, window result,
+decision/context/study references, generated signals and matching stored rows.
+Missing, duplicate, reordered or foreign records are rejected even under a new
+aggregate content hash. Window summary membership and availability must preserve
+failed and missing folds, including partial and empty aggregates.
+Its stability section receives an index entry using a JSON pointer. Normalized
+index values, prediction summary statistics and stability calculations remain
+producer-owned; these checks bind copied evidence without recalculating metrics.
 The graph links aggregate to contributing test artifacts, test artifacts to
 frozen selections, selections to the plan, and the plan to source provenance.
 
