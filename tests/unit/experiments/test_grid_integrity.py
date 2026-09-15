@@ -448,7 +448,8 @@ def test_prediction_trial_metadata_must_match_unchanged_result(
     trial = read_record(record_path)
     trial[field] = {"altered": True} if field == "analysis" else "altered"
     write_json(record_path, trial)
-    with pytest.raises(ManifestError, match="metadata does not match"):
+    expected_error = "analysis" if field == "analysis" else "metadata does not match"
+    with pytest.raises(ManifestError, match=expected_error):
         inspect_study(StudyType.PARAMETER_STUDY, path, artifact_root=tmp_path)
 
 

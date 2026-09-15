@@ -8,8 +8,10 @@ from quantforge.experiments._producer_integrity import validate_backtest_identit
 from quantforge.experiments.models import StudyType
 from quantforge.optimization.models import FailedTrialAttempt, TrialStatus
 from quantforge.prediction.grid import (
+    PredictionGridError,
     PredictionGridFailedAttempt,
     PredictionGridPersistenceError,
+    PredictionTrialAnalysis,
 )
 
 
@@ -169,6 +171,18 @@ def validate_trial_status(study_type: StudyType, trial: PrimitiveMapping) -> Non
     )
     if any(trial.get(field) is not None for field in prohibited):
         raise ManifestError("trial status contradicts its outcome context")
+    if study_type is StudyType.PARAMETER_STUDY and status is TrialStatus.SUCCEEDED:
+        # A missing final summary does not relax the producer's completed-trial
+        # contract. Deserialize stored analysis only; never invoke its analyzer.
+        try:
+            analysis = mapping(trial.get("analysis"))
+            retained = PredictionTrialAnalysis.from_primitive(analysis).to_primitive()
+        except (KeyError, TypeError, ValueError, PredictionGridError) as error:
+            raise ManifestError(
+                "successful prediction trial analysis is invalid"
+            ) from error
+        if configuration_identity(analysis) != configuration_identity(retained):
+            raise ManifestError("successful prediction trial analysis is noncanonical")
     attempts = trial.get("failed_attempts", [])
     if not isinstance(attempts, list):
         raise ManifestError("archived trial attempts must be an array")

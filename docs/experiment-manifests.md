@@ -302,6 +302,14 @@ QF-32 uses its own factory/combination/trial identity format and checks the reco
 trial definition, backend, dataset-family fingerprint and indicator configuration
 IDs. Historical schema versions and excluded candidates' null definitions are
 preserved; prediction factories and candidate generation are never invoked.
+Every trial's `schema_version` must equal the study's recorded version, including
+failed/excluded records and directories without a final summary. Successful QF-32
+trials require a complete canonical analysis record, validated by the producer's
+pure deserializer. Counts, finite numeric metrics, comparison records and artifact
+metadata must remain readable without discarded or defaulted fields. Missing,
+null or malformed analysis is rejected even when the trial and result agree and
+their fingerprints have been refreshed. Failed and excluded trials retain null
+analysis. No analyzer or research metric calculation is invoked.
 Successful plain-prediction and window artifacts must also match the trial's
 recorded component definitions, context requirements, feature configuration and
 result schema, and the grid's dataset and backend. Window results additionally
