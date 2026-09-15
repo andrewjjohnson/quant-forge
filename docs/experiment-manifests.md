@@ -150,7 +150,7 @@ historical dirty flags, but those flags do not identify the uncommitted source.
 | `FEATURE_DATASET`: QF-7/QF-29 directory or result JSON | Candidate/outcome configuration, feature schema, QF-29 contextual timeframe/backend/family provenance, source fingerprint, contributing prediction IDs, counts; CSV and optional Parquet |
 | `PARAMETER_STUDY`: QF-32 directory | Search space, constraints, factory/analyzer, fixed backend, context family, ranking/stability and optional QF-42 schedule; summary, all persisted trials, successful prediction/window result files |
 | `BACKTEST`: QF-5 directory or its `manifest.json`; detached manifest under another filename | Full strategy/indicators, capital, costs/fees/slippage, execution, corporate actions, QF-43 context/evaluation interval, benchmark configuration and source data; export inputs include original CSV tables and integrity record; detached manifests index metadata only |
-| `OPTIMIZATION`: QF-6 directory | Existing scientific identity inputs, grid/constraints, ranking/stability, counts and trial IDs; summaries, complete `ranking.json`, trials and original successful QF-5 export files |
+| `OPTIMIZATION`: QF-6 directory | Existing scientific identity inputs, grid/constraints, ranking/stability, counts and trial IDs; JSON summaries, seven reconciled native CSV tables for completed studies, trials and original successful QF-5 export files |
 
 Study types never acquire another type's metric requirements. Prediction and
 feature manifests require no capital, transaction costs, fills, or equity.
@@ -184,6 +184,13 @@ values must agree. This shared check covers standalone, manifest-only and nested
 QF-32/QF-39/QF-40 results, including window headers without decisions. Generic
 rule configurations that omit a duplicate declaration retain the validated
 wrapper value; inspection never constructs a rule to infer missing metadata.
+Outcome wrappers likewise require a positive integer future-session horizon,
+sorted unique nonempty market-field names and a nonempty result schema. Horizons
+must agree with captured `parameters.future_sessions` or `required_future_sessions`
+declarations; market fields and outcome/evaluator result schemas must agree with
+their captured declarations when present. These shared checks cover manifest-only,
+standalone and nested results, including empty window headers. Generic components
+without duplicate declarations retain their validated wrapper metadata.
 The rule, labeler and evaluator configuration IDs also bind their complete stored
 definitions. Row and generated-signal checks share the same symbol, component,
 parameter, session and warm-up validation. QF-11 requires contiguous observed
@@ -258,6 +265,17 @@ of eligible objective ranks. A zero fraction or absence of qualifying records
 requires a null recommendation. These checks compare existing metrics, scores
 and classifications; they do not rerun eligibility, calculate neighbor statistics,
 reclassify trials, sort/rewrite artifacts or invoke the ranking/stability engines.
+Completed QF-6 exports also require all seven native CSV tables: `trials.csv`,
+`failures.csv`, `exclusions.csv`, `eligible_rankings.csv`, `ineligible_trials.csv`,
+`stability.csv` and `parameter_summary.csv`. Each must match the native CSV
+serialization of the validated saved JSON records, including headers, row order,
+JSON-valued cells, nulls and diagnostics. Inspection projects stored records only;
+it does not recompute metrics or ranking/stability results or rewrite any file.
+The expected bytes are checked against both the index and the file before return.
+The completion decision uses the captured summary; its removal during inspection
+cannot bypass table reconciliation.
+Without `summary.json`, the directory remains resumable and potentially stale CSVs
+are omitted from the index. Unrecognized neighboring CSVs are always omitted.
 
 For QF-32 and QF-6 grids with a persisted summary, inspection reconciles the
 trial-file total and status counts against that summary. Missing or extra trial
@@ -594,10 +612,10 @@ enclosing hashes so that consistency checks are exercised beyond hash mismatch.
 
 | Contract family | Stored evidence checked | Boundary |
 | --- | --- | --- |
-| QF-11 | Study/component IDs, dataset/parameter provenance, ordered unique signal sessions, warm-up, outcome horizons, row/outcome/evaluation IDs and counts | Calendar metadata validation only; no labeling or evaluation |
+| QF-11 | Study/component IDs, dataset/parameter provenance, ordered unique signal sessions, warm-up, captured outcome horizons/fields/schemas, row/outcome/evaluation IDs and counts | Calendar metadata validation only; no labeling or evaluation |
 | QF-42 / nested QF-32 | Window/result/schedule identities and coverage, decision/context lineage and status, generated-signal provenance, distinct signal-to-row membership and unavailable outcomes | Reuses offline source/context checks; no context or indicator execution |
 | QF-7/QF-29 | Dataset/candidate/row IDs, source/rule/schema versions, prediction-study references, schema definitions/types, dispositions and matching manifest/directory-summary counts | Existing values are validated structurally; features and outcomes are not recalculated |
-| QF-6/QF-32 grids | Coordinates, candidate/trial identity, status payloads, result bindings, recorded metrics, ranking/stability references, eligibility coverage/counts and summary projections | No factory construction, candidate enumeration or research selection |
+| QF-6/QF-32 grids | Coordinates, candidate/trial identity, status payloads, result bindings, recorded metrics, ranking/stability references, eligibility coverage/counts and summary projections; QF-6 CSVs match saved JSON records | No factory construction, candidate enumeration or research selection; native CSV serialization only |
 | QF-5 standalone / optimization / validation exports | Run provenance, original integrity sidecar, captured fold/holdout fingerprints, original schema versions and producing QF-5 run IDs on every backtest file | No execution or accounting |
 | QF-8/QF-39/QF-40 lineage | Captured source and fold state, selections, aggregates and permanent holdout-ledger state | No partition, aggregate or holdout computation |
 | Credential metadata | Recursive normalized field-name and recognizable-value rejection at construction, JSON and binding boundaries | Conservative field filtering cannot discover arbitrary disguised secrets |

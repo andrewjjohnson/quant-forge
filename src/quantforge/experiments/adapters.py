@@ -414,7 +414,17 @@ def inspect_study(
     # Index known producer layouts only, not arbitrary neighboring files.
     if source.is_dir():
         optimization_summaries: dict[str, PrimitiveMapping] = {}
-        if study_type is StudyType.OPTIMIZATION and (source / "summary.json").is_file():
+        summary: PrimitiveMapping | None = None
+        if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
+            summary_path = source / "summary.json"
+            if summary_path.is_file():
+                summary, _ = reads.read(summary_path)
+                if summary.get("study_id") != producer_id:
+                    raise ManifestError("parameter summary belongs to another study")
+                observations["trial_counts"] = summary.get(
+                    "counts", summary.get("trial_counts")
+                )
+        if study_type is StudyType.OPTIMIZATION and summary is not None:
             for name in ("ranking", "stability"):
                 if not (source / f"{name}.json").is_file():
                     raise ManifestError(
@@ -433,6 +443,14 @@ def inspect_study(
         for path in sorted(source.iterdir()):
             if not path.is_file() or path.name in {"manifest.json", "schema.json"}:
                 continue
+            if study_type is StudyType.OPTIMIZATION and path.suffix == ".csv":
+                from quantforge.experiments._optimization_csv_integrity import (
+                    OPTIMIZATION_CSV_NAMES,
+                )
+
+                # Resumable directories can retain stale exports from a prior run.
+                if path.name not in OPTIMIZATION_CSV_NAMES or summary is None:
+                    continue
             category = _export_category(study_type, path.name)
             if category is not None:
                 bindings: PrimitiveMapping | None = None
@@ -466,15 +484,6 @@ def inspect_study(
                     )
                 )
         if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
-            summary_path = source / "summary.json"
-            summary: PrimitiveMapping | None = None
-            if summary_path.is_file():
-                summary, _ = reads.read(summary_path)
-                if summary.get("study_id") != producer_id:
-                    raise ManifestError("parameter summary belongs to another study")
-                observations["trial_counts"] = summary.get(
-                    "counts", summary.get("trial_counts")
-                )
             trials: list[str] = []
             trial_records: list[PrimitiveMapping] = []
             for path in sorted((source / "trials").glob("*.json")):
@@ -597,6 +606,20 @@ def inspect_study(
                 validate_optimization_summaries(
                     configuration, trial_records, summary, optimization_summaries
                 )
+                if summary is not None:
+                    from quantforge.experiments._optimization_csv_integrity import (
+                        validate_optimization_csv,
+                    )
+
+                    validate_optimization_csv(
+                        source,
+                        root,
+                        entries,
+                        trial_records,
+                        summary,
+                        optimization_summaries,
+                        reads,
+                    )
             elif study_type is StudyType.PARAMETER_STUDY and summary is not None:
                 validate_prediction_summary(configuration, trial_records, summary)
     elif "rows" in container or "decisions" in container:

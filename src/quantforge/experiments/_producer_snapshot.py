@@ -22,10 +22,15 @@ class ProducerReadSet:
         except OSError as error:
             raise ManifestError("cannot read producer metadata") from error
         record = decode_producer_record(content)
+        self.expect(path, content)
+        return record
+
+    def expect(self, path: Path, content: bytes) -> None:
+        """Bind an index entry to consumed or expected native export bytes."""
+        path = path.resolve()
         fingerprint = sha256(content).hexdigest()
         if self._hashes.setdefault(path, fingerprint) != fingerprint:
             raise ManifestError("producer metadata changed during indexing; retry")
-        return record
 
     def verify(self, index: ArtifactIndex, root: Path) -> None:
         """Require every consumed record to match its indexed and current bytes."""

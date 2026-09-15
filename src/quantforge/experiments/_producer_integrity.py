@@ -45,6 +45,54 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
         ):
             raise ManifestError("prediction study component identity is inconsistent")
     validate_prediction_warm_up(configuration)
+    validate_outcome_contract(configuration)
+
+
+def validate_outcome_contract(configuration: PrimitiveMapping) -> None:
+    """Bind labeling wrappers to declarations captured by their components.
+
+    Generic components may omit duplicate declarations in their configuration.
+    Preserve their validated wrapper values without constructing a component.
+    """
+    labeler = mapping(configuration.get("outcome_labeler"))
+    definition = mapping(labeler.get("configuration"))
+    horizon = labeler.get("required_future_sessions")
+    if type(horizon) is not int or horizon < 1:
+        raise ManifestError("outcome contract horizon must be a positive integer")
+    parameters = mapping(definition.get("parameters", {}))
+    for declarations, key in (
+        (parameters, "future_sessions"),
+        (definition, "required_future_sessions"),
+    ):
+        if key in declarations and (
+            type(declarations[key]) is not int or declarations[key] != horizon
+        ):
+            raise ManifestError("outcome contract horizon differs from configuration")
+    fields = labeler.get("required_market_fields")
+    if (
+        not isinstance(fields, list)
+        or not fields
+        or any(not isinstance(field, str) or not field for field in fields)
+        or fields != sorted(set(cast(list[str], fields)))
+        or (
+            "required_market_fields" in definition
+            and definition["required_market_fields"] != fields
+        )
+    ):
+        raise ManifestError("outcome contract market fields are inconsistent")
+    for name, label in (("outcome_labeler", "outcome"), ("evaluator", "evaluation")):
+        component = mapping(configuration.get(name))
+        schema = component.get("result_schema_version")
+        captured = mapping(component.get("configuration"))
+        if (
+            not isinstance(schema, str)
+            or not schema
+            or (
+                "result_schema_version" in captured
+                and captured["result_schema_version"] != schema
+            )
+        ):
+            raise ManifestError(f"{label} contract result schema is inconsistent")
 
 
 def validate_prediction_warm_up(configuration: PrimitiveMapping) -> None:

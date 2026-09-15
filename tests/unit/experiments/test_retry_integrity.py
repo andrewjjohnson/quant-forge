@@ -1,3 +1,5 @@
+import csv
+import json
 from pathlib import Path
 from typing import cast
 
@@ -63,6 +65,26 @@ def test_archived_failures_follow_producer_schema_for_every_trial_status(
             attempt.pop("started_at")
     write_json(path, trial)
     if change is None:
+        if study_type is StudyType.OPTIMIZATION:
+            # Keep the valid retry fixture's CSV projections consistent with JSON.
+            for filename in ("trials.csv", "failures.csv", "exclusions.csv"):
+                csv_path = root / filename
+                with csv_path.open(newline="") as stream:
+                    reader = csv.DictReader(stream)
+                    headers = reader.fieldnames
+                    rows = list(reader)
+                assert headers is not None
+                for row in rows:
+                    if row["trial_id"] == trial["trial_id"]:
+                        row["failed_attempts"] = json.dumps(
+                            [attempt], sort_keys=True, separators=(",", ":")
+                        )
+                with csv_path.open("w", newline="") as stream:
+                    writer = csv.DictWriter(
+                        stream, fieldnames=headers, lineterminator="\n"
+                    )
+                    writer.writeheader()
+                    writer.writerows(rows)
         bundle = inspect_study(study_type, root, artifact_root=tmp_path)
         assert any(
             entry.path == path.relative_to(tmp_path).as_posix()

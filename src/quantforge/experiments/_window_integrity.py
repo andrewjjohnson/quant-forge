@@ -6,6 +6,7 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._prediction_row_integrity import validate_prediction_signal
 from quantforge.experiments._producer_integrity import (
+    validate_outcome_contract,
     validate_prediction_identity,
     validate_prediction_rows,
     validate_prediction_warm_up,
@@ -76,6 +77,7 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
     if manifest.get("schema_version") != "1":
         raise ManifestError("unsupported prediction window schema version")
     validate_prediction_warm_up(mapping(manifest.get("configuration")))
+    validate_outcome_contract(mapping(manifest.get("configuration")))
     decisions = _records(snapshot.get("decisions"))
     identity = {
         key: value
