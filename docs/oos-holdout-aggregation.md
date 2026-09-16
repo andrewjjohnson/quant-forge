@@ -255,6 +255,15 @@ The immutable consumed marker includes the full request/provenance, exact freeze
 and parameter snapshot, validation plan/study/lineage and holdout identities,
 bounded membership, original consumption run ID and UTC timestamp. Result and
 artifact hashes/references are attached only after durable result persistence.
+Prediction results also export their already-computed summary inside
+`artifact.holdout_summary`, with extension `schema_version: "1"` and the original
+`window_result_id`. The existing artifact hash covers this captured evidence so
+QF-9 can compare it with the top-level summary without recalculating metrics.
+The ledger's outer schema, state transitions and calculation stay unchanged.
+Legacy results without the extension remain consumed and readable by the ledger;
+QF-9 reports missing summary evidence instead of migrating or reevaluating them.
+Exact reproduction across this export change requires the historical producer
+version because existing result bytes are immutable.
 For backtests, the exported run directory and its parent `evaluation` directory
 are fsynced before publishing `result.json`, preserving both artifact file entries
 and the run-directory rename. A failure at either sync leaves the holdout consumed

@@ -346,14 +346,23 @@ class HoldoutLedger:
                 summary = mapping(
                     mapping(artifact.snapshot.to_primitive()["manifest"])["performance"]
                 )
+            artifact_record = artifact.to_primitive()
+            if isinstance(artifact, PredictionOOSArtifact):
+                # Export the summary already computed above as captured evidence.
+                # Observational consumers must not rerun the QF-40 summarizer.
+                artifact_record["holdout_summary"] = {
+                    "schema_version": "1",
+                    "window_result_id": artifact.window_result_id,
+                    "summary": summary,
+                }
             result: PrimitiveMapping = {
                 "schema_version": "1",
                 "kind": "final_holdout_result",
                 "state": "consumed",
                 "request_id": request_id,
                 "consumption_sha256": configuration_identity(marker),
-                "artifact": artifact.to_primitive(),
-                "artifact_sha256": configuration_identity(artifact.to_primitive()),
+                "artifact": artifact_record,
+                "artifact_sha256": configuration_identity(artifact_record),
                 "summary": summary,
             }
             _durable_write(root / "result.json", result)

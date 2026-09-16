@@ -86,6 +86,11 @@ def test_explicit_first_consumption_and_exact_reproduction(
     assert mapping(result["summary"])
     payload = mapping(artifact["result"])
     if artifact["kind"] == "prediction":
+        assert artifact["holdout_summary"] == {
+            "schema_version": "1",
+            "window_result_id": artifact["result_id"],
+            "summary": result["summary"],
+        }
         for decision in records(payload["decisions"]):
             for row in records(mapping(decision["prediction_study"])["rows"]):
                 assert (
