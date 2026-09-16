@@ -301,6 +301,7 @@ def inspect_study(
     manifest_path = source / "manifest.json" if source.is_dir() else source
     reads = ProducerReadSet()
     trial_paths: tuple[Path, ...] | None = None
+    feature_checkpoint_paths: tuple[Path, ...] | None = None
     document, location = reads.read(manifest_path)
     container = document
     if study_type is StudyType.FEATURE_DATASET and not source.is_dir():
@@ -465,9 +466,10 @@ def inspect_study(
                 validate_feature_tables,
             )
 
-            for path in validate_feature_tables(
+            feature_checkpoint_paths = validate_feature_tables(
                 source, document, feature_schema, reads
-            ):
+            )
+            for path in feature_checkpoint_paths:
                 row_entry = add(
                     path,
                     ArtifactType.FEATURE_DATASET,
@@ -704,6 +706,11 @@ def inspect_study(
         and tuple(sorted((source / "trials").glob("*.json"))) != trial_paths
     ):
         raise ManifestError("producer trial files changed during indexing; retry")
+    if feature_checkpoint_paths is not None and (
+        not (source / "rows").is_dir()
+        or tuple(sorted((source / "rows").glob("*.json"))) != feature_checkpoint_paths
+    ):
+        raise ManifestError("feature checkpoint files changed during indexing; retry")
     return StudyArtifacts(
         StudyProvenance(
             study_type, producer_id, snapshot(configuration), snapshot(observations)

@@ -295,6 +295,10 @@ in a QF-7 export is not a producer artifact and is omitted. Every consumed
 checkpoint is indexed with its row/study binding;
 tables and summary entries reference those rows through `DERIVED_FROM` edges.
 The read-set check binds both checkpoints and table bytes through inspection.
+After final byte verification, inspection also rechecks the captured `rows/*.json`
+file set and the required checkpoint directory, including for empty exports.
+Concurrent checkpoint additions, removals or renames require a fresh inspection;
+unowned temporary files do not change checkpoint membership.
 Parquet inspection retains the original file's hash and never invokes a Parquet
 writer. Historical exports need not reproduce the current writer's bytes, but
 must remain readable by the installed decoder. Inspection never rewrites exports.
