@@ -37,6 +37,11 @@ def validate_backtest_files(export: Path, reads: ProducerReadSet) -> str:
     reads.expect(sidecar, content)
     for filename, fingerprint in files.items():
         reads.expect_sha256(export / filename, text(fingerprint))
+    from quantforge.experiments._backtest_table_integrity import (
+        validate_backtest_table_counts,
+    )
+
+    validate_backtest_table_counts(export, reads)
     # Match the producer's read_text() newline handling for captured identities.
     return content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
 

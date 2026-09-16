@@ -54,6 +54,25 @@ def reidentify(manifest: PrimitiveMapping) -> str:
             "configuration": benchmark["configuration"],
         }
     )
+    # Keep benchmark execution provenance coherent when the fixture changes
+    # configuration identity without recalculating any execution amounts.
+    order = mapping(benchmark["order"])
+    order["run_id"] = run_id
+    records = [order]
+    if benchmark["fill"] is not None:
+        records.append(mapping(benchmark["fill"]))
+    for row in records:
+        row["strategy_configuration_id"] = benchmark["benchmark_id"]
+        row["order_id"] = configuration_identity(
+            {"benchmark_id": benchmark["benchmark_id"], "record_type": "order"}
+        )
+        row["originating_signal_id"] = configuration_identity(
+            {"benchmark_id": benchmark["benchmark_id"], "record_type": "signal"}
+        )
+        if "fill_id" in row:
+            row["fill_id"] = configuration_identity(
+                {"benchmark_id": benchmark["benchmark_id"], "record_type": "fill"}
+            )
     return run_id
 
 

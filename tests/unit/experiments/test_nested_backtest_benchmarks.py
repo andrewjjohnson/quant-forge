@@ -32,7 +32,14 @@ from tests.unit.oos.conftest import complete_study
 def rewrite_benchmark(export: Path, change: str) -> PrimitiveMapping:
     manifest = read_json(export / "manifest.json")
     benchmark = mapping(manifest["benchmark"])
-    if change == "missing_performance":
+    if change == "record_counts":
+        counts = mapping(manifest["record_counts"])
+        counts["fills"] = cast(int, counts["fills"]) + 1
+    elif change == "foreign_order":
+        mapping(benchmark["order"])["run_id"] = "foreign"
+    elif change == "foreign_fill":
+        mapping(benchmark["fill"])["order_id"] = "foreign"
+    elif change == "missing_performance":
         del manifest["performance"]
     elif change == "missing_benchmark":
         del manifest["benchmark"]
@@ -79,6 +86,9 @@ def rewrite_benchmark(export: Path, change: str) -> PrimitiveMapping:
         "missing_performance",
         "missing_configuration",
         "null_configuration",
+        "record_counts",
+        "foreign_order",
+        "foreign_fill",
     ],
 )
 def test_optimization_rejects_rehashed_foreign_benchmark(
@@ -99,7 +109,15 @@ def test_optimization_rejects_rehashed_foreign_benchmark(
 
 @pytest.mark.parametrize("holdout", [False, True], ids=["fold", "holdout"])
 @pytest.mark.parametrize(
-    "change", ["initial_capital", "benchmark_id", "missing_performance"]
+    "change",
+    [
+        "initial_capital",
+        "benchmark_id",
+        "missing_performance",
+        "record_counts",
+        "foreign_order",
+        "foreign_fill",
+    ],
 )
 def test_validation_rejects_rehashed_foreign_benchmark(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, holdout: bool, change: str
@@ -148,7 +166,11 @@ def test_validation_rejects_rehashed_foreign_benchmark(
         source = load_oos_source(source.plan, completed.study.study_path)
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     message = (
-        "backtest manifest" if change == "missing_performance" else "backtest benchmark"
+        "backtest manifest"
+        if change == "missing_performance"
+        else "backtest record counts"
+        if change == "record_counts"
+        else "backtest benchmark"
     )
     with pytest.raises(ManifestError, match=message):
         inspect_validation(

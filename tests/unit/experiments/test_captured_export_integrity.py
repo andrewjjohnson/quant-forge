@@ -103,7 +103,9 @@ def test_rehashed_backtest_tables_must_match_captured_export(
             / "test"
             / fold.artifact.export_location
         )
-    changed = (export / filename).read_bytes() + b"\n"
+    # Change bytes while retaining valid CSV records and counts, so this still
+    # exercises the captured-export fingerprint rather than row validation.
+    changed = (export / filename).read_bytes().replace(b"\n", b"\r\n")
     (export / filename).write_bytes(changed)
     integrity = read_record(export / "integrity.json")
     cast(PrimitiveMapping, integrity["files"])[filename] = sha256(changed).hexdigest()

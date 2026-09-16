@@ -225,6 +225,12 @@ corporate-action declarations must retain their complete schemas and primitive
 domains. Empty disclosure arrays and producer-nullable metrics remain valid.
 These checks apply to standalone and nested backtests; refreshing the integrity
 sidecar cannot certify an incomplete manifest. Performance is not recalculated.
+For complete exports, every `record_counts` value must also match its captured
+CSV table. Logical CSV records are counted with quoted newlines preserved;
+`trades.csv` is partitioned by its required `is_open` boolean so an unchanged
+total cannot hide redistributed completed/open counts. The same captured bytes
+must match the sidecar and the final index. Header-only tables remain valid for
+zero counts. Detached manifests retain declared counts without table verification.
 Execution provenance must include the complete supported position-sizing record:
 `model: "discrete_target_weight"`, boolean `whole_shares_only: true` and boolean
 `rebalance_existing_position: false`, with no missing or additional fields.
@@ -246,6 +252,13 @@ with recorded capital, costs, corporate-action policies, snapshot and optional
 evaluation interval. These checks derive only fixed metadata; no benchmark,
 fills or performance metrics are calculated, and absent historical evaluation
 intervals remain absent.
+Benchmark order/signal/fill IDs must derive from the recorded benchmark ID.
+The order must match the run, canonical symbol and benchmark strategy; the fill
+must match its order, signal, symbol, strategy, quantity and execution session.
+The fixed buy/market/long metadata and filled/rejected states are checked, with
+zero requested quantity and absent fill for insufficient-cash rejections. These
+checks validate saved relationships without calculating affordable quantities,
+fill prices, costs or performance, and apply to detached and nested manifests.
 The shared nested-export indexer applies the same benchmark contract to QF-6
 trials and QF-39/QF-40 fold and holdout backtests. Refreshing file hashes,
 captured export fingerprints or enclosing record hashes cannot bypass this

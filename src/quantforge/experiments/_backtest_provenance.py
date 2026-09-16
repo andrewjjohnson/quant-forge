@@ -59,4 +59,9 @@ def benchmark_configuration(manifest: PrimitiveMapping) -> PrimitiveMapping:
         raise ManifestError(
             "backtest benchmark configuration or identity is inconsistent"
         )
+    from quantforge.experiments._backtest_benchmark_integrity import (
+        validate_benchmark_execution,
+    )
+
+    validate_benchmark_execution(manifest)
     return recorded
