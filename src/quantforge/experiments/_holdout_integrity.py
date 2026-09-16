@@ -4,13 +4,25 @@ from datetime import date
 
 from quantforge.backtesting.config import EvaluationInterval
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.experiments._aggregate_schema import record, records
+from quantforge.experiments._holdout_membership_integrity import (
+    validate_holdout_membership,
+)
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_counts_integrity import (
+    prediction_window_observations,
+    validate_prediction_summary_counts,
+)
+from quantforge.experiments._prediction_summary_integrity import (
+    validate_prediction_summary,
+)
 from quantforge.experiments._prediction_trial_integrity import (
     prediction_components_match,
 )
 from quantforge.experiments._producer_integrity import validate_backtest_identity
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.oos.models import OOSSource
+from quantforge.oos.prediction import PredictionMetricFields
 from quantforge.prediction import PredictionDecisionSchedule
 from quantforge.timeframes import resolve_exchange_session
 
@@ -44,7 +56,7 @@ def validate_holdout_request(
         )
     ):
         raise ManifestError("holdout request differs from its frozen source selection")
-    mapping(request["evaluation_membership"])
+    validate_holdout_membership(source, request["evaluation_membership"])
     return request
 
 
@@ -144,6 +156,28 @@ def validate_holdout_artifact(
         if captured is None:
             raise ManifestError("holdout prediction summary evidence is unavailable")
         captured = mapping(captured)
+        try:
+            record(
+                captured,
+                {"schema_version", "window_result_id", "summary"},
+                "holdout summary",
+            )
+            summary = validate_prediction_summary(captured.get("summary"))
+            validate_prediction_summary_counts(
+                summary,
+                prediction_window_observations(
+                    payload,
+                    "final_holdout",
+                    text(artifact["selection_id"]),
+                    text(artifact["result_id"]),
+                ),
+                len(records(payload["decisions"])),
+                PredictionMetricFields().to_primitive(),
+            )
+        except ManifestError as error:
+            raise ManifestError(
+                "holdout prediction summary evidence is invalid"
+            ) from error
         if (
             captured.get("schema_version") != "1"
             or captured.get("window_result_id") != manifest.get("window_result_id")

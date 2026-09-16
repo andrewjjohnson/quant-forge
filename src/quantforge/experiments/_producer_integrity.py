@@ -193,3 +193,8 @@ def validate_backtest_identity(manifest: PrimitiveMapping) -> None:
         configuration
     ) or manifest.get("run_id") != configuration_identity(identity):
         raise ManifestError("backtest run identity is inconsistent")
+    from quantforge.experiments._backtest_manifest_integrity import (
+        validate_backtest_manifest,
+    )
+
+    validate_backtest_manifest(manifest)

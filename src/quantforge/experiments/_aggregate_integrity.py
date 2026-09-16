@@ -13,6 +13,7 @@ from quantforge.experiments._backtest_summary_integrity import (
 )
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._prediction_counts_integrity import (
+    prediction_window_observations,
     validate_prediction_summary_counts,
 )
 from quantforge.experiments._prediction_summary_integrity import (
@@ -37,37 +38,6 @@ def _same_records(
         configuration_identity(row) for row in expected
     ]:
         raise ManifestError(f"OOS aggregate {description} differ from captured folds")
-
-
-def _prediction_records(
-    artifact: PredictionOOSArtifact, fold_id: str
-) -> list[PrimitiveMapping]:
-    """Project existing signals/rows and their references, without summarizing."""
-    observations: list[PrimitiveMapping] = []
-    for decision in _records(artifact.snapshot.to_primitive().get("decisions")):
-        rows = {
-            configuration_identity(
-                {"prediction": row.get("prediction"), "features": row.get("features")}
-            ): row
-            for row in _records(mapping(decision.get("prediction_study")).get("rows"))
-        }
-        for signal in _records(decision.get("generated_signals")):
-            values = mapping(mapping(signal.get("prediction")).get("values"))
-            observations.append(
-                {
-                    "fold_id": fold_id,
-                    "selection_id": artifact.selection_id,
-                    "window_result_id": artifact.window_result_id,
-                    "decision_timestamp": decision.get("decision_timestamp"),
-                    "context_id": decision.get("context_id"),
-                    "prediction_study_id": decision.get("prediction_study_id"),
-                    "signal": signal,
-                    "eligible": values.get("direction") in ("up", "down")
-                    and values.get("disposition") in (None, "accepted"),
-                    "row": rows.get(configuration_identity(signal)),
-                }
-            )
-    return observations
 
 
 def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> None:
@@ -127,7 +97,12 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
         else:
             if not isinstance(artifact, PredictionOOSArtifact):
                 raise ManifestError("OOS aggregate has incompatible fold artifacts")
-            captured = _prediction_records(artifact, fold.fold_id)
+            captured = prediction_window_observations(
+                artifact.snapshot.to_primitive(),
+                fold.fold_id,
+                artifact.selection_id,
+                artifact.window_result_id,
+            )
             scheduled = len(_records(artifact.snapshot.to_primitive().get("decisions")))
             prediction_windows[fold.fold_id] = captured, scheduled
             observations.extend(captured)

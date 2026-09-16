@@ -213,6 +213,13 @@ QF-5 run IDs are verified against their documented market-data
 reference, bar fingerprint, strategy and execution inputs, including the strategy
 configuration hash. Full export metadata, such as initiation time and warm-up
 diagnostics, does not become a new run-ID input.
+The manifest must retain every producer field, including nullable initiation time,
+performance, record counts, warnings and limitations. Market provenance, strategy
+warm-up, performance counters/finite decimal strings, benchmark metadata and
+corporate-action declarations must retain their complete schemas and primitive
+domains. Empty disclosure arrays and producer-nullable metrics remain valid.
+These checks apply to standalone and nested backtests; refreshing the integrity
+sidecar cannot certify an incomplete manifest. Performance is not recalculated.
 Execution provenance must include position sizing. The supported QF-5 version-4
 buy-and-hold benchmark configuration and deterministic benchmark ID must agree
 with recorded capital, costs, corporate-action policies, snapshot and optional
@@ -585,6 +592,13 @@ the captured source; its full frozen selection must match a captured fold.
 These checks run before indexing consumption, including interrupted attempts
 without a result. Refreshing request IDs and result-envelope hashes cannot change
 the declared holdout boundary or lineage. No partition or holdout is prepared.
+The saved `evaluation_membership` must retain its full partition and selection
+schemas, source/window/timeframe identities, bounded-dataset digests, explicit
+null purge, and false warm-up eligibility. Captured observations are ordered,
+unique and bound to the reserved window, with the declared warm-up kept before
+it. Evaluation sessions must match the captured observations after the recorded
+outcome horizon and meet the source minimum. Missing result files do not bypass
+these checks; validation never loads prices or prepares a partition.
 Consumed holdout artifacts must match the frozen selection retained in their
 permanent request and the captured source study. Prediction results receive the
 same nested window checks as standalone results, bind their result IDs and stored
@@ -615,14 +629,19 @@ artifact wrapper's `holdout_summary` extension (`schema_version: "1"`,
 `window_result_id`, `summary`). The existing `artifact_sha256` covers this evidence
 and binds it to the captured window. QF-9 requires the supported extension, matching
 window identity and exact top-level summary equality. This is a metadata export
-hook; the QF-40 calculation, QF-42 window, prediction rows, ledger state and outer
+hook. Both copies must satisfy the base QF-40 prediction-summary schema, including
+typed counts, accuracy/interval, outcome, baseline and event records. Shared
+aggregate validators reconcile counts and availability with the stored decisions
+and labeled rows using QF-40's fixed holdout metric fields. Matching malformed
+copies remain invalid under refreshed hashes; statistics are not recomputed. The
+QF-40 calculation, QF-42 window, prediction rows, ledger state and outer
 result schema remain unchanged. A legacy prediction result without this extension
 reports `holdout prediction summary evidence is unavailable`; QF-9 neither infers
 its metrics nor writes a migration or reevaluates the holdout. Retain the historical
 producer/environment for legacy reproduction. The authoritative ledger continues
 to expose that lineage as consumed even when QF-9 cannot validate its result.
 Failed or absent folds stay failed or absent; stale files do not become OOS
-observations. No partition memberships are calculated again.
+observations. No partition is prepared from market data during inspection.
 
 An existing QF-40 aggregate must have the expected content ID and exact source
 plan/study/lineage/fold references, and its family must match the source study.

@@ -126,3 +126,31 @@ def test_consumed_holdout_requires_full_request_derived_schedule(
         )
     assert {path: path.read_bytes() for path in before} == before
     assert ledger.state(source).state.value == "consumed"
+
+
+@pytest.mark.parametrize("timestamp_axis", [False, True], ids=["session", "timestamp"])
+def test_membership_retains_session_labels_for_midnight_closes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timestamp_axis: bool
+) -> None:
+    from quantforge.experiments._holdout_membership_integrity import (
+        validate_holdout_membership,
+    )
+    from tests.unit.oos.test_holdout_scope import midnight_study
+
+    completed = midnight_study(tmp_path, timestamp_axis=timestamp_axis)
+    source = completed.source
+    evaluation = HoldoutEvaluation.prepare(
+        source, completed.evaluator, selection_fold_id=source.folds[-1].fold_id
+    )
+    membership = evaluation.permitted.to_primitive()
+    block_research(monkeypatch)
+    before = configuration_identity(membership)
+    validate_holdout_membership(source, membership)
+    assert configuration_identity(membership) == before
+    # A midnight close belongs to the preceding exchange-session label.
+    labels = cast(list[str], membership["evaluation_sessions"])
+    labels[0] = (
+        (datetime.fromisoformat(labels[0]) + timedelta(days=1)).date().isoformat()
+    )
+    with pytest.raises(ManifestError, match="holdout evaluation membership"):
+        validate_holdout_membership(source, membership)

@@ -32,7 +32,9 @@ from tests.unit.oos.conftest import complete_study
 def rewrite_benchmark(export: Path, change: str) -> PrimitiveMapping:
     manifest = read_json(export / "manifest.json")
     benchmark = mapping(manifest["benchmark"])
-    if change == "missing_benchmark":
+    if change == "missing_performance":
+        del manifest["performance"]
+    elif change == "missing_benchmark":
         del manifest["benchmark"]
     elif change == "missing_configuration":
         del benchmark["configuration"]
@@ -74,6 +76,7 @@ def rewrite_benchmark(export: Path, change: str) -> PrimitiveMapping:
         "evaluation_interval",
         "benchmark_id",
         "missing_benchmark",
+        "missing_performance",
         "missing_configuration",
         "null_configuration",
     ],
@@ -95,7 +98,9 @@ def test_optimization_rejects_rehashed_foreign_benchmark(
 
 
 @pytest.mark.parametrize("holdout", [False, True], ids=["fold", "holdout"])
-@pytest.mark.parametrize("change", ["initial_capital", "benchmark_id"])
+@pytest.mark.parametrize(
+    "change", ["initial_capital", "benchmark_id", "missing_performance"]
+)
 def test_validation_rejects_rehashed_foreign_benchmark(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, holdout: bool, change: str
 ) -> None:
@@ -142,7 +147,10 @@ def test_validation_rejects_rehashed_foreign_benchmark(
         write_record(state_path, state)
         source = load_oos_source(source.plan, completed.study.study_path)
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
-    with pytest.raises(ManifestError, match="backtest benchmark"):
+    message = (
+        "backtest manifest" if change == "missing_performance" else "backtest benchmark"
+    )
+    with pytest.raises(ManifestError, match=message):
         inspect_validation(
             source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
         )

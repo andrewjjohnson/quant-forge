@@ -112,7 +112,9 @@ def _events(value: object) -> None:
         decimal_field(rates[name], minimum=0, maximum=1)
 
 
-def _prediction_summary(value: object, *, aggregate: bool) -> PrimitiveMapping:
+def validate_prediction_summary(
+    value: object, *, aggregate: bool = False
+) -> PrimitiveMapping:
     summary = record(
         value,
         _BASE_FIELDS | (_AGGREGATE_FIELDS if aggregate else set()),
@@ -151,7 +153,7 @@ def _prediction_summary(value: object, *, aggregate: bool) -> PrimitiveMapping:
 
 
 def validate_prediction_aggregate_summary(value: object) -> None:
-    summary = _prediction_summary(value, aggregate=True)
+    summary = validate_prediction_summary(value, aggregate=True)
     metric_fields = record(
         summary["metric_fields"],
         {field.name for field in fields(PredictionMetricFields)},
@@ -172,4 +174,4 @@ def validate_prediction_aggregate_summary(value: object) -> None:
         record(window, {"fold_id", "status", "summary"}, "prediction window summary")
         # Existing fold-membership checks establish status and null availability.
         if window["summary"] is not None:
-            _prediction_summary(window["summary"], aggregate=False)
+            validate_prediction_summary(window["summary"])

@@ -3,6 +3,7 @@
 from collections import Counter
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.experiments._aggregate_schema import records
 from quantforge.experiments._json import ManifestError, mapping, text
 
 
@@ -94,3 +95,34 @@ def validate_prediction_summary_counts(
             "counts": dict(events),
         },
     )
+
+
+def prediction_window_observations(
+    window: PrimitiveMapping, fold_id: str, selection_id: str, window_result_id: str
+) -> list[PrimitiveMapping]:
+    """Project existing signals/rows and their references, without summarizing."""
+    observations: list[PrimitiveMapping] = []
+    for decision in records(window.get("decisions")):
+        rows = {
+            configuration_identity(
+                {"prediction": row.get("prediction"), "features": row.get("features")}
+            ): row
+            for row in records(mapping(decision.get("prediction_study")).get("rows"))
+        }
+        for signal in records(decision.get("generated_signals")):
+            values = mapping(mapping(signal.get("prediction")).get("values"))
+            observations.append(
+                {
+                    "fold_id": fold_id,
+                    "selection_id": selection_id,
+                    "window_result_id": window_result_id,
+                    "decision_timestamp": decision.get("decision_timestamp"),
+                    "context_id": decision.get("context_id"),
+                    "prediction_study_id": decision.get("prediction_study_id"),
+                    "signal": signal,
+                    "eligible": values.get("direction") in ("up", "down")
+                    and values.get("disposition") in (None, "accepted"),
+                    "row": rows.get(configuration_identity(signal)),
+                }
+            )
+    return observations
