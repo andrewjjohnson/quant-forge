@@ -306,6 +306,7 @@ def inspect_study(
         source = source.parent
     manifest_path = source / "manifest.json" if source.is_dir() else source
     reads = ProducerReadSet()
+    trial_paths: tuple[Path, ...] | None = None
     document, location = reads.read(manifest_path)
     container = document
     if study_type is StudyType.FEATURE_DATASET and not source.is_dir():
@@ -436,10 +437,8 @@ def inspect_study(
         trial_snapshots: list[tuple[Path, PrimitiveMapping]] = []
         stale_grid_summary = False
         if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
-            trial_snapshots = [
-                (path, reads.read(path)[0])
-                for path in sorted((source / "trials").glob("*.json"))
-            ]
+            trial_paths = tuple(sorted((source / "trials").glob("*.json")))
+            trial_snapshots = [(path, reads.read(path)[0]) for path in trial_paths]
             # Both grids retain their previous exports while retrying failed trials.
             # Bind this decision to the same records validated and indexed below.
             stale_grid_summary = any(
@@ -706,6 +705,11 @@ def inspect_study(
         )
     index = ArtifactIndex(tuple(entries), tuple(edges))
     reads.verify(index, root)
+    if (
+        trial_paths is not None
+        and tuple(sorted((source / "trials").glob("*.json"))) != trial_paths
+    ):
+        raise ManifestError("producer trial files changed during indexing; retry")
     return StudyArtifacts(
         StudyProvenance(
             study_type, producer_id, snapshot(configuration), snapshot(observations)

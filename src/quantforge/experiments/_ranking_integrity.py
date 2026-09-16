@@ -290,6 +290,31 @@ def validate_optimization_summaries(
         previous_stability = stability_key
     if summary is None:
         return
+    if set(summary) != {
+        "study_id",
+        "study_schema_version",
+        "counts",
+        "objective_distribution",
+        "best_objective_trial_id",
+        "best_stability_trial_id",
+        "recommended_robust_trial_id",
+        "warnings",
+        "limitations",
+        "ranking_configuration",
+        "stability_configuration",
+        "top_objective_trials",
+        "top_stability_trials",
+        "parameter_summaries",
+    }:
+        raise ManifestError(
+            "optimization parameter summary fields differ from producer schema"
+        )
+    for field in ("warnings", "limitations"):
+        disclosures = summary[field]
+        if not isinstance(disclosures, list) or any(
+            not isinstance(disclosure, str) for disclosure in disclosures
+        ):
+            raise ManifestError(f"optimization summary {field} must be a string array")
     distribution = mapping(summary.get("objective_distribution"))
     objective_values = [_number(record["objective_value"]) for record in eligible]
     if (

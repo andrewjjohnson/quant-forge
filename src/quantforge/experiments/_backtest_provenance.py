@@ -6,30 +6,17 @@ from quantforge.experiments._json import ManifestError, mapping
 
 def benchmark_configuration(manifest: PrimitiveMapping) -> PrimitiveMapping:
     """Check the producer's complete execution and derived benchmark metadata."""
+    from quantforge.experiments._backtest_configuration_integrity import (
+        validate_backtest_configuration,
+    )
+
     configuration = mapping(manifest.get("backtest_configuration"))
-    for key in (
-        "initial_capital",
-        "commission",
-        "fees",
-        "slippage",
-        "execution",
-        "dividend_policy",
-        "split_policy",
-        "sizing",
+    validate_backtest_configuration(configuration)
+    if any(
+        configuration[key] != manifest.get(key)
+        for key in ("engine_version", "result_schema_version")
     ):
-        if key not in configuration or configuration[key] is None:
-            raise ManifestError("backtest execution provenance is incomplete")
-    sizing = mapping(configuration["sizing"])
-    if configuration_identity(sizing) != configuration_identity(
-        {
-            "model": "discrete_target_weight",
-            "whole_shares_only": True,
-            "rebalance_existing_position": False,
-        }
-    ):
-        raise ManifestError(
-            "backtest position-sizing configuration is unsupported or incomplete"
-        )
+        raise ManifestError("backtest execution versions differ from its manifest")
     # QF-5 benchmark version 4's fixed metadata and original recorded inputs.
     # Do not construct BacktestConfig: its defaults could rewrite historical inputs.
     expected: PrimitiveMapping = {

@@ -224,7 +224,18 @@ Execution provenance must include the complete supported position-sizing record:
 `model: "discrete_target_weight"`, boolean `whole_shares_only: true` and boolean
 `rebalance_existing_position: false`, with no missing or additional fields.
 Rehashed run/benchmark IDs do not make malformed sizing valid, and inspection
-does not fill in defaults. The supported QF-5 version-4
+does not fill in defaults. The complete execution configuration must also retain
+QF-5's fixed next-session-open market-order record, split/dividend timing policies,
+arithmetic policy, version bindings and long-only/no-forced-liquidation flags.
+Capital must be positive, the finite annual risk-free rate must exceed -1, and the
+annualization factor must be a positive integer. An optional evaluation interval
+must retain its complete producer contract and ordered session dates; historical
+absence remains absent. Native version-1 costs require their exact schemas and
+nonnegative decimal parameters, with slippage below 10,000 basis points. Custom
+cost records retain their producer-owned shapes and explicit implementation
+versions; commissions and fees must record the nondecreasing buy-cost guarantee.
+These checks compare pure configuration metadata without constructing a
+`BacktestConfig` or invoking any cost or execution callback. The supported QF-5 version-4
 buy-and-hold benchmark configuration and deterministic benchmark ID must agree
 with recorded capital, costs, corporate-action policies, snapshot and optional
 evaluation interval. These checks derive only fixed metadata; no benchmark,
@@ -278,6 +289,11 @@ must remain readable by the installed decoder. Inspection never rewrites exports
 These checks reuse producer serialization, row hashing and schema-value
 validation; they do not evaluate causal features or future outcomes.
 
+Completed QF-6 summary exports require the complete `StudyResult` envelope plus
+the producer's ranking/stability configuration, top-trial and parameter-summary
+extensions. Required `warnings` and `limitations` must be string arrays; missing
+or extra fields and malformed disclosures are rejected. Valid disclosure text,
+order, duplicates and empty arrays remain unchanged.
 Completed QF-6 exports must include `ranking.json` and `stability.json`. They are
 indexed as required artifacts, so missing files and changed content fail integrity
 verification. Both `ranking.json` and `stability.json` must declare the
@@ -357,6 +373,10 @@ trials include a pending or running record, inspection omits that stale summary 
 derived exports and leaves final counts unknown. Trial validation and indexing use
 the same captured bytes that establish this state; changes during inspection are
 rejected. A completed retry's replacement summary is validated and indexed normally.
+The owned `trials/*.json` file set is captured before trial reads and checked again
+after final byte verification. Concurrent additions or removals require a fresh
+inspection, including initially empty directories and resumable grids without a
+summary. Temporary files outside that producer-owned pattern remain unindexed.
 Inspection does not remove or rewrite producer files or retry any trial.
 The index describes
 only the persisted records; it does not assert completion. Successful trials

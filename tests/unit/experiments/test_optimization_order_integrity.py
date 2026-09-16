@@ -22,6 +22,7 @@ from quantforge.optimization import (
     analyze_stability,
     rank_trials,
 )
+from quantforge.optimization.models import StudyResult
 from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
 from tests.unit.experiments.test_grid_integrity import read_record
@@ -97,6 +98,7 @@ def producer_documents(
         stability_config,
     )
     configuration: PrimitiveMapping = {
+        "study_schema_version": "1",
         "ranking_configuration": ranking_config.to_primitive(),
         "stability_configuration": stability_config.to_primitive(),
     }
@@ -114,20 +116,23 @@ def producer_documents(
         },
     }
     summary: PrimitiveMapping = {
+        **StudyResult(
+            study_id=trials[0].study_id,
+            schema_version="1",
+            total_combinations=len(candidates),
+            trials=trials,
+            rankings=ranking.rankings,
+            ineligible_trials=ranking.ineligible_trials,
+            stability=stability.summaries,
+            parameter_summaries=(),
+            best_objective_trial_id=None,
+            best_stability_trial_id=None,
+            recommended_robust_trial_id=stability.recommended_robust_trial_id,
+            warnings=(),
+            limitations=(),
+        ).summary_primitive(),
         **configuration,
-        "objective_distribution": {
-            "count": len(ranking.rankings),
-            "minimum": str(min(item.objective_value for item in ranking.rankings)),
-            "maximum": str(max(item.objective_value for item in ranking.rankings)),
-        },
-        "counts": {
-            "eligible": len(ranking.rankings),
-            "ineligible_successful": len(ranking.ineligible_trials),
-            "isolated_peaks": sum(
-                item.is_isolated_peak for item in stability.summaries
-            ),
-        },
-        "recommended_robust_trial_id": stability.recommended_robust_trial_id,
+        "parameter_summaries": [],
     }
     documents = (
         configuration,
