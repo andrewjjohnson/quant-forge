@@ -585,6 +585,14 @@ top-level `schema_version: "1"`, `kind: "final_holdout_result"` and
 `state: "consumed"` before indexing. Missing, malformed or unsupported values
 remain invalid after refreshing envelope hashes and ledger result references.
 Rejecting incompatible evidence never changes the ledger's consumed state.
+Before indexing a consumption marker, QF-9 requires the complete producer envelope,
+its supported schema/state/transition constants, source lineage and request hash,
+a nonblank execution ID, and an aware UTC consumption timestamp. Its entire
+exposure scope must equal the reservation already checked by `HoldoutLedger.state()`
+against the source, including the symbol and exchange-session range. Extra scope
+or marker fields are rejected. Interrupted attempts receive the same checks;
+refreshing a completed result's `consumption_sha256` cannot bypass them. Valid
+execution metadata is preserved without normalization or a new ledger transition.
 Every consumed request must retain the producer's exact top-level fields and
 supported schema, operation and tail-policy constants. Its complete lineage,
 study definition, study/plan/lineage IDs and final-holdout reservation must match

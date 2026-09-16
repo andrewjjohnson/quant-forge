@@ -1,6 +1,6 @@
 """Bind consumed result evidence to the retained QF-40 request without evaluation."""
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from quantforge.backtesting.config import EvaluationInterval
 from quantforge.configuration import PrimitiveMapping, configuration_identity
@@ -25,6 +25,40 @@ from quantforge.oos.models import OOSSource
 from quantforge.oos.prediction import PredictionMetricFields
 from quantforge.prediction import PredictionDecisionSchedule
 from quantforge.timeframes import resolve_exchange_session
+
+
+def validate_holdout_consumption(
+    source: OOSSource, consumption: PrimitiveMapping, reservation: PrimitiveMapping
+) -> None:
+    """Bind the envelope to the reservation already validated by ledger.state()."""
+    expected: PrimitiveMapping = {
+        "schema_version": "1",
+        "state": "consumed",
+        "lineage_id": source.lineage_id,
+        "exposure_scope": mapping(reservation.get("exposure_scope")),
+        "transition": "permanent_before_evaluation; interrupted_attempts_are_consumed",
+    }
+    if set(consumption) != set(expected) | {
+        "request",
+        "request_id",
+        "consumption_run_id",
+        "consumed_at",
+    } or configuration_identity(
+        {key: consumption.get(key) for key in expected}
+    ) != configuration_identity(expected):
+        raise ManifestError("holdout consumption envelope differs from its source")
+    try:
+        text(consumption["consumption_run_id"])
+        consumed_at = datetime.fromisoformat(text(consumption["consumed_at"]))
+        if consumed_at.utcoffset() != timedelta(0):
+            raise ValueError("consumption timestamp must be UTC")
+    except ValueError as error:
+        raise ManifestError(
+            "holdout consumption execution metadata is invalid"
+        ) from error
+    request = validate_holdout_request(source, consumption)
+    if consumption["request_id"] != configuration_identity(request):
+        raise ManifestError("holdout consumption request identity is inconsistent")
 
 
 def validate_holdout_request(

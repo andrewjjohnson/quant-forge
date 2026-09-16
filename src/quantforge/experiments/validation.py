@@ -57,7 +57,7 @@ def inspect_validation(
     from quantforge.experiments._aggregate_integrity import validate_aggregate_folds
     from quantforge.experiments._holdout_integrity import (
         validate_holdout_artifact,
-        validate_holdout_request,
+        validate_holdout_consumption,
     )
     from quantforge.experiments._producer_integrity import validate_backtest_identity
     from quantforge.experiments._window_integrity import validate_window_snapshot
@@ -326,7 +326,7 @@ def inspect_validation(
             consumed, consumed_base = reads.read(consumed_path)
             if consumed != current.consumption.to_primitive():
                 raise ManifestError("holdout consumption changed during indexing")
-            validate_holdout_request(source, consumed)
+            validate_holdout_consumption(source, consumed, reservation)
             marker = add(
                 consumed_path,
                 ArtifactType.HOLDOUT_CONSUMPTION,
