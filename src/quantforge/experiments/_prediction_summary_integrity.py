@@ -122,8 +122,16 @@ def validate_prediction_summary(
     )
     for field in _COUNTS:
         counter(summary[field])
-    decimal_field(summary["prediction_frequency"], nullable=True, minimum=0)
-    decimal_field(summary["accuracy"], nullable=True, minimum=0, maximum=1)
+    for metric, denominator, maximum in (
+        ("prediction_frequency", "scheduled_decisions", None),
+        ("accuracy", "accuracy_sample_count", 1),
+    ):
+        unavailable = summary[denominator] == 0
+        if unavailable and summary[metric] is not None:
+            raise ManifestError(
+                "OOS aggregate empty prediction metric must be unavailable"
+            )
+        decimal_field(summary[metric], nullable=unavailable, minimum=0, maximum=maximum)
     if summary["frequency_denominator"] != "scheduled_decisions_in_completed_windows":
         raise ManifestError("OOS aggregate prediction frequency denominator is invalid")
     distribution = record(

@@ -19,7 +19,17 @@ def benchmark_configuration(manifest: PrimitiveMapping) -> PrimitiveMapping:
     ):
         if key not in configuration or configuration[key] is None:
             raise ManifestError("backtest execution provenance is incomplete")
-    mapping(configuration["sizing"])
+    sizing = mapping(configuration["sizing"])
+    if configuration_identity(sizing) != configuration_identity(
+        {
+            "model": "discrete_target_weight",
+            "whole_shares_only": True,
+            "rebalance_existing_position": False,
+        }
+    ):
+        raise ManifestError(
+            "backtest position-sizing configuration is unsupported or incomplete"
+        )
     # QF-5 benchmark version 4's fixed metadata and original recorded inputs.
     # Do not construct BacktestConfig: its defaults could rewrite historical inputs.
     expected: PrimitiveMapping = {

@@ -45,6 +45,8 @@ def index_backtest_files(
     root: Path, export: Path, manifest: PrimitiveMapping, logical_prefix: str
 ) -> tuple[ArtifactEntry, ...]:
     """Keep QF-5 schema/run metadata independent of the enclosing study type."""
+    from quantforge.backtesting.export import BACKTEST_ARTIFACT_FILENAMES
+
     if not export.resolve().is_relative_to(root):
         raise ManifestError("backtest export is outside artifact root")
     benchmark_configuration(manifest)
@@ -60,6 +62,5 @@ def index_backtest_files(
             producer_run_id=run_id,
             producer_artifact_id=logical_prefix + "/" + path.name,
         )
-        for path in sorted(export.iterdir())
-        if path.is_file() and path.suffix in {".json", ".csv"}
+        for path in (export / name for name in sorted(BACKTEST_ARTIFACT_FILENAMES))
     )

@@ -220,7 +220,11 @@ corporate-action declarations must retain their complete schemas and primitive
 domains. Empty disclosure arrays and producer-nullable metrics remain valid.
 These checks apply to standalone and nested backtests; refreshing the integrity
 sidecar cannot certify an incomplete manifest. Performance is not recalculated.
-Execution provenance must include position sizing. The supported QF-5 version-4
+Execution provenance must include the complete supported position-sizing record:
+`model: "discrete_target_weight"`, boolean `whole_shares_only: true` and boolean
+`rebalance_existing_position: false`, with no missing or additional fields.
+Rehashed run/benchmark IDs do not make malformed sizing valid, and inspection
+does not fill in defaults. The supported QF-5 version-4
 buy-and-hold benchmark configuration and deterministic benchmark ID must agree
 with recorded capital, costs, corporate-action policies, snapshot and optional
 evaluation interval. These checks derive only fixed metadata; no benchmark,
@@ -573,6 +577,10 @@ before producer validation and bind every named file digest to both the index an
 the final bytes on disk. Atomic CSV or sidecar replacements during inspection
 therefore fail even after the initial producer check; identical-byte replacements
 remain valid. Captured fold/holdout fingerprints use that same sidecar snapshot.
+Standalone and nested backtest indexes include only the producer's exact filename
+allowlist, which the captured sidecar must cover. Files created after validation
+are left unindexed; they cannot acquire trusted backtest provenance through a
+directory-listing race. Missing or changed allowlisted files still fail inspection.
 Nested backtest files retain their QF-5 manifest's `result_schema_version` and
 producing `run_id`, matching standalone and optimization inspection; the
 surrounding QF-39/QF-40 envelope version and study identity describe the enclosing
@@ -693,6 +701,10 @@ window consistency, completeness and warnings. Nested records validate exact key
 integer counts, finite decimal strings, supported statuses and value domains.
 Unavailable samples retain null statistics; custom metric-field bindings remain
 supported. No summary statistics or confidence intervals are recalculated.
+Prediction frequency is non-null exactly when `scheduled_decisions` is positive;
+accuracy is non-null exactly when `accuracy_sample_count` is positive. These
+availability checks also apply to completed-window and final-holdout summaries,
+and preserve recorded decimal values without calculating either ratio.
 Aggregate and per-window sample counts must also match the captured observations
 and completed decision schedules. Checks cover generated, eligible, excluded and
 labeled signals, direction distributions, accuracy and interval sample counts,

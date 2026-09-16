@@ -722,9 +722,11 @@ def _export_category(study_type: StudyType, name: str) -> ArtifactType | None:
             "summary.json": ArtifactType.FEATURE_DATASET,
         }.get(name)
     if study_type is StudyType.BACKTEST:
+        from quantforge.backtesting.export import BACKTEST_ARTIFACT_FILENAMES
+
         return (
             ArtifactType.BACKTEST_RESULT
-            if name.endswith(".csv") or name == "integrity.json"
+            if name in BACKTEST_ARTIFACT_FILENAMES
             else None
         )
     if study_type is StudyType.PARAMETER_STUDY:
