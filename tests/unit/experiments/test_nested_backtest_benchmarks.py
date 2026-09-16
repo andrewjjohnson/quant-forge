@@ -18,6 +18,7 @@ from quantforge.experiments._json import mapping
 from quantforge.oos import HoldoutEvaluation, HoldoutLedger, load_oos_source
 from quantforge.walk_forward.persistence import read_record, write_record
 from tests.unit.experiments.test_adapters import block_research
+from tests.unit.experiments.test_backtest_record_integrity import change_csv
 from tests.unit.experiments.test_contracts import write_json
 from tests.unit.experiments.test_grid_integrity import (
     build_grid_export,
@@ -35,6 +36,11 @@ def rewrite_benchmark(export: Path, change: str) -> PrimitiveMapping:
     if change == "record_counts":
         counts = mapping(manifest["record_counts"])
         counts["fills"] = cast(int, counts["fills"]) + 1
+    elif change == "performance_counts":
+        performance = mapping(manifest["performance"])
+        performance["trade_count"] = cast(int, performance["trade_count"]) + 1
+    elif change == "foreign_csv_position":
+        change_csv(export, "positions", "symbol", "foreign")
     elif change == "foreign_order":
         mapping(benchmark["order"])["run_id"] = "foreign"
     elif change == "foreign_fill":
@@ -89,6 +95,8 @@ def rewrite_benchmark(export: Path, change: str) -> PrimitiveMapping:
         "record_counts",
         "foreign_order",
         "foreign_fill",
+        "performance_counts",
+        "foreign_csv_position",
     ],
 )
 def test_optimization_rejects_rehashed_foreign_benchmark(
@@ -117,6 +125,8 @@ def test_optimization_rejects_rehashed_foreign_benchmark(
         "record_counts",
         "foreign_order",
         "foreign_fill",
+        "performance_counts",
+        "foreign_csv_position",
     ],
 )
 def test_validation_rejects_rehashed_foreign_benchmark(
@@ -149,6 +159,11 @@ def test_validation_rejects_rehashed_foreign_benchmark(
         source, completed.study.study_path, artifact_root=tmp_path, ledger=ledger
     )
     mapping(artifact["result"])["manifest"] = rewrite_benchmark(export, change)
+    if change == "foreign_csv_position":
+        positions = cast(
+            list[PrimitiveMapping], mapping(artifact["result"])["positions"]
+        )
+        positions[0]["symbol"] = "foreign"
     artifact["export_fingerprint"] = configuration_identity(
         {"integrity": (export / "integrity.json").read_text()}
     )
@@ -170,6 +185,10 @@ def test_validation_rejects_rehashed_foreign_benchmark(
         if change == "missing_performance"
         else "backtest record counts"
         if change == "record_counts"
+        else "backtest performance trade counts"
+        if change == "performance_counts"
+        else "backtest position provenance"
+        if change == "foreign_csv_position"
         else "backtest benchmark"
     )
     with pytest.raises(ManifestError, match=message):

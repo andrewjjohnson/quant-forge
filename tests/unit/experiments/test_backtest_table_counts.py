@@ -1,6 +1,7 @@
 """Rehashed QF-5 manifests must retain counts from captured CSV records."""
 
 import csv
+from dataclasses import replace
 from datetime import date
 from hashlib import sha256
 from io import StringIO
@@ -11,8 +12,10 @@ import pytest
 
 from quantforge.backtesting import export_backtest_result, run_backtest
 from quantforge.configuration import PrimitiveMapping
+from quantforge.data.models import MarketDataset
 from quantforge.experiments import StudyType, inspect_study, verify_artifacts
 from quantforge.experiments._json import mapping
+from quantforge.strategies import StrategyOutput
 from tests.unit.backtesting.test_runner import (
     PRICES,
     ManualTransitionStrategy,
@@ -118,10 +121,34 @@ def test_trade_tables_need_unambiguous_logical_records(
     inspect_manifest(export, read_record(export / "manifest.json"))
 
 
-def test_logical_counts_accept_quoted_newlines_and_empty_tables(export: Path) -> None:
-    path = export / "orders.csv"
+@pytest.mark.parametrize("corporate", [False, True])
+@pytest.mark.parametrize("reason", ['first line\nsecond, "quoted" line', "", None])
+def test_logical_counts_accept_quoted_newlines_and_empty_tables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corporate: bool, reason: str | None
+) -> None:
+    class ReasonedStrategy(ManualTransitionStrategy):
+        name = "reasoned_fixture"
+
+        def generate(self, dataset: MarketDataset) -> StrategyOutput:
+            output = super().generate(dataset)
+            return replace(
+                output,
+                decisions=tuple(
+                    replace(row, reason=reason) for row in output.decisions
+                ),
+            )
+
+    dataset = make_dataset(
+        ("100", "100", "50", "50") if corporate else ("100", "100", "100", "100"),
+        dividends=((date(2024, 7, 3), "1"),) if corporate else (),
+        splits=((date(2024, 7, 3), "2"),) if corporate else (),
+    )
+    result = run_backtest(dataset, ReasonedStrategy(), zero_cost_config())
+    export = export_backtest_result(result, tmp_path / "backtests")
+    block_research(monkeypatch)
+    path = export / "signals.csv"
     rows = list(csv.reader(StringIO(path.read_text(), newline="")))
-    rows[1][rows[0].index("reason")] = 'first line\nsecond, "quoted" line'
+    assert rows[1][rows[0].index("reason")] == (reason or "")
     stream = StringIO(newline="")
     csv.writer(stream, lineterminator="\r\n").writerows(rows)
     path.write_bytes(stream.getvalue().encode("utf-8"))

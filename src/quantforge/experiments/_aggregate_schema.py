@@ -1,5 +1,6 @@
 """Primitive QF-40 schema checks; never rebuild aggregate statistics."""
 
+from collections import Counter
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
@@ -121,6 +122,10 @@ def validate_configuration_stability(value: object, source: OOSSource) -> None:
     if stability["interpretation"] != "descriptive; no automatic quality judgement":
         raise ManifestError("OOS aggregate stability interpretation is invalid")
     windows = records(stability["windows"])
+    selection_counts: Counter[str] = Counter()
+    parameter_changes: Counter[str] = Counter()
+    previous: PrimitiveMapping | None = None
+    expected_transitions = expected_changes = 0
     if len(windows) != len(source.folds):
         raise ManifestError(
             "OOS aggregate stability windows differ from captured folds"
@@ -131,6 +136,23 @@ def validate_configuration_stability(value: object, source: OOSSource) -> None:
             None if fold.selection is None else fold.selection.snapshot.to_primitive()
         )
         candidate = None if selected is None else mapping(selected["candidate"])
+        if candidate is not None:
+            selection_counts[text(candidate["combination_id"])] += 1
+            parameters = mapping(candidate["parameters"])
+            for name in parameters:
+                parameter_changes[name] += 0
+            if previous is not None:
+                expected_transitions += 1
+                expected_changes += previous != candidate
+                prior_parameters = mapping(previous["parameters"])
+                for name in prior_parameters.keys() | parameters.keys():
+                    parameter_changes[name] += (
+                        name not in prior_parameters
+                        or name not in parameters
+                        or prior_parameters[name] != parameters[name]
+                    )
+        # Missing selections break adjacency, just as in the captured producer.
+        previous = candidate
         evidence = (
             []
             if selected is None
@@ -155,6 +177,34 @@ def validate_configuration_stability(value: object, source: OOSSource) -> None:
             raise ManifestError(
                 "OOS aggregate stability window differs from captured selection"
             )
+    if (
+        transitions != expected_transitions
+        or changes != expected_changes
+        or stability["selection_counts"] != dict(selection_counts)
+        or stability["parameter_change_counts"] != dict(parameter_changes)
+    ):
+        raise ManifestError(
+            "OOS aggregate stability totals differ from captured selections"
+        )
+    from quantforge.backtesting._arithmetic import arithmetic
+    from quantforge.configuration import decimal_to_primitive
+
+    # Reconcile two saved count ratios under the producer's decimal policy;
+    # never call the stability engine or reevaluate a candidate's performance.
+    with arithmetic():
+        for name, count in (
+            ("configuration_change_frequency", changes),
+            ("repeat_selection_frequency", repeats),
+        ):
+            expected_frequency = (
+                decimal_to_primitive(Decimal(count) / transitions)
+                if transitions
+                else None
+            )
+            if stability[name] != expected_frequency:
+                raise ManifestError(
+                    "OOS aggregate stability frequency differs from captured selections"
+                )
 
 
 def validate_completeness(value: object) -> PrimitiveMapping:

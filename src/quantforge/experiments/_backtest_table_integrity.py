@@ -4,6 +4,15 @@ import csv
 from io import StringIO
 from pathlib import Path
 
+from quantforge.configuration import PrimitiveMapping
+from quantforge.experiments._backtest_csv_schema import (
+    decode_csv_row,
+    validate_csv_header,
+)
+from quantforge.experiments._backtest_manifest_integrity import (
+    validate_backtest_manifest,
+)
+from quantforge.experiments._backtest_record_integrity import validate_backtest_records
 from quantforge.experiments._json import ManifestError, mapping
 from quantforge.experiments._producer_snapshot import ProducerReadSet
 
@@ -11,8 +20,10 @@ from quantforge.experiments._producer_snapshot import ProducerReadSet
 def validate_backtest_table_counts(export: Path, reads: ProducerReadSet) -> None:
     """Count logical CSV records from the same bytes pinned by the sidecar."""
     manifest, _ = reads.read(export / "manifest.json")
+    validate_backtest_manifest(manifest)
     counts = mapping(manifest.get("record_counts"))
     observed: dict[str, int] = {}
+    captured: dict[str, list[PrimitiveMapping]] = {}
     tables = {
         "signals": "signals.csv",
         "orders": "orders.csv",
@@ -42,6 +53,8 @@ def validate_backtest_table_counts(export: Path, reads: ProducerReadSet) -> None
             ):
                 raise ManifestError(f"backtest table {filename} has an invalid header")
             observed[name] = 0
+            validate_csv_header(name, header)
+            captured[name] = []
             if name == "trades":
                 if "is_open" not in header:
                     raise ManifestError("backtest trades table is missing is_open")
@@ -52,6 +65,9 @@ def validate_backtest_table_counts(export: Path, reads: ProducerReadSet) -> None
                         f"backtest table {filename} has a malformed row"
                     )
                 observed[name] += 1
+                captured[name].append(
+                    decode_csv_row(name, dict(zip(header, row, strict=True)))
+                )
                 if name == "trades":
                     is_open = row[header.index("is_open")]
                     if is_open not in {"True", "False"}:
@@ -67,3 +83,9 @@ def validate_backtest_table_counts(export: Path, reads: ProducerReadSet) -> None
         for name, count in observed.items()
     ):
         raise ManifestError("backtest record counts differ from captured tables")
+    validate_backtest_records(manifest, captured)
+    from quantforge.experiments._backtest_ledger_integrity import (
+        validate_backtest_ledgers,
+    )
+
+    validate_backtest_ledgers(manifest, captured)

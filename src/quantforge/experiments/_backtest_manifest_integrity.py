@@ -266,6 +266,19 @@ def validate_backtest_manifest(manifest: PrimitiveMapping) -> None:
         manifest["record_counts"], _RECORD_COUNTS, "backtest record counts"
     ).values():
         counter(count)
+    performance = mapping(manifest["performance"])
+    counts = mapping(manifest["record_counts"])
+    completed = counter(counts["completed_trades"])
+    if (
+        performance["trade_count"] != completed
+        or performance["open_trade_count"] != counts["open_trades"]
+        or counter(performance["winning_trades"])
+        + counter(performance["losing_trades"])
+        > completed
+    ):
+        raise ManifestError(
+            "backtest performance trade counts differ from record counts"
+        )
     strings(manifest["warnings"])
     strings(manifest["limitations"])
     benchmark = record(

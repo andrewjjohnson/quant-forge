@@ -204,20 +204,25 @@ def _description(
             text(document["result_schema_version"]),
         )
     if study_type is StudyType.OPTIMIZATION:
+        from quantforge.experiments._optimization_manifest_integrity import (
+            validate_optimization_manifest,
+        )
         from quantforge.optimization.models import STUDY_SCHEMA_VERSION
 
-        configuration = mapping(document["identity_inputs"])
+        configuration = mapping(document.get("identity_inputs"))
         if configuration.get("study_schema_version") != STUDY_SCHEMA_VERSION:
             raise ManifestError("unsupported QF-6 study schema")
-        if (
-            configuration.get("component") != "quantforge_grid_search_study"
-            or configuration_identity(configuration) != document["study_id"]
-        ):
+        if configuration.get(
+            "component"
+        ) != "quantforge_grid_search_study" or configuration_identity(
+            configuration
+        ) != document.get("study_id"):
             raise ManifestError("incompatible QF-6 study identity")
         if document.get("study_schema_version") != configuration.get(
             "study_schema_version"
         ):
             raise ManifestError("optimization schema differs from identity inputs")
+        validate_optimization_manifest(document)
         observations.update(
             _pick(
                 document,

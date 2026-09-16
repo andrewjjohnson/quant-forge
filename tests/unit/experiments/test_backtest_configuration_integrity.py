@@ -46,6 +46,12 @@ def inspect_configuration(
         benchmark["start"] = "first_dataset_session_open"
         benchmark.pop("evaluation_interval", None)
     renamed = export.rename(export.with_name(reidentify(manifest)))
+    if not reject:
+        from tests.unit.experiments.backtest_fixture_records import (
+            refresh_export_records,
+        )
+
+        refresh_export_records(renamed, manifest)
     inspect_manifest(renamed, manifest, reject=reject)
     return renamed
 

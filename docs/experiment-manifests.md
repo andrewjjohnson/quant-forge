@@ -231,6 +231,19 @@ CSV table. Logical CSV records are counted with quoted newlines preserved;
 total cannot hide redistributed completed/open counts. The same captured bytes
 must match the sidecar and the final index. Header-only tables remain valid for
 zero counts. Detached manifests retain declared counts without table verification.
+The headline performance's completed/open trade counts must match those same
+manifest counts, including detached manifests; winning plus losing trades cannot
+exceed completed trades. Break-even trades need not be classified as wins or losses.
+CSV tables must retain the producer's complete headers, finite decimal domains,
+integer/boolean/enum fields, and nullable values. Signals, orders, fills and trades
+must retain deterministic IDs derived from the run and their original links;
+symbol, strategy, sessions, quantities and copied prices/costs must agree along
+those links. Every filled order has one fill, and every fill belongs to a trade.
+Position/equity sessions and references must agree, and corporate-action records
+must retain run, account, symbol and dataset provenance. Benchmark corporate
+records must match their captured manifest copies. These checks accept quoted
+fields and alternative CSV line endings without rewriting the source bytes.
+They do not calculate fills, affordable quantities, accounting or trade outcomes.
 Execution provenance must include the complete supported position-sizing record:
 `model: "discrete_target_weight"`, boolean `whole_shares_only: true` and boolean
 `rebalance_existing_position: false`, with no missing or additional fields.
@@ -318,6 +331,15 @@ must remain readable by the installed decoder. Inspection never rewrites exports
 These checks reuse producer serialization, row hashing and schema-value
 validation; they do not evaluate causal features or future outcomes.
 
+Every QF-6 manifest, including resumable studies, must retain its exact producer
+fields and operational declarations: sequential/process execution with matching
+parallelism, positive worker count, boolean retry/failure options, fixed stale-run
+policy, atomic persistence without successful-trial overwrite, and a declared
+grid-size safeguard. The count expression and total/valid/excluded counts must
+agree with the saved search axes, and exceeding the declared maximum requires an
+explicit large-grid override. Historical and relative output-root text remains
+valid; inspection does not rebind it to the directory's current location. The
+timestamp policy and string-array disclosures must also retain their contracts.
 Completed QF-6 summary exports require the complete `StudyResult` envelope plus
 the producer's ranking/stability configuration, top-trial and parameter-summary
 extensions. Required `warnings` and `limitations` must be string arrays; missing
@@ -771,9 +793,13 @@ an index entry using a JSON pointer. Transition/selection/parameter-change count
 must be nonnegative integers, frequency records must have their supported nullable
 ratio domains, and the descriptive interpretation must be retained. Its windows,
 candidates and neighborhood evidence must match the captured frozen selections.
-Normalized index values, prediction summary statistics and stability calculations
-remain producer-owned; these checks validate schema and copied evidence without
-recalculating metrics or configuration turnover.
+Selection frequencies and configuration/parameter change counts must agree with
+the captured candidate sequence. Missing selections break adjacency; added or
+removed parameters count as changes. The two descriptive count ratios must use
+the producer's fixed decimal policy, independent of ambient decimal precision.
+These are tallies of saved metadata. Normalized index values, prediction metrics
+and neighborhood stability scores remain producer-owned; inspection never calls
+the stability engine or reevaluates candidate performance.
 The graph links aggregate to contributing test artifacts, test artifacts to
 frozen selections, selections to the plan, and the plan to source provenance.
 
