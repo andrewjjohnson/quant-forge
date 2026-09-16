@@ -16,8 +16,8 @@ from quantforge.experiments._json import (
     EMPTY_SNAPSHOT,
     ManifestError,
     digest,
+    parse_json,
     pointer,
-    read_json,
     snapshot,
     text,
 )
@@ -270,16 +270,20 @@ def verify_artifacts(index: ArtifactIndex, root: Path) -> IntegrityReport:
                     code = "missing_artifact"
                 else:
                     absent.append(entry.artifact_id)
+            elif entry.file_format is ArtifactFormat.JSON:
+                content = path.read_bytes()
+                if entry.sha256 != hashlib.sha256(content).hexdigest():
+                    code = "content_hash_mismatch"
+                else:
+                    document = parse_json(content)
+                    pointer(document, entry.json_pointer)
+                    if any(
+                        pointer(document, key) != value
+                        for key, value in entry.bindings.to_primitive().items()
+                    ):
+                        code = "incompatible_metadata"
             elif entry.sha256 != file_sha256(path):
                 code = "content_hash_mismatch"
-            elif entry.file_format is ArtifactFormat.JSON:
-                document = read_json(path)
-                pointer(document, entry.json_pointer)
-                if any(
-                    pointer(document, key) != value
-                    for key, value in entry.bindings.to_primitive().items()
-                ):
-                    code = "incompatible_metadata"
         except (OSError, ManifestError):
             code = "invalid_artifact"
         if code:

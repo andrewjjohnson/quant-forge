@@ -143,6 +143,8 @@ def validate_trial_coordinates(
         },
     }
     trial_dataset = mapping(trial.get("dataset"))
+    if trial.get("status") != TrialStatus.SUCCEEDED.value and trial_dataset != dataset:
+        raise ManifestError("trial dataset is incompatible with grid coordinates")
     if any(trial.get(key) != value for key, value in expected.items()) or any(
         trial_dataset.get(key) != value for key, value in dataset.items()
     ):

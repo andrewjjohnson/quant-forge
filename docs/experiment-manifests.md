@@ -394,6 +394,10 @@ and strategy provenance must match the linked
 QF-5 manifest, including its strategy-configuration hash and the grid's recorded
 engine/schema versions. These comparisons use stored values only and do not
 recalculate metrics or reconstruct strategies.
+Pending, running, failed and excluded QF-6 trials must retain exactly the study's
+dataset mapping, matching the native resume contract; additional dataset fields
+are rejected. Successful trials retain the enriched QF-5 market-data mapping
+and are checked against their linked backtest export.
 
 Every QF-6 and QF-32 trial also matches its declared Cartesian position in the serialized
 search space. The combination ID binds those parameters to the recorded strategy
@@ -716,6 +720,10 @@ stored metadata, such as an ID or schema version.
 root containment (including symlink resolution), SHA-256 of exact file bytes,
 JSON pointer resolution and metadata bindings. Missing referenced files,
 hash mismatch, invalid JSON or incompatible metadata are explicit issues.
+For JSON artifacts, the hash, pointer and bindings are checked against one
+captured byte buffer, so replacing a file between hashing and parsing cannot
+combine evidence from different versions. This also applies during manifest
+publication. Hash mismatches take precedence over JSON parse errors.
 `require_valid()` raises on failures. Verification never replaces hashes.
 A missing optional file is allowed only when it was absent at indexing and has
 `sha256: null`; a later appeared or disappeared file requires a new index.

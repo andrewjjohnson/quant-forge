@@ -59,6 +59,13 @@ def test_trial_completion_between_validation_and_hashing_is_rejected(
     )
     for field in ("artifact_location", *fields):
         pending[field] = None
+    if study_type is StudyType.OPTIMIZATION:
+        # Native pending trials carry the study dataset; only a completed
+        # backtest enriches that mapping with QF-5 market-data fields.
+        configuration = cast(
+            PrimitiveMapping, read_record(root / "manifest.json")["identity_inputs"]
+        )
+        pending["dataset"] = configuration["dataset"]
     write_json(path, pending)
     replacement = completed if complete_trial else path.read_bytes()
     inspect_study(study_type, root, artifact_root=tmp_path)
