@@ -166,15 +166,9 @@ def _description(
             text(document["schema_version"]),
         )
     if study_type is StudyType.FEATURE_DATASET:
-        if (
-            document.get("component") != "quantforge_signal_feature_dataset"
-            or document.get("status") != "complete"
-        ):
-            raise ManifestError("expected a completed QF-7/QF-29 dataset")
-        if configuration_identity(
-            mapping(document.get("configuration"))
-        ) != document.get("dataset_id"):
-            raise ManifestError("feature dataset identity is inconsistent")
+        from quantforge.experiments._feature_integrity import validate_feature_manifest
+
+        validate_feature_manifest(document)
         configuration = _pick(
             document, ("engine_version", "configuration", "market_data")
         )

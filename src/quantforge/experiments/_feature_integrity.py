@@ -11,6 +11,44 @@ from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.prediction.signal_feature_models import SignalDisposition
 
 
+def validate_feature_manifest(manifest: PrimitiveMapping) -> None:
+    """Require the complete producer envelope, including unhashed declarations."""
+    if set(manifest) != {
+        "component",
+        "configuration",
+        "dataset_id",
+        "engine_version",
+        "feature_outcome_boundary",
+        "limitations",
+        "market_data",
+        "prediction_study_ids",
+        "record_counts",
+        "status",
+    }:
+        raise ManifestError("feature manifest fields differ from producer schema")
+    if (
+        manifest["component"] != "quantforge_signal_feature_dataset"
+        or manifest["status"] != "complete"
+    ):
+        raise ManifestError("expected a completed QF-7/QF-29 dataset")
+    if (
+        configuration_identity(mapping(manifest["configuration"]))
+        != manifest["dataset_id"]
+    ):
+        raise ManifestError("feature dataset identity is inconsistent")
+    text(manifest["engine_version"])
+    if manifest["feature_outcome_boundary"] != (
+        "candidate dispositions and causal features are fixed before any "
+        "QF-11 outcome labeler is invoked"
+    ):
+        raise ManifestError("feature dataset feature/outcome boundary is invalid")
+    limitations = manifest["limitations"]
+    if not isinstance(limitations, list) or any(
+        not isinstance(item, str) for item in limitations
+    ):
+        raise ManifestError("feature dataset limitations must be an array of strings")
+
+
 def validate_feature_summary(
     manifest: PrimitiveMapping, summary: PrimitiveMapping
 ) -> None:

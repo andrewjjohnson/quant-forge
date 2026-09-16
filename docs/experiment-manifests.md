@@ -169,7 +169,12 @@ inspection, save a detached manifest under another filename, such as
 `backtest.json`; this does not assert export completeness or table integrity.
 
 QF-11 study IDs are verified against the original engine, market data, complete
-study configuration and optional prediction context. For both complete results
+study configuration and optional prediction context. Every standalone, manifest-only
+or nested QF-11 manifest must retain the exact producer `feature_outcome_boundary`
+declaration: predictions are fixed before outcome labeling, and evaluators receive
+only a fixed signal and an already-generated outcome. This required declaration
+remains outside study identity; refreshing enclosing hashes cannot replace it.
+For both complete results
 and manifest-only inputs, `generated_predictions` must equal
 `labeled_rows + unavailable_outcomes`; all three counts must be nonnegative
 integers, excluding booleans. When rows are available, their length must also
@@ -247,7 +252,14 @@ captured export fingerprints or enclosing record hashes cannot bypass this
 reconciliation, including optimization directories without a final summary.
 
 QF-7/QF-29 dataset IDs must match the producer's hash of its complete recorded
-`configuration`. Direct result JSON requires the complete producer envelope:
+`configuration`. Every direct or directory manifest requires the exact ten-field
+producer schema, including its fixed `feature_outcome_boundary` declaration and
+`limitations` array of strings. The declaration requires candidate dispositions
+and causal features to be fixed before any QF-11 outcome labeler is invoked.
+Missing fields, extra fields and malformed disclosures are rejected. Empty
+limitation arrays, empty strings, duplicates and original order remain intact;
+inspection does not invent disclosures or add them to dataset identity.
+Direct result JSON requires the complete producer envelope:
 `manifest`, `rows`, `schema` and `summary`, including an explicit empty row array
 for an empty dataset. Rows must reconcile `candidate_count` and every
 accepted/rejected/blocked/overlapping count against the rows' fixed dispositions,

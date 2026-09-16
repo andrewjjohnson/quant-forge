@@ -21,6 +21,11 @@ def validate_prediction_manifest(manifest: PrimitiveMapping) -> None:
 
 def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
     """Use QF-11's original version and optional-context identity semantics."""
+    if manifest.get("feature_outcome_boundary") != (
+        "prediction signals are fixed before outcome labeling; evaluators "
+        "receive only a fixed signal and an already-generated outcome"
+    ):
+        raise ManifestError("prediction feature/outcome boundary is invalid")
     configuration = mapping(manifest.get("configuration"))
     identity: PrimitiveMapping = {
         "component": "quantforge_prediction_study",
