@@ -576,6 +576,13 @@ top-level `schema_version: "1"`, `kind: "final_holdout_result"` and
 `state: "consumed"` before indexing. Missing, malformed or unsupported values
 remain invalid after refreshing envelope hashes and ledger result references.
 Rejecting incompatible evidence never changes the ledger's consumed state.
+Every consumed request must retain the producer's exact top-level fields and
+supported schema, operation and tail-policy constants. Its complete lineage,
+study definition, study/plan/lineage IDs and final-holdout reservation must match
+the captured source; its full frozen selection must match a captured fold.
+These checks run before indexing consumption, including interrupted attempts
+without a result. Refreshing request IDs and result-envelope hashes cannot change
+the declared holdout boundary or lineage. No partition or holdout is prepared.
 Consumed holdout artifacts must match the frozen selection retained in their
 permanent request and the captured source study. Prediction results receive the
 same nested window checks as standalone results, bind their result IDs and stored

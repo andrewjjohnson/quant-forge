@@ -12,6 +12,39 @@ from quantforge.prediction import PredictionDecisionSchedule
 from quantforge.timeframes import resolve_exchange_session
 
 
+def validate_holdout_request(
+    source: OOSSource, consumption: PrimitiveMapping
+) -> PrimitiveMapping:
+    """Bind permanent request metadata without preparing a holdout partition."""
+    request = mapping(consumption.get("request"))
+    frozen = mapping(request.get("frozen_selection"))
+    expected: PrimitiveMapping = {
+        "schema_version": "1",
+        "operation": "evaluate_frozen_final_holdout",
+        "lineage_id": source.lineage_id,
+        "lineage": source.lineage.to_primitive(),
+        "study_id": source.study_id,
+        "plan_id": source.plan.plan_id,
+        "study_definition": source.definition.to_primitive(),
+        "holdout": source.plan.final_holdout.to_primitive(),
+        "tail_policy": "outcome_horizon_remains_inside_holdout; no_tail_decisions",
+    }
+    if (
+        set(request) != set(expected) | {"frozen_selection", "evaluation_membership"}
+        or configuration_identity({key: request.get(key) for key in expected})
+        != configuration_identity(expected)
+        or not any(
+            fold.selection is not None
+            and configuration_identity(fold.selection.to_primitive())
+            == configuration_identity(frozen)
+            for fold in source.folds
+        )
+    ):
+        raise ManifestError("holdout request differs from its frozen source selection")
+    mapping(request["evaluation_membership"])
+    return request
+
+
 def validate_holdout_artifact(
     source: OOSSource, consumption: PrimitiveMapping, result: PrimitiveMapping
 ) -> None:
@@ -21,21 +54,8 @@ def validate_holdout_artifact(
         or result.get("state") != "consumed"
     ):
         raise ManifestError("unsupported holdout result envelope")
-    request = mapping(consumption.get("request"))
-    frozen = mapping(request.get("frozen_selection"))
-    if not any(
-        fold.selection is not None and fold.selection.to_primitive() == frozen
-        for fold in source.folds
-    ) or any(
-        request.get(key) != expected
-        for key, expected in {
-            "lineage_id": source.lineage_id,
-            "study_id": source.study_id,
-            "plan_id": source.plan.plan_id,
-            "study_definition": source.definition.to_primitive(),
-        }.items()
-    ):
-        raise ManifestError("holdout request differs from its frozen source selection")
+    request = validate_holdout_request(source, consumption)
+    frozen = mapping(request["frozen_selection"])
     artifact = mapping(result.get("artifact"))
     if artifact.get("selection_id") != frozen.get("selection_id"):
         raise ManifestError("holdout artifact differs from frozen selection")

@@ -55,7 +55,10 @@ def inspect_validation(
     """
     # Importing the metadata API must not initialize research producer packages.
     from quantforge.experiments._aggregate_integrity import validate_aggregate_folds
-    from quantforge.experiments._holdout_integrity import validate_holdout_artifact
+    from quantforge.experiments._holdout_integrity import (
+        validate_holdout_artifact,
+        validate_holdout_request,
+    )
     from quantforge.experiments._producer_integrity import validate_backtest_identity
     from quantforge.experiments._window_integrity import validate_window_snapshot
     from quantforge.oos.common import provenance as source_provenance
@@ -323,6 +326,7 @@ def inspect_validation(
             consumed, consumed_base = reads.read(consumed_path)
             if consumed != current.consumption.to_primitive():
                 raise ManifestError("holdout consumption changed during indexing")
+            validate_holdout_request(source, consumed)
             marker = add(
                 consumed_path,
                 ArtifactType.HOLDOUT_CONSUMPTION,
