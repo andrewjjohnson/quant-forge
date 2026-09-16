@@ -5,6 +5,9 @@ from datetime import date
 from quantforge.backtesting.config import EvaluationInterval
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_trial_integrity import (
+    prediction_components_match,
+)
 from quantforge.experiments._producer_integrity import validate_backtest_identity
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.oos.models import OOSSource
@@ -71,13 +74,10 @@ def validate_holdout_artifact(
         if artifact.get("result_id") != manifest.get("window_result_id"):
             raise ManifestError("holdout prediction result identity is inconsistent")
         configuration = mapping(manifest.get("configuration"))
-        for name in ("prediction_rule", "outcome_labeler", "evaluator"):
-            actual = mapping(configuration.get(name))
-            expected = mapping(definition.get(name))
-            if configuration_identity(
-                {key: actual.get(key) for key in expected}
-            ) != configuration_identity(expected):
-                raise ManifestError("holdout prediction differs from frozen candidate")
+        if not prediction_components_match(
+            configuration, definition, definition.get("contract_version", "1")
+        ):
+            raise ManifestError("holdout prediction differs from frozen candidate")
         if any(
             configuration.get(key) != definition.get(reference)
             for key, reference in {

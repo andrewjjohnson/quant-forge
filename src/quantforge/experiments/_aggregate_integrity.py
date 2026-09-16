@@ -9,6 +9,7 @@ from quantforge.experiments._aggregate_schema import (
 )
 from quantforge.experiments._backtest_summary_integrity import (
     validate_backtest_aggregate_summary,
+    validate_backtest_summary_counts,
 )
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._prediction_counts_integrity import (
@@ -147,6 +148,7 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
             "equity references",
         )
         _same_records(summary_windows, windows, "window summaries")
+        validate_backtest_summary_counts(summary, windows, len(equity_references))
     else:
         validate_prediction_aggregate_summary(aggregate.get("summary"))
         _same_records(

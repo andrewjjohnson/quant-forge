@@ -1,6 +1,6 @@
 """Bind persisted QF-32 results to their recorded candidate definition."""
 
-from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping
 
 
@@ -57,6 +57,27 @@ def frozen_prediction_components(
     return components
 
 
+def prediction_components_match(
+    configuration: PrimitiveMapping,
+    components: PrimitiveMapping,
+    contract_version: Primitive,
+) -> bool:
+    """Compare complete v2 wrappers; only legacy v1 projects captured fields."""
+    if contract_version not in ("1", "2"):
+        raise ManifestError("unsupported trial definition version")
+    for name in ("prediction_rule", "outcome_labeler", "evaluator"):
+        actual = mapping(configuration.get(name))
+        expected = mapping(components.get(name))
+        captured = (
+            actual
+            if contract_version == "2"
+            else {key: actual.get(key) for key in expected}
+        )
+        if configuration_identity(captured) != configuration_identity(expected):
+            return False
+    return True
+
+
 def validate_prediction_trial_result(
     trial: PrimitiveMapping, artifact: PrimitiveMapping, study: PrimitiveMapping
 ) -> None:
@@ -69,16 +90,10 @@ def validate_prediction_trial_result(
     definition = mapping(trial.get("trial_definition"))
     components = frozen_prediction_components(definition, study)
     configuration = mapping(manifest.get("configuration"))
-    for name in ("prediction_rule", "outcome_labeler", "evaluator"):
-        component = mapping(configuration.get(name))
-        expected = mapping(components[name])
-        captured = (
-            component
-            if definition.get("contract_version", "1") == "2"
-            else {key: component.get(key) for key in expected}
-        )
-        if configuration_identity(captured) != configuration_identity(expected):
-            raise ManifestError("prediction result differs from its trial definition")
+    if not prediction_components_match(
+        configuration, components, definition.get("contract_version", "1")
+    ):
+        raise ManifestError("prediction result differs from its trial definition")
     if (
         manifest.get("market_data") != study.get("dataset")
         or configuration.get("prediction_context_requirements")

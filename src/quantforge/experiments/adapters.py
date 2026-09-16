@@ -308,6 +308,11 @@ def inspect_study(
     reads = ProducerReadSet()
     document, location = reads.read(manifest_path)
     container = document
+    if study_type is StudyType.FEATURE_DATASET and not source.is_dir():
+        if not {"manifest", "rows", "schema", "summary"} <= container.keys():
+            raise ManifestError(
+                "direct feature result requires manifest, rows, schema and summary"
+            )
     if "manifest" in document:
         document = mapping(document["manifest"])
         location += "/manifest"
@@ -318,7 +323,7 @@ def inspect_study(
         validate_window_snapshot(container)
     if study_type is StudyType.PREDICTION and "rows" in container:
         validate_prediction_rows(document, container["rows"])
-    if study_type is StudyType.FEATURE_DATASET and "rows" in container:
+    if study_type is StudyType.FEATURE_DATASET and not source.is_dir():
         validate_feature_rows(document, container)
     entries: list[ArtifactEntry] = []
     edges: list[ArtifactRelationship] = []

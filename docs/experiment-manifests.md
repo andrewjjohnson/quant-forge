@@ -225,10 +225,12 @@ captured export fingerprints or enclosing record hashes cannot bypass this
 reconciliation, including optimization directories without a final summary.
 
 QF-7/QF-29 dataset IDs must match the producer's hash of its complete recorded
-`configuration`. Result JSON with rows must reconcile `candidate_count` and every
+`configuration`. Direct result JSON requires the complete producer envelope:
+`manifest`, `rows`, `schema` and `summary`, including an explicit empty row array
+for an empty dataset. Rows must reconcile `candidate_count` and every
 accepted/rejected/blocked/overlapping count against the rows' fixed dispositions,
-including any embedded summary. Counts must be nonnegative integers. Directory
-inputs validate persisted `rows/*.json` checkpoints without generating features
+including the required embedded summary. Counts must be nonnegative integers.
+Directory inputs validate persisted `rows/*.json` checkpoints without generating features
 or outcome labels. Their required `summary.json` must exactly match the manifest's
 `record_counts`: every disposition count is a nonnegative integer and their sum
 equals `candidate_count`. The index binds these summary counts to their stored
@@ -587,6 +589,10 @@ Consumed holdout artifacts must match the frozen selection retained in their
 permanent request and the captured source study. Prediction results receive the
 same nested window checks as standalone results, bind their result IDs and stored
 candidate definitions, and match the request's recorded partition and bounded dataset.
+Version `2` frozen candidates require exact rule, labeler and evaluator wrappers,
+including their key sets, using the same comparison as successful grid trials.
+Extra fields remain invalid after refreshing nested study/window identities and
+the ledger result hash. Only legacy version `1` projects the captured fields.
 The full prediction schedule must equal QF-40's calendar-derived schedule from
 the first requested session's open through the last requested session's close,
 using the frozen primary timeframe. A canonical subset, empty replacement or
@@ -635,6 +641,12 @@ Counts are nonnegative integers, decimal statistics are finite strings with thei
 supported domains, and metrics without completed windows or samples retain nulls.
 Completeness uses the same schema checks as prediction aggregates. These checks
 do not recompute backtest performance or costs.
+Aggregate trade, winning, losing and open-trade counts must equal the sums of
+their captured per-window performance counters. `oos_session_count` must equal
+the number of captured native equity rows. Missing or failed folds contribute no
+counts; partial and empty aggregates retain these same checks. Updating the
+aggregate content hash cannot replace these totals. Economic metrics remain
+producer-owned and are not recalculated.
 Prediction observations must retain the source fold, selection, window result,
 decision/context/study references, generated signals and matching stored rows.
 Missing, duplicate, reordered or foreign records are rejected even under a new

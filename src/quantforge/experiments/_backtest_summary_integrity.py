@@ -1,5 +1,6 @@
 """Validate saved QF-40 backtest summary schemas without calculating metrics."""
 
+from quantforge.configuration import PrimitiveMapping
 from quantforge.experiments._aggregate_schema import (
     counter,
     decimal_field,
@@ -7,7 +8,7 @@ from quantforge.experiments._aggregate_schema import (
     strings,
     validate_completeness,
 )
-from quantforge.experiments._json import ManifestError
+from quantforge.experiments._json import ManifestError, mapping
 
 _COUNTS = {
     "trade_count",
@@ -33,6 +34,23 @@ _DECIMALS: dict[str, tuple[int | None, int | None]] = {
     "native_slippage_cost": (0, None),
     "native_dividend_income": (None, None),
 }
+
+
+def validate_backtest_summary_counts(
+    summary: PrimitiveMapping, windows: list[PrimitiveMapping], session_count: int
+) -> None:
+    """Reconcile saved integer counters, without recomputing window performance."""
+    expected = {"oos_session_count": session_count}
+    for field in _COUNTS - {"oos_session_count"}:
+        expected[field] = sum(
+            counter(mapping(window["performance"]).get(field))
+            for window in windows
+            if window["performance"] is not None
+        )
+    if any(summary.get(field) != count for field, count in expected.items()):
+        raise ManifestError(
+            "OOS aggregate backtest counts differ from captured windows"
+        )
 
 
 def validate_backtest_aggregate_summary(value: object) -> None:
