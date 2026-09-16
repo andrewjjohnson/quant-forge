@@ -428,6 +428,12 @@ The owned `trials/*.json` file set is captured before trial reads and checked ag
 after final byte verification. Concurrent additions or removals require a fresh
 inspection, including initially empty directories and resumable grids without a
 summary. Temporary files outside that producer-owned pattern remain unindexed.
+The presence or absence of the grid's owned `summary.json` is also captured and
+rechecked after final byte verification. A summary created or removed during
+inspection requires a fresh inspection, including when it appears after the
+directory listing. Only a captured summary eligible for completed-summary
+validation can be indexed. Identical-byte replacements remain valid, and
+temporary files such as `summary.json.tmp` do not affect this membership check.
 Inspection does not remove or rewrite producer files or retry any trial.
 The index describes
 only the persisted records; it does not assert completion. Successful trials

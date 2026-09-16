@@ -306,6 +306,7 @@ def inspect_study(
     manifest_path = source / "manifest.json" if source.is_dir() else source
     reads = ProducerReadSet()
     trial_paths: tuple[Path, ...] | None = None
+    grid_summary_present: bool | None = None
     feature_checkpoint_paths: tuple[Path, ...] | None = None
     document, location = reads.read(manifest_path)
     container = document
@@ -446,7 +447,8 @@ def inspect_study(
                 for _, trial in trial_snapshots
             )
             summary_path = source / "summary.json"
-            if summary_path.is_file() and not stale_grid_summary:
+            grid_summary_present = summary_path.is_file()
+            if grid_summary_present and not stale_grid_summary:
                 summary, _ = reads.read(summary_path)
                 if summary.get("study_id") != producer_id:
                     raise ManifestError("parameter summary belongs to another study")
@@ -494,6 +496,13 @@ def inspect_study(
                 continue
             if stale_grid_summary:
                 # Derived exports do not describe this unfinished trial snapshot.
+                continue
+            if (
+                trial_paths is not None
+                and path.name == "summary.json"
+                and summary is None
+            ):
+                # A summary published after the snapshot has not been validated.
                 continue
             if (
                 study_type is StudyType.FEATURE_DATASET
@@ -716,6 +725,11 @@ def inspect_study(
         or tuple(sorted((source / "rows").glob("*.json"))) != feature_checkpoint_paths
     ):
         raise ManifestError("feature checkpoint files changed during indexing; retry")
+    if (
+        grid_summary_present is not None
+        and (source / "summary.json").is_file() != grid_summary_present
+    ):
+        raise ManifestError("producer summary file changed during indexing; retry")
     return StudyArtifacts(
         StudyProvenance(
             study_type, producer_id, snapshot(configuration), snapshot(observations)
