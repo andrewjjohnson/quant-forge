@@ -72,9 +72,12 @@ def validate_prediction_trial_result(
     for name in ("prediction_rule", "outcome_labeler", "evaluator"):
         component = mapping(configuration.get(name))
         expected = mapping(components[name])
-        if configuration_identity(
-            {key: component.get(key) for key in expected}
-        ) != configuration_identity(expected):
+        captured = (
+            component
+            if definition.get("contract_version", "1") == "2"
+            else {key: component.get(key) for key in expected}
+        )
+        if configuration_identity(captured) != configuration_identity(expected):
             raise ManifestError("prediction result differs from its trial definition")
     if (
         manifest.get("market_data") != study.get("dataset")

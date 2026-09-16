@@ -11,6 +11,9 @@ from quantforge.experiments._backtest_summary_integrity import (
     validate_backtest_aggregate_summary,
 )
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_counts_integrity import (
+    validate_prediction_summary_counts,
+)
 from quantforge.experiments._prediction_summary_integrity import (
     validate_prediction_aggregate_summary,
 )
@@ -83,6 +86,7 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
     equity_references: list[PrimitiveMapping] = []
     observations: list[PrimitiveMapping] = []
     windows: list[PrimitiveMapping] = []
+    prediction_windows: dict[str, tuple[list[PrimitiveMapping], int]] = {}
     for fold in source.folds:
         window: PrimitiveMapping = {
             "fold_id": fold.fold_id,
@@ -122,7 +126,10 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
         else:
             if not isinstance(artifact, PredictionOOSArtifact):
                 raise ManifestError("OOS aggregate has incompatible fold artifacts")
-            observations.extend(_prediction_records(artifact, fold.fold_id))
+            captured = _prediction_records(artifact, fold.fold_id)
+            scheduled = len(_records(artifact.snapshot.to_primitive().get("decisions")))
+            prediction_windows[fold.fold_id] = captured, scheduled
+            observations.extend(captured)
         windows.append(window)
     summary_windows = _records(summary.get("windows"))
     validate_configuration_stability(aggregate.get("stability"), source)
@@ -158,3 +165,16 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
                 mapping(row["summary"])
             projected.append(reference)
         _same_records(projected, windows, "window summaries")
+        fields = mapping(summary["metric_fields"])
+        validate_prediction_summary_counts(
+            summary,
+            observations,
+            sum(scheduled for _, scheduled in prediction_windows.values()),
+            fields,
+        )
+        for window in summary_windows:
+            if window["summary"] is not None:
+                captured, scheduled = prediction_windows[text(window["fold_id"])]
+                validate_prediction_summary_counts(
+                    mapping(window["summary"]), captured, scheduled, fields
+                )

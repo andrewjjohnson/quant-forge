@@ -418,6 +418,10 @@ configurations omit duplicate declarations. The grid records
 `contract_version`. All executable trial records require those wrapper fields,
 and successful nested results must match their frozen values exactly. Rehashing
 a changed result cannot change its candidate contract.
+Version `2` compares the entire prediction-rule, outcome-labeler and evaluator
+wrapper, including its key set; extra fields, even null fields, are rejected in
+plain and windowed results. Projection onto captured fields is reserved for
+legacy version `1` definitions.
 Absent version markers denote legacy version `1`. QF-9 reads legacy wrappers
 from explicit declarations in the saved component configuration, including
 `parameters.future_sessions`; it never constructs a component to infer them.
@@ -636,6 +640,13 @@ window consistency, completeness and warnings. Nested records validate exact key
 integer counts, finite decimal strings, supported statuses and value domains.
 Unavailable samples retain null statistics; custom metric-field bindings remain
 supported. No summary statistics or confidence intervals are recalculated.
+Aggregate and per-window sample counts must also match the captured observations
+and completed decision schedules. Checks cover generated, eligible, excluded and
+labeled signals, direction distributions, accuracy and interval sample counts,
+paired baseline samples, metric availability, and event counts. Custom field
+bindings determine which stored evaluation fields supply this metadata. Counting
+existing evidence does not rerun predictions, label outcomes, calculate rates,
+estimate performance, or rebuild confidence intervals.
 The stability section must match `ConfigurationStabilitySummary` before receiving
 an index entry using a JSON pointer. Transition/selection/parameter-change counters
 must be nonnegative integers, frequency records must have their supported nullable

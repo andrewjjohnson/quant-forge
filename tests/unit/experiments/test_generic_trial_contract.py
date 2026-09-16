@@ -105,7 +105,11 @@ def export_generic_grid(tmp_path: Path, *, window: bool) -> Path:
 
 
 def alter_prediction(snapshot: PrimitiveMapping, field: str) -> None:
-    if field == "warm_up_observations":
+    if field.startswith("extra_"):
+        configuration = mapping(mapping(snapshot["manifest"])["configuration"])
+        mapping(configuration[field.removeprefix("extra_")])["undeclared"] = None
+        rehash_prediction(snapshot)
+    elif field == "warm_up_observations":
         mapping(
             mapping(mapping(snapshot["manifest"])["configuration"])["prediction_rule"]
         )[field] = 1
@@ -123,6 +127,9 @@ def alter_prediction(snapshot: PrimitiveMapping, field: str) -> None:
         "required_market_fields",
         "outcome_schema",
         "evaluation_schema",
+        "extra_prediction_rule",
+        "extra_outcome_labeler",
+        "extra_evaluator",
     ],
 )
 def test_generic_wrapper_changes_cannot_rewrite_a_frozen_trial(
@@ -142,7 +149,9 @@ def test_generic_wrapper_changes_cannot_rewrite_a_frozen_trial(
     snapshot = mapping(artifact["prediction_window" if window else "prediction_study"])
     if window:
         configuration = mapping(mapping(snapshot["manifest"])["configuration"])
-        if field == "warm_up_observations":
+        if field.startswith("extra_"):
+            mapping(configuration[field.removeprefix("extra_")])["undeclared"] = None
+        elif field == "warm_up_observations":
             mapping(configuration["prediction_rule"])[field] = 1
         else:
             change_wrapper(configuration, field)
@@ -290,4 +299,64 @@ def test_legacy_grid_inspection_requires_recorded_wrapper_declarations(
             inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
     else:
         inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.parametrize("window", [False, True], ids=["plain", "window"])
+def test_legacy_results_keep_projection_for_uncaptured_wrapper_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, window: bool
+) -> None:
+    capture = grid_module._trial_definition  # pyright: ignore[reportPrivateUsage]
+
+    def old_capture(
+        study: PredictionStudy[Any, Any, Any], backend: Any
+    ) -> tuple[PrimitiveMapping, tuple[str, ...]]:
+        definition, ids = capture(study, backend)
+        return legacy_definition(definition), ids
+
+    monkeypatch.setattr(grid_module, "_trial_definition", old_capture)
+    monkeypatch.setattr(grid_module, "_TRIAL_DEFINITION_VERSION", "1")
+    study = (
+        grid(tmp_path / "grid", WindowProvider())
+        if window
+        else _grid(tmp_path / "grid", analyzer=FixtureTrialAnalyzer())
+    )
+    study.run()
+    root = tmp_path / "grid" / study.study_id
+    record_path = trial_path(root)
+    trial = read_record(record_path)
+    artifact_path = root / cast(str, trial["artifact_location"])
+    artifact = read_record(artifact_path)
+    snapshot = mapping(artifact["prediction_window" if window else "prediction_study"])
+    for name in ("prediction_rule", "outcome_labeler", "evaluator"):
+        if window:
+            configuration = mapping(mapping(snapshot["manifest"])["configuration"])
+            mapping(configuration[name])["undeclared"] = None
+            for decision in cast(list[PrimitiveMapping], snapshot["decisions"]):
+                prediction = mapping(decision["prediction_study"])
+                alter_prediction(prediction, f"extra_{name}")
+                decision["prediction_study_id"] = mapping(prediction["manifest"])[
+                    "study_id"
+                ]
+        else:
+            alter_prediction(snapshot, f"extra_{name}")
+    if window:
+        refresh_window_manifest(snapshot)
+        _rewrite_window_checksums(artifact_path, record_path, artifact)
+    else:
+        artifact["prediction_study_id"] = mapping(snapshot["manifest"])["study_id"]
+        artifact["artifact_fingerprint"] = trial["artifact_fingerprint"] = (
+            configuration_identity(
+                {
+                    key: value
+                    for key, value in artifact.items()
+                    if key != "artifact_fingerprint"
+                }
+            )
+        )
+        write_json(artifact_path, artifact)
+        write_json(record_path, trial)
+    block_research(monkeypatch)
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    inspect_study(StudyType.PARAMETER_STUDY, root, artifact_root=tmp_path)
     assert {path: path.read_bytes() for path in before} == before
