@@ -6,7 +6,11 @@ from typing import cast
 
 from quantforge.configuration import PrimitiveMapping
 from quantforge.experiments._json import ManifestError
-from quantforge.optimization.models import StabilityClassification, StabilitySummary
+from quantforge.optimization.models import (
+    ParameterSummary,
+    StabilityClassification,
+    StabilitySummary,
+)
 from quantforge.prediction.grid import PredictionStabilitySummary
 
 
@@ -30,6 +34,44 @@ def validate_prediction_stability(record: PrimitiveMapping) -> None:
 def validate_optimization_stability(record: PrimitiveMapping) -> None:
     """Check the completed QF-6 stability record, including its assigned rank."""
     _validate_stability(record, optimization=True)
+
+
+def validate_parameter_summaries(value: object) -> list[PrimitiveMapping]:
+    """Check QF-6 parameter-summary records before projecting their CSV cells."""
+    label = "optimization parameter summary"
+    if not isinstance(value, list):
+        raise ManifestError(f"{label} records must be an array")
+    required = {field.name for field in fields(ParameterSummary)}
+    records: list[PrimitiveMapping] = []
+    for raw in cast(list[object], value):
+        if (
+            not isinstance(raw, dict)
+            or set(cast(dict[object, object], raw)) != required
+        ):
+            raise ManifestError(f"{label} fields differ from producer schema")
+        record = cast(PrimitiveMapping, raw)
+        name = record["parameter_name"]
+        if not isinstance(name, str) or not name.strip():
+            raise ManifestError(f"{label} name must be a nonempty string")
+        if type(record["parameter_value"]) not in (str, int, bool):
+            raise ManifestError(f"{label} value must be a string, integer or boolean")
+        for field in ("successful_count", "eligible_count"):
+            count = record[field]
+            if type(count) is not int or count < 0:
+                raise ManifestError(f"{label} counts must be nonnegative integers")
+        eligible = cast(int, record["eligible_count"])
+        if eligible > cast(int, record["successful_count"]):
+            raise ManifestError(f"{label} eligible count exceeds successful count")
+        if not 0 <= _decimal(record["constraint_pass_fraction"], label) <= 1:
+            raise ManifestError(f"{label} constraint fraction is outside [0, 1]")
+        for field in ("mean_objective", "median_objective", "best_objective"):
+            if eligible == 0:
+                if record[field] is not None:
+                    raise ManifestError(f"{label} empty objectives must be unavailable")
+            else:
+                _decimal(record[field], label)
+        records.append(record)
+    return records
 
 
 def _validate_stability(record: PrimitiveMapping, *, optimization: bool) -> None:

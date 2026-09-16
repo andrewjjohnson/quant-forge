@@ -301,6 +301,13 @@ Completed QF-6 exports also require all seven native CSV tables: `trials.csv`,
 serialization of the validated saved JSON records, including headers, row order,
 JSON-valued cells, nulls and diagnostics. Inspection projects stored records only;
 it does not recompute metrics or ranking/stability results or rewrite any file.
+Before CSV projection, each parameter-summary record must retain exactly the
+producer's eight fields. Parameter names are nonempty strings, values retain
+their string/integer/boolean types, counts are nonnegative integers with eligible
+counts no greater than successful counts, and constraint fractions are finite
+decimal strings in [0, 1]. Objective statistics are finite decimal strings when
+eligible samples exist and null otherwise. Empty categorical strings remain
+valid values. Regenerating matching blank CSV cells cannot hide missing fields.
 The expected bytes are checked against both the index and the file before return.
 The completion decision uses the captured summary; its removal during inspection
 cannot bypass table reconciliation.

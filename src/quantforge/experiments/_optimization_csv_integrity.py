@@ -8,6 +8,7 @@ from typing import cast
 from quantforge.configuration import PrimitiveMapping
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._producer_snapshot import ProducerReadSet
+from quantforge.experiments._stability_integrity import validate_parameter_summaries
 from quantforge.experiments.artifacts import ArtifactEntry, local_path
 from quantforge.optimization.export import (
     _TRIAL_FIELDS,  # pyright: ignore[reportPrivateUsage]
@@ -114,10 +115,7 @@ def validate_optimization_csv(
             (*(field.name for field in fields(StabilitySummary)), "parameters"),
         ),
         "parameter_summary.csv": (
-            [
-                mapping(row)
-                for row in cast(list[object], summary["parameter_summaries"])
-            ],
+            validate_parameter_summaries(summary.get("parameter_summaries")),
             tuple(field.name for field in fields(ParameterSummary)),
         ),
     }
