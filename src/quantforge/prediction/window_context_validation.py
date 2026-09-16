@@ -250,6 +250,7 @@ def _validate_rule_timeframe(
     *,
     primary: bool,
     symbol: Primitive,
+    as_of: datetime,
 ) -> None:
     _equal(selected.get("requirement"), requirement, "rule timeframe requirement")
     if aligned.snapshot.get("availability") != "available":
@@ -273,13 +274,16 @@ def _validate_rule_timeframe(
         selected_ids, selected_end = aligned.visible_ids, aligned.latest_end
     if not selected_ids or selected_end is None:
         raise InvalidPredictionOutputError("rule timeframe has no permitted bars")
+    if selected_end > decision_timestamp:
+        raise InvalidPredictionOutputError(
+            "rule timeframe exposes bars after the primary decision boundary"
+        )
     maximum_age = requirement.get("maximum_age_microseconds")
     if maximum_age is not None and (
         not isinstance(maximum_age, int)
         or isinstance(maximum_age, bool)
         or maximum_age <= 0
-        or (decision_timestamp - selected_end) // timedelta(microseconds=1)
-        > maximum_age
+        or (as_of - selected_end) // timedelta(microseconds=1) > maximum_age
     ):
         raise InvalidPredictionOutputError("rule timeframe exceeds its maximum age")
     _equal(
@@ -448,9 +452,14 @@ def validate_window_context_snapshot(
     requirements: PrimitiveMapping,
     market_data: PrimitiveMapping,
     primary_timeframe: PrimitiveMapping,
-    timestamp: str,
+    timestamp: str | None = None,
 ) -> None:
-    """Validate available rule/source context metadata against fixed window inputs."""
+    """Validate available metadata against a schedule or standalone primary bar.
+
+    Without a scheduled timestamp, QF-28 uses the latest completed primary end
+    as its causal boundary but measures staleness at the source's later as-of.
+    This only checks serialized metadata; it never builds context or indicators.
+    """
     _equal(
         {
             "prediction_dataset_id": context.get("prediction_dataset_id"),
@@ -499,7 +508,14 @@ def validate_window_context_snapshot(
         raise InvalidPredictionOutputError(
             "context timeframe coverage is incomplete or duplicated"
         )
-    decision_timestamp = _timestamp(timestamp)
+    decision_timestamp = (
+        _timestamp(timestamp) if timestamp is not None else aligned[0].completed_end
+    )
+    if decision_timestamp is None:
+        raise InvalidPredictionOutputError(
+            "context has no completed primary decision bar"
+        )
+    as_of = _timestamp(source.get("as_of"))
     for index, (source_entry, rule_entry, requirement) in enumerate(
         zip(aligned, selected, declared, strict=True)
     ):
@@ -510,4 +526,5 @@ def validate_window_context_snapshot(
             decision_timestamp,
             primary=index == 0,
             symbol=market_data["symbol"],
+            as_of=as_of,
         )

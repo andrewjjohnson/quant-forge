@@ -119,6 +119,14 @@ prediction framework or feed future outcomes back into rule execution. See
 
 ## Module boundaries
 
+QF-9 adds `quantforge.experiments`, an observational consumer of existing
+QF-5/6, QF-7/29, QF-11/32/42, QF-8/39/40 and QF-34 metadata and artifacts.
+Versioned manifests preserve producer identities, separate logical study and
+execution identity, and embed typed content-hashed artifact relationships.
+QF-40's ledger remains the holdout authority. No execution, indicator, metric,
+aggregation or rendering behavior moves into this layer. See
+[`experiment-manifests.md`](experiment-manifests.md) and ADR 0019.
+
 ### Data acquisition
 
 QF-3 implements the daily boundary in `quantforge.data`: an injected provider

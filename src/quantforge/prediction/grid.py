@@ -73,6 +73,7 @@ from quantforge.timeframes import Timeframe
 
 PREDICTION_GRID_ENGINE_VERSION = "1"
 PREDICTION_GRID_SCHEMA_VERSION = "1"
+_TRIAL_DEFINITION_VERSION = "2"
 
 
 class PredictionGridError(PredictionAnalysisError):
@@ -988,35 +989,6 @@ class _CachedWindowContextProvider:
         )
 
 
-def _component_primitive(component: object, label: str) -> PrimitiveMapping:
-    try:
-        name = cast(str, getattr(component, "name"))
-        version = cast(str, getattr(component, "implementation_version"))
-        configuration_method = cast(
-            Callable[[], PrimitiveMapping], getattr(component, "configuration")
-        )
-        configuration = configuration_method()
-        configuration_id = cast(str, getattr(component, "configuration_id"))
-    except (AttributeError, TypeError, ValueError) as error:
-        raise InvalidPredictionGridConfigurationError(
-            f"{label} does not implement the prediction component contract"
-        ) from error
-    if (
-        not name
-        or not version
-        or configuration_identity(configuration) != configuration_id
-    ):
-        raise InvalidPredictionGridConfigurationError(
-            f"{label} identity or configuration is invalid"
-        )
-    return {
-        "name": name,
-        "implementation_version": version,
-        "configuration_id": configuration_id,
-        "configuration": configuration,
-    }
-
-
 def _trial_definition(
     study: PredictionStudy[Any, Any, Any],
     backend: PredictionIndicatorBackendEnvironment,
@@ -1044,8 +1016,12 @@ def _trial_definition(
                     "requirement": indicator.to_primitive(),
                 }
             )
+    # Reuse the metadata snapshot that execution will capture, including wrapper
+    # contracts that generic component configurations need not repeat.
+    captured = _capture_study_configuration(study).to_primitive()
     definition: PrimitiveMapping = {
-        "prediction_rule": _component_primitive(study.strategy, "prediction rule"),
+        "contract_version": _TRIAL_DEFINITION_VERSION,
+        "prediction_rule": captured["prediction_rule"],
         "prediction_rule_parameters": study.strategy.parameters.to_primitive(),
         "prediction_context": requirements.to_primitive(),
         "indicator_configuration_ids": cast(
@@ -1053,12 +1029,10 @@ def _trial_definition(
         ),
         "indicator_requirements": cast(list[Primitive], indicator_requirements),
         "indicator_backend_environment": backend.to_primitive(),
-        "outcome_labeler": _component_primitive(
-            study.outcome_labeler, "outcome labeler"
-        ),
-        "evaluator": _component_primitive(study.evaluator, "prediction evaluator"),
-        "feature_configuration": study.feature_configuration,
-        "result_schema_version": study.result_schema_version,
+        "outcome_labeler": captured["outcome_labeler"],
+        "evaluator": captured["evaluator"],
+        "feature_configuration": captured["feature_configuration"],
+        "result_schema_version": captured["result_schema_version"],
     }
     PrimitiveMappingSnapshot.capture(definition)
     return definition, tuple(sorted(set(indicator_ids)))
@@ -1916,6 +1890,7 @@ class PredictionGridStudy:
             "component": "quantforge_prediction_parameter_grid",
             "engine_version": PREDICTION_GRID_ENGINE_VERSION,
             "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
+            "trial_definition_version": _TRIAL_DEFINITION_VERSION,
             "label": config.label,
             "dataset": prepared.market_data.to_primitive(),
             "dataset_family_fingerprint": dataset_family_fingerprint,

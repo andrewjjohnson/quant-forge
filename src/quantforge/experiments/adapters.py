@@ -1,0 +1,755 @@
+"""Observational adapters over producer JSON and existing local exports.
+
+No producer objects, factories, data series, or execution callbacks are accepted.
+The caller supplies a completed export or an already-serialized result snapshot.
+"""
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.experiments._backtest_artifacts import (
+    index_backtest_files,
+    validate_backtest_files,
+)
+from quantforge.experiments._backtest_provenance import benchmark_configuration
+from quantforge.experiments._json import ManifestError, mapping, snapshot, text
+from quantforge.experiments._prediction_trial_integrity import (
+    validate_prediction_trial_result,
+)
+from quantforge.experiments._producer_snapshot import ProducerReadSet
+from quantforge.experiments._ranking_integrity import (
+    validate_optimization_summaries,
+    validate_prediction_summary,
+)
+from quantforge.experiments._validation_attachment import (
+    captured_validation_result,
+    merge_validation_artifacts,
+)
+from quantforge.experiments.artifacts import (
+    ArtifactEntry,
+    ArtifactIndex,
+    ArtifactRelationship,
+    ArtifactType,
+    RelationshipType,
+    index_artifact,
+)
+from quantforge.experiments.models import (
+    ExecutionProvenance,
+    ExperimentManifest,
+    StudyProvenance,
+    StudyType,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class StudyArtifacts:
+    provenance: StudyProvenance
+    index: ArtifactIndex
+
+
+def create_manifest(
+    study: StudyArtifacts,
+    execution: ExecutionProvenance,
+    *,
+    additional_artifacts: tuple[ArtifactEntry, ...] = (),
+    relationships: tuple[ArtifactRelationship, ...] = (),
+    validation: StudyArtifacts | None = None,
+) -> ExperimentManifest:
+    """Assemble indexed results and attach only their captured validation evidence."""
+    provenance = study.provenance
+    entries = study.index.entries + additional_artifacts
+    edges = study.index.relationships + relationships
+    if validation is not None:
+        if validation.provenance.study_type not in {
+            StudyType.WALK_FORWARD,
+            StudyType.OOS_VALIDATION,
+            StudyType.HOLDOUT_VALIDATION,
+        }:
+            raise ManifestError(
+                "validation attachment must contain validation evidence"
+            )
+        captured = captured_validation_result(
+            provenance, validation.provenance, validation.index
+        )
+        provenance = StudyProvenance(
+            provenance.study_type,
+            provenance.producer_study_id,
+            snapshot(
+                {
+                    **provenance.configuration.to_primitive(),
+                    "validation": validation.provenance.configuration.to_primitive(),
+                }
+            ),
+            snapshot(
+                {
+                    **provenance.observations.to_primitive(),
+                    "validation": validation.provenance.observations.to_primitive(),
+                }
+            ),
+        )
+        plans = [
+            entry
+            for entry in validation.index.entries
+            if entry.artifact_type is ArtifactType.VALIDATION_PLAN
+        ]
+        configurations = [
+            entry
+            for entry in study.index.entries
+            if entry.artifact_type is ArtifactType.CONFIGURATION
+        ]
+        edges += tuple(
+            ArtifactRelationship(
+                configuration.artifact_id,
+                RelationshipType.CONFIGURED_BY,
+                plan.artifact_id,
+            )
+            for configuration in configurations
+            for plan in plans
+        )
+        edges += tuple(
+            ArtifactRelationship(
+                captured.artifact_id,
+                RelationshipType.VALIDATES,
+                configuration.artifact_id,
+            )
+            for configuration in configurations
+        )
+        entries, edges = merge_validation_artifacts(entries, edges, validation.index)
+    return ExperimentManifest(
+        provenance,
+        execution,
+        ArtifactIndex(entries, edges),
+    )
+
+
+def _pick(document: PrimitiveMapping, keys: tuple[str, ...]) -> PrimitiveMapping:
+    # Explicit None represents unavailable producer provenance. No backend,
+    # timeframe, cost, or historical execution-environment defaults are applied.
+    return {key: document.get(key) for key in keys}
+
+
+def _description(
+    study_type: StudyType, document: PrimitiveMapping
+) -> tuple[str, PrimitiveMapping, PrimitiveMapping, str]:
+    from quantforge.experiments._producer_integrity import (
+        validate_backtest_identity,
+        validate_prediction_manifest,
+    )
+
+    observations = _pick(document, ("record_counts", "initiated_at"))
+    if study_type is StudyType.PREDICTION:
+        if document.get("component") != "quantforge_prediction_study":
+            raise ManifestError("expected a QF-11 prediction study")
+        validate_prediction_manifest(document)
+        configuration = _pick(
+            document,
+            ("engine_version", "configuration", "market_data", "prediction_context"),
+        )
+        schema = text(mapping(document["configuration"])["result_schema_version"])
+        return text(document["study_id"]), configuration, observations, schema
+    if study_type is StudyType.PREDICTION_WINDOW:
+        configuration = {
+            key: value
+            for key, value in document.items()
+            if key
+            not in {"window_id", "window_result_id", "schedule_id", "record_counts"}
+        }
+        # QF-42 already separates window configuration and result identities.
+        if configuration_identity(configuration) != document.get("window_id"):
+            raise ManifestError("incompatible QF-42 window configuration")
+        observations["window_result_id"] = document["window_result_id"]
+        return (
+            text(document["window_id"]),
+            configuration,
+            observations,
+            text(document["schema_version"]),
+        )
+    if study_type is StudyType.FEATURE_DATASET:
+        from quantforge.experiments._feature_integrity import validate_feature_manifest
+
+        validate_feature_manifest(document)
+        configuration = _pick(
+            document, ("engine_version", "configuration", "market_data")
+        )
+        from quantforge.experiments._feature_row_integrity import (
+            feature_prediction_studies,
+        )
+
+        feature_prediction_studies(document)
+        observations["prediction_study_ids"] = document["prediction_study_ids"]
+        return (
+            text(document["dataset_id"]),
+            configuration,
+            observations,
+            text(mapping(document["configuration"])["feature_schema_version"]),
+        )
+    if study_type is StudyType.BACKTEST:
+        validate_backtest_identity(document)
+        configuration = _pick(
+            document,
+            (
+                "engine_version",
+                "result_schema_version",
+                "market_data",
+                "strategy",
+                "backtest_configuration",
+            ),
+        )
+        configuration["benchmark_configuration"] = benchmark_configuration(document)
+        return (
+            text(document["run_id"]),
+            configuration,
+            observations,
+            text(document["result_schema_version"]),
+        )
+    if study_type is StudyType.OPTIMIZATION:
+        from quantforge.experiments._optimization_manifest_integrity import (
+            validate_optimization_manifest,
+        )
+        from quantforge.optimization.models import STUDY_SCHEMA_VERSION
+
+        configuration = mapping(document.get("identity_inputs"))
+        if configuration.get("study_schema_version") != STUDY_SCHEMA_VERSION:
+            raise ManifestError("unsupported QF-6 study schema")
+        if configuration.get(
+            "component"
+        ) != "quantforge_grid_search_study" or configuration_identity(
+            configuration
+        ) != document.get("study_id"):
+            raise ManifestError("incompatible QF-6 study identity")
+        if document.get("study_schema_version") != configuration.get(
+            "study_schema_version"
+        ):
+            raise ManifestError("optimization schema differs from identity inputs")
+        validate_optimization_manifest(document)
+        observations.update(
+            _pick(
+                document,
+                (
+                    "combination_counts",
+                    "execution_configuration",
+                    "persistence_configuration",
+                ),
+            )
+        )
+        return (
+            text(document["study_id"]),
+            configuration,
+            observations,
+            text(document["study_schema_version"]),
+        )
+    if study_type is StudyType.PARAMETER_STUDY:
+        from quantforge.prediction.grid import PREDICTION_GRID_SCHEMA_VERSION
+
+        if document.get("component") != "quantforge_prediction_parameter_grid":
+            raise ManifestError("expected a QF-32 parameter study")
+        if document.get("schema_version") != PREDICTION_GRID_SCHEMA_VERSION:
+            raise ManifestError("unsupported QF-32 study schema")
+        configuration = {
+            key: value
+            for key, value in document.items()
+            if key not in {"study_id", "execution", "cache_policy", "interpretation"}
+        }
+        if configuration_identity(configuration) != document["study_id"]:
+            raise ManifestError("incompatible QF-32 study identity")
+        observations["execution"] = document["execution"]
+        return (
+            text(document["study_id"]),
+            configuration,
+            observations,
+            text(document["schema_version"]),
+        )
+    raise ManifestError("use inspect_validation for walk-forward/OOS/holdout studies")
+
+
+def inspect_study(
+    study_type: StudyType, source: Path, *, artifact_root: Path
+) -> StudyArtifacts:
+    """Index QF-11/42/7/29/32/5/6 persisted outputs without loading an engine.
+
+    `source` is an export directory, or a JSON result with its existing
+    `manifest` member. A QF-5 `manifest.json` selects its complete parent export;
+    a detached QF-5 manifest must use another filename and indexes metadata only.
+    Relative artifact paths are rooted at `artifact_root`.
+    """
+    # Producer packages may initialize numerical backends on import. Load their
+    # validators only for inspection, keeping metadata imports/assembly inert.
+    from quantforge.experiments._feature_integrity import (
+        validate_feature_rows,
+        validate_feature_summary,
+    )
+    from quantforge.experiments._feature_row_integrity import (
+        validate_feature_schema,
+    )
+    from quantforge.experiments._grid_integrity import (
+        validate_backtest_trial,
+        validate_prediction_trial_coordinates,
+        validate_trial_coordinates,
+        validate_trial_counts,
+        validate_trial_status,
+    )
+    from quantforge.experiments._producer_integrity import (
+        validate_prediction_manifest,
+        validate_prediction_rows,
+    )
+    from quantforge.experiments._window_integrity import validate_window_snapshot
+
+    source = source.resolve()
+    root = artifact_root.resolve()
+    if (
+        study_type is StudyType.BACKTEST
+        and not source.is_dir()
+        and source.name == "manifest.json"
+    ):
+        source = source.parent
+    manifest_path = source / "manifest.json" if source.is_dir() else source
+    reads = ProducerReadSet()
+    trial_paths: tuple[Path, ...] | None = None
+    feature_checkpoint_paths: tuple[Path, ...] | None = None
+    document, location = reads.read(manifest_path)
+    container = document
+    if study_type is StudyType.FEATURE_DATASET and not source.is_dir():
+        if not {"manifest", "rows", "schema", "summary"} <= container.keys():
+            raise ManifestError(
+                "direct feature result requires manifest, rows, schema and summary"
+            )
+    if "manifest" in document:
+        document = mapping(document["manifest"])
+        location += "/manifest"
+    producer_id, configuration, observations, schema = _description(
+        study_type, document
+    )
+    if study_type is StudyType.PREDICTION_WINDOW:
+        validate_window_snapshot(container)
+    if study_type is StudyType.PREDICTION and "rows" in container:
+        validate_prediction_rows(document, container["rows"])
+    if study_type is StudyType.FEATURE_DATASET and not source.is_dir():
+        validate_feature_rows(document, container)
+    entries: list[ArtifactEntry] = []
+    edges: list[ArtifactRelationship] = []
+
+    def add(
+        path: Path,
+        category: ArtifactType,
+        logical_id: str,
+        *,
+        json_pointer: str = "",
+        bindings: PrimitiveMapping | None = None,
+        version: str = schema,
+    ) -> ArtifactEntry:
+        if not path.is_relative_to(root):
+            raise ManifestError("producer export is outside artifact root")
+        entry = index_artifact(
+            root,
+            path=path.relative_to(root).as_posix(),
+            artifact_type=category,
+            schema_version=version,
+            producer_study_id=producer_id,
+            producer_run_id=producer_id if study_type is StudyType.BACKTEST else None,
+            producer_artifact_id=logical_id,
+            json_pointer=json_pointer,
+            bindings=bindings,
+        )
+        entries.append(entry)
+        return entry
+
+    identity_fields = (
+        "study_id",
+        "window_id",
+        "dataset_id",
+        "run_id",
+        "engine_version",
+        "result_schema_version",
+        "study_schema_version",
+        "schema_version",
+    )
+    config_entry = add(
+        manifest_path,
+        ArtifactType.CONFIGURATION,
+        "producer_manifest",
+        json_pointer=location,
+        bindings={
+            location + "/" + key: document[key]
+            for key in identity_fields
+            if key in document
+        },
+    )
+    dataset_pointer = (
+        "/identity_inputs/dataset"
+        if study_type is StudyType.OPTIMIZATION
+        else "/dataset"
+        if study_type is StudyType.PARAMETER_STUDY
+        else "/market_data"
+    )
+    from quantforge.experiments._json import pointer
+
+    source_metadata = mapping(pointer(document, dataset_pointer))
+    dataset_entry = add(
+        manifest_path,
+        ArtifactType.SOURCE_DATASET,
+        "source_dataset",
+        json_pointer=location + dataset_pointer,
+        version=text(source_metadata.get("schema_version", "unavailable")),
+    )
+    edges.append(
+        ArtifactRelationship(
+            config_entry.artifact_id,
+            RelationshipType.DERIVED_FROM,
+            dataset_entry.artifact_id,
+        )
+    )
+    feature_schema: PrimitiveMapping = {}
+    # Only provenance is copied. Research result rows/metrics stay in their files.
+    if study_type is StudyType.FEATURE_DATASET:
+        if source.is_dir():
+            feature_schema, _ = reads.read(source / "schema.json")
+            validate_feature_schema(document, feature_schema)
+            schema_entry = add(
+                source / "schema.json",
+                ArtifactType.FEATURE_SCHEMA,
+                "feature_schema",
+                version=text(feature_schema["feature_schema_version"]),
+            )
+        else:
+            feature_schema = mapping(container["schema"])
+            schema_entry = add(
+                manifest_path,
+                ArtifactType.FEATURE_SCHEMA,
+                "feature_schema",
+                json_pointer="/schema",
+                version=text(feature_schema["feature_schema_version"]),
+            )
+        configuration["feature_schema"] = feature_schema
+        edges.append(
+            ArtifactRelationship(
+                config_entry.artifact_id,
+                RelationshipType.CONFIGURED_BY,
+                schema_entry.artifact_id,
+            )
+        )
+
+    # Index known producer layouts only, not arbitrary neighboring files.
+    if source.is_dir():
+        feature_rows: list[ArtifactEntry] = []
+        optimization_summaries: dict[str, PrimitiveMapping] = {}
+        summary: PrimitiveMapping | None = None
+        trial_snapshots: list[tuple[Path, PrimitiveMapping]] = []
+        stale_grid_summary = False
+        if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
+            trial_paths = tuple(sorted((source / "trials").glob("*.json")))
+            trial_snapshots = [(path, reads.read(path)[0]) for path in trial_paths]
+            # Both grids retain their previous exports while retrying failed trials.
+            # Bind this decision to the same records validated and indexed below.
+            stale_grid_summary = any(
+                trial.get("status") in ("pending", "running")
+                for _, trial in trial_snapshots
+            )
+            summary_path = source / "summary.json"
+            if summary_path.is_file() and not stale_grid_summary:
+                summary, _ = reads.read(summary_path)
+                if summary.get("study_id") != producer_id:
+                    raise ManifestError("parameter summary belongs to another study")
+                observations["trial_counts"] = summary.get(
+                    "counts", summary.get("trial_counts")
+                )
+        if study_type is StudyType.OPTIMIZATION and summary is not None:
+            for name in ("ranking", "stability"):
+                if not (source / f"{name}.json").is_file():
+                    raise ManifestError(
+                        f"completed optimization is missing its {name} artifact"
+                    )
+        if study_type is StudyType.BACKTEST:
+            validate_backtest_files(source, reads)
+        if study_type is StudyType.FEATURE_DATASET:
+            required_names = {"features.csv", "schema.json", "summary.json"}
+            if document["engine_version"] == "35":
+                required_names.add("features.parquet")
+            if any(not (source / name).is_file() for name in required_names):
+                raise ManifestError("completed feature dataset is missing an artifact")
+            from quantforge.experiments._feature_table_integrity import (
+                validate_feature_tables,
+            )
+
+            feature_checkpoint_paths = validate_feature_tables(
+                source, document, feature_schema, reads
+            )
+            for path in feature_checkpoint_paths:
+                row_entry = add(
+                    path,
+                    ArtifactType.FEATURE_DATASET,
+                    "rows/" + path.stem,
+                    bindings={"/row_id": path.stem, "/study_id": producer_id},
+                )
+                feature_rows.append(row_entry)
+                edges.append(
+                    ArtifactRelationship(
+                        row_entry.artifact_id,
+                        RelationshipType.CONFIGURED_BY,
+                        config_entry.artifact_id,
+                    )
+                )
+        for path in sorted(source.iterdir()):
+            if not path.is_file() or path.name in {"manifest.json", "schema.json"}:
+                continue
+            if stale_grid_summary:
+                # Derived exports do not describe this unfinished trial snapshot.
+                continue
+            if (
+                study_type is StudyType.FEATURE_DATASET
+                and path.name == "features.parquet"
+                and document["engine_version"] != "35"
+            ):
+                continue
+            if (
+                study_type is StudyType.OPTIMIZATION
+                and summary is None
+                and path.name in {"ranking.json", "stability.json"}
+            ):
+                # QF-6 writes derived exports before its completion summary.
+                continue
+            if (
+                study_type is StudyType.OPTIMIZATION
+                and summary is None
+                and path.suffix == ".csv"
+            ):
+                # Resumable directories can retain stale exports from a prior run.
+                continue
+            category = _export_category(study_type, path.name)
+            if category is not None:
+                bindings: PrimitiveMapping | None = None
+                if (
+                    study_type is StudyType.FEATURE_DATASET
+                    and path.name == "summary.json"
+                ):
+                    feature_summary, summary_base = reads.read(path)
+                    validate_feature_summary(document, feature_summary)
+                    bindings = {
+                        summary_base + "/" + key: count
+                        for key, count in feature_summary.items()
+                    }
+                if study_type is StudyType.OPTIMIZATION and path.name in {
+                    "ranking.json",
+                    "stability.json",
+                }:
+                    owned_summary, summary_base = reads.read(path)
+                    if owned_summary.get("study_id") != producer_id:
+                        raise ManifestError(
+                            "optimization summary belongs to another study"
+                        )
+                    bindings = {summary_base + "/study_id": producer_id}
+                    optimization_summaries[path.name] = owned_summary
+                entry = add(path, category, path.name, bindings=bindings)
+                edges.extend(
+                    ArtifactRelationship(
+                        entry.artifact_id,
+                        RelationshipType.DERIVED_FROM,
+                        row.artifact_id,
+                    )
+                    for row in feature_rows
+                )
+                edges.append(
+                    ArtifactRelationship(
+                        entry.artifact_id,
+                        RelationshipType.CONFIGURED_BY,
+                        config_entry.artifact_id,
+                    )
+                )
+        if study_type in {StudyType.PARAMETER_STUDY, StudyType.OPTIMIZATION}:
+            trials: list[str] = []
+            trial_records: list[PrimitiveMapping] = []
+            for path, trial in trial_snapshots:
+                trial_id = text(trial["trial_id"])
+                if path.stem != trial_id or trial["study_id"] != producer_id:
+                    raise ManifestError("trial identity is incompatible with study")
+                validate_trial_status(study_type, trial)
+                trials.append(trial_id)
+                trial_records.append(trial)
+                trial_entry = add(
+                    path,
+                    ArtifactType.TRIAL_RESULT,
+                    trial_id,
+                    bindings={"/trial_id": trial_id, "/study_id": producer_id},
+                )
+                edges.append(
+                    ArtifactRelationship(
+                        trial_entry.artifact_id,
+                        RelationshipType.CONFIGURED_BY,
+                        config_entry.artifact_id,
+                    )
+                )
+                relative = trial.get("artifact_location")
+                if relative is None and trial.get("status") == "succeeded":
+                    raise ManifestError(
+                        "successful trial is missing its result artifact"
+                    )
+                if relative is not None:
+                    from quantforge.experiments.artifacts import local_path
+
+                    artifact_path = local_path(source, text(relative))
+                    if study_type is StudyType.OPTIMIZATION:
+                        validate_backtest_files(artifact_path, reads)
+                        backtest_manifest, _ = reads.read(
+                            artifact_path / "manifest.json"
+                        )
+                        validate_backtest_trial(trial, backtest_manifest, configuration)
+                        for entry in index_backtest_files(
+                            root, artifact_path, backtest_manifest, trial_id
+                        ):
+                            entries.append(entry)
+                            edges.append(
+                                ArtifactRelationship(
+                                    entry.artifact_id,
+                                    RelationshipType.DERIVED_FROM,
+                                    trial_entry.artifact_id,
+                                )
+                            )
+                    else:
+                        artifact, _ = reads.read(artifact_path)
+                        if (
+                            artifact.get("grid_study_id") != producer_id
+                            or artifact.get("trial_id") != trial_id
+                        ):
+                            raise ManifestError(
+                                "prediction trial artifact belongs to another study"
+                            )
+                        claimed = artifact.get("artifact_fingerprint")
+                        if claimed != trial.get(
+                            "artifact_fingerprint"
+                        ) or claimed != configuration_identity(
+                            {
+                                key: value
+                                for key, value in artifact.items()
+                                if key != "artifact_fingerprint"
+                            }
+                        ):
+                            raise ManifestError(
+                                "prediction trial artifact fingerprint mismatch"
+                            )
+                        if artifact.get("analysis") != trial.get(
+                            "analysis"
+                        ) or artifact.get("schema_version") != trial.get(
+                            "schema_version"
+                        ):
+                            raise ManifestError(
+                                "prediction trial artifact metadata does not match "
+                                "its record"
+                            )
+                        if configuration.get("decision_schedule") is not None:
+                            validate_window_snapshot(
+                                mapping(artifact.get("prediction_window"))
+                            )
+                        else:
+                            prediction = mapping(artifact.get("prediction_study"))
+                            prediction_manifest = mapping(prediction.get("manifest"))
+                            validate_prediction_manifest(prediction_manifest)
+                            validate_prediction_rows(
+                                prediction_manifest, prediction.get("rows")
+                            )
+                        validate_prediction_trial_coordinates(trial, configuration)
+                        validate_prediction_trial_result(trial, artifact, configuration)
+                        entry = add(
+                            artifact_path,
+                            ArtifactType.PREDICTION_RESULT,
+                            trial_id + "/result",
+                        )
+                        edges.append(
+                            ArtifactRelationship(
+                                entry.artifact_id,
+                                RelationshipType.DERIVED_FROM,
+                                trial_entry.artifact_id,
+                            )
+                        )
+            observations["trial_ids"] = list(trials)
+            validate_trial_counts(
+                study_type, document, configuration, trial_records, summary
+            )
+            for trial in trial_records:
+                if study_type is StudyType.OPTIMIZATION:
+                    validate_trial_coordinates(trial, configuration)
+                elif trial.get("status") != "succeeded":
+                    validate_prediction_trial_coordinates(trial, configuration)
+            if study_type is StudyType.OPTIMIZATION and optimization_summaries:
+                validate_optimization_summaries(
+                    configuration, trial_records, summary, optimization_summaries
+                )
+                if summary is not None:
+                    from quantforge.experiments._optimization_csv_integrity import (
+                        validate_optimization_csv,
+                    )
+
+                    validate_optimization_csv(
+                        source,
+                        root,
+                        entries,
+                        trial_records,
+                        summary,
+                        optimization_summaries,
+                        reads,
+                    )
+            elif study_type is StudyType.PARAMETER_STUDY and summary is not None:
+                validate_prediction_summary(configuration, trial_records, summary)
+    elif "rows" in container or "decisions" in container:
+        key = "rows" if "rows" in container else "decisions"
+        category = (
+            ArtifactType.FEATURE_DATASET
+            if study_type is StudyType.FEATURE_DATASET
+            else ArtifactType.PREDICTION_RESULT
+        )
+        result_entry = add(source, category, "result", json_pointer="/" + key)
+        edges.append(
+            ArtifactRelationship(
+                result_entry.artifact_id,
+                RelationshipType.CONFIGURED_BY,
+                config_entry.artifact_id,
+            )
+        )
+    index = ArtifactIndex(tuple(entries), tuple(edges))
+    reads.verify(index, root)
+    if (
+        trial_paths is not None
+        and tuple(sorted((source / "trials").glob("*.json"))) != trial_paths
+    ):
+        raise ManifestError("producer trial files changed during indexing; retry")
+    if feature_checkpoint_paths is not None and (
+        not (source / "rows").is_dir()
+        or tuple(sorted((source / "rows").glob("*.json"))) != feature_checkpoint_paths
+    ):
+        raise ManifestError("feature checkpoint files changed during indexing; retry")
+    return StudyArtifacts(
+        StudyProvenance(
+            study_type, producer_id, snapshot(configuration), snapshot(observations)
+        ),
+        index,
+    )
+
+
+def _export_category(study_type: StudyType, name: str) -> ArtifactType | None:
+    if study_type is StudyType.FEATURE_DATASET:
+        return {
+            "features.csv": ArtifactType.FEATURE_DATASET,
+            "features.parquet": ArtifactType.FEATURE_DATASET,
+            "summary.json": ArtifactType.FEATURE_DATASET,
+        }.get(name)
+    if study_type is StudyType.BACKTEST:
+        from quantforge.backtesting.export import BACKTEST_ARTIFACT_FILENAMES
+
+        return (
+            ArtifactType.BACKTEST_RESULT
+            if name in BACKTEST_ARTIFACT_FILENAMES
+            else None
+        )
+    if study_type is StudyType.PARAMETER_STUDY:
+        return ArtifactType.PARAMETER_SUMMARY if name == "summary.json" else None
+    if study_type is StudyType.OPTIMIZATION:
+        from quantforge.experiments._optimization_csv_integrity import (
+            OPTIMIZATION_CSV_NAMES,
+        )
+
+        return (
+            ArtifactType.PARAMETER_SUMMARY
+            if name in OPTIMIZATION_CSV_NAMES
+            or name in {"summary.json", "ranking.json", "stability.json"}
+            else None
+        )
+    return None

@@ -497,6 +497,16 @@ Provide `.env.example` with names and safe placeholders only.
 
 ## Pull-request readiness
 
+Run QF-9 observational manifest/index, identity, immutable persistence,
+credential, hash/tamper and permanent holdout-state fixtures:
+
+```bash
+uv run pytest tests/unit/experiments
+```
+
+See [`experiment-manifests.md`](experiment-manifests.md) for indexing existing
+prediction/backtest exports and QF-8/QF-39/QF-40 validation artifacts.
+
 Run QF-40 OOS-only aggregation, reset-account stitching, and permanent holdout
 consumption/failure/retry fixtures, together with QF-39 compatibility regressions:
 

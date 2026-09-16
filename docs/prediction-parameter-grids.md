@@ -61,6 +61,18 @@ trial additionally binds its full built prediction definition:
 - evaluator and feature configuration; and
 - dataset-family fingerprint.
 
+QF-9's metadata hook captures the existing QF-11 component snapshot in trial
+definition contract version `2`, including rule warm-up, outcome horizon, required
+market fields and outcome/evaluator result schemas. These fields participate in
+trial identity even when a generic component's own configuration omits them.
+`trial_definition_version: "2"` also participates in grid identity, so new grids
+cannot silently reuse a legacy store with incomplete candidate definitions.
+Existing stores are not migrated; use their recorded producer version for resume.
+The experiment inspector can read legacy definitions when their saved component
+configuration explicitly supplies every required wrapper declaration. Missing
+historical declarations are reported as unavailable rather than inferred.
+Prediction calculations and result-row schemas do not change.
+
 Changing any backend or indicator configuration produces a different identity.
 It cannot resume an old study or use an incompatible indicator-cache entry.
 Factory and analyzer configurations are captured as detached immutable
