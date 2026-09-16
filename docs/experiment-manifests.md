@@ -379,7 +379,12 @@ the producers' legacy empty-history default, and QF-6 nullable timestamps remain
 supported. History is observed without retrying trials.
 Prediction result fingerprints must match
 both their content and the fingerprint in the trial record; the recorded analysis
-and schema must also agree. A QF-32 summary must retain the study's schema and
+and schema must also agree. A current QF-32 summary must retain the producer's
+exact top-level field set, including required `warnings` and `limitations` string
+arrays. Missing or additional fields, non-array disclosures and non-string members
+are rejected. Valid disclosure text, order, duplicates and empty arrays are
+preserved without generating or rewriting disclosures. Stale retry summaries
+remain unindexed. A QF-32 summary must retain the study's schema and
 its exact `PredictionGridCacheStatistics` record: `context_hits`, `context_misses`,
 `indicator_hits` and `indicator_misses` must all be nonnegative integers, not
 booleans or numeric strings. Cache usage remains recorded diagnostics and is not

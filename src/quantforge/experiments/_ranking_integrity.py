@@ -29,6 +29,24 @@ def validate_prediction_summary(
         or any(type(value) is not int or value < 0 for value in counters.values())
     ):
         raise ManifestError("prediction summary cache statistics are invalid")
+    if set(summary) != {
+        "study_id",
+        "schema_version",
+        "counts",
+        "rankings",
+        "ineligible_trials",
+        "stability",
+        "cache_statistics",
+        "warnings",
+        "limitations",
+    }:
+        raise ManifestError("prediction summary fields differ from producer schema")
+    for field in ("warnings", "limitations"):
+        disclosures = summary[field]
+        if not isinstance(disclosures, list) or any(
+            not isinstance(disclosure, str) for disclosure in disclosures
+        ):
+            raise ManifestError(f"prediction summary {field} must be a string array")
     eligible = _records(summary.get("rankings"))
     ineligible = _records(summary.get("ineligible_trials"))
     stable = _records(summary.get("stability"))
