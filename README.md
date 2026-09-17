@@ -77,6 +77,10 @@ direction rules, forward-label alignment, metrics, and deterministic exports.
 See [`docs/signal-feature-datasets.md`](docs/signal-feature-datasets.md) for QF-7
 candidate identity, schemas, outcome formulas, persistence/resume, and the
 exploratory three-feature analysis.
+For presentation-only HTML over QF-9 manifests, see
+[`docs/static-research-reports.md`](docs/static-research-reports.md). Reports
+preserve study-specific metrics and QF-40 holdout state without rerunning research.
+
 See [`docs/static-study-inspection.md`](docs/static-study-inspection.md) for the
 standalone synchronized weekly/daily/intraday prediction-study charts and their
 causal and provenance safeguards.

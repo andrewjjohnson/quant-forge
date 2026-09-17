@@ -497,6 +497,16 @@ Provide `.env.example` with names and safe placeholders only.
 
 ## Pull-request readiness
 
+Run QF-41 presentation-only study-family, warning, integrity, holdout-state,
+security and no-recomputation fixtures (including QF-34 compatibility):
+
+```bash
+uv run pytest tests/unit/reporting
+```
+
+See [`static-research-reports.md`](static-research-reports.md) for the static
+HTML API and source-of-truth rules.
+
 Run QF-9 observational manifest/index, identity, immutable persistence,
 credential, hash/tamper and permanent holdout-state fixtures:
 
