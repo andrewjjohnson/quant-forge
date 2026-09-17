@@ -30,6 +30,22 @@ if TYPE_CHECKING:
     from quantforge.oos import HoldoutLedger, OOSSource
 
 RAW_RECORD_KEYS = frozenset({"rows", "observations", "decisions", "preview"})
+RESULT_HISTORY_KEYS = RAW_RECORD_KEYS | frozenset(
+    {
+        "signals",
+        "orders",
+        "fills",
+        "positions",
+        "completed_trades",
+        "open_trades",
+        "daily_equity",
+        "dividend_cashflows",
+        "split_adjustments",
+        "benchmark_daily_equity",
+        "benchmark_dividend_cashflows",
+        "benchmark_split_adjustments",
+    }
+)
 
 
 def as_mapping(value: Primitive) -> PrimitiveMapping:
@@ -42,16 +58,16 @@ def artifact_value(artifact: ReportArtifact) -> Primitive:
     )
 
 
-def prediction_metadata(value: Primitive) -> Primitive:
-    """Retain prediction manifests and analysis without embedded observations."""
+def result_metadata(value: Primitive) -> Primitive:
+    """Retain result manifests and summaries without embedded raw histories."""
     if not isinstance(value, dict):
         return value
     return {
-        key: prediction_metadata(child)
-        if key in {"prediction_study", "prediction_window"}
+        key: result_metadata(child)
+        if key in {"prediction_study", "prediction_window", "result", "artifact"}
         else child
         for key, child in value.items()
-        if not (key in {"rows", "decisions"} and isinstance(child, list))
+        if not (key in RESULT_HISTORY_KEYS and isinstance(child, list))
     }
 
 
@@ -91,8 +107,13 @@ def read_artifacts(
                 if entry.file_format is ArtifactFormat.JSON:
                     document = parse_json(raw)
                     value = pointer(document, entry.json_pointer)
-                    if entry.artifact_type is ArtifactType.PREDICTION_RESULT:
-                        value = prediction_metadata(value)
+                    if entry.artifact_type in {
+                        ArtifactType.PREDICTION_RESULT,
+                        ArtifactType.BACKTEST_RESULT,
+                        ArtifactType.WALK_FORWARD_WINDOW,
+                        ArtifactType.HOLDOUT_RESULT,
+                    }:
+                        value = result_metadata(value)
                 else:
                     reader = csv.DictReader(io.StringIO(raw.decode("utf-8")))
                     fieldnames = reader.fieldnames

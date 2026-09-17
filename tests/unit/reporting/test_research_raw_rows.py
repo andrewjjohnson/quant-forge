@@ -195,3 +195,70 @@ def test_nested_prediction_observations_are_not_retained_with_trial_metadata(
     assert "./../trial.json" in html
     assert "RAW-TRIAL-OBSERVATION-" not in html
     assert source.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "category", [ArtifactType.WALK_FORWARD_WINDOW, ArtifactType.HOLDOUT_RESULT]
+)
+@pytest.mark.parametrize("prediction", [True, False])
+def test_validation_result_wrappers_retain_metadata_without_raw_histories(
+    tmp_path: Path, category: ArtifactType, prediction: bool
+) -> None:
+    raw_fields = (
+        ("decisions",)
+        if prediction
+        else (
+            "signals",
+            "orders",
+            "fills",
+            "positions",
+            "completed_trades",
+            "open_trades",
+            "daily_equity",
+            "dividend_cashflows",
+            "split_adjustments",
+            "benchmark_daily_equity",
+            "benchmark_dividend_cashflows",
+            "benchmark_split_adjustments",
+        )
+    )
+    native: PrimitiveMapping = {
+        "manifest": {
+            "record_counts": {"signals": 100},
+            "performance": {"trade_count": 20},
+            "strategy": {"parameters": {"orders": ["custom-setting"]}},
+        },
+    }
+    for key in raw_fields:
+        native[key] = [{"label": "RAW-HISTORY"} for _ in range(100)]
+    fold: PrimitiveMapping = {
+        "kind": "prediction" if prediction else "backtest",
+        "result_id": "result-1",
+        "result": native,
+    }
+    payload: PrimitiveMapping = (
+        {"artifact": fold, "summary": {"prediction_count": 20}}
+        if category is ArtifactType.HOLDOUT_RESULT
+        else fold
+    )
+    path = metadata_manifest(
+        tmp_path, kind=StudyType.OOS_VALIDATION, category=category, payload=payload
+    )
+    source = tmp_path / "result.json"
+    original = source.read_bytes()
+    report = build_research_report(path, artifact_root=tmp_path)
+    artifact = report.artifacts[0]
+    assert artifact.content is not None
+    retained_fold: PrimitiveMapping = {
+        **fold,
+        "result": {"manifest": native["manifest"]},
+    }
+    assert artifact.content.to_primitive()["value"] == (
+        {"artifact": retained_fold, "summary": {"prediction_count": 20}}
+        if category is ArtifactType.HOLDOUT_RESULT
+        else retained_fold
+    )
+    html = export_research_report(report, tmp_path / "reports").read_text()
+    assert "RAW-HISTORY" not in html
+    assert "./../result.json" in html
+    assert source.read_bytes() == original

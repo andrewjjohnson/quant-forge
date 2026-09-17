@@ -5,6 +5,7 @@ import pytest
 
 from quantforge.configuration import PrimitiveMapping
 from quantforge.experiments import (
+    ArtifactType,
     StudyType,
     create_manifest,
     inspect_study,
@@ -88,6 +89,28 @@ def test_native_validation_oos_and_authoritative_reserved_state(
     assert state["state"] == "reserved_unconsumed"
     assert state["authority_checked"] is True
     assert len(values(report, "Per-fold OOS result")) == 2
+    for fold in source.folds:
+        assert fold.artifact is not None
+        original = fold.artifact.to_primitive()
+        native = cast(PrimitiveMapping, original["result"])
+        assert any(isinstance(value, list) for value in native.values())
+        expected = {
+            **original,
+            "result": {
+                key: value
+                for key, value in native.items()
+                if not isinstance(value, list)
+            },
+        }
+        retained = next(
+            item
+            for item in report.artifacts
+            if item.entry.artifact_type is ArtifactType.WALK_FORWARD_WINDOW
+            and item.entry.producer_artifact_id == fold.fold_id
+        )
+        assert retained.content is not None
+        assert retained.content.to_primitive()["value"] == expected
+        assert fold.artifact.to_primitive() == original
     summary = cast(PrimitiveMapping, values(report, "Walk-forward OOS summary")[0])
     assert summary["summary"] == aggregate.summary.to_primitive()
     assert values(report, "Configuration turnover") == [

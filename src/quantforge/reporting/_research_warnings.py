@@ -6,29 +6,17 @@ from decimal import Decimal, InvalidOperation
 from quantforge.configuration import Primitive, PrimitiveMapping
 from quantforge.experiments import ArtifactType, ExperimentManifest, StudyType
 from quantforge.reporting._research_inputs import (
-    RAW_RECORD_KEYS,
     artifact_value,
     as_mapping,
     lineage_artifacts,
     validation_observations,
 )
+from quantforge.reporting._research_statistics import statistic_evidence
 from quantforge.reporting.research_models import (
     ReportArtifact,
     ResearchReportConfig,
     ResearchWarning,
 )
-
-
-def records(value: Primitive, path: str = "") -> Iterator[tuple[str, PrimitiveMapping]]:
-    if isinstance(value, dict):
-        yield path, value
-        for key, child in sorted(value.items()):
-            # Raw rows/observations are evidence links, not a statistics input.
-            if key not in RAW_RECORD_KEYS:
-                yield from records(child, path + "/" + key)
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            yield from records(child, path + f"/{index}")
 
 
 def number(value: Primitive) -> Decimal | None:
@@ -134,71 +122,60 @@ def build_warnings(
         )
         if type(recorded) is int:
             minimum = recorded
-    evidence: list[tuple[str, Primitive]] = [
-        ("manifest/configuration", configuration),
-        ("manifest/counts", manifest.provenance.observations.to_primitive()),
-    ]
-    evidence.extend(
-        (item.entry.artifact_id, artifact_value(item))
-        for item in artifacts
-        if item.content is not None
-    )
-    for source, value in evidence:
-        for path, record in records(value):
-            location = source + path
-            if minimum is not None:
-                for key in (
-                    "prediction_count",
-                    "labeled_rows",
-                    "trade_count",
-                    "candidate_count",
-                ):
-                    count = number(record.get(key))
-                    if count is not None and count < minimum:
-                        add(
-                            "LOW_SAMPLE_SIZE",
-                            f"{key}={count} is below the declared minimum {minimum}.",
-                            location + "/" + key,
-                        )
-            if config.high_trial_count is not None:
-                for key in (
-                    "trials",
-                    "trial_count",
-                    "total_combinations",
-                    "total_cartesian_combinations",
-                ):
-                    count = number(record.get(key))
-                    if count is not None and count >= config.high_trial_count:
-                        add(
-                            "HIGH_TRIAL_COUNT",
-                            f"{key}={count} reaches the configured "
-                            f"threshold {config.high_trial_count}.",
-                            location + "/" + key,
-                        )
-            if (
-                any(
-                    isinstance(record.get(key), list) and bool(record[key])
-                    for key in (
-                        "missing_sessions",
-                        "missing_intervals",
-                        "incomplete_sessions",
-                        "missing_expected_intervals",
-                    )
-                )
-                or record.get("coverage_complete") is False
+    for location, record in statistic_evidence(manifest, artifacts):
+        if minimum is not None:
+            for key in (
+                "prediction_count",
+                "labeled_rows",
+                "trade_count",
+                "candidate_count",
             ):
-                add(
-                    "INCOMPLETE_DATA_COVERAGE",
-                    "Source metadata records incomplete market-data coverage.",
-                    location,
+                count = number(record.get(key))
+                if count is not None and count < minimum:
+                    add(
+                        "LOW_SAMPLE_SIZE",
+                        f"{key}={count} is below the declared minimum {minimum}.",
+                        location + "/" + key,
+                    )
+        if config.high_trial_count is not None:
+            for key in (
+                "trials",
+                "trial_count",
+                "total_combinations",
+                "total_cartesian_combinations",
+            ):
+                count = number(record.get(key))
+                if count is not None and count >= config.high_trial_count:
+                    add(
+                        "HIGH_TRIAL_COUNT",
+                        f"{key}={count} reaches the configured "
+                        f"threshold {config.high_trial_count}.",
+                        location + "/" + key,
+                    )
+        if (
+            any(
+                isinstance(record.get(key), list) and bool(record[key])
+                for key in (
+                    "missing_sessions",
+                    "missing_intervals",
+                    "incomplete_sessions",
+                    "missing_expected_intervals",
                 )
-            if "expected_windows" in record and record.get("complete") is False:
-                add(
-                    "FAILED_OR_MISSING_OOS_WINDOWS",
-                    "OOS aggregate covers only the "
-                    "reported completed windows; missing windows are not zero returns.",
-                    location,
-                )
+            )
+            or record.get("coverage_complete") is False
+        ):
+            add(
+                "INCOMPLETE_DATA_COVERAGE",
+                "Source metadata records incomplete market-data coverage.",
+                location,
+            )
+        if "expected_windows" in record and record.get("complete") is False:
+            add(
+                "FAILED_OR_MISSING_OOS_WINDOWS",
+                "OOS aggregate covers only the "
+                "reported completed windows; missing windows are not zero returns.",
+                location,
+            )
     for item in artifacts:
         for location, record in stability_records(item):
             if (

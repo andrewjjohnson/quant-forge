@@ -157,6 +157,11 @@ Instability assessments come from indexed parameter summaries (their direct
 records, `stability`, `summaries` and `top_stability_trials`), indexed configuration
 stability, or an OOS aggregate's `stability` record. Strategy/factory configuration,
 ranking parameters and nested per-window configurations do not supply assessments.
+Count, coverage and completeness warnings follow only known statistic containers
+such as `analysis`, `counts`, `record_counts`, `performance`, `coverage`, `summary`
+and published ranking records. They do not traverse strategy/factory configuration
+or trial/ranking parameter mappings. Native configuration artifacts supply only
+their producer-owned counts, performance and market-data records.
 
 ## Integrity, security and determinism
 
@@ -181,6 +186,11 @@ Prediction-result metadata also omits embedded `prediction_study.rows` and
 document root. Published analysis and source manifests stay unchanged in the
 retained metadata; complete observations remain available through the original
 artifact link.
+The same projection applies to walk-forward and consumed-holdout result wrappers.
+Prediction observations and backtest signal, order, fill, position, trade, equity
+and corporate-action histories remain in the source artifact rather than in each
+retained fold snapshot. Manifests, counts, performance, summary fields and arbitrary
+strategy configuration remain intact; no research values are recomputed.
 
 All text, labels, configuration values, filenames and attributes are escaped.
 Local file URLs are percent-encoded and explicitly relative; source strings
