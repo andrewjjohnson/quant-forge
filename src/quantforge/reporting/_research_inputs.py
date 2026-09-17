@@ -29,6 +29,8 @@ from quantforge.reporting.research_models import (
 if TYPE_CHECKING:
     from quantforge.oos import HoldoutLedger, OOSSource
 
+RAW_RECORD_KEYS = frozenset({"rows", "observations", "decisions", "preview"})
+
 
 def as_mapping(value: Primitive) -> PrimitiveMapping:
     return value if isinstance(value, dict) else {}
@@ -52,7 +54,19 @@ def read_artifacts(
             result.append(ReportArtifact(entry, status or "unavailable_optional"))
             continue
         content = None
-        if entry.file_format in {ArtifactFormat.JSON, ArtifactFormat.CSV}:
+        raw_records = entry.file_format is ArtifactFormat.JSON and (
+            any(part in RAW_RECORD_KEYS for part in entry.json_pointer.split("/")[1:])
+            or (
+                entry.artifact_type is ArtifactType.FEATURE_DATASET
+                and entry.producer_artifact_id.startswith("rows/")
+            )
+        )
+        # QF-9 already verified these links. Raw observations are neither warning
+        # metadata nor display summaries, so do not retain their full payloads.
+        if not raw_records and entry.file_format in {
+            ArtifactFormat.JSON,
+            ArtifactFormat.CSV,
+        }:
             reads = ProducerReadSet()
             try:
                 path = local_path(root, entry.path)

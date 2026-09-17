@@ -167,6 +167,11 @@ again before export. Nothing repairs hashes or suppresses integrity failures.
 CSV previews require a header with nonempty, unique column names; missing,
 empty or duplicate names mark the artifact invalid so cells cannot be silently
 discarded or displayed under ambiguous labels.
+JSON pointers into raw `rows`, `decisions`, `observations` or `preview` collections,
+and QF-9 feature checkpoint artifacts (`rows/<id>`), remain verified links only.
+The report retains no payload for these artifacts and never interprets their
+fields as warning metadata. QF-9 still reads and validates the original JSON;
+this avoids retained row copies rather than introducing streaming verification.
 
 All text, labels, configuration values, filenames and attributes are escaped.
 Local file URLs are percent-encoded and explicitly relative; source strings

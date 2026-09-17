@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from quantforge.configuration import Primitive, PrimitiveMapping
 from quantforge.experiments import ArtifactType, ExperimentManifest, StudyType
 from quantforge.reporting._research_inputs import (
+    RAW_RECORD_KEYS,
     artifact_value,
     as_mapping,
     lineage_artifacts,
@@ -23,7 +24,7 @@ def records(value: Primitive, path: str = "") -> Iterator[tuple[str, PrimitiveMa
         yield path, value
         for key, child in sorted(value.items()):
             # Raw rows/observations are evidence links, not a statistics input.
-            if key not in {"rows", "observations", "decisions", "preview"}:
+            if key not in RAW_RECORD_KEYS:
                 yield from records(child, path + "/" + key)
     elif isinstance(value, list):
         for index, child in enumerate(value):

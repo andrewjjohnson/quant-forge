@@ -1,0 +1,134 @@
+from pathlib import Path
+
+import pytest
+
+from quantforge.configuration import Primitive
+from quantforge.experiments import (
+    ArtifactType,
+    StudyArtifacts,
+    StudyType,
+    create_manifest,
+    index_artifact,
+    read_manifest,
+    write_manifest,
+)
+from quantforge.reporting import (
+    ResearchReportConfig,
+    build_research_report,
+    export_research_report,
+)
+from tests.unit.experiments.test_contracts import write_json
+from tests.unit.reporting.research_fixtures import metadata_manifest
+from tests.unit.reporting.test_research_reports import codes
+
+
+@pytest.mark.parametrize(
+    ("kind", "category"),
+    [
+        (StudyType.PREDICTION, ArtifactType.PREDICTION_RESULT),
+        (StudyType.FEATURE_DATASET, ArtifactType.FEATURE_DATASET),
+    ],
+)
+@pytest.mark.parametrize(
+    "pointer",
+    [
+        "/rows",
+        "/decisions",
+        "/observations",
+        "/preview",
+        "/nested/rows",
+        "/rows/0",
+        "/decisions/0",
+    ],
+)
+def test_raw_json_collections_are_link_only_and_cannot_supply_warnings(
+    tmp_path: Path, kind: StudyType, category: ArtifactType, pointer: str
+) -> None:
+    path = metadata_manifest(tmp_path, kind=kind)
+    manifest = read_manifest(path)
+    rows: list[Primitive] = [
+        {
+            "prediction_count": 1,
+            "coverage_complete": False,
+            "classification": "fragile",
+            "label": f"RAW-ROW-{index}",
+        }
+        for index in range(100)
+    ]
+    source = tmp_path / "raw.json"
+    write_json(
+        source,
+        {
+            "rows": rows,
+            "decisions": rows,
+            "observations": rows,
+            "preview": rows,
+            "nested": {"rows": rows},
+        },
+    )
+    original = source.read_bytes()
+    entry = index_artifact(
+        tmp_path,
+        path="raw.json",
+        artifact_type=category,
+        schema_version="1",
+        producer_study_id="fixture-study",
+        producer_artifact_id="result-rows",
+        json_pointer=pointer,
+    )
+    path = write_manifest(
+        create_manifest(
+            StudyArtifacts(manifest.provenance, manifest.artifacts),
+            manifest.execution,
+            additional_artifacts=(entry,),
+        ),
+        tmp_path / "experiments",
+        artifact_root=tmp_path,
+    )
+    report = build_research_report(
+        path,
+        artifact_root=tmp_path,
+        config=ResearchReportConfig(minimum_sample_size=5, maximum_preview_rows=2),
+    )
+    artifact = next(item for item in report.artifacts if item.entry == entry)
+    assert artifact.status == "verified"
+    assert artifact.content is None
+    assert not {
+        "LOW_SAMPLE_SIZE",
+        "INCOMPLETE_DATA_COVERAGE",
+        "PARAMETER_INSTABILITY",
+    } & codes(report)
+    html = export_research_report(report, tmp_path / "reports").read_text()
+    assert "RAW-ROW-" not in html
+    assert "./../raw.json" in html
+    assert entry.sha256 is not None
+    assert entry.sha256 in html
+    assert source.read_bytes() == original
+
+
+def test_native_feature_checkpoint_is_link_only(tmp_path: Path) -> None:
+    path = metadata_manifest(tmp_path, kind=StudyType.FEATURE_DATASET)
+    manifest = read_manifest(path)
+    write_json(tmp_path / "row.json", {"features": {"coverage_complete": False}})
+    entry = index_artifact(
+        tmp_path,
+        path="row.json",
+        artifact_type=ArtifactType.FEATURE_DATASET,
+        schema_version="1",
+        producer_study_id="fixture-study",
+        producer_artifact_id="rows/checkpoint-id",
+    )
+    path = write_manifest(
+        create_manifest(
+            StudyArtifacts(manifest.provenance, manifest.artifacts),
+            manifest.execution,
+            additional_artifacts=(entry,),
+        ),
+        tmp_path / "experiments",
+        artifact_root=tmp_path,
+    )
+    report = build_research_report(path, artifact_root=tmp_path)
+    artifact = next(item for item in report.artifacts if item.entry == entry)
+    assert artifact.status == "verified"
+    assert artifact.content is None
+    assert "INCOMPLETE_DATA_COVERAGE" not in codes(report)
