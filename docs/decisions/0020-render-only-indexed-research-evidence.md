@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-16
 - Jira: [QF-41](https://frostfiredigital-37308542.atlassian.net/browse/QF-41)
+- Pull request: [#43](https://github.com/andrewjjohnson/quant-forge/pull/43)
 
 ## Context
 
