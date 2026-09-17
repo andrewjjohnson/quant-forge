@@ -200,7 +200,9 @@ def build_warnings(
         if not execution:
             execution = as_mapping(configuration.get("backtest"))
         missing = [
-            key for key in ("commission", "fees", "slippage") if not execution.get(key)
+            key
+            for key in ("commission", "fees", "slippage")
+            if execution.get(key) is None
         ]
         if missing:
             add(

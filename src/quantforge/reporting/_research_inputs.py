@@ -65,6 +65,13 @@ def read_artifacts(
                     value = pointer(document, entry.json_pointer)
                 else:
                     reader = csv.DictReader(io.StringIO(raw.decode("utf-8")))
+                    fieldnames = reader.fieldnames
+                    if (
+                        not fieldnames
+                        or any(not name for name in fieldnames)
+                        or len(set(fieldnames)) != len(fieldnames)
+                    ):
+                        raise ManifestError("invalid CSV header")
                     rows: list[Primitive] = []
                     truncated = False
                     for row in reader:

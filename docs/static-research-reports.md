@@ -158,6 +158,9 @@ Only verified evidence can supply displayed values or active file links.
 Missing, tampered, unsafe and absent optional artifacts remain visible in the
 index with their issue status and original hash. Verified inputs are checked
 again before export. Nothing repairs hashes or suppresses integrity failures.
+CSV previews require a header with nonempty, unique column names; missing,
+empty or duplicate names mark the artifact invalid so cells cannot be silently
+discarded or displayed under ambiguous labels.
 
 All text, labels, configuration values, filenames and attributes are escaped.
 Local file URLs are percent-encoded and explicitly relative; source strings

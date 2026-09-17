@@ -12,6 +12,7 @@ from urllib.parse import unquote
 import pytest
 
 from quantforge.configuration import (
+    Primitive,
     PrimitiveMapping,
     PrimitiveMappingSnapshot,
 )
@@ -122,6 +123,63 @@ def test_threshold_boundaries_and_no_prose_heuristics(tmp_path: Path) -> None:
     )
     assert "PARAMETER_INSTABILITY" in codes(lower)
     assert default.report_id != equal.report_id
+
+
+@pytest.mark.parametrize(
+    ("kind", "configuration_key"),
+    [
+        (StudyType.BACKTEST, "backtest_configuration"),
+        (StudyType.OPTIMIZATION, "backtest"),
+    ],
+)
+@pytest.mark.parametrize("cost", [0, 0.0, "0", {"amount": "0"}])
+def test_explicit_zero_transaction_costs_are_present(
+    tmp_path: Path, kind: StudyType, configuration_key: str, cost: Primitive
+) -> None:
+    execution: PrimitiveMapping = dict.fromkeys(
+        ("commission", "fees", "slippage"), cost
+    )
+    configuration: PrimitiveMapping = {configuration_key: execution}
+    path = metadata_manifest(tmp_path, kind=kind, configuration=configuration)
+    report = build_research_report(path, artifact_root=tmp_path)
+    assert "MISSING_TRANSACTION_COST_ASSUMPTIONS" not in codes(report)
+    assert values(report, "Research configuration and source lineage") == [
+        configuration
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "configuration_key"),
+    [
+        (StudyType.BACKTEST, "backtest_configuration"),
+        (StudyType.OPTIMIZATION, "backtest"),
+    ],
+)
+@pytest.mark.parametrize("missing_key", ["commission", "fees", "slippage"])
+@pytest.mark.parametrize("explicit_null", [False, True])
+def test_only_absent_or_null_transaction_costs_are_reported_missing(
+    tmp_path: Path,
+    kind: StudyType,
+    configuration_key: str,
+    missing_key: str,
+    explicit_null: bool,
+) -> None:
+    execution: PrimitiveMapping = dict.fromkeys(("commission", "fees", "slippage"), 0)
+    if explicit_null:
+        execution[missing_key] = None
+    else:
+        del execution[missing_key]
+    path = metadata_manifest(
+        tmp_path, kind=kind, configuration={configuration_key: execution}
+    )
+    report = build_research_report(path, artifact_root=tmp_path)
+    warnings = [
+        warning
+        for warning in report.warnings
+        if warning.code == "MISSING_TRANSACTION_COST_ASSUMPTIONS"
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].message == f"Unavailable execution assumptions: {missing_key}."
 
 
 def test_recorded_minimum_and_incomplete_oos_use_source_fields(tmp_path: Path) -> None:
@@ -331,6 +389,60 @@ def test_unsafe_csv_cells_never_enter_html(tmp_path: Path) -> None:
     html = export_research_report(report, tmp_path / "reports").read_text()
     assert "NEVER-RENDER-ME" not in html
     assert "invalid_or_changed_artifact" in html
+
+
+@pytest.mark.parametrize(
+    "csv_text",
+    [
+        "price,price\nDISCARDED-EVIDENCE,RETAINED-EVIDENCE\n",
+        "price,price\n",
+        "price,\nDISCARDED-EVIDENCE,RETAINED-EVIDENCE\n",
+        '""\nRETAINED-EVIDENCE\n',
+        "",
+        "\n",
+    ],
+)
+def test_ambiguous_or_missing_csv_headers_cannot_supply_evidence(
+    tmp_path: Path, csv_text: str
+) -> None:
+    path = metadata_manifest(tmp_path, kind=StudyType.BACKTEST)
+    manifest = read_manifest(path)
+    csv_path = tmp_path / "equity.csv"
+    csv_path.write_text(csv_text)
+    entry = index_artifact(
+        tmp_path,
+        path="equity.csv",
+        file_format=ArtifactFormat.CSV,
+        artifact_type=ArtifactType.BACKTEST_RESULT,
+        schema_version="1",
+        producer_study_id="fixture-study",
+        producer_artifact_id="equity",
+    )
+    path = write_manifest(
+        replace(
+            manifest, artifacts=ArtifactIndex((*manifest.artifacts.entries, entry))
+        ),
+        tmp_path / "experiments",
+        artifact_root=tmp_path,
+    )
+    report = build_research_report(path, artifact_root=tmp_path)
+    artifact = next(item for item in report.artifacts if item.entry == entry)
+    assert artifact.status == "invalid_or_changed_artifact"
+    assert artifact.content is None
+    assert "ARTIFACT_INTEGRITY" in codes(report)
+    assert values(report, "Equity and returns") == [None]
+    output = export_research_report(report, tmp_path / "reports")
+    html = output.read_text()
+    assert "DISCARDED-EVIDENCE" not in html
+    assert "RETAINED-EVIDENCE" not in html
+    parsed = Elements()
+    parsed.feed(html)
+    assert not any(
+        (output.parent / unquote(link)).resolve() == csv_path
+        for link in parsed.links
+        if not link.startswith("#")
+    )
+    assert csv_path.read_text() == csv_text
 
 
 def test_bad_manifest_is_rejected_instead_of_rendered(tmp_path: Path) -> None:
