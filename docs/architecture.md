@@ -724,6 +724,14 @@ Must not:
 - recompute results with undocumented assumptions;
 - imply future profitability.
 
+QF-41's presentation-only reporting boundary is documented in
+[`static-research-reports.md`](static-research-reports.md) and ADR 0020.
+`build_research_report` reads QF-9 indexed evidence into fixed study-type
+sections; `export_research_report` publishes standalone escaped HTML. It uses
+existing provenance/hash checks and QF-40's read-only holdout authority. It does
+not call research producers, aggregate metrics, rerank trials or create charts.
+QF-34 inspection artifacts remain exact indexed links.
+
 ### Broker adapters
 
 Reserved for paper and live trading.
