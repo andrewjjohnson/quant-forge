@@ -121,12 +121,25 @@ def test_native_validation_oos_and_authoritative_reserved_state(
     assert retained_aggregate.status == "verified"
     assert retained_aggregate.content is not None
     assert retained_aggregate.content.to_primitive()["value"] == {
-        key: value for key, value in original_aggregate.items() if key != "observations"
+        key: value
+        for key, value in original_aggregate.items()
+        if key not in {"observations", "native_windows"}
     }
     if prediction:
         assert original_aggregate["observations"]
     else:
         assert original_aggregate["normalized_equity"]
+        native_windows = cast(
+            list[PrimitiveMapping], original_aggregate["native_windows"]
+        )
+        assert len(native_windows) == len(source.folds)
+        for window in native_windows:
+            native_result = cast(PrimitiveMapping, window["result"])
+            assert native_result["daily_equity"]
+            assert all(
+                isinstance(native_result[key], list)
+                for key in ("fills", "positions", "completed_trades")
+            )
     summary = cast(PrimitiveMapping, values(report, "Walk-forward OOS summary")[0])
     assert summary["summary"] == aggregate.summary.to_primitive()
     assert values(report, "Configuration turnover") == [

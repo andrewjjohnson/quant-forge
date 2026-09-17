@@ -44,6 +44,7 @@ RESULT_HISTORY_KEYS = RAW_RECORD_KEYS | frozenset(
         "benchmark_daily_equity",
         "benchmark_dividend_cashflows",
         "benchmark_split_adjustments",
+        "native_windows",
     }
 )
 

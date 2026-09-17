@@ -191,10 +191,11 @@ Prediction observations and backtest signal, order, fill, position, trade, equit
 and corporate-action histories remain in the source artifact rather than in each
 retained fold snapshot. Manifests, counts, performance, summary fields and arbitrary
 strategy configuration remain intact; no research values are recomputed.
-OOS aggregates also omit their raw prediction `observations` arrays from retained
-metadata. Their summaries, stability and provenance remain intact, as do backtest
-`normalized_equity` series used by report sections. The original aggregate remains
-available through its verified artifact link and hash.
+OOS aggregates also omit raw prediction `observations` and backtest `native_windows`
+from retained metadata. The latter embeds complete per-fold backtest results,
+including their raw histories. Aggregate summaries, stability and provenance remain
+intact, as do backtest `normalized_equity` series used by report sections. The
+original aggregate remains available through its verified artifact link and hash.
 
 All text, labels, configuration values, filenames and attributes are escaped.
 Local file URLs are percent-encoded and explicitly relative; source strings
