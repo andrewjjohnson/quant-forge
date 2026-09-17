@@ -111,6 +111,7 @@ def read_artifacts(
                         ArtifactType.PREDICTION_RESULT,
                         ArtifactType.BACKTEST_RESULT,
                         ArtifactType.WALK_FORWARD_WINDOW,
+                        ArtifactType.OOS_AGGREGATE,
                         ArtifactType.HOLDOUT_RESULT,
                     }:
                         value = result_metadata(value)

@@ -54,6 +54,8 @@ def test_native_validation_oos_and_authoritative_reserved_state(
         aggregate_prediction(source) if prediction else aggregate_backtest(source)
     )
     aggregate_path = export_oos_aggregate(aggregate, tmp_path / "oos")
+    original_aggregate = aggregate.to_primitive()
+    original_aggregate_bytes = aggregate_path.read_bytes()
     ledger = HoldoutLedger.create(tmp_path / "ledger")
     ledger.reserve(source)
     manifest = create_manifest(
@@ -111,6 +113,20 @@ def test_native_validation_oos_and_authoritative_reserved_state(
         assert retained.content is not None
         assert retained.content.to_primitive()["value"] == expected
         assert fold.artifact.to_primitive() == original
+    retained_aggregate = next(
+        item
+        for item in report.artifacts
+        if item.entry.artifact_type is ArtifactType.OOS_AGGREGATE
+    )
+    assert retained_aggregate.status == "verified"
+    assert retained_aggregate.content is not None
+    assert retained_aggregate.content.to_primitive()["value"] == {
+        key: value for key, value in original_aggregate.items() if key != "observations"
+    }
+    if prediction:
+        assert original_aggregate["observations"]
+    else:
+        assert original_aggregate["normalized_equity"]
     summary = cast(PrimitiveMapping, values(report, "Walk-forward OOS summary")[0])
     assert summary["summary"] == aggregate.summary.to_primitive()
     assert values(report, "Configuration turnover") == [
@@ -120,6 +136,11 @@ def test_native_validation_oos_and_authoritative_reserved_state(
         source.plan.to_manifest()
     ]
     html = export_research_report(report, tmp_path / "reports").read_text()
+    assert f"./../{retained_aggregate.entry.path}" in html
+    assert retained_aggregate.entry.sha256 is not None
+    assert retained_aggregate.entry.sha256 in html
+    assert aggregate_path.read_bytes() == original_aggregate_bytes
+    assert aggregate.to_primitive() == original_aggregate
     assert source.lineage_id in html
     assert "WALK-FORWARD OOS" in html
     assert "VALIDATION / SELECTION" in html
