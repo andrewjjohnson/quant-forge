@@ -41,6 +41,35 @@ def number(value: Primitive) -> Decimal | None:
         return None
 
 
+def stability_records(
+    artifact: ReportArtifact,
+) -> Iterator[tuple[str, PrimitiveMapping]]:
+    """Read explicit assessment fields, never nested strategy parameters."""
+    value = artifact_value(artifact)
+    source = artifact.entry.artifact_id
+    category = artifact.entry.artifact_type
+    candidates: list[tuple[str, Primitive]] = []
+    if category is ArtifactType.CONFIGURATION_STABILITY:
+        candidates.append((source, value))
+    elif category is ArtifactType.OOS_AGGREGATE:
+        candidates.append((source + "/stability", as_mapping(value).get("stability")))
+    elif category is ArtifactType.PARAMETER_SUMMARY:
+        for path, summary in (
+            (source, value),
+            (source + "/summary", as_mapping(value).get("summary")),
+        ):
+            candidates.append((path, summary))
+            for key in ("stability", "summaries", "top_stability_trials"):
+                candidates.append((path + "/" + key, as_mapping(summary).get(key)))
+    for path, candidate in candidates:
+        if isinstance(candidate, dict):
+            yield path, candidate
+        elif isinstance(candidate, list):
+            for index, record in enumerate(candidate):
+                if isinstance(record, dict):
+                    yield path + f"/{index}", record
+
+
 def build_warnings(
     manifest: ExperimentManifest,
     artifacts: tuple[ReportArtifact, ...],
@@ -147,25 +176,6 @@ def build_warnings(
                             location + "/" + key,
                         )
             if (
-                record.get("classification") == "fragile"
-                or record.get("is_isolated_peak") is True
-            ):
-                add(
-                    "PARAMETER_INSTABILITY",
-                    "Producer classified this configuration "
-                    "as fragile or an isolated peak.",
-                    location,
-                )
-            frequency = number(record.get("configuration_change_frequency"))
-            maximum = config.maximum_configuration_change_frequency
-            if maximum is not None and frequency is not None and frequency > maximum:
-                add(
-                    "PARAMETER_INSTABILITY",
-                    f"Configuration change frequency {frequency} "
-                    f"exceeds configured maximum {maximum}.",
-                    location,
-                )
-            if (
                 any(
                     isinstance(record.get(key), list) and bool(record[key])
                     for key in (
@@ -187,6 +197,27 @@ def build_warnings(
                     "FAILED_OR_MISSING_OOS_WINDOWS",
                     "OOS aggregate covers only the "
                     "reported completed windows; missing windows are not zero returns.",
+                    location,
+                )
+    for item in artifacts:
+        for location, record in stability_records(item):
+            if (
+                record.get("classification") == "fragile"
+                or record.get("is_isolated_peak") is True
+            ):
+                add(
+                    "PARAMETER_INSTABILITY",
+                    "Producer classified this configuration "
+                    "as fragile or an isolated peak.",
+                    location,
+                )
+            frequency = number(record.get("configuration_change_frequency"))
+            maximum = config.maximum_configuration_change_frequency
+            if maximum is not None and frequency is not None and frequency > maximum:
+                add(
+                    "PARAMETER_INSTABILITY",
+                    f"Configuration change frequency {frequency} "
+                    f"exceeds configured maximum {maximum}.",
                     location,
                 )
     folds = validation_observations(manifest).get("folds")

@@ -221,6 +221,33 @@ def test_qf32_published_rankings_are_never_reranked(
     assert values(report, "Parameter neighborhoods and stability") == [
         {"stability": summary["stability"]}
     ]
+    trial_artifacts = [
+        item
+        for item in report.artifacts
+        if item.entry.artifact_type is ArtifactType.PREDICTION_RESULT
+    ]
+    assert trial_artifacts
+    for item in trial_artifacts:
+        persisted = cast(
+            PrimitiveMapping, json.loads((tmp_path / item.entry.path).read_bytes())
+        )
+        expected = dict(persisted)
+        for container, collection in (
+            ("prediction_study", "rows"),
+            ("prediction_window", "decisions"),
+        ):
+            if container in expected:
+                native = cast(PrimitiveMapping, expected[container])
+                assert collection in native
+                expected[container] = {
+                    key: value for key, value in native.items() if key != collection
+                }
+        assert item.content is not None
+        assert item.content.to_primitive()["value"] == expected
+    assert ("PARAMETER_INSTABILITY" in codes(report)) is any(
+        item["classification"] == "fragile" or item["is_isolated_peak"] is True
+        for item in cast(list[PrimitiveMapping], summary["stability"])
+    )
     assert "IN_SAMPLE_ONLY" in codes(report)
     assert all(
         section.phase is ReportPhase.IN_SAMPLE
@@ -257,6 +284,10 @@ def test_qf6_optimization_preserves_native_ranking_and_execution_context(
         for item in values(report, "Ranked configurations — published order")
     )
     assert "HIGH_TRIAL_COUNT" in codes(report)
+    assert ("PARAMETER_INSTABILITY" in codes(report)) is any(
+        item.classification.value == "fragile" or item.is_isolated_peak
+        for item in result.stability
+    )
     assert "MISSING_TRANSACTION_COST_ASSUMPTIONS" not in codes(report)
     html = export_research_report(report, tmp_path / "reports").read_text()
     assert "commission" in html

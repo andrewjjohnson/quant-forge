@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from quantforge.configuration import Primitive
+from quantforge.configuration import Primitive, PrimitiveMapping
 from quantforge.experiments import (
     ArtifactType,
     StudyArtifacts,
@@ -132,3 +132,66 @@ def test_native_feature_checkpoint_is_link_only(tmp_path: Path) -> None:
     assert artifact.status == "verified"
     assert artifact.content is None
     assert "INCOMPLETE_DATA_COVERAGE" not in codes(report)
+
+
+@pytest.mark.parametrize(
+    ("container", "collection"),
+    [("prediction_study", "rows"), ("prediction_window", "decisions")],
+)
+@pytest.mark.parametrize("select_container", [False, True])
+def test_nested_prediction_observations_are_not_retained_with_trial_metadata(
+    tmp_path: Path, container: str, collection: str, select_container: bool
+) -> None:
+    path = metadata_manifest(tmp_path, kind=StudyType.PARAMETER_STUDY)
+    manifest = read_manifest(path)
+    analysis: PrimitiveMapping = {"prediction_count": 17, "metric": "0.314159"}
+    native: PrimitiveMapping = {
+        "manifest": {
+            "study_id": "source-study",
+            "record_counts": {"predictions": 17},
+            "strategy_parameters": {"rows": [1, 2], "decisions": ["custom-setting"]},
+        },
+        collection: [
+            {"label": f"RAW-TRIAL-OBSERVATION-{index}"} for index in range(100)
+        ],
+    }
+    payload: PrimitiveMapping = {
+        "trial_id": "trial-1",
+        "analysis": analysis,
+        container: native,
+    }
+    source = tmp_path / "trial.json"
+    write_json(source, payload)
+    original = source.read_bytes()
+    entry = index_artifact(
+        tmp_path,
+        path="trial.json",
+        artifact_type=ArtifactType.PREDICTION_RESULT,
+        schema_version="1",
+        producer_study_id="fixture-study",
+        producer_artifact_id="trial-1/result",
+        json_pointer=f"/{container}" if select_container else "",
+    )
+    path = write_manifest(
+        create_manifest(
+            StudyArtifacts(manifest.provenance, manifest.artifacts),
+            manifest.execution,
+            additional_artifacts=(entry,),
+        ),
+        tmp_path / "experiments",
+        artifact_root=tmp_path,
+    )
+    report = build_research_report(path, artifact_root=tmp_path)
+    artifact = next(item for item in report.artifacts if item.entry == entry)
+    assert artifact.status == "verified"
+    assert artifact.content is not None
+    retained_native: PrimitiveMapping = {"manifest": native["manifest"]}
+    assert artifact.content.to_primitive()["value"] == (
+        retained_native
+        if select_container
+        else {"trial_id": "trial-1", "analysis": analysis, container: retained_native}
+    )
+    html = export_research_report(report, tmp_path / "reports").read_text()
+    assert "./../trial.json" in html
+    assert "RAW-TRIAL-OBSERVATION-" not in html
+    assert source.read_bytes() == original

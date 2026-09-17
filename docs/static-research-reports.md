@@ -141,7 +141,7 @@ Original producer disclosures are also shown without interpreting their text.
 | `IN_SAMPLE_ONLY` | No verified indexed OOS aggregate, fold result or consumed holdout result is available |
 | `LOW_SAMPLE_SIZE` | Recorded prediction/labeled-row/trade/candidate count is below the configured minimum; when omitted, QF-32's recorded `ranking.minimum_prediction_count` is used if available |
 | `HIGH_TRIAL_COUNT` | Recorded trials/Cartesian combination count reaches the explicitly configured threshold |
-| `PARAMETER_INSTABILITY` | Producer classification is `fragile`, `is_isolated_peak` is true, or stored configuration-change frequency exceeds the configured maximum |
+| `PARAMETER_INSTABILITY` | A published parameter/configuration-stability assessment classifies a result as `fragile` or an isolated peak, or its configuration-change frequency exceeds the configured maximum |
 | `INCOMPLETE_DATA_COVERAGE` | Recorded missing sessions/intervals or incomplete sessions are nonempty, or explicit `coverage_complete` is false |
 | `FAILED_OR_MISSING_OOS_WINDOWS` | A recorded fold is not completed, aggregate completeness is false, or indexed fold/OOS evidence is missing or invalid |
 | `HOLDOUT_ALREADY_CONSUMED` | Current authority or historical consumption evidence says consumed |
@@ -153,6 +153,10 @@ Numerical warnings are disabled when neither a renderer threshold nor the
 documented source constraint is available. Preview limits are presentation only;
 they do not change warning denominators or underlying results. Warnings do not
 certify statistical significance, economic validity or future performance.
+Instability assessments come from indexed parameter summaries (their direct
+records, `stability`, `summaries` and `top_stability_trials`), indexed configuration
+stability, or an OOS aggregate's `stability` record. Strategy/factory configuration,
+ranking parameters and nested per-window configurations do not supply assessments.
 
 ## Integrity, security and determinism
 
@@ -172,6 +176,11 @@ and QF-9 feature checkpoint artifacts (`rows/<id>`), remain verified links only.
 The report retains no payload for these artifacts and never interprets their
 fields as warning metadata. QF-9 still reads and validates the original JSON;
 this avoids retained row copies rather than introducing streaming verification.
+Prediction-result metadata also omits embedded `prediction_study.rows` and
+`prediction_window.decisions`, including QF-32 trial exports indexed at the
+document root. Published analysis and source manifests stay unchanged in the
+retained metadata; complete observations remain available through the original
+artifact link.
 
 All text, labels, configuration values, filenames and attributes are escaped.
 Local file URLs are percent-encoded and explicitly relative; source strings

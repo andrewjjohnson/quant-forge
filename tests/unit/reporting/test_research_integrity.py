@@ -53,6 +53,7 @@ def test_warnings_are_structured_configured_and_execution_specific(
     path = metadata_manifest(
         tmp_path,
         kind=kind,
+        category=ArtifactType.PARAMETER_SUMMARY,
         configuration={"market_data": {"missing_sessions": ["2024-07-03"]}},
         observations={
             "record_counts": {"prediction_count": 3},
@@ -86,6 +87,7 @@ def test_warnings_are_structured_configured_and_execution_specific(
 def test_threshold_boundaries_and_no_prose_heuristics(tmp_path: Path) -> None:
     path = metadata_manifest(
         tmp_path,
+        category=ArtifactType.PARAMETER_SUMMARY,
         observations={
             "record_counts": {"prediction_count": 5},
             "trial_counts": {"trials": 10},

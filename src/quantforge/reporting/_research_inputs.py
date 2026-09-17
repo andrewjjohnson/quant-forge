@@ -42,6 +42,19 @@ def artifact_value(artifact: ReportArtifact) -> Primitive:
     )
 
 
+def prediction_metadata(value: Primitive) -> Primitive:
+    """Retain prediction manifests and analysis without embedded observations."""
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: prediction_metadata(child)
+        if key in {"prediction_study", "prediction_window"}
+        else child
+        for key, child in value.items()
+        if not (key in {"rows", "decisions"} and isinstance(child, list))
+    }
+
+
 def read_artifacts(
     index: ArtifactIndex, root: Path, config: ResearchReportConfig
 ) -> tuple[ReportArtifact, ...]:
@@ -78,6 +91,8 @@ def read_artifacts(
                 if entry.file_format is ArtifactFormat.JSON:
                     document = parse_json(raw)
                     value = pointer(document, entry.json_pointer)
+                    if entry.artifact_type is ArtifactType.PREDICTION_RESULT:
+                        value = prediction_metadata(value)
                 else:
                     reader = csv.DictReader(io.StringIO(raw.decode("utf-8")))
                     fieldnames = reader.fieldnames
