@@ -14,6 +14,7 @@ from quantforge.experiments import (
     ArtifactType,
     ExperimentManifest,
     ManifestError,
+    RelationshipType,
     verify_artifacts,
 )
 from quantforge.experiments._json import parse_json, pointer, safe_metadata, snapshot
@@ -101,6 +102,43 @@ def validation_observations(manifest: ExperimentManifest) -> PrimitiveMapping:
     return as_mapping(observed["validation"]) if "validation" in observed else observed
 
 
+def lineage_artifacts(
+    manifest: ExperimentManifest, artifacts: tuple[ReportArtifact, ...]
+) -> tuple[ReportArtifact, ...]:
+    """Select owned evidence and explicit connections in the validated QF-9 index."""
+    entries = {item.artifact_id: item for item in manifest.artifacts.entries}
+    owners = {manifest.provenance.producer_study_id}
+    validation_id = validation_observations(manifest).get("walk_forward_study_id")
+    if isinstance(validation_id, str) and any(
+        edge.relationship is RelationshipType.VALIDATES
+        and entries[edge.source_id].producer_study_id == validation_id
+        and entries[edge.source_id].artifact_type
+        in {ArtifactType.WALK_FORWARD_WINDOW, ArtifactType.HOLDOUT_RESULT}
+        and entries[edge.target_id].producer_study_id in owners
+        and entries[edge.target_id].artifact_type is ArtifactType.CONFIGURATION
+        for edge in manifest.artifacts.relationships
+    ):
+        # QF-9 attachments validate the captured primary result. Their owner also
+        # supplies fold states that do not have individual relationship edges.
+        owners.add(validation_id)
+    neighbors: dict[str, set[str]] = {artifact_id: set() for artifact_id in entries}
+    for edge in manifest.artifacts.relationships:
+        neighbors[edge.source_id].add(edge.target_id)
+        neighbors[edge.target_id].add(edge.source_id)
+    included = {
+        artifact_id
+        for artifact_id, entry in entries.items()
+        if entry.producer_study_id in owners
+    }
+    pending = list(included)
+    while pending:
+        for neighbor in neighbors[pending.pop()]:
+            if neighbor not in included:
+                included.add(neighbor)
+                pending.append(neighbor)
+    return tuple(item for item in artifacts if item.entry.artifact_id in included)
+
+
 def holdout_snapshot(
     manifest: ExperimentManifest,
     artifacts: tuple[ReportArtifact, ...],
@@ -113,7 +151,7 @@ def holdout_snapshot(
     consumed = historical.get("state") == "consumed" or any(
         item.entry.artifact_type
         in {ArtifactType.HOLDOUT_CONSUMPTION, ArtifactType.HOLDOUT_RESULT}
-        for item in artifacts
+        for item in lineage_artifacts(manifest, artifacts)
     )
     if (source is None) != (ledger is None):
         raise ResearchReportError("holdout source and authoritative ledger are paired")

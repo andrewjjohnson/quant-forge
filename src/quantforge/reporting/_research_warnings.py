@@ -8,6 +8,7 @@ from quantforge.experiments import ArtifactType, ExperimentManifest, StudyType
 from quantforge.reporting._research_inputs import (
     artifact_value,
     as_mapping,
+    lineage_artifacts,
     validation_observations,
 )
 from quantforge.reporting.research_models import (
@@ -53,15 +54,18 @@ def build_warnings(
     for item in artifacts:
         if item.status != "verified":
             add("ARTIFACT_INTEGRITY", item.status, item.entry.artifact_id)
-            if item.entry.artifact_type in {
-                ArtifactType.WALK_FORWARD_WINDOW,
-                ArtifactType.FOLD_STATE,
-            }:
-                add(
-                    "FAILED_OR_MISSING_OOS_WINDOWS",
-                    "Indexed OOS window evidence is missing or invalid.",
-                    item.entry.artifact_id,
-                )
+    artifacts = lineage_artifacts(manifest, artifacts)
+    for item in artifacts:
+        if item.status != "verified" and item.entry.artifact_type in {
+            ArtifactType.WALK_FORWARD_WINDOW,
+            ArtifactType.FOLD_STATE,
+            ArtifactType.OOS_AGGREGATE,
+        }:
+            add(
+                "FAILED_OR_MISSING_OOS_WINDOWS",
+                "Indexed OOS window or aggregate evidence is missing or invalid.",
+                item.entry.artifact_id,
+            )
     if holdout["state"] == "consumed":
         add(
             "HOLDOUT_ALREADY_CONSUMED",

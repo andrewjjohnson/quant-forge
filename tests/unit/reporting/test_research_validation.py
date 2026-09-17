@@ -103,6 +103,7 @@ def test_native_validation_oos_and_authoritative_reserved_state(
     assert "FINAL HOLDOUT" in html
     assert "purge policy" in html
     assert "IN_SAMPLE_ONLY" not in codes(report)
+    assert len(values(report, "Persisted fold status")) == 2
     assert "HOLDOUT_ALREADY_CONSUMED" not in codes(report)
     if prediction:
         assert "normalized equity" not in html
@@ -279,3 +280,4 @@ def test_backtest_captured_in_validation_is_labeled_oos_not_in_sample(
         if section.title in {"Backtest performance and drawdown", "Equity and returns"}
     )
     assert "IN_SAMPLE_ONLY" not in codes(report)
+    assert len(values(report, "Persisted fold status")) == 2

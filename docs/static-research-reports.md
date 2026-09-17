@@ -76,8 +76,14 @@ rows are linked, and unavailable summary metrics stay unavailable. Existing
 producer summaries can be explicitly indexed with the appropriate artifact type
 and JSON pointer using QF-9's `additional_artifacts`/relationships API. Reporting
 does not discover unindexed sibling files or infer their relationship from a
-shared directory. QF-7 feature analysis likewise requires an indexed published
-analysis artifact; the feature dataset alone does not imply distributions.
+shared directory. Evidence used in sections, research warnings and holdout
+history must belong to the primary producer or connect through explicit QF-9
+artifact relationships. A QF-9 validation attachment also retains its owning
+validation study's evidence, including fold states without individual edges.
+Unrelated additional artifacts remain in the full index with their integrity
+status and links; their values cannot affect the reported study. QF-7 feature
+analysis likewise requires an indexed published analysis artifact; the feature
+dataset alone does not imply distributions.
 
 Prediction reports have no equity, trading-performance or transaction-cost
 sections/warnings. Execution metrics are explicitly not applicable. Missing

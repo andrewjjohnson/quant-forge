@@ -14,6 +14,7 @@ from quantforge.experiments._json import snapshot
 from quantforge.reporting._research_inputs import (
     artifact_value,
     as_mapping,
+    lineage_artifacts,
     validation_observations,
 )
 from quantforge.reporting.research_models import (
@@ -65,6 +66,7 @@ def build_sections(
     artifacts: tuple[ReportArtifact, ...],
     holdout: PrimitiveMapping,
 ) -> tuple[ReportSection, ...]:
+    artifacts = lineage_artifacts(manifest, artifacts)
     sections: list[ReportSection] = []
     study_type = manifest.provenance.study_type
     configuration = manifest.provenance.configuration.to_primitive()
