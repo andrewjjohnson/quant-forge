@@ -617,6 +617,16 @@ Do not “fix” discrepancies by rounding or dropping rows without identifying 
 
 ## Timestamp prediction acceptance tests (QF-48)
 
+For concrete QF-49 endpoint arithmetic, replay/export, resume, and QF-39/QF-40/QF-9
+integration (deterministic offline fixtures):
+
+```bash
+uv run --frozen pytest tests/unit/prediction/test_intraday_forward_return.py \
+  tests/unit/prediction/test_intraday_forward_return_integration.py
+```
+
+See [intraday forward returns](intraday-forward-returns.md).
+
 ```bash
 uv run --frozen pytest tests/unit/validation/test_timestamp_prediction_membership.py \
   tests/unit/walk_forward/test_timestamp_membership.py \

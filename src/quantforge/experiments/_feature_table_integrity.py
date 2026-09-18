@@ -79,7 +79,14 @@ def validate_feature_tables(
         if record.get("row_id") != path.stem:
             raise ManifestError("feature checkpoint filename differs from row identity")
         records.append(record)
-    records.sort(key=lambda row: text(row.get("signal_session")))
+    records.sort(
+        key=lambda row: (
+            text(row.get("signal_session")),
+            ""
+            if row.get("decision_timestamp") is None
+            else text(row["decision_timestamp"]),
+        )
+    )
     rows: list[Primitive] = list(records)
     validate_feature_rows(manifest, {"schema": schema_record, "rows": rows})
     schema = SignalFeatureSchema(

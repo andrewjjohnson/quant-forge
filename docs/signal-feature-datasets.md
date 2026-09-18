@@ -1,5 +1,8 @@
 # Signal-level feature datasets and outcome labels
 
+QF-49 adds [intraday forward returns](intraday-forward-returns.md) through the
+existing typed outcome adapter, including separate 10m/30m/60m/120m exports.
+
 QF-48 adds explicit exact-timestamp prediction membership and elapsed request
 execution. See [timestamp prediction validation](timestamp-prediction-validation.md)
 for the opt-in source, replay anchors, persistence, and holdout compatibility.
