@@ -1,19 +1,31 @@
 """Elapsed studies retain causal warm-up and complete-source availability checks."""
 
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from quantforge.configuration import PrimitiveMappingSnapshot
-from quantforge.data import TimeframeBarSeries
-from quantforge.prediction import PredictionContextRequirements, run_prediction_study
+from quantforge.data import MarketDataset, TimeframeBarSeries
+from quantforge.prediction import (
+    OutcomeAnchor,
+    OutcomeAnchorKind,
+    OutcomeEvaluationRequest,
+    OutcomeResolution,
+    OutcomeTemporalError,
+    PredictionContextRequirements,
+    evaluate_outcome_request,
+    run_prediction_study,
+)
+from quantforge.prediction.contracts import OutcomeLabel
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.feature_dataset import (
     _fixed_candidate_population_id,  # pyright: ignore[reportPrivateUsage]
     _SignalFeatureRule,  # pyright: ignore[reportPrivateUsage]
 )
+from quantforge.prediction.timestamp_execution import bounded_outcome_source
 from quantforge.validation import PartitionRole
 from quantforge.walk_forward.partitions import partition
 from quantforge.walk_forward.prediction import (
@@ -25,7 +37,12 @@ from tests.unit.prediction.test_multi_timeframe_feature_dataset import (
 )
 from tests.unit.prediction.test_multi_timeframe_study import FixtureContextProvider
 from tests.unit.prediction.test_timestamp_replay import ReplayRule, population
-from tests.unit.walk_forward.timestamp_fixtures import instant, timestamp_fixture
+from tests.unit.walk_forward.timestamp_fixtures import (
+    AvailabilityValues,
+    MetadataLabeler,
+    instant,
+    timestamp_fixture,
+)
 
 
 @pytest.mark.parametrize(
@@ -160,3 +177,65 @@ def test_persisted_availability_distinguishes_gaps_from_dataset_end(
     assert metadata["expected_observation_timestamp"] == endpoint.isoformat()
     assert metadata["resolved_observation_timestamp"] is None
     assert result.rows[0].outcome.values.available is False
+    assert result.rows[0].outcome.values.status == metadata["status"]
+
+
+@pytest.mark.parametrize("change", ["missing", "request", "observation"])
+def test_bounded_dispatch_requires_matching_full_source_resolution(
+    tmp_path: Path, change: str
+) -> None:
+    dataset, _, labeler, study = population(tmp_path)
+    source = study.outcome_source
+    assert source is not None
+    request = OutcomeEvaluationRequest(
+        OutcomeAnchor(OutcomeAnchorKind.TIMESTAMP, SESSIONS[4], instant(4, "10:00")),
+        labeler.temporal,
+        labeler.configuration_id,
+        dataset.metadata.dataset_id,
+        dataset.metadata.data_sha256,
+        source.dataset_reference,
+    )
+    bounded, resolved = bounded_outcome_source(source, request)
+    resolution: OutcomeResolution | None = resolved
+    if change == "missing":
+        resolution = None
+    elif change == "request":
+        resolution = replace(resolved, request=replace(request, dataset_id="foreign"))
+    else:
+        bounded = TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
+            bounded.dataset_reference,
+            bounded.timeframe,
+            tuple(bar for bar in bounded.bars if bar != resolved.observation),
+            dataset_family_manifest_id=bounded.dataset_family_manifest_id,
+        )
+    with pytest.raises(OutcomeTemporalError, match="resolution differs"):
+        evaluate_outcome_request(
+            labeler, dataset, request, source=bounded, resolution=resolution
+        )
+
+
+def test_labeler_cannot_mutate_supplied_resolution(tmp_path: Path) -> None:
+    class MutatingLabeler(MetadataLabeler):
+        def label_request(
+            self,
+            dataset: MarketDataset,
+            request: OutcomeEvaluationRequest,
+            *,
+            source: TimeframeBarSeries,
+            resolution: OutcomeResolution,
+        ) -> OutcomeLabel[AvailabilityValues]:
+            label = super().label_request(
+                dataset, request, source=source, resolution=resolution
+            )
+            object.__setattr__(
+                resolution,
+                "requested_target_timestamp",
+                resolution.requested_target_timestamp + timedelta(minutes=1),
+            )
+            return label
+
+    dataset, _, labeler, study = population(tmp_path)
+    with pytest.raises(InvalidPredictionOutputError, match=r"mutated.*resolution"):
+        run_prediction_study(
+            dataset, replace(study, outcome_labeler=MutatingLabeler(labeler.temporal))
+        )

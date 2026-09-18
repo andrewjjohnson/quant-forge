@@ -84,7 +84,10 @@ from quantforge.prediction.multi_timeframe_features import (
     _CapturedMultiTimeframeColumn,  # pyright: ignore[reportPrivateUsage]
     capture_multi_timeframe_features,
 )
-from quantforge.prediction.outcome_resolution import OutcomeEvaluationRequest
+from quantforge.prediction.outcome_resolution import (
+    OutcomeEvaluationRequest,
+    OutcomeResolution,
+)
 from quantforge.prediction.outcome_temporal import (
     OutcomeAnchorKind,
     OutcomeTemporalConfiguration,
@@ -319,6 +322,7 @@ class _TimestampCandidatePopulationLabeler:
         request: "OutcomeEvaluationRequest",
         *,
         source: TimeframeBarSeries,
+        resolution: "OutcomeResolution",
     ) -> OutcomeLabel[_CandidatePopulationValues] | None:
         return OutcomeLabel(
             request.anchor.signal_session,

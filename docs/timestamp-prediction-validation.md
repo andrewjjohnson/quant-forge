@@ -24,8 +24,11 @@ Missing scheduled observations fail closed; observed bars never redefine or
 shorten the schedule. Each scheduled instant is a distinct observation even when
 many decisions share an exchange session.
 
-The schedule must cover the study windows and their primary warm-up. Every
-window endpoint must occur in that schedule. Source prefixes are accepted only
+The schedule must cover the study windows and their primary warm-up. Plan
+construction requires every window endpoint in that schedule and enough preceding
+scheduled observations for each window's declared primary warm-up, including the
+final holdout. Extra artifact history outside the captured schedule cannot satisfy
+that requirement. Source prefixes are accepted only
 when they are exact prefixes, and both endpoints of the selected window must be
 present. Appending unrelated future bars under the same immutable source
 reference does not change captured historical membership. A different source
@@ -69,15 +72,19 @@ semantics remain unchanged.
 
 A `PredictionStudy` using elapsed outcomes supplies a canonical `outcome_source`
 and a `TimestampStudyOutcomeLabeler`. Its `label_request(dataset, request,
-source=...)` receives QF-46's original exact anchor after causal predictions have
-been fixed. The runner supplies only the last anchor-side source bar and
+source=..., resolution=...)` receives QF-46's original exact anchor after causal
+predictions have been fixed. The runner supplies only the last anchor-side source bar and
 same-session future bars through the declared conservative reach. The source
 identity is bound into study/grid identities. QF-46 resolution and availability
 metadata are persisted on each generic outcome record; unavailable outcomes
 require an explicit row, rather than a zero or a silently omitted prediction.
 Availability resolution uses the complete source artifact to distinguish a missing
-required observation from the actual end of the dataset. This does not expand the
-bounded bars exposed to the labeler.
+required observation from the actual end of the dataset. The callback receives
+that same typed `OutcomeResolution` and must use it for availability and unavailable
+reasons; resolving its bounded source alone loses coverage evidence. The resolution
+contains either no price bar or the expected endpoint already inside the bounded
+slice, so it exposes no later prices. Dispatch validates request/source agreement,
+and the runner rejects callback mutation of the detached resolution.
 Concrete labelers/evaluators remain responsible for their typed value schemas.
 
 For this path the separate QF-3 dataset supplies established identity and

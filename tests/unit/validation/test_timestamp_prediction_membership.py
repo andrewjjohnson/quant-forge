@@ -224,3 +224,92 @@ def test_declared_duration_cannot_understate_qf46_alignment_reach(
     )
     with pytest.raises(ValidationPlanError, match="QF-46 temporal reach"):
         OutcomeProvenance.capture_timestamp(component)
+
+
+@pytest.mark.parametrize("preceding_observations", [0, 2, 3])
+def test_plan_requires_scheduled_primary_warm_up_at_first_window(
+    tmp_path: Path, preceding_observations: int
+) -> None:
+    config, adapter = timestamp_fixture(tmp_path)
+    membership = config.plan.prediction_membership
+    assert membership is not None
+    first_window = config.plan.folds[0].development
+    required = first_window.warm_up_observations_for(PRIMARY)
+    assert required == 3
+    schedule = PredictionDecisionSchedule(
+        PRIMARY,
+        instant(4, "10:00") - timedelta(minutes=5 * preceding_observations),
+        membership.schedule.end_timestamp,
+    )
+    captured = PredictionMembershipSource.capture(schedule, adapter.series[0])
+    # The complete artifact has more history, but only the captured schedule
+    # certifies prediction membership and its preceding warm-up observations.
+    if preceding_observations < required:
+        with pytest.raises(ValidationPlanError, match=r"preceding QF-42.*warm-up"):
+            replace(config.plan, prediction_membership=captured)
+    else:
+        plan = replace(config.plan, prediction_membership=captured)
+        selected = select_window_observations(
+            first_window,
+            captured.observations,
+            source=captured,
+            source_timeframe=PRIMARY,
+        )
+        assert len(selected.warm_up_context) == required
+        assert plan.to_manifest()["prediction_membership"] == captured.to_primitive()
+
+
+@pytest.mark.parametrize(
+    ("fold_index", "role"),
+    [
+        (0, PartitionRole.DEVELOPMENT),
+        (0, PartitionRole.SELECTION),
+        (0, PartitionRole.WALK_FORWARD_TEST),
+        (1, PartitionRole.DEVELOPMENT),
+        (1, PartitionRole.SELECTION),
+        (1, PartitionRole.WALK_FORWARD_TEST),
+        (1, PartitionRole.FINAL_HOLDOUT),
+    ],
+)
+def test_plan_checks_scheduled_warm_up_for_every_window(
+    tmp_path: Path, fold_index: int, role: PartitionRole
+) -> None:
+    config, _ = timestamp_fixture(tmp_path)
+    plan = config.plan
+    membership = plan.prediction_membership
+    assert membership is not None
+    fold = plan.folds[fold_index]
+    window = {
+        PartitionRole.DEVELOPMENT: fold.development,
+        PartitionRole.SELECTION: fold.selection,
+        PartitionRole.WALK_FORWARD_TEST: fold.test,
+        PartitionRole.FINAL_HOLDOUT: plan.final_holdout.window,
+    }[role]
+    assert window is not None
+    preceding = membership.observations.index(window.interval.start)
+    invalid = replace(
+        window,
+        warm_up_by_timeframe=tuple(
+            replace(requirement, observations=preceding + 1)
+            if requirement.timeframe == PRIMARY
+            else requirement
+            for requirement in window.warm_up_by_timeframe
+        ),
+    )
+    folds = plan.folds
+    holdout = plan.final_holdout
+    if role is PartitionRole.FINAL_HOLDOUT:
+        holdout = replace(holdout, window=invalid)
+    else:
+        field = {
+            PartitionRole.DEVELOPMENT: "development",
+            PartitionRole.SELECTION: "selection",
+            PartitionRole.WALK_FORWARD_TEST: "test",
+        }[role]
+        changed = replace(fold, **{field: invalid})
+        folds = tuple(
+            changed if index == fold_index else item
+            for index, item in enumerate(plan.folds)
+        )
+    with pytest.raises(ValidationPlanError, match=rf"{window.name!r}.*warm-up"):
+        replace(plan, folds=folds, final_holdout=holdout)

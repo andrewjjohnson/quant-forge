@@ -2053,14 +2053,26 @@ class ValidationPlan:
                 raise ValidationPlanError(
                     "timestamp prediction membership differs from the plan environment"
                 )
-            keys = set(source.observations)
+            indexes: dict[ValidationBoundary, int] = {
+                observation: index
+                for index, observation in enumerate(source.observations)
+            }
             if any(
-                w.interval.start not in keys or w.interval.end not in keys
+                w.interval.start not in indexes or w.interval.end not in indexes
                 for w in (*windows, self.final_holdout.window)
             ):
                 raise ValidationPlanError(
                     "timestamp window endpoints must belong to the QF-42 schedule"
                 )
+            for window in (*windows, self.final_holdout.window):
+                required = window.warm_up_observations_for(
+                    source.schedule.primary_timeframe
+                )
+                if indexes[window.interval.start] < required:
+                    raise ValidationPlanError(
+                        f"validation window {window.name!r} has insufficient "
+                        "preceding QF-42 schedule observations for primary warm-up"
+                    )
         self._validate_research_warm_up((*windows, self.final_holdout.window))
         self._validate_outcome_horizon(axis)
         if axis is BoundaryAxis.EXCHANGE_SESSION:

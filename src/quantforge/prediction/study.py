@@ -484,6 +484,8 @@ def run_prediction_study_in_session(
             else study.outcome_source.dataset_reference,
         )
         resolution_snapshot = None
+        resolution = None
+        component_resolution = None
         component_source = None
         pristine_source = None
         if timestamp_outcomes:
@@ -503,12 +505,21 @@ def run_prediction_study_in_session(
             bounded, resolution = bounded_outcome_source(study.outcome_source, request)
             pristine_source = deepcopy(bounded)
             component_source = deepcopy(bounded)
+            component_resolution = deepcopy(resolution)
             resolution_snapshot = PrimitiveMappingSnapshot.capture(
                 resolution.to_primitive()
             )
         label = evaluate_outcome_request(
-            study.outcome_labeler, component_dataset, request, source=component_source
+            study.outcome_labeler,
+            component_dataset,
+            request,
+            source=component_source,
+            resolution=component_resolution,
         )
+        if component_resolution != resolution:
+            raise InvalidPredictionOutputError(
+                "outcome labeler mutated its full-source resolution"
+            )
         if component_source != pristine_source:
             raise InvalidPredictionOutputError(
                 "outcome labeler mutated its bounded source"

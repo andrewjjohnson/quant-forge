@@ -13,7 +13,10 @@ from quantforge.prediction.context import (
     PredictionContextRequirements,
     PredictionRuleContext,
 )
-from quantforge.prediction.outcome_resolution import OutcomeEvaluationRequest
+from quantforge.prediction.outcome_resolution import (
+    OutcomeEvaluationRequest,
+    OutcomeResolution,
+)
 from quantforge.prediction.outcome_temporal import (
     OutcomeAnchorKind,
     OutcomeTemporalError,
@@ -218,7 +221,9 @@ class TimestampStudyOutcomeLabeler(StudyOutcomeComponent, Protocol[OutcomeValues
     """QF-46 request consumer with a runner-bounded canonical label source.
 
     The source is supplied only after causal predictions are fixed. Its identity
-    is already bound by the existing OutcomeEvaluationRequest.
+    is already bound by the existing OutcomeEvaluationRequest. Use the supplied
+    full-source resolution for availability; resolving the bounded source alone
+    cannot distinguish missing observations from the end of the full artifact.
     """
 
     @property
@@ -230,6 +235,7 @@ class TimestampStudyOutcomeLabeler(StudyOutcomeComponent, Protocol[OutcomeValues
         request: OutcomeEvaluationRequest,
         *,
         source: TimeframeBarSeries,
+        resolution: OutcomeResolution,
     ) -> OutcomeLabel[OutcomeValuesT] | None: ...
 
 
@@ -241,6 +247,7 @@ def evaluate_outcome_request[OutcomeValuesT: PredictionValues](
     request: OutcomeEvaluationRequest,
     *,
     source: TimeframeBarSeries | None = None,
+    resolution: OutcomeResolution | None = None,
 ) -> OutcomeLabel[OutcomeValuesT] | None:
     """Dispatch an already-fixed prediction's request without changing legacy inputs.
 
@@ -268,17 +275,28 @@ def evaluate_outcome_request[OutcomeValuesT: PredictionValues](
             "outcome evaluation request differs from its component or dataset"
         )
     callback = getattr(labeler, "label_request", None)
+    if resolution is not None and source is None:
+        raise OutcomeTemporalError("outcome resolution requires its bounded source")
     if source is not None:
         if (
             source.dataset_reference != request.source_reference
             or source.timeframe != temporal.observation_timeframe
         ):
             raise OutcomeTemporalError("outcome source differs from request")
+        if (
+            not isinstance(resolution, OutcomeResolution)
+            or resolution.request != request
+            or (
+                resolution.observation is not None
+                and resolution.observation not in source.bars
+            )
+        ):
+            raise OutcomeTemporalError("outcome resolution differs from request/source")
         if not callable(callback):
             raise OutcomeTemporalError("timestamp studies require label_request()")
         return cast(
             TimestampStudyOutcomeLabeler[OutcomeValuesT], labeler
-        ).label_request(dataset, request, source=source)
+        ).label_request(dataset, request, source=source, resolution=resolution)
     if callable(callback):
         return cast(
             Callable[

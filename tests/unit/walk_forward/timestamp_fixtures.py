@@ -27,7 +27,7 @@ from quantforge.prediction.contracts import (
 )
 from quantforge.prediction.outcome_resolution import (
     OutcomeEvaluationRequest,
-    resolve_future_observation,
+    OutcomeResolution,
 )
 from quantforge.prediction.outcome_temporal import OutcomeTemporalConfiguration
 from quantforge.timeframes import IntradayInterval, Timeframe
@@ -74,9 +74,10 @@ def instant(day: int, clock: str) -> datetime:
 @dataclass(frozen=True)
 class AvailabilityValues:
     available: bool
+    status: str
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {"available": self.available}
+        return {"available": self.available, "status": self.status}
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,7 @@ class MetadataLabeler:
         request: OutcomeEvaluationRequest,
         *,
         source: TimeframeBarSeries,
+        resolution: OutcomeResolution,
     ) -> OutcomeLabel[AvailabilityValues]:
         assert dataset.metadata.dataset_id == request.dataset_id
         decision = request.anchor.decision_timestamp
@@ -130,11 +132,16 @@ class MetadataLabeler:
             bar.end_timestamp <= decision + self.required_future_duration
             for bar in source.bars
         )
-        resolution = resolve_future_observation(request, source)
+        assert resolution.request == request
+        assert resolution.observation is None or resolution.observation in source.bars
+        assert all(
+            getattr(bar, "session_date", None) == request.anchor.signal_session
+            for bar in source.bars
+        )
         return OutcomeLabel(
             request.anchor.signal_session,
             request.anchor.signal_session,
-            AvailabilityValues(resolution.available),
+            AvailabilityValues(resolution.available, resolution.status.value),
         )
 
 
