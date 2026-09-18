@@ -7,7 +7,11 @@ from typing import cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
 from quantforge.data import IntradayBar, TimeframeBarSeries
 from quantforge.prediction import (
     ForwardReturnOutcomeLabeler,
@@ -57,6 +61,15 @@ def priced_source(
             high=Decimal("200"),
             low=Decimal("1"),
             close=Decimal(prices.get(bar.end_timestamp, "100")),
+            provenance=replace(
+                cast(IntradayBar, bar).provenance,
+                adjustment_basis=replace(
+                    cast(IntradayBar, bar).provenance.adjustment_basis,
+                    corporate_action_policy=(
+                        "separate_provider_reported_cash_dividends_and_splits"
+                    ),
+                ),
+            ),
         )
         for bar in original.bars
     )
@@ -133,6 +146,34 @@ def test_exact_endpoint_return_uses_normalized_decimals(
     assert PrimitiveMappingSnapshot.capture(primitive).to_primitive() == primitive
     reference = next(bar for bar in source.bars if bar.end_timestamp == decision)
     assert values.reference_observation_id == reference.bar_id
+
+
+@pytest.mark.parametrize("endpoint_minute", [20, 50])
+@pytest.mark.parametrize("mismatch", ["symbol", "adjustment basis"])
+def test_each_price_endpoint_must_match_prediction_dataset(
+    endpoint_minute: int, mismatch: str
+) -> None:
+    source = priced_source()
+    bars: list[IntradayBar] = []
+    for original in source.bars:
+        bar = cast(IntradayBar, original)
+        if bar.end_timestamp == timestamp(11, endpoint_minute):
+            bar = (
+                replace(bar, symbol="QQQ")
+                if mismatch == "symbol"
+                else replace(
+                    bar,
+                    provenance=replace(
+                        bar.provenance,
+                        adjustment_basis=replace(
+                            bar.provenance.adjustment_basis, adjusted_fields_used=True
+                        ),
+                    ),
+                )
+            )
+        bars.append(bar)
+    with pytest.raises(InvalidPredictionDataError, match=mismatch):
+        label(series(timeframe=TWO_MINUTES, bars=tuple(bars)))
 
 
 def test_between_boundary_target_uses_qf46_resolution(
@@ -308,6 +349,10 @@ def test_identity_and_temporal_reach_reuse_existing_contract() -> None:
             labeler
         ).future_horizon == TemporalOffset.duration(timedelta(minutes=minutes + 2))
         config = labeler.configuration()
+        assert config["implementation_version"] == "2"
+        assert labeler.configuration_id != configuration_identity(
+            {**config, "implementation_version": "1"}
+        )
         temporal = OutcomeTemporalConfiguration.from_primitive(
             cast(PrimitiveMapping, config["temporal_configuration"])
         )

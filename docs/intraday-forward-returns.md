@@ -18,9 +18,14 @@ completed observation at the decision instant.
 The future price is the close of the observation supplied by QF-46 resolution.
 Both prices share the same canonical source and adjustment basis. Since the
 outcome stays inside one exchange session, the legacy multi-session split guard
-is not applied to the separate daily metadata dataset. Canonical source
-construction and existing contextual study validation retain their price,
-symbol, adjustment, feed, and family checks.
+is not applied to the separate daily metadata dataset. Before computing a return,
+the labeler checks each endpoint's symbol and full adjustment basis against the
+prediction dataset metadata: adjustment mode, OHLC and volume bases,
+corporate-action policy, and whether adjusted fields were used. A mismatch raises
+`InvalidPredictionDataError`, including in direct studies and fixed-candidate
+replay without a context provider. Unavailable outcomes still require a compatible
+reference endpoint. Canonical source construction and existing contextual study
+validation retain their price, feed, and family checks.
 
 ```text
 raw_return = future_close / reference_close - 1
@@ -36,8 +41,9 @@ There are no transaction costs, fills, orders, or executable-return claims.
 
 The runner calls QF-46 `resolve_future_observation` on the complete immutable
 source, then supplies its typed resolution and a bounded source to the labeler.
-The labeler adds the reference lookup and arithmetic only. It neither rounds
-timestamps nor re-resolves the bounded slice (which would lose coverage evidence).
+The labeler adds the reference lookup, endpoint provenance checks, and arithmetic.
+It neither rounds timestamps nor re-resolves the bounded slice (which would lose
+coverage evidence).
 
 `FIRST_COMPLETED_AT_OR_AFTER` uses the first **expected** canonical bar end at or
 after the requested target. On two-minute bars, 11:20 + 30m resolves to 11:50;
@@ -119,6 +125,9 @@ The component identity binds the elapsed temporal configuration (including
 alignment, session policy, and full observation timeframe), fixed close-price
 conventions, formula, units, and implementation/schema versions. Study/export
 identities additionally bind the immutable source reference and family manifest.
+Labeler implementation version `2` enforces endpoint compatibility with the
+prediction dataset; its changed identity prevents reuse of version `1` results
+that lacked this check. The serialized result schema remains version `1`.
 There are no alternative reference-price or alignment policies in this release.
 Changing material configuration/source prevents unsafe reuse through the existing
 QF-7/QF-32/QF-39 persistence checks; no new cache is introduced. Adding observations

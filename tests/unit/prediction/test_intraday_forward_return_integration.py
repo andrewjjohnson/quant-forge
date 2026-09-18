@@ -10,7 +10,12 @@ from typing import Any, cast
 import pytest
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.data import MarketDataset, TimeframeBarSeries
+from quantforge.data import (
+    AdjustmentMode,
+    IntradayBar,
+    MarketDataset,
+    TimeframeBarSeries,
+)
 from quantforge.experiments import (
     ManifestError,
     StudyType,
@@ -26,6 +31,7 @@ from quantforge.oos._records import mapping, records
 from quantforge.prediction import (
     IntradayForwardReturnOutcomeLabeler,
     IntradayForwardReturnValues,
+    InvalidPredictionDataError,
     MultiTimeframeFeatureRequest,
     PredictionContextRequirements,
     PredictionRuleContext,
@@ -91,6 +97,76 @@ def replay_study(
 
 def forbidden(*args: object, **kwargs: object) -> None:
     pytest.fail("completed artifacts must not recalculate intraday returns")
+
+
+@pytest.mark.parametrize("execution", ["direct", "export"])
+@pytest.mark.parametrize("unavailable", [False, True])
+@pytest.mark.parametrize(
+    "mismatch",
+    ["symbol", "adjustment_mode", "corporate_action_policy", "adjusted_fields"],
+)
+def test_incompatible_outcome_source_is_rejected_without_context_provider(
+    tmp_path: Path, execution: str, unavailable: bool, mismatch: str
+) -> None:
+    dataset, template, _ = replay_study(tmp_path)
+    original = template.outcome_source
+    assert original is not None
+    bars: list[IntradayBar] = []
+    for original_bar in original.bars:
+        bar = cast(IntradayBar, original_bar)
+        if unavailable and bar.end_timestamp > instant(4, "10:05"):
+            continue
+        basis = bar.provenance.adjustment_basis
+        if mismatch == "adjustment_mode":
+            basis = replace(
+                basis,
+                adjustment_mode=AdjustmentMode.SPLIT_ADJUSTED,
+                ohlc_basis="split_adjusted",
+                volume_basis="split_adjusted",
+                adjusted_fields_used=True,
+            )
+        elif mismatch == "corporate_action_policy":
+            basis = replace(basis, corporate_action_policy="different_action_policy")
+        elif mismatch == "adjusted_fields":
+            basis = replace(basis, adjusted_fields_used=not basis.adjusted_fields_used)
+        bars.append(
+            replace(
+                bar,
+                symbol="QQQ" if mismatch == "symbol" else bar.symbol,
+                provenance=replace(
+                    bar.provenance,
+                    provider_symbol="QQQ"
+                    if mismatch == "symbol"
+                    else bar.provenance.provider_symbol,
+                    adjustment_basis=basis,
+                ),
+            )
+        )
+    source = TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
+        replace(original.dataset_reference, dataset_id="incompatible-source"),
+        original.timeframe,
+        tuple(bars),
+        dataset_family_manifest_id=original.dataset_family_manifest_id,
+    )
+    outcome = intraday_forward_return_outcome(timedelta(minutes=30), source)
+    study = PredictionStudy[
+        SignalFeatureCandidate, IntradayForwardReturnValues, IntradayForwardReturnValues
+    ].create(
+        template.strategy, outcome.labeler, outcome.evaluator, outcome_source=source
+    )
+    expected = "symbol" if mismatch == "symbol" else "adjustment basis"
+    if execution == "direct":
+        with pytest.raises(InvalidPredictionDataError, match=expected):
+            run_prediction_study(dataset, study)
+    else:
+        with pytest.raises(InvalidPredictionDataError, match=expected):
+            build_signal_feature_dataset(
+                dataset=dataset,
+                prediction_study=template,
+                contextual_features=(),
+                outcomes=(outcome,),
+                output_root=tmp_path / "incompatible-export",
+            )
 
 
 def test_multiple_horizons_exact_replay_export_and_completed_resume(
