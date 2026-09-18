@@ -14,10 +14,34 @@ from quantforge.oos import (
     load_oos_source,
 )
 from quantforge.walk_forward.persistence import read_record, write_record
+from tests.unit.experiments.study_fixtures import CapturedStudy, copy_study
+from tests.unit.experiments.study_fixtures import study_baselines as study_baselines
 from tests.unit.experiments.test_adapters import block_research
-from tests.unit.oos.conftest import CompletedStudy, complete_study
 
-type AggregateFixture = tuple[CompletedStudy, PrimitiveMapping]
+type AggregateFixture = tuple[CapturedStudy, PrimitiveMapping]
+
+
+@pytest.fixture(scope="module")
+def aggregate_baselines(
+    study_baselines: dict[bool, CapturedStudy],
+) -> dict[bool, AggregateFixture]:
+    baselines: dict[bool, AggregateFixture] = {}
+    for prediction, completed in study_baselines.items():
+        aggregate = (aggregate_prediction if prediction else aggregate_backtest)(
+            completed.source
+        )
+        root = completed.study_path.parent.parent
+        path = export_oos_aggregate(aggregate, root / "oos")
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            block_research(monkeypatch)
+            inspect_validation(
+                completed.source,
+                completed.study_path,
+                artifact_root=root,
+                aggregate_path=path,
+            )
+        baselines[prediction] = completed, aggregate.to_primitive()
+    return baselines
 
 
 @pytest.mark.parametrize("prediction", [False, True], ids=["backtest", "prediction"])
@@ -25,11 +49,12 @@ type AggregateFixture = tuple[CompletedStudy, PrimitiveMapping]
 def test_aggregate_preserves_failed_and_missing_windows_without_fabricating_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    study_baselines: dict[bool, CapturedStudy],
     prediction: bool,
     empty: bool,
 ) -> None:
-    completed = complete_study(tmp_path, prediction=prediction)
-    root = completed.study.study_path / "folds"
+    completed = copy_study(study_baselines[prediction], tmp_path)
+    root = completed.study_path / "folds"
     shutil.rmtree(root / completed.source.folds[1].fold_id)
     if empty:
         state_path = root / completed.source.folds[0].fold_id / "state.json"
@@ -38,12 +63,12 @@ def test_aggregate_preserves_failed_and_missing_windows_without_fabricating_resu
         state["artifact_id"] = None
         state["failures"] = [{"stage": "test", "error_type": "FixtureFailure"}]
         write_record(state_path, state)
-    source = load_oos_source(completed.source.plan, completed.study.study_path)
+    source = load_oos_source(completed.source.plan, completed.study_path)
     aggregate = (aggregate_prediction if prediction else aggregate_backtest)(source)
     path = export_oos_aggregate(aggregate, tmp_path / "oos")
     block_research(monkeypatch)
     inspect_validation(
-        source, completed.study.study_path, artifact_root=tmp_path, aggregate_path=path
+        source, completed.study_path, artifact_root=tmp_path, aggregate_path=path
     )
     assert sum(fold.artifact is not None for fold in source.folds) == (
         0 if empty else 1
@@ -51,21 +76,15 @@ def test_aggregate_preserves_failed_and_missing_windows_without_fabricating_resu
 
 
 def captured_aggregate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, prediction: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    baselines: dict[bool, AggregateFixture],
+    *,
+    prediction: bool,
 ) -> AggregateFixture:
-    completed = complete_study(tmp_path, prediction=prediction)
-    aggregate = (aggregate_prediction if prediction else aggregate_backtest)(
-        completed.source
-    )
-    path = export_oos_aggregate(aggregate, tmp_path / "oos")
     block_research(monkeypatch)
-    inspect_validation(
-        completed.source,
-        completed.study.study_path,
-        artifact_root=tmp_path,
-        aggregate_path=path,
-    )
-    return completed, aggregate.to_primitive()
+    completed, aggregate = baselines[prediction]
+    return copy_study(completed, tmp_path), deepcopy(aggregate)
 
 
 def reject_rehashed_aggregate(
@@ -77,7 +96,7 @@ def reject_rehashed_aggregate(
     with pytest.raises(ManifestError, match=message):
         inspect_validation(
             completed.source,
-            completed.study.study_path,
+            completed.study_path,
             artifact_root=tmp_path,
             aggregate_path=path,
         )
@@ -85,16 +104,47 @@ def reject_rehashed_aggregate(
 
 @pytest.fixture
 def backtest_aggregate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    aggregate_baselines: dict[bool, AggregateFixture],
 ) -> AggregateFixture:
-    return captured_aggregate(tmp_path, monkeypatch, prediction=False)
+    return captured_aggregate(
+        tmp_path, monkeypatch, aggregate_baselines, prediction=False
+    )
 
 
 @pytest.fixture
 def prediction_aggregate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    aggregate_baselines: dict[bool, AggregateFixture],
 ) -> AggregateFixture:
-    return captured_aggregate(tmp_path, monkeypatch, prediction=True)
+    return captured_aggregate(
+        tmp_path, monkeypatch, aggregate_baselines, prediction=True
+    )
+
+
+@pytest.mark.parametrize("prediction", [False, True], ids=["backtest", "prediction"])
+def test_aggregate_copies_keep_nested_mutations_local(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    aggregate_baselines: dict[bool, AggregateFixture],
+    prediction: bool,
+) -> None:
+    original = deepcopy(aggregate_baselines[prediction][1])
+    first = captured_aggregate(
+        tmp_path / "first", monkeypatch, aggregate_baselines, prediction=prediction
+    )
+    second = captured_aggregate(
+        tmp_path / "second", monkeypatch, aggregate_baselines, prediction=prediction
+    )
+    windows = cast(
+        list[PrimitiveMapping], cast(PrimitiveMapping, first[1]["summary"])["windows"]
+    )
+    windows.clear()
+    assert aggregate_baselines[prediction][1] == original
+    assert second[1] == original
+    assert first[0].study_path != second[0].study_path
 
 
 @pytest.mark.parametrize(
@@ -207,10 +257,13 @@ def test_prediction_observations_remain_bound_to_captured_signals_and_rows(
 def test_aggregate_family_and_window_summaries_retain_captured_membership(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    aggregate_baselines: dict[bool, AggregateFixture],
     prediction: bool,
     change: str,
 ) -> None:
-    fixture = captured_aggregate(tmp_path, monkeypatch, prediction=prediction)
+    fixture = captured_aggregate(
+        tmp_path, monkeypatch, aggregate_baselines, prediction=prediction
+    )
     aggregate = fixture[1]
     if change == "kind":
         aggregate["kind"] = (

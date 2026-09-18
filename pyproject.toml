@@ -27,6 +27,7 @@ dev = [
   "pre-commit>=4.5,<5",
   "pyright>=1.1.409,<2",
   "pytest>=9.0.3,<10",
+  "pytest-xdist>=3.8,<4",
   "ruff>=0.15.12,<1",
 ]
 
@@ -63,7 +64,7 @@ venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -ra -q"
+addopts = "--strict-config --strict-markers -ra -q -n 2 --dist=loadfile --durations=30"
 testpaths = ["tests"]
 markers = [
   "integration: optional component-boundary tests selected with '-m integration'",
