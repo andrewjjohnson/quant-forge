@@ -59,17 +59,18 @@ Type check:
 uv run pyright
 ```
 
-Run the full test suite (two worker processes by default):
+Run the full test suite (four worker processes by default):
 
 ```bash
 uv run pytest
 ```
 
 Tests are distributed by file (`--dist=loadfile`) so module-scoped fixtures stay
-on one worker. The fixed two-worker default bounds CPU and memory use locally
-and in CI, including tests that create their own execution workers. All tests
-are collected; parallel execution does not exclude integration or integrity
-coverage. Live-provider tests keep their existing explicit opt-in requirements.
+on one worker. The fixed four-worker default applies locally and in CI. Some
+tests also create their own execution workers; reduce the pytest worker count
+on machines with limited CPU or memory. All tests are collected; parallel
+execution does not exclude integration or integrity coverage. Live-provider
+tests keep their existing explicit opt-in requirements.
 
 Run serially for debugging or an uncontended timing baseline:
 
@@ -77,10 +78,11 @@ Run serially for debugging or an uncontended timing baseline:
 uv run pytest -n 0
 ```
 
-On a machine with spare CPU and memory, explicitly select more workers:
+Use two workers on a constrained machine or to compare against the previous
+parallel configuration:
 
 ```bash
-uv run pytest -n 4
+uv run pytest -n 2
 ```
 
 The default output includes the 30 slowest setup/call/teardown durations. Save
