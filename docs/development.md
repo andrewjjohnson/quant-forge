@@ -59,11 +59,50 @@ Type check:
 uv run pyright
 ```
 
-Run tests:
+Run the full test suite (four worker processes by default):
 
 ```bash
 uv run pytest
 ```
+
+Tests are distributed by file (`--dist=loadfile`) so module-scoped fixtures stay
+on one worker. The fixed four-worker default applies locally and in CI. Some
+tests also create their own execution workers; reduce the pytest worker count
+on machines with limited CPU or memory. All tests are collected; parallel
+execution does not exclude integration or integrity coverage. Live-provider
+tests keep their existing explicit opt-in requirements.
+
+Run serially for debugging or an uncontended timing baseline:
+
+```bash
+uv run pytest -n 0
+```
+
+Use two workers on a constrained machine or to compare against the previous
+parallel configuration:
+
+```bash
+uv run pytest -n 2
+```
+
+The default output includes the 30 slowest setup/call/teardown durations. Save
+per-test timings and results using the same command as CI:
+
+```bash
+uv run pytest --junitxml=reports/tests/junit.xml
+```
+
+CI uploads this file as the `test-results` artifact, including test failures,
+with 14-day retention. The generated report stays ignored by Git. Use the same
+machine, worker count, and test selection when comparing timings; JUnit test
+durations sum worker time, which differs from parallel wall time.
+
+Selected experiment-integrity tests generate real backtest and prediction
+studies once per module. Each corruption case copies the producer files into
+its own temporary directory, reloads and checks their original identities, and
+deep-copies mutable aggregate records. Never share writable study directories
+between tests or cache the results of integrity checks across mutations.
+Keep engine, execution, resume, and temporal-safety tests exercising producers.
 
 Run a focused test:
 

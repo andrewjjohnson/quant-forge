@@ -36,4 +36,13 @@ jobs:
         run: uv run pyright
 
       - name: Test
-        run: uv run pytest
+        run: uv run pytest --junitxml=reports/tests/junit.xml
+
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: reports/tests/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
