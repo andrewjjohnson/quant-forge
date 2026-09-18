@@ -1,8 +1,11 @@
 """QF-42 observations and QF-46 reach enter existing QF-8 selection/purge rules."""
 
+import pickle
+from copy import deepcopy
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import ClassVar, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,6 +27,62 @@ from tests.unit.walk_forward.timestamp_fixtures import (
     instant,
     timestamp_fixture,
 )
+
+
+class _CountedTimestamp(datetime):
+    comparisons: ClassVar[int] = 0
+
+    def __eq__(self, other: object) -> bool:
+        type(self).comparisons += 1
+        return super().__eq__(other)
+
+    __hash__ = datetime.__hash__
+
+
+def test_repeated_session_lookup_performs_linear_total_comparison_work(
+    tmp_path: Path,
+) -> None:
+    config, _ = timestamp_fixture(tmp_path)
+    membership = config.plan.prediction_membership
+    assert membership is not None
+    timestamps = tuple(
+        _CountedTimestamp.fromtimestamp(timestamp.timestamp(), UTC)
+        for timestamp in membership.schedule.decision_timestamps
+    )
+    _CountedTimestamp.comparisons = 0
+    assert tuple(membership.session_for(t) for t in timestamps) == (
+        membership.schedule.decision_sessions
+    )
+    # Count equality operations rather than measuring machine-dependent time.
+    # A per-decision scan of this schedule needs n*(n+1)/2 comparisons.
+    assert _CountedTimestamp.comparisons <= 2 * len(timestamps)
+
+
+def test_session_index_preserves_exact_keys_identity_and_copying(
+    tmp_path: Path,
+) -> None:
+    config, _ = timestamp_fixture(tmp_path)
+    membership = config.plan.prediction_membership
+    assert membership is not None
+    primitive = membership.to_primitive()
+    identity = membership.membership_id
+    timestamp = membership.schedule.decision_timestamps[0]
+    session = membership.schedule.decision_sessions[0]
+    copies = (membership, deepcopy(membership), pickle.loads(pickle.dumps(membership)))
+    for copied in copies:
+        assert copied == membership
+        assert hash(copied) == hash(membership)
+        assert copied.to_primitive() == primitive
+        assert copied.membership_id == identity
+        assert (
+            copied.session_for(timestamp.astimezone(ZoneInfo("America/New_York")))
+            == session
+        )
+        with pytest.raises(ValidationPlanError, match="outside the captured schedule"):
+            copied.session_for(timestamp + timedelta(microseconds=1))
+        index = copied._sessions_by_timestamp  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(TypeError):
+            cast(dict[datetime, date], index)[timestamp] = session
 
 
 def test_explicit_axis_and_legacy_serialization(tmp_path: Path) -> None:

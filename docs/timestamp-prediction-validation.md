@@ -24,6 +24,11 @@ Missing scheduled observations fail closed; observed bars never redefine or
 shorten the schedule. Each scheduled instant is a distinct observation even when
 many decisions share an exchange session.
 
+Capture also builds a read-only timestamp-to-session index, so resolving all
+retained decisions takes linear total lookup work. This derived index does not
+change serialized evidence or membership identity and is rebuilt on copy or
+deserialization through Python's object protocol.
+
 The schedule must cover the study windows and their primary warm-up. Plan
 construction requires every window endpoint in that schedule and enough preceding
 scheduled observations for each window's declared primary warm-up, including the

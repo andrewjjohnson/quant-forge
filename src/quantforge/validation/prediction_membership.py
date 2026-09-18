@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date, datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
@@ -26,6 +28,9 @@ class PredictionMembershipSource:
     schedule: PredictionDecisionSchedule
     source_reference: DatasetFamilyReference
     family_manifest_id: str
+    _sessions_by_timestamp: Mapping[datetime, date] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __init__(self) -> None:
         raise TypeError("prediction membership must be captured from a source")
@@ -49,7 +54,37 @@ class PredictionMembershipSource:
             instance, "family_manifest_id", source.dataset_family_manifest_id
         )
         instance.validate_source(source)
+        instance._index_sessions()
         return instance
+
+    def _index_sessions(self) -> None:
+        object.__setattr__(
+            self,
+            "_sessions_by_timestamp",
+            MappingProxyType(
+                dict(
+                    zip(
+                        self.schedule.decision_timestamps,
+                        self.schedule.decision_sessions,
+                        strict=True,
+                    )
+                )
+            ),
+        )
+
+    def __getstate__(
+        self,
+    ) -> tuple[PredictionDecisionSchedule, DatasetFamilyReference, str]:
+        """Copy/serialize canonical evidence; rebuild the derived read-only index."""
+        return self.schedule, self.source_reference, self.family_manifest_id
+
+    def __setstate__(
+        self, state: tuple[PredictionDecisionSchedule, DatasetFamilyReference, str]
+    ) -> None:
+        object.__setattr__(self, "schedule", state[0])
+        object.__setattr__(self, "source_reference", state[1])
+        object.__setattr__(self, "family_manifest_id", state[2])
+        self._index_sessions()
 
     def validate_source(self, source: TimeframeBarSeries) -> None:
         if (
@@ -82,11 +117,10 @@ class PredictionMembershipSource:
         return tuple(TimestampBoundary(t) for t in self.schedule.decision_timestamps)
 
     def session_for(self, timestamp: datetime) -> date:
+        """Resolve an exact decision in constant expected time without scanning."""
         try:
-            return self.schedule.decision_sessions[
-                self.schedule.decision_timestamps.index(timestamp)
-            ]
-        except ValueError as error:
+            return self._sessions_by_timestamp[timestamp]
+        except KeyError as error:
             raise ValidationPlanError(
                 "timestamp is outside the captured schedule"
             ) from error
