@@ -117,6 +117,11 @@ are checked against their original context timestamp. Timestamp-aware exports
 add a `decision_timestamp` identity column. Date-only exports keep their existing
 columns; original legacy labelers retain positive session horizons.
 
+Custom prediction records that serialize `decision_timestamp` must use canonical
+UTC `datetime.isoformat()` text with the `+00:00` offset. Equivalent non-UTC
+offsets and alternate ISO spellings are rejected before labeling; the runner does
+not rewrite a custom record's payload before hashing or persistence.
+
 ## Persistence and QF-40
 
 The opt-in membership source enters plan identity, frozen membership, validation

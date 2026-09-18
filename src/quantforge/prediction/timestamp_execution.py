@@ -1,6 +1,6 @@
 """Consume QF-46 requests in prediction execution; no outcome calculations."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from quantforge.configuration import PrimitiveMapping
 from quantforge.data import TimeframeBarSeries
@@ -26,6 +26,10 @@ def decision_timestamp(signal: PredictionRecord) -> datetime | None:
     result = datetime.fromisoformat(timestamp)
     if result.utcoffset() is None:
         raise InvalidPredictionConfigurationError("decision timestamp must be aware")
+    if timestamp != result.astimezone(UTC).isoformat():
+        raise InvalidPredictionConfigurationError(
+            "decision timestamp must use canonical UTC ISO serialization"
+        )
     return result
 
 
