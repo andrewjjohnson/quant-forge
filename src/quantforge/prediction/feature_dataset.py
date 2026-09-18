@@ -296,6 +296,41 @@ class _CandidatePopulationEvaluator:
         )
 
 
+def outcome_resolution_fields() -> tuple[SchemaField, ...]:
+    """Opt-in metadata columns matching OutcomeResolution.metadata_primitive().
+
+    All fields stay in the future-outcome namespace, including anchor metadata.
+    Existing schemas are unchanged. Timestamp candidate replay belongs to QF-48.
+    """
+    definitions = {
+        "anchor_kind": ("string", "policy", False),
+        "signal_session": ("date", "exchange_session", False),
+        "decision_timestamp": ("string", "UTC_timestamp", False),
+        "horizon_kind": ("string", "policy", False),
+        "elapsed_duration_microseconds": ("integer", "microseconds", False),
+        "outcome_configuration_id": ("string", "sha256", False),
+        "temporal_configuration_id": ("string", "sha256", False),
+        "requested_target_timestamp": ("string", "UTC_timestamp", False),
+        "expected_observation_timestamp": ("string", "UTC_timestamp", True),
+        "resolved_observation_timestamp": ("string", "UTC_timestamp", True),
+        "observation_id": ("string", "sha256", True),
+        "status": ("string", "availability", False),
+        "available": ("boolean", "availability", False),
+    }
+    return tuple(
+        SchemaField(
+            name,
+            SchemaFieldCategory.FUTURE_OUTCOME,
+            data_type,
+            unit,
+            nullable,
+            "QF-46 generic outcome observation resolution",
+            "future outcome metadata; unavailable is not a numeric zero",
+        )
+        for name, (data_type, unit, nullable) in sorted(definitions.items())
+    )
+
+
 class ConfiguredOutcome(Protocol):
     """Type-erased adapter around one typed QF-11 labeler/evaluator pair."""
 

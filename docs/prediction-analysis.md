@@ -49,6 +49,11 @@ daily close cannot also claim it purchased at that exact close.
 
 ## Generic study contracts
 
+QF-46 adds opt-in temporal requests, typed horizons, and endpoint resolution
+without changing the session engine described below. See
+[outcome temporal contracts](outcome-temporal-contracts.md) for exact anchors,
+legacy compatibility, and the QF-46 → QF-48 dependency boundary.
+
 The reusable contracts are:
 
 - `PredictionRule` and `PredictionRuleOutput`, which generate typed causal

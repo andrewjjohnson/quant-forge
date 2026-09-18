@@ -497,6 +497,18 @@ Provide `.env.example` with names and safe placeholders only.
 
 ## Pull-request readiness
 
+Run QF-46 anchor/horizon, endpoint-resolution, metadata, identity, QF-42 dispatch,
+and QF-9 integrity fixtures:
+
+```bash
+uv run pytest tests/unit/prediction/test_outcome_temporal.py \
+  tests/unit/prediction/test_outcome_resolution.py \
+  tests/unit/prediction/test_outcome_temporal_integration.py
+```
+
+See [`outcome-temporal-contracts.md`](outcome-temporal-contracts.md). These fixtures
+calculate no concrete intraday outcomes and implement no timestamp membership.
+
 Run QF-41 presentation-only study-family, warning, integrity, holdout-state,
 security and no-recomputation fixtures (including QF-34 compatibility):
 
