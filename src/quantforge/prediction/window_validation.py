@@ -1,6 +1,6 @@
 """Offline provenance checks for persisted historical prediction windows."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import cast
 
 from quantforge.configuration import (
@@ -10,6 +10,16 @@ from quantforge.configuration import (
     configuration_identity,
 )
 from quantforge.prediction.errors import InvalidPredictionOutputError
+from quantforge.prediction.outcome_resolution import (
+    OutcomeEvaluationRequest,
+    _target_boundaries,  # pyright: ignore[reportPrivateUsage]
+)  # pyright: ignore[reportPrivateUsage]
+from quantforge.prediction.outcome_temporal import (
+    ElapsedDurationHorizon,
+    OutcomeAnchor,
+    OutcomeTemporalConfiguration,
+    outcome_temporal_configuration,
+)
 from quantforge.prediction.window import (
     PredictionDecisionSchedule,
     _window_record_counts,  # pyright: ignore[reportPrivateUsage]
@@ -35,6 +45,16 @@ def _validate_generated_signals(
     warm_up = rule.get("warm_up_observations")
     if not isinstance(warm_up, int) or isinstance(warm_up, bool) or warm_up < 1:
         raise InvalidPredictionOutputError("prediction rule warm-up is invalid")
+    labeler = cast(PrimitiveMapping, configuration["outcome_labeler"])
+    elapsed = isinstance(
+        outcome_temporal_configuration(
+            cast(PrimitiveMapping, labeler["configuration"]),
+            required_future_sessions=cast(
+                int | None, labeler.get("required_future_sessions")
+            ),
+        ).horizon,
+        ElapsedDurationHorizon,
+    )
     sessions: list[str] = []
     for signal in signals:
         prediction = signal.get("prediction") if isinstance(signal, dict) else None
@@ -48,9 +68,9 @@ def _validate_generated_signals(
         session = prediction.get("signal_session")
         if (
             not isinstance(session, str)
-            or session not in session_indexes
+            or (not elapsed and session not in session_indexes)
             or session != decision_session
-            or session_indexes[session] + 1 < warm_up
+            or (not elapsed and session_indexes[session] + 1 < warm_up)
             or configuration_identity(
                 {
                     key: prediction.get(key)
@@ -86,14 +106,27 @@ def _validate_rows(
     signals: list[Primitive],
     configuration: PrimitiveMapping,
     session_indexes: dict[str, int],
+    timestamp: str,
 ) -> None:
     labeler = configuration.get("outcome_labeler")
-    horizon = (
-        labeler.get("required_future_sessions") if isinstance(labeler, dict) else None
+    if not isinstance(labeler, dict):
+        raise InvalidPredictionOutputError("missing outcome labeler")
+    horizon = labeler.get("required_future_sessions")
+    temporal = outcome_temporal_configuration(
+        cast(PrimitiveMapping, labeler["configuration"]),
+        required_future_sessions=cast(int | None, horizon),
     )
-    if not isinstance(horizon, int) or isinstance(horizon, bool) or horizon < 1:
+    elapsed = isinstance(temporal.horizon, ElapsedDurationHorizon)
+    if not elapsed and (type(horizon) is not int or horizon < 1):
         raise InvalidPredictionOutputError(
             "outcome horizon must be a positive session count"
+        )
+    if elapsed and (
+        "required_future_sessions" in labeler
+        or labeler.get("temporal_configuration") != temporal.to_primitive()
+    ):
+        raise InvalidPredictionOutputError(
+            "elapsed outcome wrapper differs from its temporal contract"
         )
     signal_outcome_indexes: dict[str, int] = {}
     for signal in signals:
@@ -104,7 +137,10 @@ def _validate_rows(
             raise InvalidPredictionOutputError("generated signals contain duplicates")
         prediction = cast(PrimitiveMapping, signal["prediction"])
         signal_outcome_indexes[signal_id] = (
-            session_indexes[cast(str, prediction["signal_session"])] + horizon
+            -1
+            if elapsed
+            else session_indexes[cast(str, prediction["signal_session"])]
+            + cast(int, horizon)
         )
 
     for row in rows:
@@ -130,7 +166,11 @@ def _validate_rows(
             )
         expected_outcome_index = signal_outcome_indexes.pop(signal_id)
         outcome_session = outcome.get("outcome_session")
-        if (
+        if elapsed:
+            _validate_timestamp_resolution(
+                outcome, prediction, labeler, temporal, timestamp
+            )
+        elif (
             not isinstance(outcome_session, str)
             or session_indexes.get(outcome_session) != expected_outcome_index
         ):
@@ -304,7 +344,7 @@ def _validate_decision(
         session_indexes=session_indexes,
         strategy_parameters=strategy_parameters,
     )
-    _validate_rows(rows, signals, configuration, session_indexes)
+    _validate_rows(rows, signals, configuration, session_indexes, timestamp)
     if configuration_identity(
         {"counts": manifest.get("record_counts")}
     ) != configuration_identity(
@@ -429,3 +469,75 @@ def validate_prediction_window_snapshot(
         {"window_id": window_id, "decisions": decisions}
     ) != manifest.get("window_result_id"):
         raise InvalidPredictionOutputError("window result identity is inconsistent")
+
+
+def _validate_timestamp_resolution(
+    outcome: PrimitiveMapping,
+    prediction: PrimitiveMapping,
+    labeler: PrimitiveMapping,
+    temporal: OutcomeTemporalConfiguration,
+    timestamp: str,
+) -> None:
+    resolution = outcome.get("temporal_resolution")
+    if not isinstance(resolution, dict) or not isinstance(
+        resolution.get("request"), dict
+    ):
+        raise InvalidPredictionOutputError(
+            "elapsed outcome lacks QF-46 resolution provenance"
+        )
+    request = cast(PrimitiveMapping, resolution["request"])
+    anchor = OutcomeAnchor.from_primitive(cast(PrimitiveMapping, request["anchor"]))
+    source = labeler.get("outcome_source")
+    if not isinstance(source, dict) or any(
+        (
+            anchor.decision_timestamp != datetime.fromisoformat(timestamp),
+            cast(PrimitiveMapping, prediction["values"]).get(
+                "decision_timestamp", timestamp
+            )
+            != timestamp,
+            anchor.signal_session.isoformat() != prediction["signal_session"],
+            outcome["outcome_session"] != prediction["signal_session"],
+            request.get("temporal_configuration") != temporal.to_primitive(),
+            request.get("outcome_configuration_id")
+            != outcome["outcome_configuration_id"],
+            request.get("dataset_id") != outcome["dataset_id"],
+            request.get("dataset_fingerprint") != outcome["dataset_fingerprint"],
+            request.get("source_reference") != source.get("source_reference"),
+        )
+    ):
+        raise InvalidPredictionOutputError(
+            "elapsed outcome request differs from its exact decision/source"
+        )
+    typed = OutcomeEvaluationRequest(
+        anchor,
+        temporal,
+        str(request["outcome_configuration_id"]),
+        str(request["dataset_id"]),
+        str(request["dataset_fingerprint"]),
+    )
+    target, expected = _target_boundaries(typed)
+    available = resolution.get("available")
+    status = resolution.get("status")
+    if (
+        resolution.get("requested_target_timestamp") != target.isoformat()
+        or resolution.get("expected_observation_timestamp")
+        != (None if expected is None else expected.isoformat())
+        or type(available) is not bool
+        or available != (status == "available")
+        or (expected is None) != (status == "session_overflow")
+        or status
+        not in {
+            "available",
+            "session_overflow",
+            "missing_required_observation",
+            "incomplete_future_data",
+            "dataset_end",
+        }
+        or resolution.get("resolved_observation_timestamp")
+        != (expected.isoformat() if available and expected is not None else None)
+        or (available and not isinstance(resolution.get("observation_id"), str))
+        or (not available and resolution.get("observation_id") is not None)
+    ):
+        raise InvalidPredictionOutputError(
+            "elapsed outcome resolution contradicts QF-46 boundaries/availability"
+        )

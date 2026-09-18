@@ -85,6 +85,7 @@ from quantforge.prediction.contracts import (
     PredictionStudy,
     PredictionValues,
     RequestOutcomeLabeler,
+    TimestampStudyOutcomeLabeler,
     evaluate_outcome_request,
 )
 from quantforge.prediction.errors import (
@@ -543,6 +544,7 @@ __all__ = [
     "TechnicalConfluenceParameters",
     "TechnicalConfluencePredictionRule",
     "ThresholdSensitivitySummary",
+    "TimestampStudyOutcomeLabeler",
     "TrendDistanceContext",
     "VolumeRatioContext",
     "WeekdaySummary",

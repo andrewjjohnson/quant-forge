@@ -75,6 +75,11 @@ def validation_lineage(definition: PrimitiveMapping) -> PrimitiveMappingSnapshot
             "version": "1",
             "environment": plan["environment"],
             "purge_policy": plan["purge_policy"],
+            **(
+                {"prediction_membership": plan["prediction_membership"]}
+                if "prediction_membership" in plan
+                else {}
+            ),
             "training_window_mode": plan["training_window_mode"],
             "windows": windows,
             "holdout": {
@@ -145,7 +150,11 @@ def _selection(
             or purge["fold_id"] != plan.folds[index].fold_id
             or purge["protected_window_id"] != protected.window_id
             or member["source_dataset_id"]
-            not in plan.environment.outcome_dataset.dataset_ids
+            not in (
+                (plan.prediction_membership.source_reference.dataset_id,)
+                if plan.prediction_membership is not None
+                else plan.environment.outcome_dataset.dataset_ids
+            )
             or purge["source_dataset_id"] != member["source_dataset_id"]
         ):
             raise OOSIntegrityError("incompatible partition membership provenance")
@@ -155,6 +164,24 @@ def _selection(
             raise OOSIntegrityError(
                 "evaluation sessions differ from retained membership"
             )
+        timestamp_source = plan.prediction_membership
+        if timestamp_source is not None:
+            if (
+                part.get("prediction_membership") != timestamp_source.to_primitive()
+                or part.get("evaluation_timestamps")
+                != [key.get("timestamp") for key in retained]
+                or [text(key["timestamp"]) for key in retained]
+                != sorted({text(key["timestamp"]) for key in retained})
+                or member["source_timeframe_configuration_id"]
+                != timestamp_source.schedule.primary_timeframe.configuration_id
+                or member["source_family_manifest_id"]
+                != timestamp_source.family_manifest_id
+                or purge["source_timeframe_configuration_id"]
+                != member["source_timeframe_configuration_id"]
+            ):
+                raise OOSIntegrityError("incompatible timestamp membership lineage")
+        elif "prediction_membership" in part or "evaluation_timestamps" in part:
+            raise OOSIntegrityError("unexpected timestamp membership on session plan")
         sessions: list[str] = []
         for key, declared_session in zip(retained, declared_sessions, strict=True):
             boundary = (
@@ -171,6 +198,15 @@ def _selection(
                 raise OOSIntegrityError("retained observations escape their window")
             if isinstance(boundary, ExchangeSessionBoundary):
                 sessions.append(boundary.session_date.isoformat())
+            elif timestamp_source is not None:
+                if (
+                    timestamp_source.session_for(boundary.timestamp).isoformat()
+                    != declared_session
+                ):
+                    raise OOSIntegrityError(
+                        "timestamp differs from captured QF-42 schedule"
+                    )
+                sessions.append(declared_session)
             else:
                 timeframe = plan.environment.outcome_dataset.standalone_timeframe
                 assert timeframe is not None
@@ -187,7 +223,8 @@ def _selection(
                 sessions.append(declared_session)
         if (
             not sessions
-            or sessions != sorted(set(sessions))
+            or sessions
+            != sorted(sessions if timestamp_source is not None else set(sessions))
             or sessions != part["evaluation_sessions"]
         ):
             raise OOSIntegrityError(
@@ -236,8 +273,16 @@ def _validate_prediction(
     sessions = [date.fromisoformat(text(s)) for s in texts(part["evaluation_sessions"])]
     schedule = PredictionDecisionSchedule(
         primary,
-        resolve_exchange_session(sessions[0], primary.session_policy).open_timestamp,
-        resolve_exchange_session(sessions[-1], primary.session_policy).close_timestamp,
+        datetime.fromisoformat(texts(part["evaluation_timestamps"])[0])
+        if plan.prediction_membership is not None
+        else resolve_exchange_session(
+            sessions[0], primary.session_policy
+        ).open_timestamp,
+        datetime.fromisoformat(texts(part["evaluation_timestamps"])[-1])
+        if plan.prediction_membership is not None
+        else resolve_exchange_session(
+            sessions[-1], primary.session_policy
+        ).close_timestamp,
     )
     market = mapping(manifest["market_data"])
     if (
@@ -280,14 +325,28 @@ def _validate_prediction(
         else plan.final_holdout.window
     )
     # A test result must never include an outcome in the next protected window.
-    assert isinstance(protected.interval.start, ExchangeSessionBoundary)
     for decision in records(payload["decisions"]):
         for row in records(mapping(decision["prediction_study"])["rows"]):
-            if (
-                date.fromisoformat(text(mapping(row["outcome"])["outcome_session"]))
-                >= protected.interval.start.session_date
-            ):
-                raise OOSIntegrityError("test outcome reaches a protected window")
+            if plan.prediction_membership is not None:
+                assert isinstance(protected.interval.start, TimestampBoundary)
+                reach = plan.purge_policy.label_horizon.elapsed
+                embargo = plan.purge_policy.embargo.elapsed
+                assert reach is not None
+                assert embargo is not None
+                if (
+                    datetime.fromisoformat(text(decision["decision_timestamp"]))
+                    + reach
+                    + embargo
+                    >= protected.interval.start.timestamp
+                ):
+                    raise OOSIntegrityError("test outcome reaches a protected window")
+            else:
+                assert isinstance(protected.interval.start, ExchangeSessionBoundary)
+                if (
+                    date.fromisoformat(text(mapping(row["outcome"])["outcome_session"]))
+                    >= protected.interval.start.session_date
+                ):
+                    raise OOSIntegrityError("test outcome reaches a protected window")
 
 
 def _validate_backtest(

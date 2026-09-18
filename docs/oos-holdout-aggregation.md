@@ -1,5 +1,9 @@
 # OOS aggregation and final holdout consumption
 
+QF-48 adds explicit exact-timestamp prediction membership and elapsed request
+execution. See [timestamp prediction validation](timestamp-prediction-validation.md)
+for the opt-in source, replay anchors, persistence, and holdout compatibility.
+
 QF-40 adds `quantforge.oos`. It reads QF-39's immutable **test-window** artifacts,
 summarizes their existing results, and separately manages explicit final-holdout
 consumption. It does not run walk-forward selection, grids, indicator generation,

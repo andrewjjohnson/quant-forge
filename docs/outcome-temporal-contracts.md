@@ -34,12 +34,11 @@ before dispatch. `RequestOutcomeLabeler` is the opt-in protocol for future
 request consumers. Exact-anchor requests cannot fall back to date-based labelers.
 Dataset validation and fixing causal predictions remain the caller's job.
 
-This contract is deliberately separate from activating timestamp execution in
-existing consumers. `PredictionStudy`, QF-7 fixed-candidate replay, QF-8
-membership, and QF-39/QF-40 execution retain their positive session-count
-requirements. QF-48 will integrate timestamp membership and replay; it must
-not use zero sessions as a duration proxy. The richer dispatcher can already
-be exercised independently by a request-aware consumer without intraday math.
+QF-48 now integrates explicit timestamp membership and fixed-candidate replay.
+`TimestampStudyOutcomeLabeler` adds a runner-bounded canonical source to request
+execution; it reuses these temporal contracts. Legacy session paths retain their
+positive session counts, and elapsed paths omit the count rather than setting
+it to zero. See [timestamp prediction validation](timestamp-prediction-validation.md).
 
 ## Typed horizons and material identity
 
@@ -157,8 +156,8 @@ wrappers still require a positive matching session count. Elapsed wrappers must
 omit `required_future_sessions`; zero, null, conflicting legacy counts, malformed
 horizons, unsupported policies, and mismatched timeframes are rejected. Market
 field and schema checks are preserved. QF-9 does not perform temporal membership,
-endpoint research, or intraday arithmetic. Row-level timestamp execution and
-validation remain downstream integration work.
+endpoint research, or intraday arithmetic. QF-48 supplies row-level timestamp execution and validation through the explicit
+membership source.
 
 QF-39/QF-40 provenance already retains immutable component snapshots and hashes;
 no execution changes are needed here. Changing material configuration creates a

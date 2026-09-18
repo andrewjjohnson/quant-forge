@@ -48,6 +48,7 @@ from quantforge.validation import (
     ResearchRuleProvenance,
     ResearchStudyType,
     TimestampBoundary,
+    TimestampOutcomeComponent,
     ValidationPlan,
     select_prediction_context_observations,
 )
@@ -137,7 +138,7 @@ def _logical_definition(
 
 
 class PredictionEvaluator:
-    """Session membership/outcomes from QF-8; intraday decisions from QF-42."""
+    """QF-8 session or explicit timestamp membership; QF-42 decisions."""
 
     def __init__(
         self,
@@ -305,13 +306,34 @@ class PredictionEvaluator:
             raise WalkForwardError(
                 "context family manifest differs from the validation plan"
             )
+        if plan.prediction_membership is not None:
+            primary = next(
+                s for s in self.series if s.timeframe == self.primary_timeframe
+            )
+            plan.prediction_membership.validate_source(primary)
         validate_fixed_backends(plan)
         for candidate in self.universe.candidates:
             study = self.factory.build(candidate.parameters.to_primitive())
             validate_rule(
                 plan, ResearchRuleProvenance.capture_prediction(study.strategy)
             )
-            outcome = OutcomeProvenance.capture_exchange_sessions(study.outcome_labeler)
+            if plan.prediction_membership is None:
+                from quantforge.validation import SessionOutcomeComponent
+
+                outcome = OutcomeProvenance.capture_exchange_sessions(
+                    cast(SessionOutcomeComponent, study.outcome_labeler)
+                )
+            else:
+                outcome = OutcomeProvenance.capture_timestamp(
+                    cast(TimestampOutcomeComponent, study.outcome_labeler)
+                )
+                if study.outcome_source is None or not any(
+                    study.outcome_source == source for source in self.series
+                ):
+                    raise WalkForwardError(
+                        "timestamp outcome source must match a selected "
+                        "canonical artifact"
+                    )
             if outcome not in plan.environment.outcomes:
                 raise WalkForwardError(
                     "candidate outcome is outside the declared universe"
@@ -353,6 +375,19 @@ class PredictionEvaluator:
         )
 
     def _schedule(self, permitted: EvaluationPartition) -> PredictionDecisionSchedule:
+        timestamps = permitted.to_primitive().get("evaluation_timestamps")
+        if timestamps is not None:
+            values = cast(list[str], timestamps)
+            schedule = PredictionDecisionSchedule(
+                self.primary_timeframe,
+                datetime.fromisoformat(values[0]),
+                datetime.fromisoformat(values[-1]),
+            )
+            if [t.isoformat() for t in schedule.decision_timestamps] != values:
+                raise WalkForwardError(
+                    "QF-42 schedule differs from retained QF-8 membership"
+                )
+            return schedule
         policy = self.primary_timeframe.session_policy
         schedule = PredictionDecisionSchedule(
             self.primary_timeframe,

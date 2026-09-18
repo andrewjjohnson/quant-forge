@@ -1,4 +1,4 @@
-"""Plan-bound, timestamp-preserving feature context for session-outcome studies."""
+"""Plan-bound, timestamp-preserving feature context for prediction studies."""
 
 from dataclasses import dataclass
 from typing import cast
@@ -83,21 +83,21 @@ def select_prediction_context_observations(
     source: TimeframeBarSeries,
     as_of: TimestampBoundary,
 ) -> PredictionContextObservationSelection:
-    """Select completed context bars for one decision in a session window.
+    """Select completed context bars for one decision in a declared window.
 
-    Study membership/purging stays on the separate daily prediction dataset.
+    Study membership/purging uses the plan's separate observation source.
     Source keys remain UTC bar ends. Only bars completed by as_of are exposed;
-    context before the first session open stays structurally separate. When no
+    preceding context stays structurally separate. When no
     source bar has completed in the window (e.g. weekly context on Tuesday), an
     extra preceding anchor supplies the current indicator input. This is not a
     context provider: QF-20/QF-28 still enforce decision alignment and staleness.
     """
-    if (
-        plan.environment.prediction_dataset is None
-        or plan.axis is not BoundaryAxis.EXCHANGE_SESSION
+    if plan.environment.prediction_dataset is None or (
+        plan.axis is not BoundaryAxis.EXCHANGE_SESSION
+        and plan.prediction_membership is None
     ):
         raise ValidationPlanError(
-            "prediction context selection requires a dual-input session plan"
+            "prediction context selection requires a dual-input prediction plan"
         )
     windows = (
         *(
@@ -120,30 +120,42 @@ def select_prediction_context_observations(
         )
     if not isinstance(cast(object, as_of), TimestampBoundary):
         raise ValidationPlanError("context as_of must be a timestamp boundary")
-    start = cast(ExchangeSessionBoundary, window.interval.start)
-    end = cast(ExchangeSessionBoundary, window.interval.end)
-    decision_session = as_of.timestamp.astimezone(
-        ZoneInfo(start.session_policy.timezone_name)
-    ).date()
-    decision = ExchangeSessionBoundary(decision_session, start.session_policy)
-    if not window.interval.contains(decision):
-        raise ValidationPlanError("context decision must belong to the session window")
-    metadata = plan.environment.prediction_dataset.market_data_metadata
-    assert metadata is not None
-    if (
-        not metadata.actual_first_session
-        <= decision_session
-        <= metadata.actual_last_session
-        or decision_session in metadata.missing_sessions
-    ):
-        raise ValidationPlanError(
-            "context decision must be observed in the prediction dataset"
-        )
-    session = resolve_exchange_session(decision_session, start.session_policy)
-    if not session.open_timestamp <= as_of.timestamp <= session.close_timestamp:
-        raise ValidationPlanError(
-            "context decision must lie within the exchange session"
-        )
+    if plan.prediction_membership is not None:
+        if not window.interval.contains(as_of):
+            raise ValidationPlanError(
+                "context decision must belong to the timestamp window"
+            )
+        plan.prediction_membership.session_for(as_of.timestamp)
+        start_timestamp = cast(TimestampBoundary, window.interval.start).timestamp
+    else:
+        start = cast(ExchangeSessionBoundary, window.interval.start)
+        decision_session = as_of.timestamp.astimezone(
+            ZoneInfo(start.session_policy.timezone_name)
+        ).date()
+        decision = ExchangeSessionBoundary(decision_session, start.session_policy)
+        if not window.interval.contains(decision):
+            raise ValidationPlanError(
+                "context decision must belong to the session window"
+            )
+        metadata = plan.environment.prediction_dataset.market_data_metadata
+        assert metadata is not None
+        if (
+            not metadata.actual_first_session
+            <= decision_session
+            <= metadata.actual_last_session
+            or decision_session in metadata.missing_sessions
+        ):
+            raise ValidationPlanError(
+                "context decision must be observed in the prediction dataset"
+            )
+        session = resolve_exchange_session(decision_session, start.session_policy)
+        if not session.open_timestamp <= as_of.timestamp <= session.close_timestamp:
+            raise ValidationPlanError(
+                "context decision must lie within the exchange session"
+            )
+        start_timestamp = resolve_exchange_session(
+            start.session_date, start.session_policy
+        ).open_timestamp
     keys = tuple(TimestampBoundary(bar.end_timestamp) for bar in source.bars)
     dataset_id, timeframe, manifest_id = validate_source_observations(
         keys, as_of, source
@@ -156,11 +168,6 @@ def select_prediction_context_observations(
         raise ValidationPlanError(
             "context source needs an explicit timeframe warm-up count"
         )
-    start_timestamp = resolve_exchange_session(
-        start.session_date, start.session_policy
-    ).open_timestamp
-    # End is already validated as part of the plan; no synthetic daily/weekly keys.
-    assert decision.session_date <= end.session_date
     history = tuple(key for key in keys if key.timestamp < start_timestamp)
     visible = tuple(
         key for key in keys if start_timestamp <= key.timestamp <= as_of.timestamp

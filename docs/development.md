@@ -615,6 +615,18 @@ When two runs differ unexpectedly, compare:
 
 Do not “fix” discrepancies by rounding or dropping rows without identifying the cause.
 
+## Timestamp prediction acceptance tests (QF-48)
+
+```bash
+uv run --frozen pytest tests/unit/validation/test_timestamp_prediction_membership.py \
+  tests/unit/walk_forward/test_timestamp_membership.py \
+  tests/unit/prediction/test_timestamp_replay.py
+```
+
+These fixtures execute metadata-only elapsed labels through the real QF-8/QF-39
+and QF-40 paths, preserve replay anchors, and reject incompatible resume artifacts.
+See [timestamp prediction validation](timestamp-prediction-validation.md).
+
 ## Walk-forward acceptance tests (QF-39)
 
 Run the deterministic two-fold prediction/backtest fixtures, exact QF-8

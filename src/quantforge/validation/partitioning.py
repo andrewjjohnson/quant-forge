@@ -21,6 +21,7 @@ from quantforge.validation.models import (
     boundaries_share_semantics,
     boundary_value,
 )
+from quantforge.validation.prediction_membership import PredictionMembershipSource
 
 
 def _validate_observations(
@@ -84,7 +85,7 @@ def _validate_result_chronology(
 def validate_source_observations(
     observations: tuple[ValidationBoundary, ...],
     reference: ValidationBoundary,
-    source: MarketDataset | TimeframeBarSeries,
+    source: MarketDataset | TimeframeBarSeries | PredictionMembershipSource,
     *,
     plan: ValidationPlan | None = None,
 ) -> tuple[str, Timeframe, str | None]:
@@ -93,12 +94,24 @@ def validate_source_observations(
     source_value = cast(object, source)
     keys: tuple[ValidationBoundary, ...]
     manifest_id: str | None = None
-    if isinstance(source_value, MarketDataset):
+    if isinstance(source_value, PredictionMembershipSource):
+        if reference.axis is not BoundaryAxis.TIMESTAMP or (
+            plan is not None and source_value != plan.prediction_membership
+        ):
+            raise ValidationPlanError("schedule membership does not match the plan")
+        keys = source_value.observations
+        timeframe = source_value.schedule.primary_timeframe
+        dataset_id = source_value.source_reference.dataset_id
+        manifest_id = source_value.family_manifest_id
+    elif isinstance(source_value, MarketDataset):
         provenance = DatasetProvenance.from_market_dataset(source_value)
         assert provenance.standalone_timeframe is not None
         timeframe = provenance.standalone_timeframe
         dataset_id = source_value.metadata.dataset_id
-        if plan is not None and provenance != plan.environment.outcome_dataset:
+        if plan is not None and (
+            plan.prediction_membership is not None
+            or provenance != plan.environment.outcome_dataset
+        ):
             raise ValidationPlanError("observation source does not match plan dataset")
         if reference.axis is BoundaryAxis.EXCHANGE_SESSION:
             keys = tuple(
@@ -149,7 +162,15 @@ def validate_source_observations(
         raise ValidationPlanError(
             "observations require a validated dataset or timeframe series"
         )
-    if plan is not None:
+    if (
+        plan is not None
+        and plan.prediction_membership is not None
+        and not isinstance(source_value, PredictionMembershipSource)
+    ):
+        raise ValidationPlanError(
+            "timestamp prediction membership requires its QF-42 schedule source"
+        )
+    if plan is not None and plan.prediction_membership is None:
         outcome_timeframe = plan.environment.outcome_dataset.standalone_timeframe
         rule_timeframe_id = (
             outcome_timeframe.configuration_id
@@ -224,7 +245,7 @@ def purge_development_observations(
     fold_index: int,
     observations: tuple[ValidationBoundary, ...],
     *,
-    source: MarketDataset | TimeframeBarSeries,
+    source: MarketDataset | TimeframeBarSeries | PredictionMembershipSource,
 ) -> PurgedPartitionObservations:
     """Purge a prefix of the plan-bound source artifact's completed observations."""
     return purge_partition_observations(
@@ -242,7 +263,7 @@ def purge_partition_observations(
     source_role: PartitionRole,
     observations: tuple[ValidationBoundary, ...],
     *,
-    source: MarketDataset | TimeframeBarSeries,
+    source: MarketDataset | TimeframeBarSeries | PredictionMembershipSource,
 ) -> PurgedPartitionObservations:
     """Purge one partition using keys verified against the plan-bound source.
 
@@ -434,7 +455,7 @@ def select_window_observations(
     window: ValidationWindow,
     observations: tuple[ValidationBoundary, ...],
     *,
-    source: MarketDataset | TimeframeBarSeries,
+    source: MarketDataset | TimeframeBarSeries | PredictionMembershipSource,
     source_timeframe: Timeframe | None = None,
 ) -> WindowObservationSelection:
     """Select preceding context and membership from a verified artifact prefix.

@@ -48,6 +48,7 @@ from quantforge.validation.partitioning import (
     purge_partition_observations,
     select_window_observations,
 )
+from quantforge.validation.prediction_membership import PredictionMembershipSource
 from quantforge.validation.serialization import (
     serialize_validation_plan,
     validate_validation_plan_manifest,
@@ -70,6 +71,7 @@ __all__ = [
     "OutcomeProvenance",
     "PartitionRole",
     "PredictionContextObservationSelection",
+    "PredictionMembershipSource",
     "PurgePolicy",
     "PurgedPartitionObservations",
     "ResearchEnvironment",

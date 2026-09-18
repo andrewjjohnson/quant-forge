@@ -1,7 +1,7 @@
 """QF-40 boundary adapter; execution stays in QF-42/QF-43 and QF-11/QF-5."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import cast
 
@@ -11,6 +11,7 @@ from quantforge.oos._records import OOSIntegrityError, mapping
 from quantforge.oos.common import provenance
 from quantforge.oos.models import OOSSource
 from quantforge.validation import (
+    PredictionMembershipSource,
     TimestampBoundary,
     ValidationWindow,
     WindowObservationSelection,
@@ -20,6 +21,7 @@ from quantforge.walk_forward import BacktestEvaluator, PredictionEvaluator
 from quantforge.walk_forward.models import FrozenSelection, OOSArtifact
 from quantforge.walk_forward.partitions import (
     observation_keys,
+    prediction_metadata_prefix,
     project_dataset,
 )
 
@@ -32,9 +34,11 @@ class HoldoutPartition:
     membership: WindowObservationSelection
     dataset: MarketDataset
     sessions: tuple[date, ...]
+    decision_timestamps: tuple[datetime, ...] = ()
+    prediction_membership: PredictionMembershipSource | None = None
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "window": self.window.to_primitive(),
             "membership": self.membership.to_primitive(),
             "purge": None,
@@ -42,6 +46,14 @@ class HoldoutPartition:
             "bounded_dataset_id": self.dataset.metadata.dataset_id,
             "bounded_data_sha256": self.dataset.metadata.data_sha256,
         }
+        if self.prediction_membership is not None:
+            primitive["prediction_membership"] = (
+                self.prediction_membership.to_primitive()
+            )
+            primitive["evaluation_timestamps"] = [
+                t.isoformat() for t in self.decision_timestamps
+            ]
+        return primitive
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,8 +93,12 @@ class HoldoutEvaluation:
         member = select_window_observations(
             window,
             keys,
-            source=dataset,
-            source_timeframe=plan.environment.outcome_dataset.standalone_timeframe,
+            source=plan.prediction_membership or dataset,
+            source_timeframe=(
+                plan.prediction_membership.schedule.primary_timeframe
+                if plan.prediction_membership is not None
+                else plan.environment.outcome_dataset.standalone_timeframe
+            ),
         )
         # All outcomes must end INSIDE the reserved interval. Its final horizon
         # supplies labels only and cannot create decisions needing unseen data.
@@ -116,6 +132,19 @@ class HoldoutEvaluation:
                 f"holdout has {len(retained)} observations after excluding the outcome "
                 f"horizon; minimum_test_observations requires {minimum}"
             )
+        if plan.prediction_membership is not None:
+            timestamps = tuple(
+                cast(TimestampBoundary, key).timestamp for key in retained
+            )
+            permitted = HoldoutPartition(
+                window,
+                member,
+                prediction_metadata_prefix(dataset, timestamps[0]),
+                tuple(plan.prediction_membership.session_for(t) for t in timestamps),
+                timestamps,
+                plan.prediction_membership,
+            )
+            return cls(source, evaluator, fold.selection, permitted, adapter)
         start_key = (member.warm_up_context or retained)[0]
         start = keys.index(start_key)
         end = keys.index(member.study_observations[-1])

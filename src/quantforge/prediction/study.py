@@ -1,7 +1,7 @@
 """Generic orchestration for causal prediction, outcome, and evaluation stages."""
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import cast
 
@@ -50,9 +50,15 @@ from quantforge.prediction.errors import (
 from quantforge.prediction.models import PredictionMarketData
 from quantforge.prediction.outcome_resolution import OutcomeEvaluationRequest
 from quantforge.prediction.outcome_temporal import (
+    ElapsedDurationHorizon,
+    ExchangeSessionHorizon,
     OutcomeAnchor,
-    OutcomeAnchorKind,
     outcome_temporal_configuration,
+)
+from quantforge.prediction.timestamp_execution import (
+    bounded_outcome_source,
+    decision_timestamp,
+    source_provenance,
 )
 
 STUDY_ENGINE_VERSION = "12"
@@ -97,7 +103,7 @@ class PredictionStudyConfiguration:
     outcome_configuration_id: str
     outcome_configuration_snapshot: PrimitiveMappingSnapshot
     outcome_result_schema_version: str
-    required_future_sessions: int
+    required_future_sessions: int | None
     required_market_fields: tuple[str, ...]
     evaluator_name: str
     evaluator_implementation_version: str
@@ -107,6 +113,7 @@ class PredictionStudyConfiguration:
     feature_configuration_snapshot: PrimitiveMappingSnapshot
     result_schema_version: str
     context_requirements_snapshot: PrimitiveMappingSnapshot | None = None
+    outcome_source_snapshot: PrimitiveMappingSnapshot | None = None
 
     def to_primitive(self) -> PrimitiveMapping:
         primitive: PrimitiveMapping = {
@@ -147,6 +154,11 @@ class PredictionStudyConfiguration:
         if "temporal_configuration" in definition:
             labeler = cast(PrimitiveMapping, primitive["outcome_labeler"])
             labeler["temporal_configuration"] = definition["temporal_configuration"]
+        labeler = cast(PrimitiveMapping, primitive["outcome_labeler"])
+        if self.required_future_sessions is None:
+            labeler.pop("required_future_sessions")
+        if self.outcome_source_snapshot is not None:
+            labeler["outcome_source"] = self.outcome_source_snapshot.to_primitive()
         return primitive
 
 
@@ -310,6 +322,11 @@ def run_prediction_study_in_session(
     _validate_unchanged_dataset(prepared.source_dataset, dataset_snapshot)
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     configuration = _capture_study_configuration(study)
+    temporal = outcome_temporal_configuration(
+        configuration.outcome_configuration_snapshot.to_primitive(),
+        required_future_sessions=configuration.required_future_sessions,
+    )
+    timestamp_outcomes = isinstance(temporal.horizon, ElapsedDurationHorizon)
     market_data = prepared.market_data
     rule_context, prediction_context_snapshot = _prepare_prediction_context(
         study.strategy,
@@ -352,6 +369,25 @@ def run_prediction_study_in_session(
             rule_context_snapshot,
         )
     generated_signals = tuple(output.signals)
+    if rule_context is not None and timestamp_outcomes:
+        from quantforge.prediction.signal_feature_models import SignalFeatureCandidate
+
+        captured: list[PredictionRecordT] = []
+        for signal in generated_signals:
+            if isinstance(signal, SignalFeatureCandidate):
+                if (
+                    signal.decision_timestamp is not None
+                    and signal.decision_timestamp != rule_context.as_of
+                ):
+                    raise InvalidPredictionOutputError(
+                        "candidate anchor differs from its original decision"
+                    )
+                signal = cast(
+                    PredictionRecordT,
+                    replace(signal, decision_timestamp=rule_context.as_of),
+                )
+            captured.append(signal)
+        generated_signals = tuple(captured)
     _validate_unchanged_dataset(component_dataset, dataset_snapshot)
     _validate_unchanged_component(
         "prediction strategy",
@@ -377,6 +413,7 @@ def run_prediction_study_in_session(
         context_decision_session=(
             None if rule_context is None else rule_context.decision_session
         ),
+        timestamp_outcomes=timestamp_outcomes,
     )
     _validate_signal_snapshots(generated_signals, signal_snapshots)
 
@@ -414,25 +451,63 @@ def run_prediction_study_in_session(
             signal_snapshot,
         )
         expected_outcome_index = (
-            bar_indexes[signal.signal_session] + configuration.required_future_sessions
+            None
+            if configuration.required_future_sessions is None
+            else bar_indexes[signal.signal_session]
+            + configuration.required_future_sessions
         )
+        original_timestamp = decision_timestamp(signal)
+        if rule_context is not None:
+            if (
+                original_timestamp is not None
+                and original_timestamp != rule_context.as_of
+            ):
+                raise InvalidPredictionOutputError(
+                    "prediction anchor differs from original context"
+                )
+            original_timestamp = rule_context.as_of
         request = OutcomeEvaluationRequest(
             OutcomeAnchor(
-                OutcomeAnchorKind.SESSION,
-                signal.signal_session,
-                None if rule_context is None else rule_context.as_of,
+                temporal.anchor_kind, signal.signal_session, original_timestamp
             ),
-            outcome_temporal_configuration(
-                configuration.outcome_configuration_snapshot.to_primitive(),
-                required_future_sessions=configuration.required_future_sessions,
-            ),
+            temporal,
             configuration.outcome_configuration_id,
             market_data.dataset_id,
             market_data.bars_fingerprint,
+            None
+            if study.outcome_source is None
+            else study.outcome_source.dataset_reference,
         )
+        resolution_snapshot = None
+        component_source = None
+        pristine_source = None
+        if timestamp_outcomes:
+            assert study.outcome_source is not None
+            if rule_context is not None and (
+                study.outcome_source.dataset_reference.family_id
+                != cast(
+                    PrimitiveMapping,
+                    rule_context.source_context_snapshot.to_primitive()[
+                        "source_consistency"
+                    ],
+                )["family_id"]
+            ):
+                raise InvalidPredictionOutputError(
+                    "outcome source and prediction context families differ"
+                )
+            bounded, resolution = bounded_outcome_source(study.outcome_source, request)
+            pristine_source = deepcopy(bounded)
+            component_source = deepcopy(bounded)
+            resolution_snapshot = PrimitiveMappingSnapshot.capture(
+                resolution.to_primitive()
+            )
         label = evaluate_outcome_request(
-            study.outcome_labeler, component_dataset, request
+            study.outcome_labeler, component_dataset, request, source=component_source
         )
+        if component_source != pristine_source:
+            raise InvalidPredictionOutputError(
+                "outcome labeler mutated its bounded source"
+            )
         _validate_unchanged_component(
             "outcome labeler",
             study.outcome_labeler.configuration(),
@@ -445,30 +520,46 @@ def run_prediction_study_in_session(
             signal_snapshot,
         )
         if label is None:
-            if expected_outcome_index < len(component_dataset.bars):
+            if timestamp_outcomes:
+                raise InvalidPredictionOutputError(
+                    "elapsed outcomes require an explicit availability row"
+                )
+            if expected_outcome_index is not None and expected_outcome_index < len(
+                component_dataset.bars
+            ):
                 raise InvalidPredictionOutputError(
                     "outcome labeler returned no label although its declared future "
                     "session is available"
                 )
             unavailable_outcome_count += 1
             continue
-        if (
-            label.signal_session != signal.signal_session
-            or label.outcome_session <= signal.signal_session
-            or label.outcome_session not in available_sessions
-        ):
-            raise InvalidPredictionOutputError(
-                "outcome labels require matching signal and later dataset sessions"
-            )
-        if (
-            expected_outcome_index >= len(component_dataset.bars)
-            or label.outcome_session
-            != component_dataset.bars[expected_outcome_index].session_date
-        ):
-            raise InvalidPredictionOutputError(
-                "outcome label session does not match its declared future-session "
-                "horizon"
-            )
+        if timestamp_outcomes:
+            if (
+                label.signal_session != signal.signal_session
+                or label.outcome_session != signal.signal_session
+            ):
+                raise InvalidPredictionOutputError(
+                    "same-session elapsed outcome must retain its signal session"
+                )
+        else:
+            assert expected_outcome_index is not None
+            if (
+                label.signal_session != signal.signal_session
+                or label.outcome_session <= signal.signal_session
+                or label.outcome_session not in available_sessions
+            ):
+                raise InvalidPredictionOutputError(
+                    "outcome labels require matching signal and later dataset sessions"
+                )
+            if (
+                expected_outcome_index >= len(component_dataset.bars)
+                or label.outcome_session
+                != component_dataset.bars[expected_outcome_index].session_date
+            ):
+                raise InvalidPredictionOutputError(
+                    "outcome label session does not match its declared future-session "
+                    "horizon"
+                )
         outcome_values_snapshot = _capture_values_snapshot(
             "prediction outcome values", label.values.to_primitive()
         )
@@ -479,6 +570,7 @@ def run_prediction_study_in_session(
             label.outcome_session,
             label.values,
             outcome_values_snapshot,
+            resolution_snapshot,
         )
         outcome_snapshot = _capture_values_snapshot(
             "prediction outcome",
@@ -548,6 +640,7 @@ def run_prediction_study_in_session(
             outcome.signal_session,
             outcome.outcome_session,
             _detached_copy("prediction outcome values", outcome.values),
+            outcome.temporal_resolution,
         )
         detached_evaluation = PredictionEvaluation(
             evaluation.evaluation_id,
@@ -688,16 +781,34 @@ def _capture_study_configuration(
         study.evaluator.configuration_id,
         study.evaluator.configuration(),
     )
-    future_sessions_value = cast(object, study.outcome_labeler.required_future_sessions)
-    fields_value = cast(object, study.outcome_labeler.required_market_fields)
-    if (
-        isinstance(future_sessions_value, bool)
-        or not isinstance(future_sessions_value, int)
-        or future_sessions_value < 1
+    future_sessions_value = getattr(
+        study.outcome_labeler, "required_future_sessions", None
+    )
+    if future_sessions_value is not None and (
+        type(future_sessions_value) is not int or future_sessions_value < 1
     ):
         raise InvalidPredictionConfigurationError(
             "outcome labelers require a positive future-session horizon"
         )
+    temporal = outcome_temporal_configuration(
+        outcome_snapshot.to_primitive(), required_future_sessions=future_sessions_value
+    )
+    if isinstance(temporal.horizon, ExchangeSessionHorizon):
+        if type(future_sessions_value) is not int or future_sessions_value < 1:
+            raise InvalidPredictionConfigurationError(
+                "outcome labelers require a positive future-session horizon"
+            )
+        if study.outcome_source is not None:
+            raise InvalidPredictionConfigurationError(
+                "session labelers cannot use an elapsed source"
+            )
+    elif study.outcome_source is None or not callable(
+        getattr(study.outcome_labeler, "label_request", None)
+    ):
+        raise InvalidPredictionConfigurationError(
+            "elapsed studies require a canonical outcome source and label_request"
+        )
+    fields_value = cast(object, study.outcome_labeler.required_market_fields)
     if not isinstance(fields_value, tuple) or not fields_value:
         raise InvalidPredictionConfigurationError(
             "outcome required market fields must be sorted unique names"
@@ -748,6 +859,13 @@ def _capture_study_configuration(
         ),
         result_schema_version=study.result_schema_version,
         context_requirements_snapshot=context_requirements_snapshot,
+        outcome_source_snapshot=(
+            None
+            if study.outcome_source is None
+            else PrimitiveMappingSnapshot.capture(
+                source_provenance(study.outcome_source, temporal)
+            )
+        ),
     )
 
 
@@ -884,6 +1002,7 @@ def _prediction_outcome(
     outcome_session: date,
     values: OutcomeValuesT,
     values_snapshot: PrimitiveMappingSnapshot,
+    temporal_resolution: PrimitiveMappingSnapshot | None = None,
 ) -> PredictionOutcome[OutcomeValuesT]:
     outcome_id = _stable_id(
         {
@@ -898,6 +1017,11 @@ def _prediction_outcome(
                 configuration.outcome_result_schema_version
             ),
             "outcome_session": outcome_session.isoformat(),
+            **(
+                {}
+                if temporal_resolution is None
+                else {"temporal_resolution": temporal_resolution.to_primitive()}
+            ),
             "record_type": "prediction_outcome",
             "signal_session": signal_session.isoformat(),
             "values": values_snapshot.to_primitive(),
@@ -914,6 +1038,7 @@ def _prediction_outcome(
         signal_session,
         outcome_session,
         values,
+        temporal_resolution,
     )
 
 
@@ -921,18 +1046,7 @@ def _prediction_outcome_primitive(
     outcome: PredictionOutcome[OutcomeValuesT],
     values: PrimitiveMapping,
 ) -> PrimitiveMapping:
-    return {
-        "dataset_fingerprint": outcome.dataset_fingerprint,
-        "dataset_id": outcome.dataset_id,
-        "outcome_configuration_id": outcome.outcome_configuration_id,
-        "outcome_id": outcome.outcome_id,
-        "outcome_implementation_version": outcome.outcome_implementation_version,
-        "outcome_name": outcome.outcome_name,
-        "outcome_result_schema_version": outcome.outcome_result_schema_version,
-        "outcome_session": outcome.outcome_session.isoformat(),
-        "signal_session": outcome.signal_session.isoformat(),
-        "values": values,
-    }
+    return {**outcome.to_primitive(), "values": values}
 
 
 def _prediction_evaluation(
@@ -1121,6 +1235,7 @@ def _validate_strategy_output(
     expected_configuration_id: str,
     expected_warm_up_observations: int,
     context_decision_session: date | None,
+    timestamp_outcomes: bool = False,
 ) -> None:
     if (
         output.contract_version != "1"
@@ -1132,13 +1247,24 @@ def _validate_strategy_output(
             "prediction output identity does not match its strategy and dataset"
         )
     expected_order = tuple(
-        sorted(signals, key=lambda signal: (signal.signal_session, signal.symbol))
+        sorted(
+            signals,
+            key=lambda signal: (
+                signal.signal_session,
+                anchor.isoformat()
+                if (anchor := decision_timestamp(signal)) is not None
+                else "",
+                signal.symbol,
+            ),
+        )
     )
     if signals != expected_order:
         raise InvalidPredictionOutputError(
             "prediction signals must be deterministically ordered"
         )
-    sessions = tuple(signal.signal_session for signal in signals)
+    sessions = tuple(
+        (signal.signal_session, decision_timestamp(signal)) for signal in signals
+    )
     if len(sessions) != len(set(sessions)):
         raise InvalidPredictionOutputError(
             "a strategy may emit at most one prediction per session"
@@ -1149,7 +1275,7 @@ def _validate_strategy_output(
         signal_index = bar_indexes.get(signal.signal_session)
         if (
             signal.symbol != dataset.metadata.canonical_symbol
-            or signal_index is None
+            or (signal_index is None and not timestamp_outcomes)
             or signal.strategy_id != strategy.name
             or signal.strategy_implementation_version != strategy.implementation_version
             or signal.strategy_configuration_id != expected_configuration_id
@@ -1169,7 +1295,11 @@ def _validate_strategy_output(
                 "multi-timeframe prediction signal must use the context decision "
                 "session"
             )
-        if signal_index + 1 < expected_warm_up_observations:
+        if (
+            not timestamp_outcomes
+            and signal_index is not None
+            and signal_index + 1 < expected_warm_up_observations
+        ):
             raise InvalidPredictionOutputError(
                 "prediction signal was emitted before the strategy's declared "
                 "warm-up completed"

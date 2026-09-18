@@ -1,5 +1,9 @@
 # Deterministic walk-forward studies
 
+QF-48 adds explicit exact-timestamp prediction membership and elapsed request
+execution. See [timestamp prediction validation](timestamp-prediction-validation.md)
+for the opt-in source, replay anchors, persistence, and holdout compatibility.
+
 QF-39 adds `quantforge.walk_forward`: chronological orchestration that ends at
 **typed per-fold out-of-sample artifacts**. It consumes the explicit QF-8
 `ValidationPlan`; it does not create calendar splits or change either evaluator.
