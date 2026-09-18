@@ -40,6 +40,7 @@ from quantforge.prediction.contracts import (
     PredictionRuleOutput,
     PredictionStudy,
     PredictionValues,
+    evaluate_outcome_request,
 )
 from quantforge.prediction.errors import (
     InvalidPredictionConfigurationError,
@@ -47,6 +48,12 @@ from quantforge.prediction.errors import (
     InvalidPredictionOutputError,
 )
 from quantforge.prediction.models import PredictionMarketData
+from quantforge.prediction.outcome_resolution import OutcomeEvaluationRequest
+from quantforge.prediction.outcome_temporal import (
+    OutcomeAnchor,
+    OutcomeAnchorKind,
+    outcome_temporal_configuration,
+)
 
 STUDY_ENGINE_VERSION = "12"
 STUDY_CONTRACT_VERSION = "1"
@@ -136,6 +143,10 @@ class PredictionStudyConfiguration:
             primitive["prediction_context_requirements"] = (
                 self.context_requirements_snapshot.to_primitive()
             )
+        definition = self.outcome_configuration_snapshot.to_primitive()
+        if "temporal_configuration" in definition:
+            labeler = cast(PrimitiveMapping, primitive["outcome_labeler"])
+            labeler["temporal_configuration"] = definition["temporal_configuration"]
         return primitive
 
 
@@ -405,7 +416,23 @@ def run_prediction_study_in_session(
         expected_outcome_index = (
             bar_indexes[signal.signal_session] + configuration.required_future_sessions
         )
-        label = study.outcome_labeler.label(component_dataset, signal.signal_session)
+        request = OutcomeEvaluationRequest(
+            OutcomeAnchor(
+                OutcomeAnchorKind.SESSION,
+                signal.signal_session,
+                None if rule_context is None else rule_context.as_of,
+            ),
+            outcome_temporal_configuration(
+                configuration.outcome_configuration_snapshot.to_primitive(),
+                required_future_sessions=configuration.required_future_sessions,
+            ),
+            configuration.outcome_configuration_id,
+            market_data.dataset_id,
+            market_data.bars_fingerprint,
+        )
+        label = evaluate_outcome_request(
+            study.outcome_labeler, component_dataset, request
+        )
         _validate_unchanged_component(
             "outcome labeler",
             study.outcome_labeler.configuration(),

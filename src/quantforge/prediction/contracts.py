@@ -1,8 +1,9 @@
 """Generic typed contracts for causal prediction studies."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data.models import MarketDataset
@@ -10,6 +11,12 @@ from quantforge.indicators import Indicator
 from quantforge.prediction.context import (
     PredictionContextRequirements,
     PredictionRuleContext,
+)
+from quantforge.prediction.outcome_resolution import OutcomeEvaluationRequest
+from quantforge.prediction.outcome_temporal import (
+    OutcomeAnchorKind,
+    OutcomeTemporalError,
+    outcome_temporal_configuration,
 )
 
 
@@ -182,6 +189,70 @@ class OutcomeLabeler(Protocol[OutcomeValuesT]):
     def label(
         self, dataset: MarketDataset, signal_session: date
     ) -> OutcomeLabel[OutcomeValuesT] | None: ...
+
+
+class RequestOutcomeLabeler(Protocol[OutcomeValuesT]):
+    """Opt-in future labeler receiving exact temporal inputs after prediction.
+
+    Timestamp consumers use the generic resolver's typed availability metadata.
+    This protocol does not enable timestamp membership or session-engine replay.
+    A session labeler may implement both protocols without changing its results.
+    """
+
+    @property
+    def configuration_id(self) -> str: ...
+
+    def configuration(self) -> PrimitiveMapping: ...
+
+    def label_request(
+        self, dataset: MarketDataset, request: OutcomeEvaluationRequest
+    ) -> OutcomeLabel[OutcomeValuesT] | None: ...
+
+
+def evaluate_outcome_request[OutcomeValuesT: PredictionValues](
+    labeler: OutcomeLabeler[OutcomeValuesT] | RequestOutcomeLabeler[OutcomeValuesT],
+    dataset: MarketDataset,
+    request: OutcomeEvaluationRequest,
+) -> OutcomeLabel[OutcomeValuesT] | None:
+    """Dispatch an already-fixed prediction's request without changing legacy inputs.
+
+    Dataset validation and causal prediction capture remain the caller's job.
+    No timestamp is synthesized for a session-only caller. Elapsed requests must
+    be handled explicitly by a request-aware component, never by ``label(date)``.
+    """
+    from quantforge.configuration import configuration_identity
+
+    configuration = labeler.configuration()
+    sessions = getattr(labeler, "required_future_sessions", None)
+    if sessions is not None and type(sessions) is not int:
+        raise OutcomeTemporalError("outcome session horizon must be an integer")
+    temporal = outcome_temporal_configuration(
+        configuration, required_future_sessions=sessions
+    )
+    if (
+        request.dataset_id != dataset.metadata.dataset_id
+        or request.dataset_fingerprint != dataset.metadata.data_sha256
+        or request.outcome_configuration_id != labeler.configuration_id
+        or labeler.configuration_id != configuration_identity(configuration)
+        or request.temporal_configuration != temporal
+    ):
+        raise OutcomeTemporalError(
+            "outcome evaluation request differs from its component or dataset"
+        )
+    callback = getattr(labeler, "label_request", None)
+    if callable(callback):
+        return cast(
+            Callable[
+                [MarketDataset, OutcomeEvaluationRequest],
+                OutcomeLabel[OutcomeValuesT] | None,
+            ],
+            callback,
+        )(dataset, request)
+    if request.anchor.kind is not OutcomeAnchorKind.SESSION:
+        raise OutcomeTemporalError("exact timestamp outcomes require label_request()")
+    return cast(OutcomeLabeler[OutcomeValuesT], labeler).label(
+        dataset, request.anchor.signal_session
+    )
 
 
 class PredictionEvaluator(

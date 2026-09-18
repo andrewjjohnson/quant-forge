@@ -6,6 +6,11 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._prediction_row_integrity import validate_prediction_row
 from quantforge.experiments._prediction_sessions import recorded_session_indexes
+from quantforge.prediction.outcome_temporal import (
+    ExchangeSessionHorizon,
+    OutcomeTemporalError,
+    outcome_temporal_configuration,
+)
 
 
 def validate_prediction_manifest(manifest: PrimitiveMapping) -> None:
@@ -62,7 +67,30 @@ def validate_outcome_contract(configuration: PrimitiveMapping) -> None:
     labeler = mapping(configuration.get("outcome_labeler"))
     definition = mapping(labeler.get("configuration"))
     horizon = labeler.get("required_future_sessions")
-    if type(horizon) is not int or horizon < 1:
+    if "temporal_configuration" in definition:
+        try:
+            temporal = outcome_temporal_configuration(definition)
+            if isinstance(temporal.horizon, ExchangeSessionHorizon):
+                if type(horizon) is not int or horizon != temporal.horizon.count:
+                    raise OutcomeTemporalError(
+                        "session wrapper differs from typed horizon"
+                    )
+            elif "required_future_sessions" in labeler:
+                raise OutcomeTemporalError(
+                    "elapsed outcomes cannot declare a session count"
+                )
+            wrapper_temporal = mapping(labeler.get("temporal_configuration"))
+            if configuration_identity(wrapper_temporal) != temporal.configuration_id:
+                raise OutcomeTemporalError(
+                    "typed outcome wrapper differs from configuration"
+                )
+        except (TypeError, ValueError) as error:
+            raise ManifestError(
+                f"outcome contract temporal configuration is inconsistent: {error}"
+            ) from error
+    elif "temporal_configuration" in labeler:
+        raise ManifestError("outcome temporal wrapper requires a component declaration")
+    elif type(horizon) is not int or horizon < 1:
         raise ManifestError("outcome contract horizon must be a positive integer")
     parameters = mapping(definition.get("parameters", {}))
     for declarations, key in (

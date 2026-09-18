@@ -103,6 +103,13 @@ decision retains its timestamp and source identities. See
 `docs/historical-prediction-windows.md` and ADR 0015. Walk-forward orchestration
 and OOS aggregation remain QF-39/QF-40 responsibilities.
 
+QF-46 defines explicit future-outcome anchors, typed session/elapsed horizons,
+and calendar-based observation resolution independently of concrete outcome math.
+It preserves the QF-42 instant in a future-only evaluation request and exposes
+conservative reach through existing QF-8 temporal types. Timestamp membership and
+replay integration follow in QF-48. See `docs/outcome-temporal-contracts.md` and
+ADR 0021; QF-49/QF-47 own intraday returns and path outcomes.
+
 QF-34 adds a reporting-only consumer of the immutable multi-timeframe prediction
 branch. It renders exact QF-20/QF-21 bars, QF-28 normalized indicator outputs,
 QF-31 condition evidence, and QF-14/QF-35 provenance into deterministic
