@@ -155,15 +155,24 @@ def validate_holdout_artifact(
             raise ManifestError(
                 "holdout prediction primary timeframe is not in its plan"
             )
+        timestamps = membership.get("evaluation_timestamps")
+        if source.plan.prediction_membership is not None and (
+            not isinstance(timestamps, list) or not timestamps
+        ):
+            raise ManifestError("holdout timestamp membership is invalid")
         try:
             # QF-40 derives the complete closed schedule from the requested
             # partition and frozen primary timeframe, without generating research.
             expected_schedule = PredictionDecisionSchedule(
                 primary,
-                resolve_exchange_session(
+                datetime.fromisoformat(text(timestamps[0]))
+                if isinstance(timestamps, list)
+                else resolve_exchange_session(
                     date.fromisoformat(text(labels[0])), primary.session_policy
                 ).open_timestamp,
-                resolve_exchange_session(
+                datetime.fromisoformat(text(timestamps[-1]))
+                if isinstance(timestamps, list)
+                else resolve_exchange_session(
                     date.fromisoformat(text(labels[-1])), primary.session_policy
                 ).close_timestamp,
             )

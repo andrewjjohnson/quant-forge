@@ -1,7 +1,7 @@
 """Typed QF-7 signal snapshots, schema fields, and dataset results."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import cast
@@ -168,8 +168,20 @@ class SignalFeatureCandidate:
     matched_rule_reasons: tuple[str, ...]
     strategy_features: tuple[SignalFeatureValue, ...]
     contextual_features: tuple[SignalFeatureValue, ...] = ()
+    decision_timestamp: datetime | None = None
 
     def __post_init__(self) -> None:
+        if self.decision_timestamp is not None:
+            if (
+                not isinstance(cast(object, self.decision_timestamp), datetime)
+                or self.decision_timestamp.utcoffset() is None
+            ):
+                raise InvalidPredictionOutputError(
+                    "candidate decision timestamp must be aware"
+                )
+            object.__setattr__(
+                self, "decision_timestamp", self.decision_timestamp.astimezone(UTC)
+            )
         if any(
             not value
             for value in (
@@ -233,6 +245,11 @@ class SignalFeatureCandidate:
 
     def prediction_primitive(self) -> PrimitiveMapping:
         return {
+            **(
+                {}
+                if self.decision_timestamp is None
+                else {"decision_timestamp": self.decision_timestamp.isoformat()}
+            ),
             "direction": None if self.direction is None else self.direction.value,
             "disposition": self.disposition.value,
             "disposition_explanation": self.explanation,

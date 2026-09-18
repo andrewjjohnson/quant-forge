@@ -1,5 +1,7 @@
 """Immutable, study-neutral validation-plan contracts."""
 
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
@@ -38,6 +40,7 @@ from quantforge.validation.errors import ValidationPlanError
 
 if TYPE_CHECKING:
     from quantforge.backtesting import BacktestConfig
+    from quantforge.validation.prediction_membership import PredictionMembershipSource
 
 VALIDATION_PLAN_SCHEMA_VERSION = "1"
 VALIDATION_WINDOW_SCHEMA_VERSION = "1"
@@ -172,14 +175,14 @@ class ValidationInterval:
         value = boundary_value(boundary)
         return boundary_value(self.start) <= value <= boundary_value(self.end)
 
-    def precedes(self, other: "ValidationInterval") -> bool:
+    def precedes(self, other: ValidationInterval) -> bool:
         if not boundaries_share_semantics(self.start, other.start):
             raise ValidationPlanError(
                 "validation intervals do not share temporal semantics"
             )
         return boundary_value(self.end) < boundary_value(other.start)
 
-    def overlaps(self, other: "ValidationInterval") -> bool:
+    def overlaps(self, other: ValidationInterval) -> bool:
         if not boundaries_share_semantics(self.start, other.start):
             raise ValidationPlanError(
                 "validation intervals do not share temporal semantics"
@@ -477,11 +480,11 @@ class TemporalOffset:
             )
 
     @classmethod
-    def sessions(cls, count: int) -> "TemporalOffset":
+    def sessions(cls, count: int) -> TemporalOffset:
         return cls(BoundaryAxis.EXCHANGE_SESSION, exchange_sessions=count)
 
     @classmethod
-    def duration(cls, elapsed: timedelta) -> "TemporalOffset":
+    def duration(cls, elapsed: timedelta) -> TemporalOffset:
         return cls(BoundaryAxis.TIMESTAMP, elapsed=elapsed)
 
     def to_primitive(self) -> PrimitiveMapping:
@@ -605,7 +608,7 @@ class ConfigurationReference:
         configuration: PrimitiveMapping,
         *,
         configuration_id: str | None = None,
-    ) -> "ConfigurationReference":
+    ) -> ConfigurationReference:
         snapshot = PrimitiveMappingSnapshot.capture(configuration)
         expected_id = configuration_identity(snapshot.to_primitive())
         if configuration_id is not None and configuration_id != expected_id:
@@ -625,7 +628,7 @@ class ConfigurationReference:
         cls,
         component_type: str,
         component: ConfiguredComponent,
-    ) -> "ConfigurationReference":
+    ) -> ConfigurationReference:
         """Capture an existing rule, strategy, outcome, evaluator, or policy."""
         return cls.capture(
             component_type,
@@ -639,7 +642,7 @@ class ConfigurationReference:
     def capture_aggregation_policy(
         cls,
         policy: AggregationPolicy,
-    ) -> "ConfigurationReference":
+    ) -> ConfigurationReference:
         """Capture the exact typed aggregation policy recorded by QF-14."""
         if not isinstance(cast(object, policy), AggregationPolicy):
             raise ValidationPlanError(
@@ -733,10 +736,10 @@ class OutcomeProvenance:
     @classmethod
     def capture_exchange_sessions(
         cls,
-        outcome: SessionOutcomeComponent,
-    ) -> "OutcomeProvenance":
+        outcome: ConfiguredComponent,
+    ) -> OutcomeProvenance:
         """Capture a QF-11-style outcome with a positive future-session horizon."""
-        sessions = cast(object, outcome.required_future_sessions)
+        sessions = cast(object, getattr(outcome, "required_future_sessions", None))
         if isinstance(sessions, bool) or not isinstance(sessions, int) or sessions < 1:
             raise ValidationPlanError(
                 "outcome required future sessions must be a positive integer"
@@ -755,13 +758,25 @@ class OutcomeProvenance:
     @classmethod
     def capture_timestamp(
         cls,
-        outcome: TimestampOutcomeComponent,
-    ) -> "OutcomeProvenance":
+        outcome: ConfiguredComponent,
+    ) -> OutcomeProvenance:
         """Capture an outcome component with an exact elapsed future horizon."""
-        duration = cast(object, outcome.required_future_duration)
+        duration = cast(object, getattr(outcome, "required_future_duration", None))
         if not isinstance(duration, timedelta) or duration < timedelta(0):
             raise ValidationPlanError(
                 "outcome required future duration must be a non-negative timedelta"
+            )
+        from quantforge.prediction.outcome_temporal import (
+            outcome_temporal_configuration,
+        )
+
+        configuration = outcome.configuration()
+        if "temporal_configuration" in configuration and (
+            outcome_temporal_configuration(configuration).future_temporal_reach
+            != TemporalOffset.duration(duration)
+        ):
+            raise ValidationPlanError(
+                "outcome duration differs from QF-46 temporal reach"
             )
         return cls._capture_component(outcome, TemporalOffset.duration(duration))
 
@@ -773,7 +788,7 @@ class OutcomeProvenance:
         *,
         required_market_fields: tuple[str, ...] | None = None,
         result_schema_version: str | None = None,
-    ) -> "OutcomeProvenance":
+    ) -> OutcomeProvenance:
         from quantforge.prediction.feature_outcomes import (
             ExcursionOutcomeLabeler,
             ForwardReturnOutcomeLabeler,
@@ -877,7 +892,7 @@ class IndicatorProvenance:
         cls,
         indicator: IndicatorComponent,
         source_timeframe: Timeframe,
-    ) -> "IndicatorProvenance":
+    ) -> IndicatorProvenance:
         if not isinstance(cast(object, source_timeframe), Timeframe):
             raise ValidationPlanError("captured indicator source timeframe is invalid")
         configuration = indicator.configuration()
@@ -1144,7 +1159,7 @@ class ResearchRuleProvenance:
     def capture_prediction(
         cls,
         rule: ResearchRuleComponent,
-    ) -> "ResearchRuleProvenance":
+    ) -> ResearchRuleProvenance:
         """Capture a component that identifies itself as a prediction strategy."""
         return cls._capture("prediction_rule", "prediction_strategy", rule)
 
@@ -1152,7 +1167,7 @@ class ResearchRuleProvenance:
     def capture_trading(
         cls,
         strategy: ResearchRuleComponent,
-    ) -> "ResearchRuleProvenance":
+    ) -> ResearchRuleProvenance:
         """Capture a component that identifies itself as a trading strategy."""
         return cls._capture("trading_strategy", "strategy", strategy)
 
@@ -1162,7 +1177,7 @@ class ResearchRuleProvenance:
         component_type: str,
         configured_component_type: str,
         rule: ResearchRuleComponent,
-    ) -> "ResearchRuleProvenance":
+    ) -> ResearchRuleProvenance:
         configuration = rule.configuration()
         if configuration.get("component_type") != configured_component_type:
             raise ValidationPlanError(
@@ -1283,8 +1298,8 @@ class BacktestProvenance:
     @classmethod
     def capture(
         cls,
-        configuration: "BacktestConfig",
-    ) -> "BacktestProvenance":
+        configuration: BacktestConfig,
+    ) -> BacktestProvenance:
         from quantforge.backtesting import BacktestConfig
 
         if type(configuration) is not BacktestConfig:
@@ -1422,7 +1437,7 @@ class DatasetProvenance:
         return self.dataset_family.manifest_id
 
     @classmethod
-    def from_market_dataset(cls, dataset: MarketDataset) -> "DatasetProvenance":
+    def from_market_dataset(cls, dataset: MarketDataset) -> DatasetProvenance:
         """Capture one validated QF-3 dataset without retrofitting QF-14 identity."""
         validate_market_dataset(dataset)
         try:
@@ -1450,7 +1465,7 @@ class DatasetProvenance:
         cls,
         family: DatasetFamily,
         dataset_ids: tuple[str, ...],
-    ) -> "DatasetProvenance":
+    ) -> DatasetProvenance:
         """Capture selected artifact identity from an immutable family manifest."""
         try:
             references = tuple(
@@ -1488,7 +1503,7 @@ class DatasetProvenance:
         dataset_family: DatasetFamily | None = None,
         standalone_timeframe: Timeframe | None = None,
         market_data_metadata: DatasetMetadata | None = None,
-    ) -> "DatasetProvenance":
+    ) -> DatasetProvenance:
         instance = object.__new__(cls)
         object.__setattr__(instance, "dataset_fingerprint", dataset_fingerprint)
         object.__setattr__(instance, "dataset_ids", dataset_ids)
@@ -1955,6 +1970,9 @@ class ValidationPlan:
     purge_policy: PurgePolicy
     training_window_mode: TrainingWindowMode
     schema_version: str = VALIDATION_PLAN_SCHEMA_VERSION
+    prediction_membership: PredictionMembershipSource | None = field(
+        default=None, kw_only=True
+    )
     _axis: BoundaryAxis = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -1996,6 +2014,7 @@ class ValidationPlan:
             )
         if (
             self.environment.prediction_dataset is not None
+            and self.prediction_membership is None
             and axis is not BoundaryAxis.EXCHANGE_SESSION
         ):
             raise ValidationPlanError(
@@ -2013,6 +2032,47 @@ class ValidationPlan:
             raise ValidationPlanError(
                 "intraday source observations require timestamp validation boundaries"
             )
+        if self.prediction_membership is not None:
+            from quantforge.validation.prediction_membership import (
+                PredictionMembershipSource,
+            )
+
+            source = self.prediction_membership
+            if (
+                not isinstance(cast(object, source), PredictionMembershipSource)
+                or axis is not BoundaryAxis.TIMESTAMP
+                or self.environment.study_type is not ResearchStudyType.PREDICTION
+                or self.environment.prediction_dataset is None
+                or source.source_reference
+                not in self.environment.dataset.family_references
+                or source.family_manifest_id
+                != self.environment.dataset.family_manifest_id
+                or source.schedule.primary_timeframe.configuration_id
+                != self.environment.research_rule.warm_up_timeframe_configuration_id
+            ):
+                raise ValidationPlanError(
+                    "timestamp prediction membership differs from the plan environment"
+                )
+            indexes: dict[ValidationBoundary, int] = {
+                observation: index
+                for index, observation in enumerate(source.observations)
+            }
+            if any(
+                w.interval.start not in indexes or w.interval.end not in indexes
+                for w in (*windows, self.final_holdout.window)
+            ):
+                raise ValidationPlanError(
+                    "timestamp window endpoints must belong to the QF-42 schedule"
+                )
+            for window in (*windows, self.final_holdout.window):
+                required = window.warm_up_observations_for(
+                    source.schedule.primary_timeframe
+                )
+                if indexes[window.interval.start] < required:
+                    raise ValidationPlanError(
+                        f"validation window {window.name!r} has insufficient "
+                        "preceding QF-42 schedule observations for primary warm-up"
+                    )
         self._validate_research_warm_up((*windows, self.final_holdout.window))
         self._validate_outcome_horizon(axis)
         if axis is BoundaryAxis.EXCHANGE_SESSION:
@@ -2064,7 +2124,10 @@ class ValidationPlan:
             required_context[rule_timeframe_id],
             self.environment.research_rule.required_context_observations,
         )
-        if self.environment.prediction_dataset is not None:
+        if (
+            self.environment.prediction_dataset is not None
+            and self.prediction_membership is None
+        ):
             timeframe = self.environment.prediction_dataset.standalone_timeframe
             assert timeframe is not None
             required_context[timeframe.configuration_id] = max(
@@ -2143,7 +2206,7 @@ class ValidationPlan:
                 )
 
     def _identity_primitive(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "schema_version": self.schema_version,
             "name": self.name,
             "training_window_mode": self.training_window_mode.value,
@@ -2156,6 +2219,20 @@ class ValidationPlan:
                 "consumption_are_outside_qf8"
             ),
         }
+
+        if self.prediction_membership is not None:
+            primitive["prediction_membership"] = (
+                self.prediction_membership.to_primitive()
+            )
+        return primitive
+
+    @property
+    def membership_axis(self) -> BoundaryAxis:
+        return (
+            BoundaryAxis.EXCHANGE_SESSION
+            if self.prediction_membership is None
+            else self.prediction_membership.axis
+        )
 
     @property
     def plan_id(self) -> str:

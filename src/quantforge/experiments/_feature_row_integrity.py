@@ -1,6 +1,7 @@
 """Verify QF-7/QF-29 row contracts without feature or outcome execution."""
 
 from dataclasses import replace
+from datetime import datetime
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
@@ -14,6 +15,10 @@ from quantforge.prediction.feature_dataset import (
     _identity_fields,  # pyright: ignore[reportPrivateUsage]
     _row_id,  # pyright: ignore[reportPrivateUsage]
     _schema_value_matches,  # pyright: ignore[reportPrivateUsage]
+)
+from quantforge.prediction.outcome_temporal import (
+    OutcomeAnchorKind,
+    outcome_utc_timestamp,
 )
 from quantforge.prediction.signal_feature_models import SchemaField, SchemaFieldCategory
 
@@ -70,8 +75,11 @@ def validate_feature_schema(
             for item in _records(configuration.get("contextual_features"))
         ),
     ]
+    anchor_kind = configuration.get("candidate_anchor_kind")
+    if anchor_kind not in (None, OutcomeAnchorKind.TIMESTAMP.value):
+        raise ManifestError("unsupported feature candidate anchor kind")
     fields = (
-        *_identity_fields(),
+        *_identity_fields(timestamp_anchors=anchor_kind is not None),
         *_disposition_fields(),
         *(
             replace(field, name="feature_" + field.name)
@@ -160,7 +168,7 @@ def validate_feature_row_provenance(
             strategy_configuration_id=configuration_identity(source_rule),
         )
     candidates: set[str] = set()
-    sessions: list[str] = []
+    observations: list[tuple[str, str]] = []
     for row in rows:
         if set(row) != {field.name for field in fields} or any(
             not _schema_value_matches(field, row[field.name]) for field in fields
@@ -171,9 +179,30 @@ def validate_feature_row_provenance(
         ) != configuration_identity(expected):
             raise ManifestError("feature row provenance differs from its dataset")
         session = session_text(row.get("signal_session"))
-        if session not in indexes:
+        if session not in indexes and "outcome_source" not in configuration:
             raise ManifestError("feature row session is outside its source dataset")
-        sessions.append(session)
+        anchor = row.get("decision_timestamp")
+        if anchor is not None:
+            try:
+                exact = outcome_utc_timestamp(datetime.fromisoformat(text(anchor)))
+            except ValueError as error:
+                raise ManifestError(
+                    "feature row decision timestamp is invalid"
+                ) from error
+            if exact.isoformat() != anchor:
+                raise ManifestError("feature row decision timestamp is noncanonical")
+            context = configuration.get("prediction_context")
+            if context is not None:
+                captured = mapping(mapping(context).get("source_context"))
+                if captured.get("as_of") != anchor:
+                    raise ManifestError(
+                        "feature row anchor differs from captured context"
+                    )
+        elif configuration.get("candidate_anchor_kind") is not None:
+            raise ManifestError(
+                "timestamp feature row requires its original exact anchor"
+            )
+        observations.append((session, "" if anchor is None else text(anchor)))
         parameters = mapping(row.get("strategy_parameters"))
         if row.get("strategy_parameters_id") != configuration_identity(parameters):
             raise ManifestError("feature parameter identity is inconsistent")
@@ -186,6 +215,7 @@ def validate_feature_row_provenance(
                 "dataset_fingerprint": row["dataset_fingerprint"],
                 "parameters": parameters,
                 "signal_session": session,
+                **({"decision_timestamp": anchor} if anchor is not None else {}),
                 "source_rule_configuration_id": digest(
                     row.get("strategy_configuration_id")
                 ),
@@ -222,5 +252,5 @@ def validate_feature_row_provenance(
             or (selected is not None and (not matched or matched[0] != selected))
         ):
             raise ManifestError("feature row disposition evidence is inconsistent")
-    if sessions != sorted(set(sessions)):
-        raise ManifestError("feature rows must have ordered unique sessions")
+    if observations != sorted(set(observations)):
+        raise ManifestError("feature rows must have ordered unique observation anchors")

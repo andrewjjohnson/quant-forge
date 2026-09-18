@@ -12,6 +12,10 @@ def frozen_prediction_components(
         validate_outcome_contract,
         validate_prediction_warm_up,
     )
+    from quantforge.prediction.outcome_temporal import (
+        ElapsedDurationHorizon,
+        outcome_temporal_configuration,
+    )
 
     version = definition.get("contract_version", "1")
     if version not in ("1", "2") or version != study.get(
@@ -35,6 +39,15 @@ def frozen_prediction_components(
         captured = mapping(component.get("configuration"))
         for field in required:
             if field not in component:
+                if (
+                    field == "required_future_sessions"
+                    and "temporal_configuration" in captured
+                    and isinstance(
+                        outcome_temporal_configuration(captured).horizon,
+                        ElapsedDurationHorizon,
+                    )
+                ):
+                    continue
                 if version == "1" and field in captured:
                     component[field] = captured[field]
                 elif (

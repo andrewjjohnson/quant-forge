@@ -41,6 +41,8 @@ Do not create ADRs for routine implementation details that are easy to change.
 - [ADR 0019: Index existing research artifacts](0019-index-existing-research-artifacts.md)
 - [ADR 0021: Define outcome time contracts before timestamp membership](0021-define-outcome-time-contracts-before-timestamp-membership.md)
 
+- [ADR 0022: Bind prediction membership to exact decision schedules](0022-bind-prediction-membership-to-exact-decision-schedules.md)
+
 ## File naming
 
 ```text

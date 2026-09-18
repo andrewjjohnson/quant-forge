@@ -6,6 +6,10 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
 from quantforge.experiments._prediction_row_integrity import validate_prediction_row
 from quantforge.experiments._prediction_sessions import recorded_session_indexes
+from quantforge.experiments._prediction_temporal_integrity import (
+    elapsed_temporal_configuration,
+    prediction_observation_key,
+)
 from quantforge.prediction.outcome_temporal import (
     ExchangeSessionHorizon,
     OutcomeTemporalError,
@@ -154,6 +158,8 @@ def validate_prediction_counts(manifest: PrimitiveMapping) -> int:
             raise ManifestError("prediction record counts must be nonnegative integers")
     labeled = cast(int, counts["labeled_rows"])
     unavailable = cast(int, counts["unavailable_outcomes"])
+    if unavailable and elapsed_temporal_configuration(manifest) is not None:
+        raise ManifestError("elapsed prediction outcomes require explicit labeled rows")
     if counts["generated_predictions"] != labeled + unavailable:
         raise ManifestError("prediction record counts are internally inconsistent")
     return labeled
@@ -178,12 +184,14 @@ def validate_prediction_rows(
     ]
     if len(set(identifiers)) != len(identifiers):
         raise ManifestError("duplicate prediction row identity")
-    sessions = [
-        text(mapping(mapping(row).get("prediction")).get("signal_session"))
+    observations = [
+        prediction_observation_key(manifest, mapping(mapping(row).get("prediction")))
         for row in cast(list[object], rows)
     ]
-    if sessions != sorted(set(sessions)):
-        raise ManifestError("prediction rows must have ordered unique signal sessions")
+    if observations != sorted(set(observations)):
+        raise ManifestError(
+            "prediction rows must have ordered unique signal sessions/anchors"
+        )
     return indexes
 
 

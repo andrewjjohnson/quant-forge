@@ -27,6 +27,7 @@ from quantforge.validation import (
     DatasetProvenance,
     ExchangeSessionBoundary,
     PartitionRole,
+    PredictionMembershipSource,
     PurgedPartitionObservations,
     TimestampBoundary,
     ValidationBoundary,
@@ -61,9 +62,11 @@ class PermittedPartition:
     purge: PurgedPartitionObservations
     dataset: MarketDataset
     sessions: tuple[date, ...]
+    decision_timestamps: tuple[datetime, ...] = ()
+    prediction_membership: PredictionMembershipSource | None = None
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "window": self.window.to_primitive(),
             "membership": self.membership.to_primitive(),
             "purge": self.purge.to_primitive(),
@@ -71,11 +74,21 @@ class PermittedPartition:
             "bounded_dataset_id": self.dataset.metadata.dataset_id,
             "bounded_data_sha256": self.dataset.metadata.data_sha256,
         }
+        if self.prediction_membership is not None:
+            primitive["prediction_membership"] = (
+                self.prediction_membership.to_primitive()
+            )
+            primitive["evaluation_timestamps"] = [
+                t.isoformat() for t in self.decision_timestamps
+            ]
+        return primitive
 
 
 def observation_keys(
     dataset: MarketDataset, plan: ValidationPlan
 ) -> tuple[ValidationBoundary, ...]:
+    if plan.prediction_membership is not None:
+        return plan.prediction_membership.observations
     timeframe = plan.environment.outcome_dataset.standalone_timeframe
     if timeframe is None:
         raise WalkForwardError("the existing evaluators require a QF-3 study dataset")
@@ -119,21 +132,40 @@ def partition(
     if window is None:
         raise WalkForwardError("this fold has no selection partition")
     observations = observation_keys(dataset, plan)
+    source = plan.prediction_membership or dataset
+    source_timeframe = (
+        plan.environment.outcome_dataset.standalone_timeframe
+        if plan.prediction_membership is None
+        else plan.prediction_membership.schedule.primary_timeframe
+    )
     membership = select_window_observations(
         window,
         observations,
-        source=dataset,
-        source_timeframe=plan.environment.outcome_dataset.standalone_timeframe,
+        source=source,
+        source_timeframe=source_timeframe,
     )
     purged = purge_partition_observations(
         plan,
         fold_index,
         role,
         observations,
-        source=dataset,
+        source=source,
     )
     if len(purged.retained) < minimum_observations:
         raise WalkForwardError(f"insufficient {role.value} observations after purging")
+    if plan.prediction_membership is not None:
+        timestamps = tuple(
+            cast(TimestampBoundary, key).timestamp for key in purged.retained
+        )
+        return PermittedPartition(
+            window,
+            membership,
+            purged,
+            prediction_metadata_prefix(dataset, timestamps[0]),
+            tuple(plan.prediction_membership.session_for(t) for t in timestamps),
+            timestamps,
+            plan.prediction_membership,
+        )
     start_key = (membership.warm_up_context or purged.retained)[0]
     start = observations.index(start_key)
     final_decision = observations.index(purged.retained[-1])
@@ -243,3 +275,26 @@ def project_dataset(dataset: MarketDataset, start: date, end: date) -> MarketDat
     )
     validate_market_dataset(projected)
     return projected
+
+
+def prediction_metadata_prefix(
+    dataset: MarketDataset, decision: datetime
+) -> MarketDataset:
+    """For elapsed outcomes QF-3 supplies identity/basis, never future daily prices.
+
+    Exact observations and future label coverage come from canonical intraday
+    sources. Daily observations are not required at the scheduled decisions.
+    """
+    timeframe = DatasetProvenance.from_market_dataset(dataset).standalone_timeframe
+    assert timeframe is not None
+    completed = tuple(
+        bar.session_date
+        for bar in dataset.bars
+        if resolve_exchange_session(
+            bar.session_date, timeframe.session_policy
+        ).close_timestamp
+        <= decision
+    )
+    if not completed:
+        raise WalkForwardError("timestamp studies require prior QF-3 metadata context")
+    return project_dataset(dataset, completed[0], completed[-1])

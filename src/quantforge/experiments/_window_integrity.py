@@ -13,8 +13,15 @@ from quantforge.experiments._producer_integrity import (
 )
 from quantforge.experiments._window_context_integrity import validate_decision_context
 from quantforge.experiments._window_sessions import scheduled_sessions
+from quantforge.prediction.outcome_temporal import (
+    ElapsedDurationHorizon,
+    outcome_temporal_configuration,
+)
 from quantforge.prediction.window import (
     _window_record_counts,  # pyright: ignore[reportPrivateUsage]
+)
+from quantforge.prediction.window_validation import (
+    _validate_decision,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -121,6 +128,39 @@ def validate_window_snapshot(snapshot: PrimitiveMapping) -> None:
             or decision.get("prediction_study_id") != study_manifest.get("study_id")
         ):
             raise ManifestError("decision study does not match its window provenance")
+        configuration = mapping(manifest.get("configuration"))
+        labeler = mapping(configuration.get("outcome_labeler"))
+        temporal = outcome_temporal_configuration(
+            mapping(labeler.get("configuration")),
+            required_future_sessions=cast(
+                int | None, labeler.get("required_future_sessions")
+            ),
+        )
+        if isinstance(temporal.horizon, ElapsedDurationHorizon):
+            # Reuse the QF-42 stored-decision verifier, including exact QF-46
+            # requests and availability. No context or labels are regenerated.
+            timestamp = text(decision["decision_timestamp"])
+            rule = mapping(mapping(configuration["prediction_rule"])["configuration"])
+            try:
+                _validate_decision(
+                    decision,
+                    identity,
+                    timestamp,
+                    primary_timeframe={
+                        "configuration": schedule["primary_timeframe"],
+                        "configuration_id": configuration_identity(
+                            mapping(schedule["primary_timeframe"])
+                        ),
+                    },
+                    decision_session=sessions[timestamp],
+                    session_indexes={},
+                    strategy_parameters=mapping(rule.get("parameters", {})),
+                )
+            except (ValueError, KeyError, TypeError) as error:
+                raise ManifestError(
+                    "invalid elapsed prediction decision evidence"
+                ) from error
+            continue
         indexes = validate_prediction_rows(study_manifest, study.get("rows"))
         rows = _records(study.get("rows"))
         if len(rows) > len(signals):

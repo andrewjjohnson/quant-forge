@@ -42,6 +42,7 @@ def _boundaries(
 def validate_holdout_membership(source: OOSSource, value: object) -> None:
     """Read schema, identities, chronology and retained-session evidence only."""
     try:
+        timestamp_source = source.plan.prediction_membership
         partition = record(
             value,
             {
@@ -51,11 +52,20 @@ def validate_holdout_membership(source: OOSSource, value: object) -> None:
                 "evaluation_sessions",
                 "bounded_dataset_id",
                 "bounded_data_sha256",
-            },
+            }
+            | (
+                {"prediction_membership", "evaluation_timestamps"}
+                if timestamp_source is not None
+                else set()
+            ),
             "holdout membership",
         )
         window = source.plan.final_holdout.window
-        timeframe = source.plan.environment.outcome_dataset.standalone_timeframe
+        timeframe = (
+            timestamp_source.schedule.primary_timeframe
+            if timestamp_source is not None
+            else source.plan.environment.outcome_dataset.standalone_timeframe
+        )
         if timeframe is None:
             raise ManifestError("holdout membership requires a source timeframe")
         member = mapping(partition["membership"])
@@ -63,8 +73,11 @@ def validate_holdout_membership(source: OOSSource, value: object) -> None:
             window.window_id,
             _boundaries(member.get("warm_up_context"), window.interval.start),
             _boundaries(member.get("study_observations"), window.interval.start),
-            source.plan.environment.outcome_dataset.dataset_ids[0],
+            timestamp_source.source_reference.dataset_id
+            if timestamp_source is not None
+            else source.plan.environment.outcome_dataset.dataset_ids[0],
             timeframe.configuration_id,
+            None if timestamp_source is None else timestamp_source.family_manifest_id,
         )
         if (
             configuration_identity(member)
@@ -93,7 +106,7 @@ def validate_holdout_membership(source: OOSSource, value: object) -> None:
         if not isinstance(sessions, list) or not sessions:
             raise ManifestError("holdout evaluation sessions must be a nonempty array")
         labels = [date.fromisoformat(session_text(item)) for item in sessions]
-        if labels != sorted(set(labels)):
+        if labels != sorted(labels if timestamp_source is not None else set(labels)):
             raise ManifestError(
                 "holdout evaluation sessions must be ordered and unique"
             )
@@ -111,16 +124,37 @@ def validate_holdout_membership(source: OOSSource, value: object) -> None:
             if horizon.exchange_sessions
             else captured.study_observations
         )
-        evidence = tuple(
-            ExchangeSessionBoundary(label, timeframe.session_policy)
-            if isinstance(window.interval.start, ExchangeSessionBoundary)
-            else TimestampBoundary(
-                resolve_exchange_session(
-                    label, timeframe.session_policy
-                ).close_timestamp
+        evidence: tuple[ValidationBoundary, ...]
+        if timestamp_source is not None:
+            if partition["prediction_membership"] != timestamp_source.to_primitive():
+                raise ManifestError("holdout timestamp lineage differs")
+            timestamps = partition["evaluation_timestamps"]
+            if not isinstance(timestamps, list):
+                raise ManifestError("holdout timestamp observations are invalid")
+            exact_keys = tuple(
+                TimestampBoundary(datetime.fromisoformat(text(t))) for t in timestamps
             )
-            for label in labels
-        )
+            if [
+                timestamp_source.session_for(key.timestamp) for key in exact_keys
+            ] != labels or any(
+                key not in timestamp_source.observations
+                for key in captured.study_observations
+            ):
+                raise ManifestError(
+                    "holdout observations differ from captured schedule"
+                )
+            evidence = exact_keys
+        else:
+            evidence = tuple(
+                ExchangeSessionBoundary(label, timeframe.session_policy)
+                if isinstance(window.interval.start, ExchangeSessionBoundary)
+                else TimestampBoundary(
+                    resolve_exchange_session(
+                        label, timeframe.session_policy
+                    ).close_timestamp
+                )
+                for label in labels
+            )
         minimum = mapping(source.definition.to_primitive()["configuration"])[
             "minimum_test_observations"
         ]

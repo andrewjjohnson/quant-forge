@@ -6,8 +6,8 @@ import json
 import os
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, DecimalException
 from importlib import import_module
 from pathlib import Path
@@ -32,6 +32,7 @@ from quantforge.data.models import (
 from quantforge.data.multi_timeframe import (
     MultiTimeframeContext,
     MultiTimeframeContextError,
+    TimeframeBarSeries,
 )
 from quantforge.indicators import Indicator
 from quantforge.prediction.context import (
@@ -39,6 +40,7 @@ from quantforge.prediction.context import (
     PredictionContextFailurePolicy,
     PredictionContextProvider,
     PredictionContextRequirements,
+    PredictionRuleContext,
     available_prediction_context_manifest,
     build_prediction_rule_context,
     skipped_prediction_context_manifest,
@@ -53,6 +55,7 @@ from quantforge.prediction.contracts import (
     PredictionRuleParameters,
     PredictionStudy,
     PredictionValues,
+    TimestampStudyOutcomeLabeler,
 )
 from quantforge.prediction.errors import (
     InvalidPredictionDataError,
@@ -79,7 +82,17 @@ from quantforge.prediction.models import PredictionMarketData
 from quantforge.prediction.multi_timeframe_features import (
     MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION,
     MultiTimeframeFeatureRequest,
+    _CapturedMultiTimeframeColumn,  # pyright: ignore[reportPrivateUsage]
     capture_multi_timeframe_features,
+)
+from quantforge.prediction.outcome_resolution import (
+    OutcomeEvaluationRequest,
+    OutcomeResolution,
+)
+from quantforge.prediction.outcome_temporal import (
+    OutcomeAnchorKind,
+    OutcomeTemporalConfiguration,
+    outcome_temporal_configuration,
 )
 from quantforge.prediction.signal_feature_context import (
     AtrPercentageContext,
@@ -107,6 +120,7 @@ from quantforge.prediction.study import (
     run_prediction_study,
     run_prediction_study_in_session,
 )
+from quantforge.prediction.timestamp_execution import source_provenance
 
 
 class _ArrowBuffer(Protocol):
@@ -182,6 +196,13 @@ class OutcomeRun:
 
     study_id: str
     values_by_session: dict[date, PrimitiveMapping]
+    values_by_timestamp: dict[datetime, PrimitiveMapping] = field(
+        default_factory=dict[datetime, PrimitiveMapping]
+    )
+
+    @property
+    def observation_values(self) -> dict[date | datetime, PrimitiveMapping]:
+        return {**self.values_by_session, **self.values_by_timestamp}
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +283,55 @@ class _CandidatePopulationLabeler:
         return None
 
 
+class _TimestampCandidatePopulationLabeler:
+    """Capture candidates with their declared QF-46 temporal descriptor.
+
+    This internal boundary returns no research values and never calls the user's
+    outcome component. Only QF-46 time/availability metadata is constructed.
+    """
+
+    name = "qf7_timestamp_candidate_population_boundary"
+    implementation_version = "1"
+    result_schema_version = "1"
+    required_market_fields = ("close",)
+
+    def __init__(self, temporal: OutcomeTemporalConfiguration) -> None:
+        self.temporal = temporal
+
+    @property
+    def required_future_duration(self) -> timedelta:
+        return self.temporal.required_future_duration
+
+    def configuration(self) -> PrimitiveMapping:
+        return {
+            "component_name": self.name,
+            "implementation_version": self.implementation_version,
+            "temporal_configuration": self.temporal.to_primitive(),
+            "purpose": "fix_candidate_population_without_future_evaluation",
+        }
+
+    @property
+    def configuration_id(self) -> str:
+        return configuration_identity(self.configuration())
+
+    def validate_dataset(self, dataset: MarketDataset) -> None:
+        pass
+
+    def label_request(
+        self,
+        dataset: MarketDataset,
+        request: "OutcomeEvaluationRequest",
+        *,
+        source: TimeframeBarSeries,
+        resolution: "OutcomeResolution",
+    ) -> OutcomeLabel[_CandidatePopulationValues] | None:
+        return OutcomeLabel(
+            request.anchor.signal_session,
+            request.anchor.signal_session,
+            _CandidatePopulationValues(),
+        )
+
+
 class _CandidatePopulationEvaluator:
     """Evaluator that cannot be reached because candidate-only labels are absent."""
 
@@ -294,6 +364,15 @@ class _CandidatePopulationEvaluator:
         raise InvalidPredictionOutputError(
             "candidate-only QF-11 boundary unexpectedly produced an outcome"
         )
+
+
+class _TimestampCandidatePopulationEvaluator(_CandidatePopulationEvaluator):
+    def evaluate(
+        self,
+        signal: SignalFeatureCandidate,
+        outcome: PredictionOutcome[_CandidatePopulationValues],
+    ) -> _CandidatePopulationValues:
+        return _CandidatePopulationValues()
 
 
 def outcome_resolution_fields() -> tuple[SchemaField, ...]:
@@ -369,20 +448,22 @@ class PredictionStudyOutcome[
     """Expose one typed QF-11 study as flattened QF-7 outcome columns."""
 
     namespace: str
-    labeler: OutcomeLabeler[OutcomeT]
+    labeler: OutcomeLabeler[OutcomeT] | TimestampStudyOutcomeLabeler[OutcomeT]
     evaluator: PredictionEvaluator[SignalFeatureCandidate, OutcomeT, EvaluationT]
     fields: tuple[SchemaField, ...]
     unavailable_values_snapshot: PrimitiveMappingSnapshot
+    outcome_source: TimeframeBarSeries | None = None
 
     @classmethod
     def create(
         cls,
         namespace: str,
-        labeler: OutcomeLabeler[OutcomeT],
+        labeler: OutcomeLabeler[OutcomeT] | TimestampStudyOutcomeLabeler[OutcomeT],
         evaluator: PredictionEvaluator[SignalFeatureCandidate, OutcomeT, EvaluationT],
         fields: tuple[SchemaField, ...],
         *,
         unavailable_values: PrimitiveMapping,
+        outcome_source: TimeframeBarSeries | None = None,
     ) -> "PredictionStudyOutcome[OutcomeT, EvaluationT]":
         if not namespace or not namespace.replace("_", "").isalnum():
             raise SignalFeatureDatasetError(
@@ -446,6 +527,7 @@ class PredictionStudyOutcome[
             evaluator,
             fields,
             PrimitiveMappingSnapshot.capture(unavailable_values),
+            outcome_source,
         )
 
     @property
@@ -459,6 +541,16 @@ class PredictionStudyOutcome[
     def configuration(self) -> PrimitiveMapping:
         return {
             "component": "qf11_prediction_study_outcome",
+            **(
+                {}
+                if self.outcome_source is None
+                else {
+                    "outcome_source": source_provenance(
+                        self.outcome_source,
+                        outcome_temporal_configuration(self.labeler.configuration()),
+                    )
+                }
+            ),
             "evaluator": self.evaluator.configuration(),
             "fields": [field.to_primitive() for field in self.fields],
             "labeler": self.labeler.configuration(),
@@ -492,6 +584,8 @@ class PredictionStudyOutcome[
         prepared_dataset: PredictionStudyDatasetSession,
         strategy: PredictionRule[SignalFeatureCandidate],
         feature_configuration: PrimitiveMapping,
+        *,
+        context_provider: PredictionContextProvider | None = None,
     ) -> OutcomeRun:
         study = PredictionStudy[SignalFeatureCandidate, OutcomeT, EvaluationT].create(
             strategy,
@@ -499,13 +593,17 @@ class PredictionStudyOutcome[
             self.evaluator,
             feature_configuration=feature_configuration,
             result_schema_version=OUTCOME_SCHEMA_VERSION,
+            outcome_source=self.outcome_source,
         )
-        result = run_prediction_study_in_session(prepared_dataset, study)
+        result = run_prediction_study_in_session(
+            prepared_dataset, study, context_provider=context_provider
+        )
         field_names = {field.name for field in self.fields}
         non_nullable_field_names = {
             field.name for field in self.fields if not field.nullable
         }
         values_by_session: dict[date, PrimitiveMapping] = {}
+        values_by_timestamp: dict[datetime, PrimitiveMapping] = {}
         for row in result.rows:
             values = row.evaluation.values.to_primitive()
             if "outcome_session" in field_names:
@@ -532,8 +630,11 @@ class PredictionStudyOutcome[
                     f"outcome {self.namespace} values do not match declared field "
                     f"types: {invalid_value_names}"
                 )
-            values_by_session[row.signal.signal_session] = values
-        return OutcomeRun(result.study_id, values_by_session)
+            if row.signal.decision_timestamp is None:
+                values_by_session[row.signal.signal_session] = values
+            else:
+                values_by_timestamp[row.signal.decision_timestamp] = values
+        return OutcomeRun(result.study_id, values_by_session, values_by_timestamp)
 
 
 def _run_configured_outcome(
@@ -543,6 +644,8 @@ def _run_configured_outcome(
     prepared_dataset: PredictionStudyDatasetSession,
     strategy: PredictionRule[SignalFeatureCandidate],
     feature_configuration: PrimitiveMapping,
+    *,
+    context_provider: PredictionContextProvider | None = None,
 ) -> OutcomeRun:
     feature_configuration_snapshot = PrimitiveMappingSnapshot.capture(
         feature_configuration
@@ -550,7 +653,10 @@ def _run_configured_outcome(
     outcome_feature_configuration = feature_configuration_snapshot.to_primitive()
     if isinstance(configured_outcome, PredictionStudyOutcome):
         outcome_run = configured_outcome.run_prepared(
-            prepared_dataset, strategy, outcome_feature_configuration
+            prepared_dataset,
+            strategy,
+            outcome_feature_configuration,
+            context_provider=context_provider,
         )
     else:
         outcome_run = configured_outcome.run(
@@ -659,8 +765,8 @@ def _bound_outcome_study_id(
 
 def _validate_outcome_session_keys(
     configured_outcome: ConfiguredOutcome,
-    expected_sessions: frozenset[date],
-    values_by_session: dict[date, PrimitiveMapping],
+    expected_sessions: frozenset[date | datetime],
+    values_by_session: dict[date | datetime, PrimitiveMapping],
 ) -> None:
     unexpected_sessions = tuple(
         sorted(set(values_by_session).difference(expected_sessions))
@@ -722,12 +828,15 @@ class _FixedCandidateRule:
         signals: tuple[SignalFeatureCandidate, ...],
         population_id: str,
         population_count: int,
+        *,
+        context_requirements: PredictionContextRequirements | None = None,
     ) -> None:
         self._source = source
         self._source_configuration_snapshot = source_configuration_snapshot
         self._signals = signals
         self._population_id = population_id
         self._population_count = population_count
+        self.context_requirements = context_requirements
 
     @property
     def name(self) -> str:
@@ -768,11 +877,19 @@ class _FixedCandidateRule:
         }
 
     def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        return self._output(dataset.metadata.dataset_id)
+
+    def generate_with_context(
+        self, context: PredictionRuleContext
+    ) -> SignalFeatureCandidateOutput:
+        return self._output(context.prediction_dataset_id)
+
+    def _output(self, dataset_id: str) -> SignalFeatureCandidateOutput:
         configuration_id = self.configuration_id
         return SignalFeatureCandidateOutput(
             self.name,
             configuration_id,
-            dataset.metadata.dataset_id,
+            dataset_id,
             tuple(
                 replace(signal, strategy_configuration_id=configuration_id)
                 for signal in self._signals
@@ -1082,6 +1199,8 @@ def build_signal_feature_dataset[
         contextual_definitions,
         sorted_outcomes,
         outcome_field_snapshots,
+        timestamp_anchors=prediction_context_snapshot is not None
+        or prediction_study.outcome_source is not None,
     )
     feature_configuration = _feature_configuration(
         strategy_fields,
@@ -1172,7 +1291,7 @@ def build_signal_feature_dataset[
     for chunk_start in range(0, len(missing_candidates), chunk_size):
         chunk = missing_candidates[chunk_start : chunk_start + chunk_size]
         chunk_signal_sessions = frozenset(
-            candidate.signal_session for candidate in chunk
+            _candidate_key(candidate) for candidate in chunk
         )
         fixed_rule = _FixedCandidateRule(
             strategy,
@@ -1180,8 +1299,13 @@ def build_signal_feature_dataset[
             chunk,
             candidate_population_id,
             len(enriched_candidates),
+            context_requirements=(
+                getattr(strategy, "context_requirements", None)
+                if prediction_study.outcome_source is not None
+                else None
+            ),
         )
-        outcome_values: dict[str, dict[date, PrimitiveMapping]] = {}
+        outcome_values: dict[str, dict[date | datetime, PrimitiveMapping]] = {}
         chunk_study_ids: dict[str, str] = {}
         for configured_outcome, fields in zip(
             sorted_outcomes, outcome_field_snapshots, strict=True
@@ -1197,17 +1321,18 @@ def build_signal_feature_dataset[
                 prepared_outcome_dataset,
                 fixed_rule,
                 feature_configuration,
+                context_provider=effective_context_provider,
             )
             _validate_outcome_session_keys(
                 configured_outcome,
                 chunk_signal_sessions,
-                outcome_run.values_by_session,
+                outcome_run.observation_values,
             )
             outcome_values[configured_outcome.namespace] = {
                 signal_session: _validated_flattened_outcome_values(
                     configured_outcome, fields, values
                 )
-                for signal_session, values in outcome_run.values_by_session.items()
+                for signal_session, values in outcome_run.observation_values.items()
             }
             study_id = _bound_outcome_study_id(
                 configured_outcome,
@@ -1276,7 +1401,7 @@ def build_signal_feature_dataset[
             _validate_outcome_session_keys(
                 configured_outcome,
                 frozenset(),
-                outcome_run.values_by_session,
+                outcome_run.observation_values,
             )
             study_ids_by_namespace[configured_outcome.namespace] = (
                 _bound_outcome_study_id(
@@ -1326,18 +1451,42 @@ def _generate_candidate_population[
         _CandidatePopulationValues,
     ].create(
         prediction_study.strategy,
-        _CandidatePopulationLabeler(len(dataset.bars)),
-        _CandidatePopulationEvaluator(),
+        (
+            _CandidatePopulationLabeler(len(dataset.bars))
+            if prediction_study.outcome_source is None
+            else _TimestampCandidatePopulationLabeler(
+                outcome_temporal_configuration(
+                    prediction_study.outcome_labeler.configuration()
+                )
+            )
+        ),
+        (
+            _CandidatePopulationEvaluator()
+            if prediction_study.outcome_source is None
+            else _TimestampCandidatePopulationEvaluator()
+        ),
         feature_configuration=prediction_study.feature_configuration,
         result_schema_version=prediction_study.result_schema_version,
+        outcome_source=prediction_study.outcome_source,
     )
-    signals = tuple(
-        run_prediction_study(
-            dataset,
-            boundary_study,
-            context_provider=context_provider,
-        ).signals
+    population = run_prediction_study(
+        dataset,
+        boundary_study,
+        context_provider=context_provider,
     )
+    signals = tuple(population.signals)
+    captured_context = population.prediction_context_snapshot
+    if captured_context is not None:
+        context = captured_context.to_primitive()
+        if context["status"] == "available":
+            source_context = cast(PrimitiveMapping, context["source_context"])
+            original_timestamp = datetime.fromisoformat(
+                cast(str, source_context["as_of"])
+            )
+            signals = tuple(
+                replace(signal, decision_timestamp=original_timestamp)
+                for signal in signals
+            )
     _validate_strategy_configuration(
         cast(PredictionRule[SignalFeatureCandidate], prediction_study.strategy),
         expected_strategy_configuration_id,
@@ -1459,7 +1608,7 @@ def _validate_regenerated_completed_rows(
         completed_values = completed_row.to_primitive()
         outcome_values = {
             outcome.namespace: {
-                candidate.signal_session: {
+                _candidate_key(candidate): {
                     field.name: completed_values[
                         f"outcome_{outcome.namespace}_{field.name}"
                     ]
@@ -1657,6 +1806,18 @@ def _dataset_configuration[
     }
     if prediction_context_snapshot is not None:
         configuration["prediction_context"] = prediction_context_snapshot.to_primitive()
+    if (
+        prediction_context_snapshot is not None
+        or prediction_study.outcome_source is not None
+    ):
+        configuration["candidate_anchor_kind"] = OutcomeAnchorKind.TIMESTAMP.value
+    if prediction_study.outcome_source is not None:
+        configuration["outcome_source"] = source_provenance(
+            prediction_study.outcome_source,
+            outcome_temporal_configuration(
+                prediction_study.outcome_labeler.configuration()
+            ),
+        )
     return configuration
 
 
@@ -1714,6 +1875,8 @@ def _schema(
     contextual_definitions: tuple[SchemaField, ...],
     outcomes: tuple[ConfiguredOutcome, ...],
     outcome_field_snapshots: tuple[tuple[SchemaField, ...], ...],
+    *,
+    timestamp_anchors: bool = False,
 ) -> SignalFeatureSchema:
     feature_fields = tuple(
         replace(field, name=f"feature_{field.name}")
@@ -1730,11 +1893,16 @@ def _schema(
     return SignalFeatureSchema(
         FEATURE_SCHEMA_VERSION,
         OUTCOME_SCHEMA_VERSION,
-        (*_identity_fields(), *_disposition_fields(), *feature_fields, *outcome_fields),
+        (
+            *_identity_fields(timestamp_anchors=timestamp_anchors),
+            *_disposition_fields(),
+            *feature_fields,
+            *outcome_fields,
+        ),
     )
 
 
-def _identity_fields() -> tuple[SchemaField, ...]:
+def _identity_fields(*, timestamp_anchors: bool = False) -> tuple[SchemaField, ...]:
     timing = "known before outcome labeling"
     definitions = (
         ("row_id", "string", "sha256", "QF-7 row identity"),
@@ -1830,6 +1998,20 @@ def _identity_fields() -> tuple[SchemaField, ...]:
             timing,
         )
         for name, data_type, unit, source in definitions
+    ) + (
+        (
+            SchemaField(
+                "decision_timestamp",
+                SchemaFieldCategory.IDENTITY,
+                "string",
+                "UTC_timestamp",
+                True,
+                "original QF-42 decision anchor",
+                timing,
+            ),
+        )
+        if timestamp_anchors
+        else ()
     )
 
 
@@ -1871,8 +2053,8 @@ def _enrich_candidates(
         )
     if not candidates:
         return ()
-    values_by_session: dict[date, list[SignalFeatureValue]] = {
-        candidate.signal_session: [] for candidate in candidates
+    values_by_session: dict[date | datetime, list[SignalFeatureValue]] = {
+        _candidate_key(candidate): [] for candidate in candidates
     }
     for feature, definition, configuration_snapshot in zip(
         contextual_features,
@@ -1884,15 +2066,31 @@ def _enrich_candidates(
             configuration_snapshot.to_primitive()
         )
         if feature.__class__ not in _TRUSTED_ALIGNED_CONTEXT_TYPES:
-            values: dict[date, Decimal | Primitive] = {}
+            values: dict[date | datetime, Decimal | Primitive] = {}
             for candidate in candidates:
-                value = feature.value_from_history(
-                    _causal_history(
-                        dataset,
-                        bar_indexes[candidate.signal_session],
-                        candidate.signal_session,
+                if isinstance(feature, _CapturedMultiTimeframeColumn):
+                    provenance = cast(
+                        PrimitiveMapping, feature.configuration()["resolved_provenance"]
                     )
-                )
+                    if (
+                        candidate.signal_session != feature.decision_session
+                        or candidate.decision_timestamp is None
+                        or candidate.decision_timestamp.isoformat()
+                        != provenance["context_as_of"]
+                    ):
+                        raise InvalidPredictionOutputError(
+                            "captured context differs from original candidate anchor"
+                        )
+                    value = feature.value
+                else:
+                    history_index = _history_index(dataset, candidate, bar_indexes)
+                    value = feature.value_from_history(
+                        _causal_history(
+                            dataset,
+                            history_index,
+                            dataset.bars[history_index].session_date,
+                        )
+                    )
                 if (
                     feature.configuration_id != expected_configuration_id
                     or configuration_identity(feature.configuration())
@@ -1901,7 +2099,7 @@ def _enrich_candidates(
                     raise InvalidPredictionOutputError(
                         "contextual feature configuration changed during calculation"
                     )
-                values[candidate.signal_session] = value
+                values[_candidate_key(candidate)] = value
         else:
             aligned_callback = getattr(feature, "values_for_dataset", None)
             if not callable(aligned_callback):
@@ -1925,8 +2123,8 @@ def _enrich_candidates(
                 )
             aligned_values = cast(tuple[Decimal | None, ...], raw_aligned_tuple)
             values = {
-                candidate.signal_session: aligned_values[
-                    bar_indexes[candidate.signal_session]
+                _candidate_key(candidate): aligned_values[
+                    _history_index(dataset, candidate, bar_indexes)
                 ]
                 for candidate in candidates
             }
@@ -1952,7 +2150,7 @@ def _enrich_candidates(
             candidate,
             contextual_features=tuple(
                 sorted(
-                    values_by_session[candidate.signal_session],
+                    values_by_session[_candidate_key(candidate)],
                     key=lambda item: item.name,
                 )
             ),
@@ -2034,6 +2232,11 @@ def _candidate_id(
             "dataset_fingerprint": market_data.bars_fingerprint,
             "parameters": candidate.parameters_primitive(),
             "record_type": "signal_feature_candidate",
+            **(
+                {}
+                if candidate.decision_timestamp is None
+                else {"decision_timestamp": candidate.decision_timestamp.isoformat()}
+            ),
             "signal_session": candidate.signal_session.isoformat(),
             "source_rule_configuration_id": candidate.source_rule_configuration_id,
             "source_rule_id": candidate.source_rule_id,
@@ -2052,7 +2255,7 @@ def _build_row(
     candidate: SignalFeatureCandidate,
     candidate_id: str,
     outcomes: tuple[ConfiguredOutcome, ...],
-    outcome_values: dict[str, dict[date, PrimitiveMapping]],
+    outcome_values: dict[str, dict[date | datetime, PrimitiveMapping]],
     study_ids: dict[str, str],
     unavailable_outcome_values: dict[str, PrimitiveMapping],
 ) -> SignalFeatureRow:
@@ -2118,10 +2321,16 @@ def _build_row(
         "symbol": candidate.symbol,
         "volume_basis": market_data.volume_basis,
     }
+    if "decision_timestamp" in schema.column_names:
+        values["decision_timestamp"] = (
+            None
+            if candidate.decision_timestamp is None
+            else candidate.decision_timestamp.isoformat()
+        )
     values.update(candidate_features)
     for configured_outcome in outcomes:
         unprefixed = outcome_values[configured_outcome.namespace].get(
-            candidate.signal_session
+            _candidate_key(candidate)
         )
         if unprefixed is None:
             unprefixed = unavailable_outcome_values[configured_outcome.namespace]
@@ -2398,7 +2607,15 @@ def _load_completed_result(
 ) -> SignalFeatureDatasetResult:
     manifest = _read_mapping(destination / "manifest.json")
     rows_by_candidate = _load_progress_rows(destination, feature_dataset_id, schema)
-    rows = tuple(sorted(rows_by_candidate.values(), key=lambda row: row.signal_session))
+    rows = tuple(
+        sorted(
+            rows_by_candidate.values(),
+            key=lambda row: (
+                row.signal_session,
+                str(row.to_primitive().get("decision_timestamp") or ""),
+            ),
+        )
+    )
     study_ids = _study_ids_from_rows(rows)
     if rows:
         prediction_study_ids = tuple(study_ids[name] for name in sorted(study_ids))
@@ -2488,7 +2705,7 @@ def _empty_dataset_study_ids(
         _validate_outcome_session_keys(
             outcome,
             frozenset(),
-            outcome_run.values_by_session,
+            outcome_run.observation_values,
         )
         study_ids.append(
             _bound_outcome_study_id(
@@ -2706,3 +2923,32 @@ def _outcome_field(
         calculation,
         timing,
     )
+
+
+def _candidate_key(candidate: SignalFeatureCandidate) -> date | datetime:
+    return candidate.decision_timestamp or candidate.signal_session
+
+
+def _history_index(
+    dataset: MarketDataset, candidate: SignalFeatureCandidate, indexes: dict[date, int]
+) -> int:
+    if candidate.decision_timestamp is None:
+        return indexes[candidate.signal_session]
+    from quantforge.timeframes import resolve_exchange_session
+    from quantforge.validation import DatasetProvenance
+
+    timeframe = DatasetProvenance.from_market_dataset(dataset).standalone_timeframe
+    assert timeframe is not None
+    visible = [
+        i
+        for i, bar in enumerate(dataset.bars)
+        if resolve_exchange_session(
+            bar.session_date, timeframe.session_policy
+        ).close_timestamp
+        <= candidate.decision_timestamp
+    ]
+    if not visible:
+        raise InvalidPredictionOutputError(
+            "timestamp context requires completed historical daily observations"
+        )
+    return visible[-1]

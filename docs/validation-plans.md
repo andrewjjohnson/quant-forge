@@ -41,13 +41,19 @@ calendar, timezone, or session scope.
 
 A single-input plan containing selected intraday sources requires timestamp
 boundaries. Session keys never stand in for individual intraday bars. The
-explicit two-input prediction contract is different: its session-indexed QF-3
+legacy two-input prediction contract is different: its session-indexed QF-3
 prediction dataset owns study membership and observed-session outcome horizons,
 while the context family supplies timestamped feature bars. Such plans use
 session boundaries and `select_prediction_context_observations()` for context;
 there is no conversion of an outcome session into an assumed 24-hour duration.
 The ordinary `select_window_observations()` still rejects intraday bars on a
 session-key window. Family lineage alone cannot opt into the two-input contract.
+
+QF-48 additionally allows an explicit `prediction_membership` source to bind a
+QF-42 exact decision schedule to a two-input prediction plan. That opt-in uses
+timestamp boundaries and QF-46 elapsed reach. See
+[timestamp prediction validation](timestamp-prediction-validation.md) for capture,
+coverage, closed boundaries, purge/embargo, and compatibility rules.
 
 ## Folds and final holdout
 

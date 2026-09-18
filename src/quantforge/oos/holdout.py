@@ -82,7 +82,19 @@ def _exposure_scope(source: OOSSource) -> PrimitiveMapping:
     metadata, timeframe = dataset.market_data_metadata, dataset.standalone_timeframe
     if metadata is None or timeframe is None:
         raise OOSIntegrityError("holdout exposure requires a daily dataset policy")
-    if isinstance(interval.start, ExchangeSessionBoundary):
+    if source.plan.prediction_membership is not None:
+        membership = source.plan.prediction_membership
+        sessions = tuple(
+            membership.session_for(key.timestamp)
+            for key in membership.observations
+            if interval.contains(key)
+        )
+        if not sessions:
+            raise OOSIntegrityError("holdout has no captured timestamp observations")
+        # Exposure still conservatively guards whole exchange sessions, so a
+        # different membership axis cannot restore a viewed portion of a session.
+        start, end = sessions[0], sessions[-1]
+    elif isinstance(interval.start, ExchangeSessionBoundary):
         assert isinstance(interval.end, ExchangeSessionBoundary)
         start, end = interval.start.session_date, interval.end.session_date
     else:

@@ -209,6 +209,7 @@ def test_session_outcome_capture_preserves_valid_runner_horizon(horizon: int) ->
     outcome = OutcomeProvenance.capture_exchange_sessions(study.outcome_labeler)
     assert events == []
     result = run_prediction_study(make_dataset(("100", "101", "102")), study)
+    assert result.configuration.required_future_sessions is not None
     assert outcome.future_horizon == TemporalOffset.sessions(
         result.configuration.required_future_sessions
     )

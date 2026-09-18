@@ -1,5 +1,9 @@
 # Signal-level feature datasets and outcome labels
 
+QF-48 adds explicit exact-timestamp prediction membership and elapsed request
+execution. See [timestamp prediction validation](timestamp-prediction-validation.md)
+for the opt-in source, replay anchors, persistence, and holdout compatibility.
+
 QF-7 extends the generic QF-11 prediction-study contracts. It does not add a
 second prediction engine, feature store, backtester, or execution model.
 

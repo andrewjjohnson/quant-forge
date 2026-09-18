@@ -2,17 +2,21 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Protocol, TypeVar, cast
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data.models import MarketDataset
+from quantforge.data.multi_timeframe import TimeframeBarSeries
 from quantforge.indicators import Indicator
 from quantforge.prediction.context import (
     PredictionContextRequirements,
     PredictionRuleContext,
 )
-from quantforge.prediction.outcome_resolution import OutcomeEvaluationRequest
+from quantforge.prediction.outcome_resolution import (
+    OutcomeEvaluationRequest,
+    OutcomeResolution,
+)
 from quantforge.prediction.outcome_temporal import (
     OutcomeAnchorKind,
     OutcomeTemporalError,
@@ -161,8 +165,8 @@ class OutcomeLabel[OutcomeValuesT: PredictionValues]:
     values: OutcomeValuesT
 
 
-class OutcomeLabeler(Protocol[OutcomeValuesT]):
-    """Generate future outcomes only after prediction signals are fixed."""
+class StudyOutcomeComponent(Protocol):
+    """Metadata and dataset validation shared by session and request consumers."""
 
     @property
     def name(self) -> str: ...
@@ -174,9 +178,6 @@ class OutcomeLabeler(Protocol[OutcomeValuesT]):
     def result_schema_version(self) -> str: ...
 
     @property
-    def required_future_sessions(self) -> int: ...
-
-    @property
     def required_market_fields(self) -> tuple[str, ...]: ...
 
     @property
@@ -185,6 +186,13 @@ class OutcomeLabeler(Protocol[OutcomeValuesT]):
     def configuration(self) -> PrimitiveMapping: ...
 
     def validate_dataset(self, dataset: MarketDataset) -> None: ...
+
+
+class OutcomeLabeler(StudyOutcomeComponent, Protocol[OutcomeValuesT]):
+    """Legacy session outcome execution contract."""
+
+    @property
+    def required_future_sessions(self) -> int: ...
 
     def label(
         self, dataset: MarketDataset, signal_session: date
@@ -209,10 +217,37 @@ class RequestOutcomeLabeler(Protocol[OutcomeValuesT]):
     ) -> OutcomeLabel[OutcomeValuesT] | None: ...
 
 
+class TimestampStudyOutcomeLabeler(StudyOutcomeComponent, Protocol[OutcomeValuesT]):
+    """QF-46 request consumer with a runner-bounded canonical label source.
+
+    The source is supplied only after causal predictions are fixed. Its identity
+    is already bound by the existing OutcomeEvaluationRequest. Use the supplied
+    full-source resolution for availability; resolving the bounded source alone
+    cannot distinguish missing observations from the end of the full artifact.
+    """
+
+    @property
+    def required_future_duration(self) -> timedelta: ...
+
+    def label_request(
+        self,
+        dataset: MarketDataset,
+        request: OutcomeEvaluationRequest,
+        *,
+        source: TimeframeBarSeries,
+        resolution: OutcomeResolution,
+    ) -> OutcomeLabel[OutcomeValuesT] | None: ...
+
+
 def evaluate_outcome_request[OutcomeValuesT: PredictionValues](
-    labeler: OutcomeLabeler[OutcomeValuesT] | RequestOutcomeLabeler[OutcomeValuesT],
+    labeler: OutcomeLabeler[OutcomeValuesT]
+    | RequestOutcomeLabeler[OutcomeValuesT]
+    | TimestampStudyOutcomeLabeler[OutcomeValuesT],
     dataset: MarketDataset,
     request: OutcomeEvaluationRequest,
+    *,
+    source: TimeframeBarSeries | None = None,
+    resolution: OutcomeResolution | None = None,
 ) -> OutcomeLabel[OutcomeValuesT] | None:
     """Dispatch an already-fixed prediction's request without changing legacy inputs.
 
@@ -240,6 +275,28 @@ def evaluate_outcome_request[OutcomeValuesT: PredictionValues](
             "outcome evaluation request differs from its component or dataset"
         )
     callback = getattr(labeler, "label_request", None)
+    if resolution is not None and source is None:
+        raise OutcomeTemporalError("outcome resolution requires its bounded source")
+    if source is not None:
+        if (
+            source.dataset_reference != request.source_reference
+            or source.timeframe != temporal.observation_timeframe
+        ):
+            raise OutcomeTemporalError("outcome source differs from request")
+        if (
+            not isinstance(resolution, OutcomeResolution)
+            or resolution.request != request
+            or (
+                resolution.observation is not None
+                and resolution.observation not in source.bars
+            )
+        ):
+            raise OutcomeTemporalError("outcome resolution differs from request/source")
+        if not callable(callback):
+            raise OutcomeTemporalError("timestamp studies require label_request()")
+        return cast(
+            TimestampStudyOutcomeLabeler[OutcomeValuesT], labeler
+        ).label_request(dataset, request, source=source, resolution=resolution)
     if callable(callback):
         return cast(
             Callable[
@@ -299,9 +356,10 @@ class PredictionOutcome[OutcomeValuesT: PredictionValues]:
     signal_session: date
     outcome_session: date
     values: OutcomeValuesT
+    temporal_resolution: PrimitiveMappingSnapshot | None = None
 
     def to_primitive(self) -> PrimitiveMapping:
-        return {
+        primitive: PrimitiveMapping = {
             "dataset_fingerprint": self.dataset_fingerprint,
             "dataset_id": self.dataset_id,
             "outcome_configuration_id": self.outcome_configuration_id,
@@ -313,6 +371,9 @@ class PredictionOutcome[OutcomeValuesT: PredictionValues]:
             "signal_session": self.signal_session.isoformat(),
             "values": self.values.to_primitive(),
         }
+        if self.temporal_resolution is not None:
+            primitive["temporal_resolution"] = self.temporal_resolution.to_primitive()
+        return primitive
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,23 +412,28 @@ class PredictionStudy[
         PredictionRule[PredictionRecordT]
         | MultiTimeframePredictionRule[PredictionRecordT]
     )
-    outcome_labeler: OutcomeLabeler[OutcomeValuesT]
+    outcome_labeler: (
+        OutcomeLabeler[OutcomeValuesT] | TimestampStudyOutcomeLabeler[OutcomeValuesT]
+    )
     evaluator: PredictionEvaluator[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
     feature_configuration_snapshot: PrimitiveMappingSnapshot
     result_schema_version: str = "1"
+    outcome_source: TimeframeBarSeries | None = None
 
     @classmethod
     def create(
         cls,
         strategy: PredictionRule[PredictionRecordT]
         | MultiTimeframePredictionRule[PredictionRecordT],
-        outcome_labeler: OutcomeLabeler[OutcomeValuesT],
+        outcome_labeler: OutcomeLabeler[OutcomeValuesT]
+        | TimestampStudyOutcomeLabeler[OutcomeValuesT],
         evaluator: PredictionEvaluator[
             PredictionRecordT, OutcomeValuesT, EvaluationValuesT
         ],
         *,
         feature_configuration: PrimitiveMapping | None = None,
         result_schema_version: str = "1",
+        outcome_source: TimeframeBarSeries | None = None,
     ) -> "PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]":
         configured_features: PrimitiveMapping = (
             {
@@ -383,6 +449,7 @@ class PredictionStudy[
             evaluator,
             PrimitiveMappingSnapshot.capture(configured_features),
             result_schema_version,
+            outcome_source,
         )
 
     @property
