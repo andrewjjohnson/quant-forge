@@ -98,7 +98,10 @@ contract.
 Elapsed horizons do not waive strategy warm-up. Direct studies still validate the
 signal's dataset observation count. When a validated primary context is supplied,
 its completed bars must satisfy the declared warm-up instead of the separate
-daily metadata projection.
+daily metadata projection. A signal absent from that projection is rejected unless
+validated primary context supplies the count. Contextual QF-7 outcome replay keeps
+the original context provider and requirements so it can certify that history
+again; the elapsed horizon or captured timestamp alone is not warm-up evidence.
 
 QF-7 `SignalFeatureCandidate.decision_timestamp` captures the original context
 instant before replay. Fixed replay preserves it verbatim, keys outcomes by that
@@ -117,6 +120,14 @@ timeframe/session policy, or elapsed reach invalidate material identities. The
 existing persistence comparisons reject incompatible artifacts even when copied
 into a new study directory. Compatible completed runs resume without evaluation.
 No new cache or automatic migration is introduced.
+
+Standalone QF-11 results and non-window QF-32 trials use the same QF-46 resolution
+checks as window results when their temporal contract is elapsed. Read-only
+inspection validates exact anchors, context warm-up, source identity, endpoint
+boundaries, and availability without calling research components. Same-session
+rows are ordered and unique by their original timestamps. Elapsed outcomes always
+require explicit labeled rows, including unavailable endpoints; legacy session
+artifacts retain their session-horizon checks.
 
 QF-40 verifies captured timestamps, source lineage, and QF-46 request metadata;
 it does not rerun QF-8 partition/purge calculations during OOS aggregation. Its

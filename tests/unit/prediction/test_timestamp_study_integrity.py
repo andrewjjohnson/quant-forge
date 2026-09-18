@@ -27,7 +27,7 @@ from quantforge.prediction.feature_dataset import (
 )
 from quantforge.prediction.timestamp_execution import bounded_outcome_source
 from quantforge.validation import PartitionRole
-from quantforge.walk_forward.partitions import partition
+from quantforge.walk_forward.partitions import partition, prediction_metadata_prefix
 from quantforge.walk_forward.prediction import (
     _PermittedContextProvider,  # pyright: ignore[reportPrivateUsage]
 )
@@ -75,6 +75,19 @@ def test_direct_elapsed_study_enforces_dataset_warm_up(
     else:
         with pytest.raises(InvalidPredictionOutputError, match="warm-up completed"):
             run_prediction_study(dataset, direct_study)
+
+
+@pytest.mark.parametrize("warm_up", [1, 20])
+def test_direct_elapsed_replay_rejects_absent_session_without_context(
+    tmp_path: Path, warm_up: int
+) -> None:
+    dataset, replay, _, study = population(tmp_path)
+    metadata = prediction_metadata_prefix(dataset, instant(4, "10:00"))
+    source_rule = cast(_FixtureCandidateRule, replay._source)  # pyright: ignore[reportPrivateUsage]
+    source_rule.warm_up_observations = warm_up
+    assert SESSIONS[4] not in {bar.session_date for bar in metadata.bars}
+    with pytest.raises(InvalidPredictionOutputError, match=r"evidence.*warm-up"):
+        run_prediction_study(metadata, study)
 
 
 @pytest.mark.parametrize("sufficient_context", [False, True])

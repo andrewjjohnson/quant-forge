@@ -48,14 +48,19 @@ def validate_signal_session(
     indexes: dict[str, int],
     *,
     decision_session: object = None,
+    context_warm_up_observations: int | None = None,
 ) -> str:
     session = session_text(prediction.get("signal_session"))
     warm_up = rule.get("warm_up_observations")
+    observations = (
+        context_warm_up_observations
+        if context_warm_up_observations is not None
+        else indexes.get(session, -1) + 1
+    )
     if (
         type(warm_up) is not int
         or warm_up < 1
-        or session not in indexes
-        or indexes[session] + 1 < warm_up
+        or observations < warm_up
         or (decision_session is not None and session != decision_session)
     ):
         raise ManifestError("prediction signal session or warm-up is incompatible")

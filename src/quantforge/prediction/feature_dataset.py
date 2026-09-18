@@ -40,6 +40,7 @@ from quantforge.prediction.context import (
     PredictionContextFailurePolicy,
     PredictionContextProvider,
     PredictionContextRequirements,
+    PredictionRuleContext,
     available_prediction_context_manifest,
     build_prediction_rule_context,
     skipped_prediction_context_manifest,
@@ -583,6 +584,8 @@ class PredictionStudyOutcome[
         prepared_dataset: PredictionStudyDatasetSession,
         strategy: PredictionRule[SignalFeatureCandidate],
         feature_configuration: PrimitiveMapping,
+        *,
+        context_provider: PredictionContextProvider | None = None,
     ) -> OutcomeRun:
         study = PredictionStudy[SignalFeatureCandidate, OutcomeT, EvaluationT].create(
             strategy,
@@ -592,7 +595,9 @@ class PredictionStudyOutcome[
             result_schema_version=OUTCOME_SCHEMA_VERSION,
             outcome_source=self.outcome_source,
         )
-        result = run_prediction_study_in_session(prepared_dataset, study)
+        result = run_prediction_study_in_session(
+            prepared_dataset, study, context_provider=context_provider
+        )
         field_names = {field.name for field in self.fields}
         non_nullable_field_names = {
             field.name for field in self.fields if not field.nullable
@@ -639,6 +644,8 @@ def _run_configured_outcome(
     prepared_dataset: PredictionStudyDatasetSession,
     strategy: PredictionRule[SignalFeatureCandidate],
     feature_configuration: PrimitiveMapping,
+    *,
+    context_provider: PredictionContextProvider | None = None,
 ) -> OutcomeRun:
     feature_configuration_snapshot = PrimitiveMappingSnapshot.capture(
         feature_configuration
@@ -646,7 +653,10 @@ def _run_configured_outcome(
     outcome_feature_configuration = feature_configuration_snapshot.to_primitive()
     if isinstance(configured_outcome, PredictionStudyOutcome):
         outcome_run = configured_outcome.run_prepared(
-            prepared_dataset, strategy, outcome_feature_configuration
+            prepared_dataset,
+            strategy,
+            outcome_feature_configuration,
+            context_provider=context_provider,
         )
     else:
         outcome_run = configured_outcome.run(
@@ -818,12 +828,15 @@ class _FixedCandidateRule:
         signals: tuple[SignalFeatureCandidate, ...],
         population_id: str,
         population_count: int,
+        *,
+        context_requirements: PredictionContextRequirements | None = None,
     ) -> None:
         self._source = source
         self._source_configuration_snapshot = source_configuration_snapshot
         self._signals = signals
         self._population_id = population_id
         self._population_count = population_count
+        self.context_requirements = context_requirements
 
     @property
     def name(self) -> str:
@@ -864,11 +877,19 @@ class _FixedCandidateRule:
         }
 
     def generate(self, dataset: MarketDataset) -> SignalFeatureCandidateOutput:
+        return self._output(dataset.metadata.dataset_id)
+
+    def generate_with_context(
+        self, context: PredictionRuleContext
+    ) -> SignalFeatureCandidateOutput:
+        return self._output(context.prediction_dataset_id)
+
+    def _output(self, dataset_id: str) -> SignalFeatureCandidateOutput:
         configuration_id = self.configuration_id
         return SignalFeatureCandidateOutput(
             self.name,
             configuration_id,
-            dataset.metadata.dataset_id,
+            dataset_id,
             tuple(
                 replace(signal, strategy_configuration_id=configuration_id)
                 for signal in self._signals
@@ -1278,6 +1299,11 @@ def build_signal_feature_dataset[
             chunk,
             candidate_population_id,
             len(enriched_candidates),
+            context_requirements=(
+                getattr(strategy, "context_requirements", None)
+                if prediction_study.outcome_source is not None
+                else None
+            ),
         )
         outcome_values: dict[str, dict[date | datetime, PrimitiveMapping]] = {}
         chunk_study_ids: dict[str, str] = {}
@@ -1295,6 +1321,7 @@ def build_signal_feature_dataset[
                 prepared_outcome_dataset,
                 fixed_rule,
                 feature_configuration,
+                context_provider=effective_context_provider,
             )
             _validate_outcome_session_keys(
                 configured_outcome,

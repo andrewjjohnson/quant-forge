@@ -6,6 +6,11 @@ from quantforge.experiments._prediction_sessions import (
     validate_outcome_session,
     validate_signal_session,
 )
+from quantforge.experiments._prediction_temporal_integrity import (
+    elapsed_temporal_configuration,
+    primary_context_observations,
+    validate_elapsed_resolution,
+)
 
 
 def _require_fields(record: PrimitiveMapping, expected: PrimitiveMapping) -> None:
@@ -42,7 +47,15 @@ def validate_prediction_signal(
     if context is not None and mapping(context).get("status") == "available":
         decision_session = text(mapping(context).get("decision_session"))
     return validate_signal_session(
-        prediction, rule, indexes, decision_session=decision_session
+        prediction,
+        rule,
+        indexes,
+        decision_session=decision_session,
+        context_warm_up_observations=(
+            primary_context_observations(manifest)
+            if elapsed_temporal_configuration(manifest) is not None
+            else None
+        ),
     )
 
 
@@ -61,12 +74,15 @@ def validate_prediction_row(
     signal = validate_prediction_signal(manifest, prediction, indexes)
     outcome = mapping(row.get("outcome"))
     labeler = mapping(configuration.get("outcome_labeler"))
-    validate_outcome_session(
-        signal,
-        outcome.get("outcome_session"),
-        labeler.get("required_future_sessions"),
-        indexes,
-    )
+    if elapsed_temporal_configuration(manifest) is not None:
+        validate_elapsed_resolution(manifest, prediction, outcome)
+    else:
+        validate_outcome_session(
+            signal,
+            outcome.get("outcome_session"),
+            labeler.get("required_future_sessions"),
+            indexes,
+        )
     _require_fields(
         outcome,
         {

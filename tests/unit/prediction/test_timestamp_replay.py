@@ -145,7 +145,9 @@ def population(
     replay_study = PredictionStudy[
         SignalFeatureCandidate, AvailabilityValues, ReplayValues
     ].create(replay, labeler, ReplayEvaluator(), outcome_source=source)
-    return permitted.dataset, replay, labeler, replay_study
+    # Direct replay uses daily membership as its warm-up evidence. Contextual
+    # export separately verifies replay over a metadata-only projection.
+    return adapter.dataset, replay, labeler, replay_study
 
 
 def test_two_same_session_candidates_keep_original_anchors_through_replay(
@@ -165,6 +167,66 @@ def test_two_same_session_candidates_keep_original_anchors_through_replay(
         == expected
     )
     assert len({s.signal_session for s in result.signals}) == 1
+
+
+def test_contextual_elapsed_export_reuses_validated_primary_history(
+    tmp_path: Path,
+) -> None:
+    from tests.unit.experiments.test_elapsed_prediction_integrity import (
+        contextual_study,
+    )
+
+    dataset, template, provider = contextual_study(tmp_path)
+    requirements = cast(
+        PredictionContextRequirements,
+        getattr(template.strategy, "context_requirements"),
+    )
+    rule = _FixtureCandidateRule(requirements)
+    rule.warm_up_observations = 4
+    study = PredictionStudy[
+        SignalFeatureCandidate, AvailabilityValues, ReplayValues
+    ].create(
+        rule,
+        template.outcome_labeler,
+        ReplayEvaluator(),
+        outcome_source=template.outcome_source,
+    )
+    outcome = PredictionStudyOutcome[AvailabilityValues, ReplayValues].create(
+        "anchor",
+        template.outcome_labeler,
+        ReplayEvaluator(),
+        (
+            SchemaField(
+                "decision_timestamp",
+                SchemaFieldCategory.FUTURE_OUTCOME,
+                "string",
+                "UTC_timestamp",
+                True,
+                "QF-46 anchor",
+                "future metadata",
+            ),
+        ),
+        unavailable_values={"decision_timestamp": None},
+        outcome_source=template.outcome_source,
+    )
+    result = build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(outcome,),
+        output_root=tmp_path / "contextual-export",
+        context_provider=provider,
+    )
+    assert len(result.rows) == 1
+    assert dataset.bars[-1].session_date < result.rows[0].signal_session
+    assert result == build_signal_feature_dataset(
+        dataset=dataset,
+        prediction_study=study,
+        contextual_features=(),
+        outcomes=(outcome,),
+        output_root=tmp_path / "contextual-export",
+        context_provider=provider,
+    )
 
 
 def test_export_and_chunked_resume_do_not_collapse_same_session_candidates(

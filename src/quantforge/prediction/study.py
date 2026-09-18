@@ -1321,10 +1321,12 @@ def _validate_strategy_output(
             if signal_index is None
             else signal_index + 1
         )
-        if (
-            warm_up_observations is not None
-            and warm_up_observations < expected_warm_up_observations
-        ):
+        if warm_up_observations is None:
+            raise InvalidPredictionOutputError(
+                "prediction signal has no dataset or validated primary context "
+                "evidence for its declared warm-up"
+            )
+        if warm_up_observations < expected_warm_up_observations:
             raise InvalidPredictionOutputError(
                 "prediction signal was emitted before the strategy's declared "
                 "warm-up completed"
