@@ -75,6 +75,9 @@ same-session future bars through the declared conservative reach. The source
 identity is bound into study/grid identities. QF-46 resolution and availability
 metadata are persisted on each generic outcome record; unavailable outcomes
 require an explicit row, rather than a zero or a silently omitted prediction.
+Availability resolution uses the complete source artifact to distinguish a missing
+required observation from the actual end of the dataset. This does not expand the
+bounded bars exposed to the labeler.
 Concrete labelers/evaluators remain responsible for their typed value schemas.
 
 For this path the separate QF-3 dataset supplies established identity and
@@ -84,6 +87,11 @@ or supply same-day future prices to a rule. QF-20/QF-28 feature context remains
 bounded by each original decision and its timeframe-specific warm-up. A prior
 completed daily observation is currently required by the existing QF-11 dataset
 contract.
+
+Elapsed horizons do not waive strategy warm-up. Direct studies still validate the
+signal's dataset observation count. When a validated primary context is supplied,
+its completed bars must satisfy the declared warm-up instead of the separate
+daily metadata projection.
 
 QF-7 `SignalFeatureCandidate.decision_timestamp` captures the original context
 instant before replay. Fixed replay preserves it verbatim, keys outcomes by that

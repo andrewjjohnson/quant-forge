@@ -50,7 +50,7 @@ def source_provenance(
 def bounded_outcome_source(
     source: TimeframeBarSeries, request: OutcomeEvaluationRequest
 ) -> tuple[TimeframeBarSeries, OutcomeResolution]:
-    """Supply an anchor bar and future bars through the declared conservative reach."""
+    """Bound labeler inputs, but classify availability using full source coverage."""
     decision = request.anchor.decision_timestamp
     assert decision is not None
     end = decision + request.temporal_configuration.required_future_duration
@@ -70,4 +70,4 @@ def bounded_outcome_source(
         bars,
         dataset_family_manifest_id=source.dataset_family_manifest_id,
     )
-    return bounded, resolve_future_observation(request, bounded)
+    return bounded, resolve_future_observation(request, source)

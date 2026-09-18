@@ -414,6 +414,11 @@ def run_prediction_study_in_session(
             None if rule_context is None else rule_context.decision_session
         ),
         timestamp_outcomes=timestamp_outcomes,
+        context_warm_up_observations=(
+            None
+            if rule_context is None
+            else len(rule_context.bars_for(rule_context.requirements.primary.timeframe))
+        ),
     )
     _validate_signal_snapshots(generated_signals, signal_snapshots)
 
@@ -1236,6 +1241,7 @@ def _validate_strategy_output(
     expected_warm_up_observations: int,
     context_decision_session: date | None,
     timestamp_outcomes: bool = False,
+    context_warm_up_observations: int | None = None,
 ) -> None:
     if (
         output.contract_version != "1"
@@ -1295,10 +1301,18 @@ def _validate_strategy_output(
                 "multi-timeframe prediction signal must use the context decision "
                 "session"
             )
+        # Elapsed horizons do not certify causal history. Only a validated primary
+        # context can replace the dataset's observation count for a direct study.
+        warm_up_observations = (
+            context_warm_up_observations
+            if timestamp_outcomes and context_warm_up_observations is not None
+            else None
+            if signal_index is None
+            else signal_index + 1
+        )
         if (
-            not timestamp_outcomes
-            and signal_index is not None
-            and signal_index + 1 < expected_warm_up_observations
+            warm_up_observations is not None
+            and warm_up_observations < expected_warm_up_observations
         ):
             raise InvalidPredictionOutputError(
                 "prediction signal was emitted before the strategy's declared "
