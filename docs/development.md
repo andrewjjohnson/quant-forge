@@ -649,3 +649,20 @@ uv run pytest tests/unit/walk_forward
 These fixtures use existing QF-42/QF-43 engines and local synthetic artifacts.
 They require no provider credentials. See
 [`walk-forward-studies.md`](walk-forward-studies.md).
+
+## Intraday path acceptance tests (QF-47)
+
+Use required uv 0.12.1 and the frozen dependency workflow.
+
+```bash
+uv run --frozen pytest tests/unit/prediction/test_intraday_path.py \
+  tests/unit/prediction/test_intraday_path_integration.py \
+  tests/unit/prediction/test_feature_outcomes.py \
+  tests/unit/prediction/test_intraday_forward_return.py \
+  tests/unit/prediction/test_intraday_forward_return_integration.py
+```
+
+See [intraday path outcomes](intraday-path-outcomes.md) for exact intervals,
+reference price, ratio conventions, ambiguity, completeness, and provenance.
+The fixtures cover real QF-7/QF-29/QF-39 exports, QF-48 timestamp validation,
+QF-40 aggregation without path recomputation, safe resume, and QF-9 inspection.

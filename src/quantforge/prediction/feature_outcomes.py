@@ -356,6 +356,7 @@ class TargetStopLabel(StrEnum):
     STOP_FIRST = "stop_first"
     NEITHER = "neither"
     BOTH_SAME_SESSION = "both_same_session"
+    BOTH_SAME_BAR = "both_same_bar"
     UNAVAILABLE = "unavailable"
 
 

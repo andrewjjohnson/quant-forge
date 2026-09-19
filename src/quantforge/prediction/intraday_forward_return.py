@@ -10,12 +10,15 @@ from quantforge.configuration import (
     decimal_to_primitive,
 )
 from quantforge.data import (
-    AdjustmentBasis,
-    IntradayBar,
     MarketDataset,
     TimeframeBarSeries,
 )
 from quantforge.prediction._arithmetic import arithmetic
+from quantforge.prediction._intraday_reference import (
+    REFERENCE_PRICE_CONVENTION,
+    completed_decision_reference,
+    validate_intraday_price_basis,
+)
 from quantforge.prediction.contracts import (
     OutcomeLabel,
     PredictionOutcome,
@@ -23,7 +26,6 @@ from quantforge.prediction.contracts import (
 )
 from quantforge.prediction.errors import (
     InvalidPredictionConfigurationError,
-    InvalidPredictionDataError,
     InvalidPredictionOutputError,
 )
 from quantforge.prediction.outcome_resolution import (
@@ -36,7 +38,6 @@ from quantforge.prediction.outcome_temporal import (
     OutcomeTemporalConfiguration,
 )
 
-REFERENCE_PRICE_CONVENTION = "completed_decision_observation_close"
 FUTURE_PRICE_CONVENTION = "resolved_completed_observation_close"
 
 
@@ -142,46 +143,11 @@ class IntradayForwardReturnOutcomeLabeler:
     ) -> OutcomeLabel[IntradayForwardReturnValues]:
         # Generic dispatch owns request/source/configuration validation and calls
         # the QF-46 resolver on full coverage before bounding the callback source.
-        reference = next(
-            (
-                bar
-                for bar in source.bars
-                if isinstance(bar, IntradayBar)
-                and bar.end_timestamp == request.anchor.decision_timestamp
-                and bar.session_date == request.anchor.signal_session
-                and bar.complete
-            ),
-            None,
-        )
-        if reference is None:
-            raise InvalidPredictionDataError(
-                "intraday forward return requires the exact completed decision "
-                "observation in the outcome source"
-            )
+        reference = completed_decision_reference(request, source)
         future = resolution.observation
-        metadata = dataset.metadata
-        adjustment_basis = AdjustmentBasis(
-            adjustment_mode=metadata.adjustment_mode,
-            ohlc_basis=metadata.ohlc_basis,
-            volume_basis=metadata.volume_basis,
-            corporate_action_policy=metadata.corporate_action_policy,
-            adjusted_fields_used=metadata.adjusted_fields_used,
+        validate_intraday_price_basis(
+            dataset, (reference,) if future is None else (reference, future)
         )
-        # Direct studies and fixed-candidate replay need this check even when no
-        # context provider validates the source against the prediction dataset.
-        for endpoint in (reference, future):
-            if endpoint is None:
-                continue
-            if endpoint.symbol != metadata.canonical_symbol:
-                raise InvalidPredictionDataError(
-                    "intraday forward return source symbol is incompatible with "
-                    "the prediction dataset"
-                )
-            if endpoint.provenance.adjustment_basis != adjustment_basis:
-                raise InvalidPredictionDataError(
-                    "intraday forward return source adjustment basis is "
-                    "incompatible with the prediction dataset"
-                )
         raw_return = None
         if future is not None:
             try:

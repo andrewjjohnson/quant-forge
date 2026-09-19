@@ -1,5 +1,8 @@
 # Signal-level feature datasets and outcome labels
 
+QF-47 adds [intraday path outcomes](intraday-path-outcomes.md): elapsed MFE/MAE
+and target/stop labels with explicit same-bar ambiguity and complete-path checks.
+
 QF-49 adds [intraday forward returns](intraday-forward-returns.md) through the
 existing typed outcome adapter, including separate 10m/30m/60m/120m exports.
 
