@@ -189,6 +189,22 @@ from quantforge.prediction.intraday_forward_return import (
     IntradayForwardReturnOutcomeLabeler,
     IntradayForwardReturnValues,
 )
+from quantforge.prediction.intraday_path import (
+    IntradayPathOutcomeLabeler,
+    IntradayPathRange,
+    IntradayPathValues,
+)
+from quantforge.prediction.intraday_path_evaluation import (
+    IntradayExcursionEvaluationValues,
+    IntradayExcursionEvaluator,
+    IntradayTargetStopEvaluationValues,
+    IntradayTargetStopEvaluator,
+    SameBarConflictPolicy,
+)
+from quantforge.prediction.intraday_path_exports import (
+    intraday_excursion_outcome,
+    intraday_target_stop_outcome,
+)
 from quantforge.prediction.models import (
     PredictionAnalysisResult,
     PredictionDirection,
@@ -404,9 +420,16 @@ __all__ = [
     "HistoricalPredictionStudyReference",
     "HistoricalStudyMismatchError",
     "InMemoryAlertDeduplicationStore",
+    "IntradayExcursionEvaluationValues",
+    "IntradayExcursionEvaluator",
     "IntradayForwardReturnEvaluator",
     "IntradayForwardReturnOutcomeLabeler",
     "IntradayForwardReturnValues",
+    "IntradayPathOutcomeLabeler",
+    "IntradayPathRange",
+    "IntradayPathValues",
+    "IntradayTargetStopEvaluationValues",
+    "IntradayTargetStopEvaluator",
     "InvalidPredictionConfigurationError",
     "InvalidPredictionDataError",
     "InvalidPredictionGridConfigurationError",
@@ -522,6 +545,7 @@ __all__ = [
     "RsiOversoldUpParameters",
     "RsiOversoldUpPredictionStrategy",
     "RuleSummary",
+    "SameBarConflictPolicy",
     "SameSessionConflictPolicy",
     "SchemaField",
     "SchemaFieldCategory",
@@ -576,7 +600,9 @@ __all__ = [
     "export_prediction_comparison",
     "export_signal_feature_analysis",
     "forward_return_outcome",
+    "intraday_excursion_outcome",
     "intraday_forward_return_outcome",
+    "intraday_target_stop_outcome",
     "load_prediction_manifest",
     "outcome_resolution_fields",
     "outcome_temporal_configuration",
