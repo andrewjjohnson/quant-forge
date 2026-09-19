@@ -132,6 +132,7 @@ from quantforge.prediction.feature_dataset import (
     default_signal_feature_outcomes,
     excursion_outcome,
     forward_return_outcome,
+    intraday_forward_return_outcome,
     outcome_resolution_fields,
     target_stop_outcome,
 )
@@ -182,6 +183,11 @@ from quantforge.prediction.grid import (
     PredictionTrialAnalysis,
     PredictionTrialAnalyzer,
     PredictionWindowAnalyzer,
+)
+from quantforge.prediction.intraday_forward_return import (
+    IntradayForwardReturnEvaluator,
+    IntradayForwardReturnOutcomeLabeler,
+    IntradayForwardReturnValues,
 )
 from quantforge.prediction.models import (
     PredictionAnalysisResult,
@@ -398,6 +404,9 @@ __all__ = [
     "HistoricalPredictionStudyReference",
     "HistoricalStudyMismatchError",
     "InMemoryAlertDeduplicationStore",
+    "IntradayForwardReturnEvaluator",
+    "IntradayForwardReturnOutcomeLabeler",
+    "IntradayForwardReturnValues",
     "InvalidPredictionConfigurationError",
     "InvalidPredictionDataError",
     "InvalidPredictionGridConfigurationError",
@@ -567,6 +576,7 @@ __all__ = [
     "export_prediction_comparison",
     "export_signal_feature_analysis",
     "forward_return_outcome",
+    "intraday_forward_return_outcome",
     "load_prediction_manifest",
     "outcome_resolution_fields",
     "outcome_temporal_configuration",

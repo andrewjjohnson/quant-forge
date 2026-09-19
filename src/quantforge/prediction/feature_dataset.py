@@ -78,6 +78,13 @@ from quantforge.prediction.feature_outcomes import (
     TargetStopOutcomeLabeler,
     TargetStopPathValues,
 )
+from quantforge.prediction.intraday_forward_return import (
+    FUTURE_PRICE_CONVENTION,
+    REFERENCE_PRICE_CONVENTION,
+    IntradayForwardReturnEvaluator,
+    IntradayForwardReturnOutcomeLabeler,
+    IntradayForwardReturnValues,
+)
 from quantforge.prediction.models import PredictionMarketData
 from quantforge.prediction.multi_timeframe_features import (
     MULTI_TIMEFRAME_FEATURE_DATASET_ENGINE_VERSION,
@@ -919,6 +926,79 @@ def _fixed_candidate_population_id(
                 for signal in signals
             ],
         }
+    )
+
+
+def intraday_forward_return_outcome(
+    duration: timedelta,
+    source: TimeframeBarSeries,
+    *,
+    namespace: str | None = None,
+) -> PredictionStudyOutcome[IntradayForwardReturnValues, IntradayForwardReturnValues]:
+    """Compose an elapsed endpoint return with QF-46 audit columns for QF-7/29.
+
+    Distinct durations receive distinct default namespaces. Use an explicit
+    namespace to compare multiple sources with the same duration in one export.
+    """
+    temporal = OutcomeTemporalConfiguration.elapsed_duration(duration, source.timeframe)
+    labeler = IntradayForwardReturnOutcomeLabeler(temporal)
+    timing = "future label; available only at the QF-46 resolved completed endpoint"
+    defaults: PrimitiveMapping = {
+        "available": False,
+        "anchor_kind": temporal.anchor_kind.value,
+        "horizon_kind": "elapsed_duration",
+        "elapsed_duration_microseconds": duration // timedelta(microseconds=1),
+        "outcome_configuration_id": labeler.configuration_id,
+        "temporal_configuration_id": temporal.configuration_id,
+        "reference_price_convention": REFERENCE_PRICE_CONVENTION,
+        "future_price_convention": FUTURE_PRICE_CONVENTION,
+        "source_reference": source.dataset_reference.to_primitive(
+            include_feed_scope=True
+        ),
+    }
+    fields = _sorted_fields(
+        (
+            # Per-row metadata cannot be invented for the generic no-row default.
+            # QF-48 execution requires explicit resolution rows even if unavailable.
+            *(
+                replace(field, nullable=field.nullable or field.name not in defaults)
+                for field in outcome_resolution_fields()
+            ),
+            _outcome_field(
+                "reference_observation_id", "string", "sha256", True, timing
+            ),
+            _outcome_field(
+                "reference_price", "decimal", "price_per_share", True, timing
+            ),
+            _outcome_field("outcome_price", "decimal", "price_per_share", True, timing),
+            _outcome_field(
+                "raw_return",
+                "decimal",
+                "ratio",
+                True,
+                timing,
+                "resolved future close / completed decision close - 1",
+            ),
+            _outcome_field(
+                "reference_price_convention", "string", "policy", False, timing
+            ),
+            _outcome_field(
+                "future_price_convention", "string", "policy", False, timing
+            ),
+            _outcome_field("source_reference", "object", "provenance", False, timing),
+        )
+    )
+    return PredictionStudyOutcome[
+        IntradayForwardReturnValues, IntradayForwardReturnValues
+    ].create(
+        namespace
+        if namespace is not None
+        else (f"intraday_forward_return_{duration // timedelta(microseconds=1)}us"),
+        labeler,
+        IntradayForwardReturnEvaluator(),
+        fields,
+        unavailable_values=defaults,
+        outcome_source=source,
     )
 
 
