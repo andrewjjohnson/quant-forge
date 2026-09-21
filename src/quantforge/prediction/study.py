@@ -16,6 +16,10 @@ from quantforge.data.exceptions import ValidationError as MarketDataValidationEr
 from quantforge.data.lineage import AdjustmentBasis
 from quantforge.data.models import SCHEMA_VERSION, MarketDataset
 from quantforge.data.multi_timeframe import MultiTimeframeContextError
+from quantforge.data.prediction_inputs import (
+    validate_prediction_context_sources,
+    validate_prediction_source,
+)
 from quantforge.prediction.context import (
     PredictionContextError,
     PredictionContextFailurePolicy,
@@ -429,6 +433,11 @@ def run_prediction_study_in_session(
         configuration.outcome_configuration_id,
     )
     if labeler_session_key not in prepared.validated_labelers:
+        if study.outcome_source is not None:
+            try:
+                validate_prediction_source(component_dataset, study.outcome_source)
+            except MarketDataValidationError as error:
+                raise InvalidPredictionDataError(str(error)) from error
         study.outcome_labeler.validate_dataset(component_dataset)
         prepared.validated_labelers.add(labeler_session_key)
     _validate_unchanged_component(
@@ -928,6 +937,11 @@ def _prepare_prediction_context(
     source_context = None
     try:
         source_context = provider.get_context(requirements)
+        if dataset.metadata.intraday_provenance is not None:
+            try:
+                validate_prediction_context_sources(dataset, source_context)
+            except MarketDataValidationError as error:
+                raise PredictionContextError(str(error)) from error
         rule_context = build_prediction_rule_context(
             requirements,
             source_context,

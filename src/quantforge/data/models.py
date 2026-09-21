@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import cast
+
+from quantforge.configuration import PrimitiveMapping
 
 SCHEMA_VERSION = "4"
 type JsonPrimitive = str | int | float | bool | None
@@ -25,6 +28,103 @@ class CorporateActionType(StrEnum):
 
     CASH_DIVIDEND = "cash_dividend"
     STOCK_SPLIT = "stock_split"
+
+
+class CorporateActionAvailability(StrEnum):
+    """Event supply is independent of whether source prices are adjusted."""
+
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class IntradayPredictionProvenance:
+    """Canonical source lineage of a session projection used by predictions.
+
+    The original intraday and session artifacts remain authoritative. This
+    reference does not turn intraday observations into provider daily bars.
+    """
+
+    family_id: str
+    source_dataset_id: str
+    source_request_id: str
+    source_raw_snapshot_ids: tuple[str, ...]
+    session_dataset_id: str
+    session_timeframe_configuration_id: str
+    session_policy_id: str
+    feed_scope_id: str
+    corporate_action_availability: CorporateActionAvailability
+    schema_version: str = "1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "1":
+            raise ValueError("unsupported intraday prediction provenance schema")
+        if not isinstance(
+            cast(object, self.corporate_action_availability),
+            CorporateActionAvailability,
+        ):
+            raise ValueError("corporate-action availability must be explicit")
+        for name in (
+            "family_id",
+            "source_dataset_id",
+            "source_request_id",
+            "session_dataset_id",
+            "session_timeframe_configuration_id",
+            "session_policy_id",
+            "feed_scope_id",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value or value != value.strip():
+                raise ValueError(f"intraday prediction {name} must be nonempty text")
+        if (
+            not isinstance(cast(object, self.source_raw_snapshot_ids), tuple)
+            or not self.source_raw_snapshot_ids
+            or any(
+                not isinstance(item, str) or not item
+                for item in cast(tuple[object, ...], self.source_raw_snapshot_ids)
+            )
+            or len(set(self.source_raw_snapshot_ids))
+            != len(self.source_raw_snapshot_ids)
+        ):
+            raise ValueError("intraday prediction raw snapshot IDs must be unique")
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "schema_version": self.schema_version,
+            "family_id": self.family_id,
+            "source_dataset_id": self.source_dataset_id,
+            "source_request_id": self.source_request_id,
+            "source_raw_snapshot_ids": list(self.source_raw_snapshot_ids),
+            "session_dataset_id": self.session_dataset_id,
+            "session_timeframe_configuration_id": (
+                self.session_timeframe_configuration_id
+            ),
+            "session_policy_id": self.session_policy_id,
+            "feed_scope_id": self.feed_scope_id,
+            "corporate_action_availability": self.corporate_action_availability.value,
+        }
+
+    @classmethod
+    def from_primitive(cls, value: object) -> "IntradayPredictionProvenance":
+        if not isinstance(value, dict):
+            raise ValueError("intraday prediction provenance must be a record")
+        record = cast(dict[str, object], value)
+        fields = set(cls.__dataclass_fields__)
+        if set(record) != fields:
+            raise ValueError("intraday prediction provenance fields are invalid")
+        snapshots = record["source_raw_snapshot_ids"]
+        if not isinstance(snapshots, list):
+            raise ValueError("intraday prediction raw snapshots must be an array")
+        strings = fields - {"source_raw_snapshot_ids", "corporate_action_availability"}
+        if any(not isinstance(record[name], str) for name in strings):
+            raise ValueError("intraday prediction provenance requires text identities")
+        return cls(
+            **cast(dict[str, str], {name: record[name] for name in strings}),
+            source_raw_snapshot_ids=tuple(cast(list[str], snapshots)),
+            corporate_action_availability=CorporateActionAvailability(
+                cast(str, record["corporate_action_availability"])
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +245,16 @@ class DatasetMetadata:
     adjusted_fields_used: bool
     corporate_action_policy: str
     adapter_version: str
+    intraday_provenance: IntradayPredictionProvenance | None = None
+
+    @property
+    def corporate_action_availability(self) -> CorporateActionAvailability:
+        """Event supply; available does not imply a complete observed history."""
+        return (
+            CorporateActionAvailability.AVAILABLE
+            if self.intraday_provenance is None
+            else self.intraday_provenance.corporate_action_availability
+        )
 
 
 @dataclass(frozen=True, slots=True)

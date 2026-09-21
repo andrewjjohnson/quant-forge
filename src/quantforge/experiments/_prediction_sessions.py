@@ -4,6 +4,8 @@ from datetime import date
 
 from quantforge.configuration import PrimitiveMapping
 from quantforge.data.calendar import expected_sessions
+from quantforge.data.exceptions import ValidationError
+from quantforge.data.prediction_inputs import validate_prediction_provenance
 from quantforge.experiments._json import ManifestError, text
 
 
@@ -19,6 +21,14 @@ def session_text(value: object) -> str:
 
 def recorded_session_indexes(market: PrimitiveMapping) -> dict[str, int]:
     """Verify declared daily coverage; never read prices or create outcomes."""
+    if (
+        "intraday_provenance" in market
+        or market.get("corporate_action_policy") == "not_provided_for_intraday_bars"
+    ):
+        try:
+            validate_prediction_provenance(market)
+        except (TypeError, ValueError, ValidationError) as error:
+            raise ManifestError(str(error)) from error
     first = date.fromisoformat(session_text(market.get("actual_first_session")))
     last = date.fromisoformat(session_text(market.get("actual_last_session")))
     try:

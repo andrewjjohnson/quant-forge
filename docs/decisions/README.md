@@ -91,3 +91,5 @@ How will the decision be tested or revisited?
 - Describe statistical and research-integrity consequences.
 - Do not rewrite accepted ADR history to make old decisions appear different.
 - Supersede an old ADR with a new one when the decision changes.
+
+- [0023: Preserve intraday prediction-input provenance](0023-preserve-intraday-prediction-input-provenance.md)

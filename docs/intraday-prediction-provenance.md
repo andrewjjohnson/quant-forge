@@ -1,0 +1,112 @@
+# Intraday prediction-input provenance (QF-51)
+
+Corporate-action **availability** describes whether a dataset path supplies
+split/dividend events. **Adjustment compatibility** describes whether its
+prices and volumes can be compared under the declared source semantics.
+Unavailable events do not imply unknown prices, zero events, or a daily event
+policy. They do not permit mixing adjusted and raw prices.
+
+## Canonical input
+
+The intraday contract already records the explicit policy
+`not_provided_for_intraday_bars`. QF-51 preserves that string unchanged.
+`CorporateActionAvailability` distinguishes `AVAILABLE` from `UNAVAILABLE`;
+`DatasetMetadata.corporate_action_availability` exposes this typed state.
+Availability is separate from `corporate_actions_complete`.
+
+`quantforge.data.prediction_inputs.prediction_dataset_from_intraday` accepts:
+
+- a canonical `IntradayDataset`;
+- its existing QF-19 one-session `AggregatedSessionDataset`;
+- the existing `MarketDataCache`;
+- optionally the validated QF-20 composed `DatasetFamily` used by the study.
+
+It verifies the session aggregation against its actual source, verifies the
+family binding through the existing artifact APIs, and persists those completed
+session prices as QF-11's session carrier. This retains the current QF-11/QF-48
+session-coverage contract; exact decisions and future labels still consume the
+canonical intraday series. No intraday bar is presented as a daily provider bar.
+No provider client, network call, or second cache is introduced.
+
+```python
+from quantforge.data.prediction_inputs import prediction_dataset_from_intraday
+
+prediction_input = prediction_dataset_from_intraday(
+    source, derived_daily, cache=market_cache, family=context_family
+)
+```
+
+When combining 2-minute and daily artifacts, pass the **same composed family**
+used to bind both context series. Their separate aggregation families are not
+interchangeable. Existing QF-20 artifact composition rules remain authoritative.
+
+The new optional `IntradayPredictionProvenance` record contains its own schema
+version (`1`), explicit event availability, source dataset/request/raw-snapshot
+references, session dataset/timeframe references, chosen family identity, feed
+identity, and session-policy identity. The cache's raw extract retains the
+original session manifest and full selected family manifest. `provider_name`
+remains the original provider; `adapter_version` identifies QuantForge's
+projection. Requested session bounds describe the projected completed sessions;
+the original intraday request bounds remain in the retained source evidence.
+
+This adapter handles sources explicitly reporting unavailable events. It does
+not infer event economics for an intraday source that claims an available event
+policy without supplying event records. Existing daily inputs with supported
+explicit event policies keep their original behavior.
+
+## Compatibility and integrity
+
+The shared prediction-input checks require:
+
+- exact common family and canonical source snapshot;
+- matching feed, symbol, and exchange-session policy;
+- exact adjustment mode, OHLC basis, volume basis, adjusted-field usage, and
+  truthful corporate-action policy;
+- canonical raw-bar request/snapshot lineage, or the existing derived-bar link
+  to that same canonical source dataset.
+
+Both context construction and the generic timestamp-outcome dispatch use this
+contract. QF-49 and QF-47 retain their additional exact price-basis checks.
+No labeler-specific exception or provider-name condition is added. A future
+provider with the same canonical semantics works automatically.
+
+Unavailable events require explicit intraday lineage, `corporate_actions_complete
+= false`, empty event records, zero known-event counts, and the deterministic
+empty-record snapshot. That snapshot fingerprints the records supplied; it does
+**not** certify that no economic events occurred. An unavailable declaration
+combined with the daily event policy, complete-event claim, or event records is
+invalid. Adjusted source prices can be accepted without event data when their
+explicit price/volume semantics and lineage match; this does not create an
+adjustment algorithm or authorize corporate-action accounting.
+
+QF-9 preserves the new record in existing `market_data` provenance. Its readers
+validate availability, price semantics, and recorded context/outcome source
+references without generating predictions or outcomes. Existing outer manifest,
+producer identity, hash, and row checks still apply.
+
+## Serialization, identity, and resume
+
+Legacy daily schema-4 metadata omits `intraday_provenance` entirely. Its original
+serialized bytes, dataset identity, and prediction identity remain unchanged.
+An absent field means the established daily contract; it never implies
+unavailable intraday events. Explicit null or malformed new records are rejected
+by the cache reader. The additive intraday record round-trips with canonical
+sorted JSON and participates in dataset, study, feature, and checkpoint identity.
+Changes to adjustment semantics or source/event provenance cannot alias an
+existing artifact. Compatible runs use existing cache/resume validation.
+
+The original QF-45 cache-only reproducer used 8,190 Tiingo SPY one-minute bars
+for January 2–31, 2024, 4,095 derived two-minute bars, and 21 derived session bars.
+The old QF-3 daily-only policy check and complete `AdjustmentBasis` comparison
+rejected the input before research could execute. QF-51 supplies a truthful
+input that satisfies those semantics, with stronger source binding. It does
+not implement the QF-45 EMA study, change outcome mathematics, or change
+QF-46/QF-48 temporal validation.
+
+Ordinary tests use synthetic prices through the actual intraday cache,
+aggregation, prediction, feature export, and manifest APIs. They need no
+credentials and contain no licensed real market data:
+
+```bash
+uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py
+```

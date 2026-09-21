@@ -40,6 +40,24 @@ def serialize_metadata_values(
 ) -> dict[str, object]:
     """Return metadata in the canonical JSON-compatible representation."""
     value = metadata_values.copy()
+    # Omit the additive reference for legacy daily schema-4 identities.
+    provenance = value.get("intraday_provenance")
+    if provenance is None:
+        value.pop("intraday_provenance", None)
+    elif isinstance(provenance, dict):
+        provenance = cast(dict[str, object], provenance)
+        value["intraday_provenance"] = {
+            **provenance,
+            "source_raw_snapshot_ids": list(
+                cast(tuple[str, ...], provenance["source_raw_snapshot_ids"])
+            ),
+        }
+    else:
+        from quantforge.data.models import IntradayPredictionProvenance
+
+        value["intraday_provenance"] = cast(
+            IntradayPredictionProvenance, provenance
+        ).to_primitive()
     for field in (
         "requested_start",
         "requested_end",

@@ -31,6 +31,7 @@ from quantforge.data.models import (
     CorporateAction,
     DailyBar,
     DatasetMetadata,
+    IntradayPredictionProvenance,
     MarketDataset,
     ProviderResponse,
     StockSplit,
@@ -336,6 +337,11 @@ def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
         adjusted_fields_used=_manifest_boolean(value, "adjusted_fields_used"),
         corporate_action_policy=_manifest_string(value, "corporate_action_policy"),
         adapter_version=_manifest_string(value, "adapter_version"),
+        intraday_provenance=(
+            IntradayPredictionProvenance.from_primitive(value["intraday_provenance"])
+            if "intraday_provenance" in value
+            else None
+        ),
     )
 
 

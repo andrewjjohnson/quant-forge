@@ -666,3 +666,14 @@ See [intraday path outcomes](intraday-path-outcomes.md) for exact intervals,
 reference price, ratio conventions, ambiguity, completeness, and provenance.
 The fixtures cover real QF-7/QF-29/QF-39 exports, QF-48 timestamp validation,
 QF-40 aggregation without path recomputation, safe resume, and QF-9 inspection.
+
+## Intraday prediction provenance acceptance tests (QF-51)
+
+```bash
+uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py
+```
+
+The synthetic cache-only fixture exercises canonical SPY one-minute input,
+derived two-minute/daily bars, truthful unavailable events, context construction,
+QF-49/QF-47 outcomes, QF-9 integrity, and compatible/incompatible resume. See
+[intraday prediction provenance](intraday-prediction-provenance.md).

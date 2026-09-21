@@ -99,6 +99,12 @@ timeframe: the intraday primary bars provide the explicit adjustment provenance
 needed to compare the QF-20 family with the QF-3 prediction dataset, while
 daily and weekly aggregates remain valid contextual inputs.
 
+QF-51 adds a provider-neutral input adapter for canonical intraday sources with
+unavailable corporate-action events. It retains the original policy and binds
+the session carrier to the context/outcome source family, feed, session policy,
+and adjustment semantics. Daily input serialization remains unchanged. See
+[intraday prediction provenance](intraday-prediction-provenance.md).
+
 Rule code receives only a `PredictionRuleContext`. It exposes bars and
 `TimeframeIndicatorOutput` values for declared timeframes and named indicators;
 it does not expose the source `MultiTimeframeContext`, indicator adapters,
