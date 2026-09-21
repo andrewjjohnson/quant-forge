@@ -6,6 +6,7 @@ from dataclasses import asdict
 from datetime import UTC, date, datetime
 from typing import cast
 
+from quantforge.configuration import PrimitiveMappingSnapshot
 from quantforge.data.corporate_actions import (
     action_seeds_from_records,
     bind_corporate_actions,
@@ -48,6 +49,14 @@ def serialize_metadata_values(
         provenance = cast(dict[str, object], provenance)
         value["intraday_provenance"] = {
             **provenance,
+            "family_manifest": PrimitiveMappingSnapshot(
+                cast(
+                    str,
+                    cast(dict[str, object], provenance["family_manifest"])[
+                        "canonical_json"
+                    ],
+                )
+            ).to_primitive(),
             "source_raw_snapshot_ids": list(
                 cast(tuple[str, ...], provenance["source_raw_snapshot_ids"])
             ),

@@ -49,10 +49,11 @@ used to bind both context series. Their separate aggregation families are not
 interchangeable. Existing QF-20 artifact composition rules remain authoritative.
 
 The new optional `IntradayPredictionProvenance` record contains its own schema
-version (`1`), explicit event availability, source dataset/request/raw-snapshot
+version (`2`), explicit event availability, source dataset/request/raw-snapshot
 references, session dataset/timeframe references, chosen family identity, feed
-identity, and session-policy identity. The cache's raw extract retains the
-original session manifest and full selected family manifest. `provider_name`
+identity, session-policy identity, and an immutable copy of the selected family
+manifest. The cache's raw extract also retains the original session manifest
+and full selected family manifest. `provider_name`
 remains the original provider; `adapter_version` identifies QuantForge's
 projection. Requested session bounds describe the projected completed sessions;
 the original intraday request bounds remain in the retained source evidence.
@@ -92,7 +93,12 @@ adjustment algorithm or authorize corporate-action accounting.
 
 QF-9 preserves the new record in existing `market_data` provenance. Its readers
 validate availability, price semantics, and recorded context/outcome source
-references without generating predictions or outcomes. Prediction and feature
+references without generating predictions or outcomes. Cache and experiment
+validation recompute the embedded family and manifest identities and compare
+the complete declared adjustment basis to the canonical source committed by
+that family. Each outcome's `family_manifest_id` must match the retained exact
+lineage graph, including feature templates and individual outcomes. Prediction
+generation enforces the same exact-manifest requirement. Prediction and feature
 manifests bind every recorded outcome source and available context source to the
 input's family, canonical snapshot, and feed. Available context timeframes must
 also retain the input's exchange-session policy, including calendar and timezone.
@@ -119,6 +125,11 @@ by the cache reader. The additive intraday record round-trips with canonical
 sorted JSON and participates in dataset, study, feature, and checkpoint identity.
 Changes to adjustment semantics or source/event provenance cannot alias an
 existing artifact. Compatible runs use existing cache/resume validation.
+Earlier intraday provenance version-1 projections lack the required embedded
+evidence and are rejected. Regenerate those projections from the existing
+intraday cache and session aggregates, then recreate dependent studies/features;
+do not relabel or reuse their old checkpoint identities. Legacy daily artifacts
+remain unchanged.
 
 The original QF-45 cache-only reproducer used 8,190 Tiingo SPY one-minute bars
 for January 2–31, 2024, 4,095 derived two-minute bars, and 21 derived session bars.
@@ -135,5 +146,6 @@ credentials and contain no licensed real market data:
 ```bash
 uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py \
   tests/integration/test_intraday_prediction_manifest_integrity.py \
-  tests/integration/test_intraday_prediction_feed_integrity.py
+  tests/integration/test_intraday_prediction_feed_integrity.py \
+  tests/integration/test_intraday_prediction_family_integrity.py
 ```

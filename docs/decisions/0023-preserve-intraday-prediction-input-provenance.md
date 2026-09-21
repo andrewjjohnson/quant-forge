@@ -22,6 +22,12 @@ semantics, explicit unavailable events, source/family/feed/session identity, and
 full source evidence. Context and generic outcome dispatch require matching
 provenance; their original price-basis equality checks remain intact.
 
+Provenance version 2 embeds an immutable family manifest so observational cache
+and experiment readers can recompute both its family and exact-graph identities.
+The declared adjustment basis must match the committed canonical source, and
+outcome manifest IDs must match the retained graph. Version-1 intraday projections
+must be regenerated from canonical caches; no missing evidence is inferred.
+
 Omit the additive reference for legacy daily serialization so existing daily
 identities remain stable. New provenance participates in existing identities
 and resume validation. QF-9 validates it observationally in the existing format.

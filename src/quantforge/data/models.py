@@ -7,7 +7,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import cast
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 
 SCHEMA_VERSION = "4"
 type JsonPrimitive = str | int | float | bool | None
@@ -54,11 +54,14 @@ class IntradayPredictionProvenance:
     session_policy_id: str
     feed_scope_id: str
     corporate_action_availability: CorporateActionAvailability
-    schema_version: str = "1"
+    family_manifest: PrimitiveMappingSnapshot
+    schema_version: str = "2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "1":
+        if self.schema_version != "2":
             raise ValueError("unsupported intraday prediction provenance schema")
+        if not isinstance(cast(object, self.family_manifest), PrimitiveMappingSnapshot):
+            raise ValueError("intraday prediction family manifest must be immutable")
         if not isinstance(
             cast(object, self.corporate_action_availability),
             CorporateActionAvailability,
@@ -102,6 +105,7 @@ class IntradayPredictionProvenance:
             "session_policy_id": self.session_policy_id,
             "feed_scope_id": self.feed_scope_id,
             "corporate_action_availability": self.corporate_action_availability.value,
+            "family_manifest": self.family_manifest.to_primitive(),
         }
 
     @classmethod
@@ -115,7 +119,14 @@ class IntradayPredictionProvenance:
         snapshots = record["source_raw_snapshot_ids"]
         if not isinstance(snapshots, list):
             raise ValueError("intraday prediction raw snapshots must be an array")
-        strings = fields - {"source_raw_snapshot_ids", "corporate_action_availability"}
+        family_manifest = record["family_manifest"]
+        if not isinstance(family_manifest, dict):
+            raise ValueError("intraday prediction family manifest must be a record")
+        strings = fields - {
+            "source_raw_snapshot_ids",
+            "corporate_action_availability",
+            "family_manifest",
+        }
         if any(not isinstance(record[name], str) for name in strings):
             raise ValueError("intraday prediction provenance requires text identities")
         return cls(
@@ -123,6 +134,9 @@ class IntradayPredictionProvenance:
             source_raw_snapshot_ids=tuple(cast(list[str], snapshots)),
             corporate_action_availability=CorporateActionAvailability(
                 cast(str, record["corporate_action_availability"])
+            ),
+            family_manifest=PrimitiveMappingSnapshot.capture(
+                cast(PrimitiveMapping, family_manifest)
             ),
         )
 

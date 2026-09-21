@@ -5,12 +5,17 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, cast
 
-from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
 from quantforge.data.corporate_actions import corporate_action_snapshot_id
 from quantforge.data.exceptions import ValidationError
 from quantforge.data.intraday import IntradayBar
 from quantforge.data.intraday_ingestion import IntradayDataset, IntradayMarketDataCache
 from quantforge.data.lineage import (
+    DATASET_FAMILY_SCHEMA_VERSION,
     AdjustmentBasis,
     DatasetFamily,
     DatasetFamilyReference,
@@ -74,14 +79,68 @@ def validate_prediction_provenance(
         != corporate_action_snapshot_id(())
     ):
         raise ValidationError("contradictory intraday corporate-action provenance")
-    AdjustmentBasis(
+    basis = AdjustmentBasis(
         AdjustmentMode(cast(str, record.get("adjustment_mode"))),
         cast(str, record.get("ohlc_basis")),
         cast(str, record.get("volume_basis")),
         cast(str, policy),
         cast(bool, record.get("adjusted_fields_used")),
     )
+    _validate_family_evidence(provenance, record, basis)
     return provenance
+
+
+def _validate_family_evidence(
+    provenance: IntradayPredictionProvenance,
+    record: PrimitiveMapping,
+    basis: AdjustmentBasis,
+) -> None:
+    """Bind declared semantics to the source committed by the family identity."""
+    manifest = provenance.family_manifest.to_primitive()
+    if (
+        set(manifest)
+        != {
+            "schema_version",
+            "canonical_source",
+            "source_consistency",
+            "family_id",
+            "lineage",
+            "manifest_id",
+        }
+        or manifest.get("schema_version") != DATASET_FAMILY_SCHEMA_VERSION
+        or manifest.get("family_id") != provenance.family_id
+        or configuration_identity(
+            {
+                key: value
+                for key, value in manifest.items()
+                if key not in {"family_id", "lineage", "manifest_id"}
+            }
+        )
+        != provenance.family_id
+        or configuration_identity(
+            {key: value for key, value in manifest.items() if key != "manifest_id"}
+        )
+        != manifest.get("manifest_id")
+    ):
+        raise ValidationError(
+            "prediction input source lineage family manifest is invalid"
+        )
+    source = manifest.get("canonical_source")
+    if not isinstance(source, dict):
+        raise ValidationError("prediction input source lineage is invalid")
+    if source.get("adjustment_basis") != basis.to_primitive():
+        raise ValidationError(
+            "prediction input adjustment basis differs from source family"
+        )
+    feed_scope = source.get("feed_scope")
+    if (
+        source.get("snapshot_id") != provenance.source_dataset_id
+        or source.get("symbol") != record.get("canonical_symbol", record.get("symbol"))
+        or source.get("provider") != record.get("provider_name")
+        or not isinstance(feed_scope, dict)
+        or configuration_identity(feed_scope) != provenance.feed_scope_id
+    ):
+        raise ValidationError("prediction input source lineage is incompatible")
 
 
 def prediction_dataset_from_intraday(
@@ -141,6 +200,7 @@ def prediction_dataset_from_intraday(
         configuration_identity(target.session_policy.to_primitive()),
         configuration_identity(family.feed_scope.to_primitive()),
         CorporateActionAvailability.UNAVAILABLE,
+        PrimitiveMappingSnapshot.capture(family.to_manifest()),
     )
     # The immutable raw extract is the original derived artifact manifest. It
     # records the full source family and aggregation evidence, not invented events.
@@ -273,6 +333,13 @@ def validate_prediction_source(
 ) -> None:
     """Shared future-label input validation for every timestamp labeler."""
     _validate_source(dataset, source.dataset_reference, source.timeframe, source.bars)
+    provenance = dataset.metadata.intraday_provenance
+    if (
+        provenance is not None
+        and source.dataset_family_manifest_id
+        != (provenance.family_manifest.to_primitive()["manifest_id"])
+    ):
+        raise ValidationError("outcome source family manifest is incompatible")
 
 
 def validate_prediction_context_sources(

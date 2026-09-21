@@ -69,6 +69,13 @@ def validate_prediction_input_sources(
                 )
             if provenance is not None:
                 if (
+                    mapping(source).get("family_manifest_id")
+                    != (provenance.family_manifest.to_primitive()["manifest_id"])
+                ):
+                    raise ValidationError(
+                        "outcome source family manifest is incompatible"
+                    )
+                if (
                     configuration_identity(timeframe.session_policy.to_primitive())
                     != provenance.session_policy_id
                 ):
