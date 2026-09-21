@@ -120,6 +120,9 @@ reproduce `source_request_id`, and its ordered raw chunk references must equal
 `source_raw_snapshot_ids`. Source symbol, provider, feed, timeframe, and price
 basis must agree with the family. Rehashing a changed source manifest creates a
 different source dataset identity; it cannot retain the original family binding.
+The projection cache's `provider_symbol` must exactly match the retained source
+manifest, including provider aliases that differ from the canonical symbol.
+QF-9 market records omit this field and retain it inside the source evidence.
 The projection's `retrieved_at` must equal the source manifest's retrieval time
 after both timezone-aware timestamps are normalized to UTC. Equivalent offset
 representations are accepted; missing, malformed, naive, or different timestamps

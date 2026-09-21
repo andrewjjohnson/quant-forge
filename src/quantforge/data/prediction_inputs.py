@@ -167,6 +167,12 @@ def _validate_source_evidence(
     try:
         manifest = provenance.source_manifest.to_primitive()
         validate_intraday_manifest_identity(manifest)
+        # QF-3 cache metadata requires this field; QF-9 market records omit it.
+        if (
+            "provider_symbol" in record
+            and record["provider_symbol"] != manifest["provider_symbol"]
+        ):
+            raise ValueError("provider symbol differs from the canonical source")
         if _retrieval_instant(record.get("retrieved_at")) != _retrieval_instant(
             manifest.get("retrieved_at")
         ):

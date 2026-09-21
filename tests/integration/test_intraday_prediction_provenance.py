@@ -108,7 +108,11 @@ class Fixture:
 
 
 def cached_fixture(
-    root: Path, provider: str = "tiingo", basis: AdjustmentBasis = BASIS
+    root: Path,
+    provider: str = "tiingo",
+    basis: AdjustmentBasis = BASIS,
+    *,
+    provider_symbol: str = "SPY",
 ) -> Fixture:
     """Synthetic prices, same SPY/1m/unavailable contract as real QF-45 data."""
     request = IntradayBarRequest(
@@ -122,7 +126,7 @@ def cached_fixture(
     retrieved = datetime(2024, 1, 4, tzinfo=UTC)
     raw = IntradayRawSnapshot(
         provider,
-        "SPY",
+        provider_symbol,
         "fixture-v1",
         "offline-fixture",
         request.request_id,
@@ -134,7 +138,7 @@ def cached_fixture(
     )
     provenance = IntradayBarProvenance(
         provider,
-        "SPY",
+        provider_symbol,
         "fixture-v1",
         retrieved,
         request.request_id,

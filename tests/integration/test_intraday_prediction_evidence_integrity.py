@@ -1,16 +1,22 @@
 """Raw source evidence and the complete family DAG survive observational checks."""
 
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from shutil import copy2, copytree
 from typing import cast
 
 import pytest
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
-from quantforge.data import dataset_identity_matches, validate_market_dataset
-from quantforge.data.exceptions import ValidationError
+from quantforge.data import (
+    MarketDataCache,
+    dataset_identity_matches,
+    validate_market_dataset,
+)
+from quantforge.data.exceptions import CacheError, ValidationError
+from quantforge.data.identity import serialize_metadata_values
 from quantforge.data.intraday_ingestion import IntradayMarketDataCache
 from quantforge.data.models import IntradayPredictionProvenance
 from quantforge.data.prediction_inputs import validate_prediction_provenance
@@ -31,7 +37,10 @@ from tests.integration.test_intraday_prediction_manifest_integrity import (
 from tests.integration.test_intraday_prediction_manifest_integrity import (
     feature_result as feature_result,
 )
-from tests.integration.test_intraday_prediction_provenance import Fixture
+from tests.integration.test_intraday_prediction_provenance import (
+    Fixture,
+    cached_fixture,
+)
 from tests.integration.test_intraday_prediction_provenance import fixture as fixture
 from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
@@ -46,6 +55,50 @@ CHANGES = (
     "cycle",
     "orphan_member",
 )
+
+
+@pytest.mark.parametrize("boundary", ["dataset", "cache"])
+def test_rehashed_projection_provider_symbol_must_match_source(
+    fixture: Fixture, tmp_path: Path, boundary: str
+) -> None:
+    altered = _rehash_dataset(
+        replace(
+            fixture.dataset,
+            metadata=replace(fixture.dataset.metadata, provider_symbol="OTHER"),
+        )
+    )
+    assert dataset_identity_matches(altered)
+    if boundary == "dataset":
+        with pytest.raises(ValidationError, match="provider symbol"):
+            validate_market_dataset(altered)
+        return
+
+    cache = MarketDataCache(tmp_path / "cache")
+    directory = cache.root / "datasets" / altered.metadata.dataset_id
+    copytree(
+        fixture.cache.root / "datasets" / fixture.dataset.metadata.dataset_id,
+        directory,
+    )
+    raw_path = cache.root / altered.metadata.raw_location
+    raw_path.parent.mkdir(parents=True)
+    copy2(fixture.cache.root / altered.metadata.raw_location, raw_path)
+    write_json(
+        directory / "manifest.json",
+        cast(PrimitiveMapping, serialize_metadata_values(asdict(altered.metadata))),
+    )
+    with pytest.raises(CacheError, match="provider symbol"):
+        cache.load(altered.metadata.dataset_id)
+
+
+def test_projection_preserves_source_provider_alias(tmp_path: Path) -> None:
+    inputs = cached_fixture(tmp_path, provider_symbol="spy.us")
+    metadata = inputs.dataset.metadata
+    assert metadata.canonical_symbol == "SPY"
+    assert metadata.provider_symbol == "spy.us"
+    assert inputs.cache.load(metadata.dataset_id) == inputs.dataset
+    market = PredictionMarketData.from_qf3(metadata).to_primitive()
+    assert "provider_symbol" not in market
+    assert validate_prediction_provenance(market) == metadata.intraday_provenance
 
 
 def _alter_projection_metadata(
