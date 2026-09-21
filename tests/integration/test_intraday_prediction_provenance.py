@@ -9,7 +9,11 @@ from typing import Any, cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
 from quantforge.data import (
     AdjustmentBasis,
     AdjustmentMode,
@@ -58,7 +62,15 @@ from quantforge.prediction import (
     intraday_target_stop_outcome,
     run_prediction_study,
 )
-from quantforge.prediction.study import prepare_prediction_study_dataset
+from quantforge.prediction.feature_dataset import (
+    _fixed_candidate_population_id,  # pyright: ignore[reportPrivateUsage]
+    _FixedCandidateRule,  # pyright: ignore[reportPrivateUsage]
+    _SignalFeatureRule,  # pyright: ignore[reportPrivateUsage]
+)
+from quantforge.prediction.study import (
+    prepare_prediction_study_dataset,
+    run_prediction_study_in_session,
+)
 from quantforge.timeframes import IntradayInterval, SessionInterval, Timeframe
 from tests.unit.helpers import make_dataset
 from tests.unit.prediction.test_multi_timeframe_feature_dataset import (
@@ -291,6 +303,61 @@ def test_other_provider_uses_identical_contract(tmp_path: Path) -> None:
         context_provider=provider,
     )
     assert len(result.rows) == 1
+
+
+@pytest.mark.parametrize("outcome_name", ["forward_return", "excursion", "target_stop"])
+def test_reused_session_revalidates_changed_outcome_source(
+    fixture: Fixture, tmp_path: Path, outcome_name: str
+) -> None:
+    other = cached_fixture(tmp_path, "other-provider")
+    outcome = {
+        "forward_return": intraday_forward_return_outcome(
+            timedelta(minutes=30), fixture.primary
+        ),
+        "excursion": intraday_excursion_outcome(timedelta(minutes=60), fixture.primary),
+        "target_stop": intraday_target_stop_outcome(
+            timedelta(minutes=60), fixture.primary, Decimal("0.003"), Decimal("0.002")
+        ),
+    }[outcome_name]
+    rule, provider = study_inputs(fixture)
+    original = PredictionStudy[SignalFeatureCandidate, Any, Any].create(
+        rule, outcome.labeler, outcome.evaluator, outcome_source=fixture.primary
+    )
+    signals = run_prediction_study(
+        fixture.dataset, original, context_provider=provider
+    ).signals
+    # Replay fixed timestamp candidates without context, so only the outcome
+    # source check can enforce the projection's family and snapshot lineage.
+    replay = _FixedCandidateRule(
+        cast(_SignalFeatureRule, rule),
+        PrimitiveMappingSnapshot.capture(rule.configuration()),
+        signals,
+        _fixed_candidate_population_id(signals),
+        len(signals),
+    )
+    study = PredictionStudy[SignalFeatureCandidate, Any, Any].create(
+        replay, outcome.labeler, outcome.evaluator, outcome_source=fixture.primary
+    )
+    prepared = prepare_prediction_study_dataset(fixture.dataset)
+    first = run_prediction_study_in_session(prepared, study)
+    assert len(first.rows) == 1
+    assert first.unavailable_outcome_count == 0
+    assert (
+        run_prediction_study_in_session(prepared, study).to_primitive()
+        == first.to_primitive()
+    )
+
+    # Keep the labeler object/configuration, symbol, and price basis unchanged.
+    # The replacement source is independently canonical but has another lineage.
+    incompatible = replace(study, outcome_source=other.primary)
+    with pytest.raises(
+        InvalidPredictionDataError, match="source lineage is incompatible"
+    ):
+        run_prediction_study_in_session(prepared, incompatible)
+    assert (
+        run_prediction_study_in_session(prepared, study).to_primitive()
+        == first.to_primitive()
+    )
 
 
 @pytest.mark.parametrize(

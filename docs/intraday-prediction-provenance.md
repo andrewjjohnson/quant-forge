@@ -67,6 +67,9 @@ The shared prediction-input checks require:
 
 Both context construction and the generic timestamp-outcome dispatch use this
 contract. QF-49 and QF-47 retain their additional exact price-basis checks.
+Outcome-source compatibility is checked on every run, including when a dataset
+session reuses a previously validated labeler. This check runs after signals are
+fixed and before outcome labeling.
 No labeler-specific exception or provider-name condition is added. A future
 provider with the same canonical semantics works automatically.
 

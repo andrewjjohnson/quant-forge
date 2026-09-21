@@ -428,16 +428,17 @@ def run_prediction_study_in_session(
 
     # This is intentionally after signal generation. Dataset-specific future-label
     # checks must never run early enough to influence prediction generation.
+    # A reused labeler can receive a different source on each run.
+    if study.outcome_source is not None:
+        try:
+            validate_prediction_source(component_dataset, study.outcome_source)
+        except MarketDataValidationError as error:
+            raise InvalidPredictionDataError(str(error)) from error
     labeler_session_key = (
         id(study.outcome_labeler),
         configuration.outcome_configuration_id,
     )
     if labeler_session_key not in prepared.validated_labelers:
-        if study.outcome_source is not None:
-            try:
-                validate_prediction_source(component_dataset, study.outcome_source)
-            except MarketDataValidationError as error:
-                raise InvalidPredictionDataError(str(error)) from error
         study.outcome_labeler.validate_dataset(component_dataset)
         prepared.validated_labelers.add(labeler_session_key)
     _validate_unchanged_component(
