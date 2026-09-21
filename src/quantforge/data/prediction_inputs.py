@@ -203,15 +203,13 @@ def validate_prediction_source_reference(
     provenance: IntradayPredictionProvenance,
     reference: PrimitiveMapping,
 ) -> None:
-    """Require common family and immutable source; unavailable is no wildcard."""
+    """Require common family, immutable source, and an explicit matching feed."""
+    feed_scope = reference.get("feed_scope")
     if (
         reference.get("family_id") != provenance.family_id
         or reference.get("canonical_source_snapshot_id") != provenance.source_dataset_id
-        or (
-            "feed_scope" in reference
-            and configuration_identity(cast(PrimitiveMapping, reference["feed_scope"]))
-            != provenance.feed_scope_id
-        )
+        or not isinstance(feed_scope, dict)
+        or configuration_identity(feed_scope) != provenance.feed_scope_id
     ):
         raise ValidationError("prediction input source lineage is incompatible")
 

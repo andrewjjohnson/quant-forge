@@ -96,6 +96,10 @@ references without generating predictions or outcomes. Prediction and feature
 manifests bind every recorded outcome source and available context source to the
 input's family, canonical snapshot, and feed. Available context timeframes must
 also retain the input's exchange-session policy, including calendar and timezone.
+Outcome references must explicitly record their feed scope. Compact context
+references obtain it from the captured requirements, whose primary, contextual,
+and selected-timeframe feeds must all match the input provenance. A missing feed
+or a different feed cannot be accepted by omitting it from a source reference.
 Every outcome source's timeframe identity must match its labeler's declared
 observation timeframe. Intraday-backed outcome timeframes must also retain the
 input's session policy. This covers the feature study template and every exported
@@ -130,5 +134,6 @@ credentials and contain no licensed real market data:
 
 ```bash
 uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py \
-  tests/integration/test_intraday_prediction_manifest_integrity.py
+  tests/integration/test_intraday_prediction_manifest_integrity.py \
+  tests/integration/test_intraday_prediction_feed_integrity.py
 ```

@@ -671,14 +671,15 @@ QF-40 aggregation without path recomputation, safe resume, and QF-9 inspection.
 
 ```bash
 uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py \
-  tests/integration/test_intraday_prediction_manifest_integrity.py
+  tests/integration/test_intraday_prediction_manifest_integrity.py \
+  tests/integration/test_intraday_prediction_feed_integrity.py
 ```
 
 The synthetic cache-only fixture exercises canonical SPY one-minute input,
 derived two-minute/daily bars, truthful unavailable events, context construction,
 QF-49/QF-47 outcomes, QF-9 integrity, and compatible/incompatible resume. The reader
-regressions reject rehashed source-lineage, outcome-timeframe, and session-policy
-mismatches in prediction/feature artifacts without executing research. Projection
-tests also reject source metadata, bars, and raw extracts that differ from the
+regressions reject rehashed source-lineage, feed-scope, outcome-timeframe, and
+session-policy mismatches in prediction/feature artifacts without executing
+research. Projection tests also reject source metadata, bars, and raw extracts that differ from the
 immutable intraday cache. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

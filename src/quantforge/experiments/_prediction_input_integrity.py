@@ -13,6 +13,31 @@ from quantforge.experiments._json import ManifestError, mapping
 from quantforge.prediction.outcome_temporal import outcome_temporal_configuration
 
 
+def _context_feed_scope(
+    context: PrimitiveMapping, feed_scope_id: str
+) -> PrimitiveMapping:
+    """Validate declared and selected requirements before expanding references."""
+    requirements = mapping(context.get("requirements"))
+    primary = mapping(requirements.get("primary"))
+    contextual = requirements.get("contextual")
+    selected = context.get("timeframes")
+    if not isinstance(contextual, list) or not isinstance(selected, list):
+        raise ValidationError("prediction context feed scope requirements are invalid")
+    declarations = (
+        primary,
+        *(mapping(item) for item in contextual),
+        *(mapping(mapping(item).get("requirement")) for item in selected),
+    )
+    for requirement in declarations:
+        feed_scope = requirement.get("feed_scope")
+        if (
+            not isinstance(feed_scope, dict)
+            or configuration_identity(feed_scope) != feed_scope_id
+        ):
+            raise ValidationError("prediction context feed scope is incompatible")
+    return mapping(primary["feed_scope"])
+
+
 def validate_prediction_input_sources(
     market: PrimitiveMapping,
     *,
@@ -60,6 +85,7 @@ def validate_prediction_input_sources(
         source_context = captured.get("source_context")
         if source_context is None:
             return
+        feed_scope = _context_feed_scope(captured, provenance.feed_scope_id)
         timeframes = mapping(source_context).get("timeframes")
         if not isinstance(timeframes, list):
             raise ManifestError("prediction source timeframes are invalid")
@@ -68,7 +94,11 @@ def validate_prediction_input_sources(
             reference = aligned.get("dataset_reference")
             if reference is None:
                 continue
-            validate_prediction_source_reference(provenance, mapping(reference))
+            # QF-20's compact reference omits feed scope. Expand it only from
+            # declarations already checked against the input's feed identity.
+            expanded_reference = dict(mapping(reference))
+            expanded_reference.setdefault("feed_scope", feed_scope)
+            validate_prediction_source_reference(provenance, expanded_reference)
             requirement = mapping(aligned.get("requirement"))
             definition = mapping(
                 mapping(requirement.get("timeframe")).get("configuration")
