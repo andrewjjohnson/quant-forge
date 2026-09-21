@@ -8,6 +8,9 @@ from quantforge.experiments._feature_row_integrity import (
     validate_feature_row_provenance,
 )
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_input_integrity import (
+    validate_prediction_input_sources,
+)
 from quantforge.prediction.signal_feature_models import SignalDisposition
 
 
@@ -47,6 +50,21 @@ def validate_feature_manifest(manifest: PrimitiveMapping) -> None:
         not isinstance(item, str) for item in limitations
     ):
         raise ManifestError("feature dataset limitations must be an array of strings")
+    configuration = mapping(manifest["configuration"])
+    outcome_sources = [configuration.get("outcome_source")]
+    outcomes = configuration.get("outcomes")
+    if not isinstance(outcomes, list):
+        raise ManifestError("feature outcome configurations must be an array")
+    for outcome in outcomes:
+        component = mapping(outcome).get("component_configuration")
+        if not isinstance(component, dict):
+            raise ManifestError("feature outcome configuration must be an object")
+        outcome_sources.append(component.get("outcome_source"))
+    validate_prediction_input_sources(
+        mapping(manifest["market_data"]),
+        outcome_sources=outcome_sources,
+        context=configuration.get("prediction_context"),
+    )
 
 
 def validate_feature_summary(

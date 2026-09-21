@@ -3,12 +3,10 @@
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
-from quantforge.data.exceptions import ValidationError
-from quantforge.data.prediction_inputs import (
-    validate_prediction_provenance,
-    validate_prediction_source_reference,
-)
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_input_integrity import (
+    validate_prediction_input_sources,
+)
 from quantforge.experiments._prediction_row_integrity import validate_prediction_row
 from quantforge.experiments._prediction_sessions import recorded_session_indexes
 from quantforge.experiments._prediction_temporal_integrity import (
@@ -42,36 +40,6 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
         raise ManifestError("prediction feature/outcome boundary is invalid")
     configuration = mapping(manifest.get("configuration"))
     market = mapping(manifest.get("market_data"))
-    if (
-        "intraday_provenance" in market
-        or market.get("corporate_action_policy") == "not_provided_for_intraday_bars"
-    ):
-        try:
-            provenance = validate_prediction_provenance(market)
-            assert provenance is not None
-            outcome_source = mapping(configuration.get("outcome_labeler")).get(
-                "outcome_source"
-            )
-            if outcome_source is not None:
-                validate_prediction_source_reference(
-                    provenance, mapping(mapping(outcome_source).get("source_reference"))
-                )
-            context = mapping(manifest.get("prediction_context", {}))
-            source_context = context.get("source_context")
-            if source_context is not None and context.get("status") == "available":
-                timeframes = mapping(source_context).get("timeframes")
-                if not isinstance(timeframes, list):
-                    raise ManifestError("prediction source timeframes are invalid")
-                for timeframe in timeframes:
-                    reference = mapping(timeframe).get("dataset_reference")
-                    if reference is not None:
-                        validate_prediction_source_reference(
-                            provenance, mapping(reference)
-                        )
-        except (TypeError, ValueError, ValidationError) as error:
-            raise ManifestError(
-                f"prediction input provenance is invalid: {error}"
-            ) from error
     identity: PrimitiveMapping = {
         "component": "quantforge_prediction_study",
         "engine_version": text(manifest.get("engine_version")),
@@ -84,6 +52,13 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
         "study_id"
     ) != configuration_identity(identity):
         raise ManifestError("prediction study identity is inconsistent")
+    validate_prediction_input_sources(
+        market,
+        outcome_sources=(
+            mapping(configuration.get("outcome_labeler")).get("outcome_source"),
+        ),
+        context=manifest.get("prediction_context"),
+    )
     for name in ("prediction_rule", "outcome_labeler", "evaluator"):
         component = mapping(configuration.get(name))
         definition = mapping(component.get("configuration"))

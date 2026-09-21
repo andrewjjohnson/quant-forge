@@ -84,7 +84,12 @@ adjustment algorithm or authorize corporate-action accounting.
 
 QF-9 preserves the new record in existing `market_data` provenance. Its readers
 validate availability, price semantics, and recorded context/outcome source
-references without generating predictions or outcomes. Existing outer manifest,
+references without generating predictions or outcomes. Prediction and feature
+manifests bind every recorded outcome source and available context source to the
+input's family, canonical snapshot, and feed. Available context timeframes must
+also retain the input's exchange-session policy, including calendar and timezone.
+These checks still apply when artifact hashes are recomputed; skipped contexts
+retain their rejected evidence for auditability. Existing outer manifest,
 producer identity, hash, and row checks still apply.
 
 ## Serialization, identity, and resume
@@ -111,5 +116,6 @@ aggregation, prediction, feature export, and manifest APIs. They need no
 credentials and contain no licensed real market data:
 
 ```bash
-uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py
+uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py \
+  tests/integration/test_intraday_prediction_manifest_integrity.py
 ```
