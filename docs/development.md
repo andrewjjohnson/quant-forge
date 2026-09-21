@@ -673,7 +673,8 @@ QF-40 aggregation without path recomputation, safe resume, and QF-9 inspection.
 uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py \
   tests/integration/test_intraday_prediction_manifest_integrity.py \
   tests/integration/test_intraday_prediction_feed_integrity.py \
-  tests/integration/test_intraday_prediction_family_integrity.py
+  tests/integration/test_intraday_prediction_family_integrity.py \
+  tests/integration/test_intraday_prediction_lineage_integrity.py
 ```
 
 The synthetic cache-only fixture exercises canonical SPY one-minute input,

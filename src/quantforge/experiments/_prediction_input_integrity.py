@@ -105,7 +105,6 @@ def validate_prediction_input_sources(
             # declarations already checked against the input's feed identity.
             expanded_reference = dict(mapping(reference))
             expanded_reference.setdefault("feed_scope", feed_scope)
-            validate_prediction_source_reference(provenance, expanded_reference)
             requirement = mapping(aligned.get("requirement"))
             definition = mapping(
                 mapping(requirement.get("timeframe")).get("configuration")
@@ -113,6 +112,7 @@ def validate_prediction_input_sources(
             session_policy = mapping(definition.get("session_policy"))
             if configuration_identity(session_policy) != provenance.session_policy_id:
                 raise ValidationError("prediction input session policy is incompatible")
+            validate_prediction_source_reference(provenance, expanded_reference)
     except (TypeError, ValueError, ValidationError) as error:
         raise ManifestError(
             f"prediction input provenance is invalid: {error}"

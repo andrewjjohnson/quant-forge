@@ -98,7 +98,15 @@ validation recompute the embedded family and manifest identities and compare
 the complete declared adjustment basis to the canonical source committed by
 that family. Each outcome's `family_manifest_id` must match the retained exact
 lineage graph, including feature templates and individual outcomes. Prediction
-generation enforces the same exact-manifest requirement. Prediction and feature
+generation enforces the same exact-manifest requirement. Each outcome and
+available-context reference must identify exactly one member of that graph with
+the recorded timeframe, canonical source, and role. A valid family ID cannot
+stand in for a missing dataset or a dataset recorded at another timeframe.
+Cache and experiment validation also bind the projection's session dataset and
+timeframe IDs to its retained one-session artifact and session policy. Embedded
+timeframe definitions must reproduce their declared IDs. These checks do not
+change schema version 2 or the identities of valid artifacts.
+Prediction and feature
 manifests bind every recorded outcome source and available context source to the
 input's family, canonical snapshot, and feed. Available context timeframes must
 also retain the input's exchange-session policy, including calendar and timezone.
@@ -147,5 +155,6 @@ credentials and contain no licensed real market data:
 uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py \
   tests/integration/test_intraday_prediction_manifest_integrity.py \
   tests/integration/test_intraday_prediction_feed_integrity.py \
-  tests/integration/test_intraday_prediction_family_integrity.py
+  tests/integration/test_intraday_prediction_family_integrity.py \
+  tests/integration/test_intraday_prediction_lineage_integrity.py
 ```

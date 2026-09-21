@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, cast
 
 from quantforge.configuration import (
+    Primitive,
     PrimitiveMapping,
     PrimitiveMappingSnapshot,
     configuration_identity,
@@ -45,6 +46,53 @@ if TYPE_CHECKING:
 
 DAILY_CORPORATE_ACTION_POLICY = "separate_provider_reported_cash_dividends_and_splits"
 INTRADAY_CORPORATE_ACTION_POLICY = "not_provided_for_intraday_bars"
+
+
+def _family_dataset_timeframe(
+    provenance: IntradayPredictionProvenance,
+    dataset_id: Primitive,
+    timeframe_configuration_id: Primitive,
+    *,
+    subject: str,
+) -> PrimitiveMapping:
+    """Resolve one unambiguous member and verify its committed timeframe."""
+    error = f"prediction input {subject} lineage is incompatible"
+    lineage = provenance.family_manifest.to_primitive().get("lineage")
+    if (
+        not isinstance(dataset_id, str)
+        or not isinstance(timeframe_configuration_id, str)
+        or not isinstance(lineage, list)
+        or any(not isinstance(entry, dict) for entry in lineage)
+    ):
+        raise ValidationError(error)
+    matches = [
+        entry
+        for entry in cast(list[PrimitiveMapping], lineage)
+        if entry.get("dataset_id") == dataset_id
+    ]
+    if len(matches) != 1:
+        raise ValidationError(error)
+    entry = matches[0]
+    timeframe = entry.get("timeframe")
+    expected_role = (
+        "canonical_source_snapshot"
+        if dataset_id == provenance.source_dataset_id
+        else "derived_dataset"
+    )
+    if (
+        entry.get("canonical_source_snapshot_id") != provenance.source_dataset_id
+        or entry.get("role") != expected_role
+        or not isinstance(timeframe, dict)
+        or timeframe.get("configuration_id") != timeframe_configuration_id
+    ):
+        raise ValidationError(error)
+    configuration = timeframe.get("configuration")
+    if (
+        not isinstance(configuration, dict)
+        or configuration_identity(configuration) != timeframe_configuration_id
+    ):
+        raise ValidationError(error)
+    return configuration
 
 
 def validate_prediction_provenance(
@@ -141,6 +189,30 @@ def _validate_family_evidence(
         or configuration_identity(feed_scope) != provenance.feed_scope_id
     ):
         raise ValidationError("prediction input source lineage is incompatible")
+    source_timeframe = source.get("timeframe")
+    if not isinstance(source_timeframe, dict):
+        raise ValidationError("prediction input source lineage is incompatible")
+    _family_dataset_timeframe(
+        provenance,
+        provenance.source_dataset_id,
+        source_timeframe.get("configuration_id"),
+        subject="source",
+    )
+    session_timeframe = _family_dataset_timeframe(
+        provenance,
+        provenance.session_dataset_id,
+        provenance.session_timeframe_configuration_id,
+        subject="session artifact",
+    )
+    session_policy = session_timeframe.get("session_policy")
+    if (
+        session_timeframe.get("interval") != SessionInterval(1).to_primitive()
+        or not isinstance(session_policy, dict)
+        or configuration_identity(session_policy) != provenance.session_policy_id
+    ):
+        raise ValidationError(
+            "prediction input session artifact lineage is incompatible"
+        )
 
 
 def prediction_dataset_from_intraday(
@@ -263,7 +335,7 @@ def validate_prediction_source_reference(
     provenance: IntradayPredictionProvenance,
     reference: PrimitiveMapping,
 ) -> None:
-    """Require common family, immutable source, and an explicit matching feed."""
+    """Require a recorded family member, immutable source, and matching feed."""
     feed_scope = reference.get("feed_scope")
     if (
         reference.get("family_id") != provenance.family_id
@@ -272,6 +344,12 @@ def validate_prediction_source_reference(
         or configuration_identity(feed_scope) != provenance.feed_scope_id
     ):
         raise ValidationError("prediction input source lineage is incompatible")
+    _family_dataset_timeframe(
+        provenance,
+        reference.get("dataset_id"),
+        reference.get("timeframe_configuration_id"),
+        subject="source",
+    )
 
 
 def _validate_source(

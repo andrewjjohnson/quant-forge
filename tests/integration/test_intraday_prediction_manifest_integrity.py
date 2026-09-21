@@ -98,7 +98,10 @@ def _write_rehashed_feature(
 
 @pytest.mark.parametrize("directory", [False, True], ids=["snapshot", "directory"])
 @pytest.mark.parametrize("source", ["template", "outcome", "context"])
-@pytest.mark.parametrize("field", ["family_id", "canonical_source_snapshot_id"])
+@pytest.mark.parametrize(
+    "field",
+    ["family_id", "canonical_source_snapshot_id", "dataset_id", "other_timeframe"],
+)
 def test_rehashed_feature_sources_must_match_intraday_provenance(
     feature_result: SignalFeatureDatasetResult,
     tmp_path: Path,
@@ -108,12 +111,20 @@ def test_rehashed_feature_sources_must_match_intraday_provenance(
     field: str,
 ) -> None:
     configuration = feature_result.configuration
+    source_data = cast(PrimitiveMapping, configuration["source_data"])
+    provenance = cast(PrimitiveMapping, source_data["intraday_provenance"])
+    replacement = "0" * 64
+    if field == "other_timeframe":
+        field = "dataset_id"
+        replacement = provenance["source_dataset_id"]
     if source == "context":
         context = cast(PrimitiveMapping, configuration["prediction_context"])
         captured = cast(PrimitiveMapping, context["source_context"])
         aligned = cast(list[PrimitiveMapping], captured["timeframes"])
         for timeframe in aligned:
-            cast(PrimitiveMapping, timeframe["dataset_reference"])[field] = "0" * 64
+            cast(PrimitiveMapping, timeframe["dataset_reference"])[field] = replacement
+            if field == "dataset_id":
+                timeframe["dataset_id"] = replacement
         if field == "family_id":
             cast(PrimitiveMapping, captured["source_consistency"])[field] = "0" * 64
         captured["context_id"] = configuration_identity(
@@ -129,7 +140,7 @@ def test_rehashed_feature_sources_must_match_intraday_provenance(
             PrimitiveMapping,
             cast(PrimitiveMapping, owner["outcome_source"])["source_reference"],
         )
-        reference[field] = "0" * 64
+        reference[field] = replacement
         if outcome is not None:
             outcome["configuration_id"] = configuration_identity(owner)
     path = _write_rehashed_feature(feature_result, configuration, tmp_path, directory)
