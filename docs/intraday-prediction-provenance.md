@@ -103,7 +103,10 @@ available-context reference must identify exactly one member of that graph with
 the recorded timeframe, canonical source, and role. A valid family ID cannot
 stand in for a missing dataset or a dataset recorded at another timeframe.
 Cache and experiment validation also bind the projection's session dataset and
-timeframe IDs to its retained one-session artifact and session policy. Embedded
+timeframe IDs to its retained one-session artifact and session policy. The
+projection's `calendar` and `provider_timezone` must exactly match that policy's
+calendar and timezone, even when a different calendar produces the same session
+dates over the recorded range. Embedded
 timeframe definitions must reproduce their declared IDs. These checks do not
 accept a self-consistent hash as proof of a valid graph: `DatasetFamily.from_manifest`
 reconstructs every member through the domain types and enforces unique datasets,
@@ -117,6 +120,10 @@ reproduce `source_request_id`, and its ordered raw chunk references must equal
 `source_raw_snapshot_ids`. Source symbol, provider, feed, timeframe, and price
 basis must agree with the family. Rehashing a changed source manifest creates a
 different source dataset identity; it cannot retain the original family binding.
+The projection's `retrieved_at` must equal the source manifest's retrieval time
+after both timezone-aware timestamps are normalized to UTC. Equivalent offset
+representations are accepted; missing, malformed, naive, or different timestamps
+are rejected. These checks preserve schema version 3 and valid artifact identities.
 The producer reloads bars/raw extracts through the cache before capturing this
 evidence. Observational readers validate the retained metadata without I/O or
 recomputing bars; hashes establish consistency, not provider authenticity.

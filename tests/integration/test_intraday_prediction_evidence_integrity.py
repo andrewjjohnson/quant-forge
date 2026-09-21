@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -14,7 +15,7 @@ from quantforge.data.intraday_ingestion import IntradayMarketDataCache
 from quantforge.data.models import IntradayPredictionProvenance
 from quantforge.data.prediction_inputs import validate_prediction_provenance
 from quantforge.experiments import ManifestError, StudyType, inspect_study
-from quantforge.prediction import SignalFeatureDatasetResult
+from quantforge.prediction import PredictionMarketData, SignalFeatureDatasetResult
 from tests.integration.test_intraday_prediction_feed_integrity import (
     _rehash_prediction,  # pyright: ignore[reportPrivateUsage]
 )
@@ -45,6 +46,138 @@ CHANGES = (
     "cycle",
     "orphan_member",
 )
+
+
+def _alter_projection_metadata(
+    market: PredictionMarketData, change: str
+) -> PredictionMarketData:
+    if change == "calendar":
+        return replace(market, calendar="XNAS")
+    if change == "timezone":
+        return replace(market, provider_timezone="UTC")
+    if change == "session_policy":
+        return replace(market, calendar="XNAS", provider_timezone="UTC")
+    return replace(market, retrieved_at=market.retrieved_at + timedelta(hours=1))
+
+
+@pytest.mark.parametrize(
+    "change", ["calendar", "timezone", "session_policy", "retrieval"]
+)
+def test_dataset_projection_metadata_must_match_retained_evidence(
+    fixture: Fixture, change: str
+) -> None:
+    market = _alter_projection_metadata(
+        PredictionMarketData.from_qf3(fixture.dataset.metadata), change
+    )
+    altered = _rehash_dataset(
+        replace(
+            fixture.dataset,
+            metadata=replace(
+                fixture.dataset.metadata,
+                calendar=market.calendar,
+                provider_timezone=market.provider_timezone,
+                retrieved_at=market.retrieved_at,
+            ),
+        )
+    )
+    assert dataset_identity_matches(altered)
+    with pytest.raises(
+        ValidationError,
+        match="retrieval" if change == "retrieval" else "session policy",
+    ):
+        validate_market_dataset(altered)
+
+
+@pytest.mark.parametrize(
+    "change", ["calendar", "timezone", "session_policy", "retrieval"]
+)
+def test_prediction_projection_metadata_must_match_retained_evidence(
+    prediction_manifest: PrimitiveMapping,
+    fixture: Fixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    manifest = deepcopy(prediction_manifest)
+    manifest["market_data"] = _alter_projection_metadata(
+        PredictionMarketData.from_qf3(fixture.dataset.metadata), change
+    ).to_primitive()
+    _rehash_prediction(manifest)
+    path = tmp_path / "prediction.json"
+    write_json(path, manifest)
+    block_research(monkeypatch)
+    with pytest.raises(
+        ManifestError, match="retrieval" if change == "retrieval" else "session policy"
+    ):
+        inspect_study(StudyType.PREDICTION, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("directory", [False, True], ids=["snapshot", "directory"])
+@pytest.mark.parametrize(
+    "change", ["calendar", "timezone", "session_policy", "retrieval"]
+)
+def test_feature_projection_metadata_must_match_retained_evidence(
+    feature_result: SignalFeatureDatasetResult,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    directory: bool,
+    change: str,
+) -> None:
+    altered = replace(
+        feature_result,
+        market_data=_alter_projection_metadata(feature_result.market_data, change),
+    )
+    configuration = altered.configuration
+    configuration["source_data"] = altered.market_data.to_primitive()
+    path = _write_rehashed_feature(altered, configuration, tmp_path, directory)
+    block_research(monkeypatch)
+    with pytest.raises(
+        ManifestError, match="retrieval" if change == "retrieval" else "session policy"
+    ):
+        inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [None, 123, "not-a-timestamp", "2024-01-04T00:00:00", "0001-01-01T00:00:00+01:00"],
+)
+def test_projection_retrieval_timestamp_requires_an_aware_instant(
+    prediction_manifest: PrimitiveMapping, timestamp: Primitive
+) -> None:
+    market = deepcopy(cast(PrimitiveMapping, prediction_manifest["market_data"]))
+    market["retrieved_at"] = timestamp
+    with pytest.raises(ValidationError, match="retrieval timestamp"):
+        validate_prediction_provenance(market)
+
+
+@pytest.mark.parametrize("representation", ["utc_z", "offset"])
+def test_equivalent_retrieval_timestamp_representation_is_accepted(
+    prediction_manifest: PrimitiveMapping,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    representation: str,
+) -> None:
+    manifest = deepcopy(prediction_manifest)
+    market = cast(PrimitiveMapping, manifest["market_data"])
+    original = cast(str, market["retrieved_at"])
+    market["retrieved_at"] = (
+        original.replace("+00:00", "Z")
+        if representation == "utc_z"
+        else datetime.fromisoformat(original)
+        .astimezone(timezone(timedelta(hours=-5)))
+        .isoformat()
+    )
+    assert market["retrieved_at"] != original
+    _rehash_prediction(manifest)
+    path = tmp_path / "prediction.json"
+    write_json(path, manifest)
+    block_research(monkeypatch)
+    assert (
+        inspect_study(
+            StudyType.PREDICTION, path, artifact_root=tmp_path
+        ).provenance.producer_study_id
+        == manifest["study_id"]
+    )
 
 
 def _alter_evidence(provenance: PrimitiveMapping, change: str) -> str:

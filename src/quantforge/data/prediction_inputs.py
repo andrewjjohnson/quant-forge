@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from quantforge.configuration import (
@@ -139,15 +140,37 @@ def validate_prediction_provenance(
         cast(bool, record.get("adjusted_fields_used")),
     )
     _validate_family_evidence(provenance, record, basis)
-    _validate_source_evidence(provenance)
+    _validate_source_evidence(provenance, record)
     return provenance
 
 
-def _validate_source_evidence(provenance: IntradayPredictionProvenance) -> None:
+def _retrieval_instant(value: Primitive) -> datetime:
+    """Compare acquisition timestamps as aware UTC instants, never local time."""
+    try:
+        if not isinstance(value, str):
+            raise ValueError
+        instant = datetime.fromisoformat(value)
+        if instant.utcoffset() is None:
+            raise ValueError
+        return instant.astimezone(UTC)
+    except (ValueError, OverflowError) as error:
+        raise ValueError(
+            "retrieval timestamp must be a timezone-aware ISO timestamp"
+        ) from error
+
+
+def _validate_source_evidence(
+    provenance: IntradayPredictionProvenance,
+    record: PrimitiveMapping,
+) -> None:
     """Bind raw IDs and family semantics to the canonical intraday dataset ID."""
     try:
         manifest = provenance.source_manifest.to_primitive()
         validate_intraday_manifest_identity(manifest)
+        if _retrieval_instant(record.get("retrieved_at")) != _retrieval_instant(
+            manifest.get("retrieved_at")
+        ):
+            raise ValueError("retrieval timestamp differs from the canonical source")
         request = cast(PrimitiveMapping, manifest["request"])
         configuration = cast(PrimitiveMapping, request["configuration"])
         chunks = cast(list[PrimitiveMapping], manifest["chunks"])
@@ -251,6 +274,12 @@ def _validate_family_evidence(
     ):
         raise ValidationError(
             "prediction input session artifact lineage is incompatible"
+        )
+    if record.get("calendar") != session_policy.get("calendar") or record.get(
+        "provider_timezone"
+    ) != session_policy.get("timezone"):
+        raise ValidationError(
+            "prediction input calendar or timezone differs from the session policy"
         )
     try:
         DatasetFamily.from_manifest(manifest)
