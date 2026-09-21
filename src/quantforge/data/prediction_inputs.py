@@ -9,7 +9,7 @@ from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data.corporate_actions import corporate_action_snapshot_id
 from quantforge.data.exceptions import ValidationError
 from quantforge.data.intraday import IntradayBar
-from quantforge.data.intraday_ingestion import IntradayDataset
+from quantforge.data.intraday_ingestion import IntradayDataset, IntradayMarketDataCache
 from quantforge.data.lineage import (
     AdjustmentBasis,
     DatasetFamily,
@@ -89,17 +89,21 @@ def prediction_dataset_from_intraday(
     sessions: AggregatedSessionDataset,
     *,
     cache: MarketDataCache,
+    intraday_cache: IntradayMarketDataCache,
     family: DatasetFamily | None = None,
 ) -> MarketDataset:
     """Persist completed session bars with their original intraday source lineage.
 
     This is the session carrier required by QF-11, not an intraday schedule or a
     new aggregation algorithm. Exact decisions and labels still use canonical
-    intraday series. No provider client, credentials, or network is involved.
+    intraday series. The source must exactly match its immutable intraday cache
+    artifact. No provider client, credentials, or network is involved.
     """
     target = sessions.metadata.target_timeframe
     if target.interval != SessionInterval(1):
         raise ValidationError("prediction input requires one-session derived bars")
+    family = sessions.dataset_family if family is None else family
+    TimeframeBarSeries.from_source_dataset(source, family=family, cache=intraday_cache)
     expected = aggregate_session_dataset(
         source, target, policy=sessions.metadata.aggregation_policy
     )
@@ -108,7 +112,6 @@ def prediction_dataset_from_intraday(
             "prediction session dataset differs from its intraday source"
         )
     TimeframeBarSeries.from_aggregated_session_dataset(sessions, family=family)
-    family = sessions.dataset_family if family is None else family
     basis = source.request.adjustment_basis
     if basis.corporate_action_policy != INTRADAY_CORPORATE_ACTION_POLICY:
         raise ValidationError(

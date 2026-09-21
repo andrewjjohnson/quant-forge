@@ -19,9 +19,13 @@ Availability is separate from `corporate_actions_complete`.
 - a canonical `IntradayDataset`;
 - its existing QF-19 one-session `AggregatedSessionDataset`;
 - the existing `MarketDataCache`;
+- the `IntradayMarketDataCache` containing the canonical source and raw extracts;
 - optionally the validated QF-20 composed `DatasetFamily` used by the study.
 
-It verifies the session aggregation against its actual source, verifies the
+It reloads the source through the intraday cache and requires an exact match to
+the supplied dataset before creating any projection artifacts. This verifies
+the source identity, normalized bars, and raw-extract checksums. It then verifies
+the session aggregation against that source, verifies the
 family binding through the existing artifact APIs, and persists those completed
 session prices as QF-11's session carrier. This retains the current QF-11/QF-48
 session-coverage contract; exact decisions and future labels still consume the
@@ -32,7 +36,11 @@ No provider client, network call, or second cache is introduced.
 from quantforge.data.prediction_inputs import prediction_dataset_from_intraday
 
 prediction_input = prediction_dataset_from_intraday(
-    source, derived_daily, cache=market_cache, family=context_family
+    source,
+    derived_daily,
+    cache=market_cache,
+    intraday_cache=intraday_cache,
+    family=context_family,
 )
 ```
 
@@ -88,6 +96,11 @@ references without generating predictions or outcomes. Prediction and feature
 manifests bind every recorded outcome source and available context source to the
 input's family, canonical snapshot, and feed. Available context timeframes must
 also retain the input's exchange-session policy, including calendar and timezone.
+Every outcome source's timeframe identity must match its labeler's declared
+observation timeframe. Intraday-backed outcome timeframes must also retain the
+input's session policy. This covers the feature study template and every exported
+outcome independently; rehashing both a source reference and its enclosing
+configuration does not waive those bindings.
 These checks still apply when artifact hashes are recomputed; skipped contexts
 retain their rejected evidence for auditability. Existing outer manifest,
 producer identity, hash, and row checks still apply.

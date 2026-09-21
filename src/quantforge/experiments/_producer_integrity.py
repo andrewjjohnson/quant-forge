@@ -55,7 +55,10 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
     validate_prediction_input_sources(
         market,
         outcome_sources=(
-            mapping(configuration.get("outcome_labeler")).get("outcome_source"),
+            (
+                mapping(configuration.get("outcome_labeler")).get("outcome_source"),
+                mapping(configuration.get("outcome_labeler")).get("configuration"),
+            ),
         ),
         context=manifest.get("prediction_context"),
     )

@@ -15,8 +15,9 @@ this mismatch despite valid acquisition and aggregation.
 Keep event availability distinct from price compatibility. Retain the existing
 intraday unavailable-policy value and introduce a typed, optional, versioned
 intraday source reference on the existing session dataset. A generic adapter
-validates existing QF-19 session artifacts against their canonical source and
-persists them through the existing QF-3 cache. It preserves original adjustment
+requires the existing intraday cache, reloads and compares the canonical source,
+validates existing QF-19 session artifacts against that source, and persists them
+through the existing QF-3 cache. It preserves original adjustment
 semantics, explicit unavailable events, source/family/feed/session identity, and
 full source evidence. Context and generic outcome dispatch require matching
 provenance; their original price-basis equality checks remain intact.

@@ -29,21 +29,28 @@ from quantforge.data import (
     IntradayFetchResult,
     IntradayMarketDataCache,
     IntradayRawSnapshot,
+    IntradayValidationMode,
     MarketDataCache,
     MarketDataset,
     TimeframeBarSeries,
     aggregate_intraday_dataset,
     aggregate_session_dataset,
     build_multi_timeframe_context,
+    validate_intraday_coverage,
     validate_market_dataset,
 )
 from quantforge.data.exceptions import ValidationError
-from quantforge.data.identity import canonical_json_bytes, serialize_metadata_values
+from quantforge.data.identity import (
+    canonical_json_bytes,
+    serialize_metadata_values,
+    sha256_hex,
+)
 from quantforge.data.intraday_aggregation import intraday_session_windows
 from quantforge.data.models import (
     CorporateActionAvailability,
     IntradayPredictionProvenance,
 )
+from quantforge.data.multi_timeframe import MultiTimeframeContextValidationError
 from quantforge.data.prediction_inputs import (
     prediction_dataset_from_intraday,
     validate_prediction_source,
@@ -194,7 +201,7 @@ def cached_fixture(
     )
     cache = MarketDataCache(root)
     dataset = prediction_dataset_from_intraday(
-        source, daily, cache=cache, family=family
+        source, daily, cache=cache, intraday_cache=intraday_cache, family=family
     )
     return Fixture(
         source,
@@ -208,6 +215,98 @@ def cached_fixture(
 @pytest.fixture(scope="module")
 def fixture(tmp_path_factory: pytest.TempPathFactory) -> Fixture:
     return cached_fixture(tmp_path_factory.mktemp("intraday-provenance"))
+
+
+@pytest.mark.parametrize("change", ["dataset_id", "raw_snapshot_ids", "bars"])
+def test_projection_rejects_source_not_matching_immutable_cache(
+    fixture: Fixture, tmp_path: Path, change: str
+) -> None:
+    source = fixture.source
+    if change == "dataset_id":
+        source = replace(
+            source,
+            metadata=replace(
+                source.metadata,
+                dataset_id="0" * 64,
+                normalized_location=f"intraday/datasets/{'0' * 64}/bars.json",
+            ),
+        )
+    elif change == "raw_snapshot_ids":
+        source = replace(
+            source, metadata=replace(source.metadata, raw_snapshot_ids=("0" * 64,))
+        )
+    else:
+        bars = (replace(source.bars[0], high=Decimal("100.3")), *source.bars[1:])
+        batch = IntradayBarBatch(source.request, bars)
+        source = replace(
+            source,
+            bars=bars,
+            metadata=replace(
+                source.metadata,
+                batch_id=batch.batch_id,
+                data_sha256=sha256_hex(batch.serialize()),
+                quality_report=validate_intraday_coverage(
+                    batch, mode=IntradayValidationMode.DIAGNOSTIC
+                ),
+            ),
+        )
+    # Reaggregation and self-consistent in-memory hashes cannot establish that
+    # this source came from the immutable cache recorded by its identity.
+    sessions = aggregate_session_dataset(source, DAILY)
+    output_cache = MarketDataCache(tmp_path / "projection")
+    with pytest.raises(MultiTimeframeContextValidationError, match="immutable cache"):
+        prediction_dataset_from_intraday(
+            source,
+            sessions,
+            cache=output_cache,
+            intraday_cache=IntradayMarketDataCache(fixture.cache.root),
+        )
+    assert not output_cache.root.exists()
+
+
+def test_projection_rejects_corrupt_raw_cache_artifact(
+    fixture: Fixture, tmp_path: Path
+) -> None:
+    import shutil
+
+    shutil.copytree(fixture.cache.root / "intraday", tmp_path / "intraday")
+    raw_path = tmp_path / fixture.source.metadata.raw_locations[0]
+    raw_path.write_bytes(b"corrupt raw extract")
+    sessions = aggregate_session_dataset(fixture.source, DAILY)
+    output_cache = MarketDataCache(tmp_path / "projection")
+    with pytest.raises(MultiTimeframeContextValidationError, match="immutable cache"):
+        prediction_dataset_from_intraday(
+            fixture.source,
+            sessions,
+            cache=output_cache,
+            intraday_cache=IntradayMarketDataCache(tmp_path),
+        )
+    assert not output_cache.root.exists()
+
+
+def test_projection_accepts_reloaded_source_with_default_session_family(
+    fixture: Fixture, tmp_path: Path
+) -> None:
+    intraday_cache = IntradayMarketDataCache(fixture.cache.root)
+    source = intraday_cache.load(
+        fixture.source.metadata.dataset_id, fixture.source.request
+    )
+    sessions = aggregate_session_dataset(source, DAILY)
+    output_cache = MarketDataCache(tmp_path)
+    result = prediction_dataset_from_intraday(
+        source, sessions, cache=output_cache, intraday_cache=intraday_cache
+    )
+    provenance = result.metadata.intraday_provenance
+    assert provenance is not None
+    assert provenance.family_id == sessions.dataset_family.family_id
+    assert provenance.source_dataset_id == source.metadata.dataset_id
+    assert output_cache.load(result.metadata.dataset_id) == result
+    assert (
+        prediction_dataset_from_intraday(
+            source, sessions, cache=output_cache, intraday_cache=intraday_cache
+        )
+        == result
+    )
 
 
 def study_inputs(

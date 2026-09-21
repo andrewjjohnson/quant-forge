@@ -51,7 +51,14 @@ def validate_feature_manifest(manifest: PrimitiveMapping) -> None:
     ):
         raise ManifestError("feature dataset limitations must be an array of strings")
     configuration = mapping(manifest["configuration"])
-    outcome_sources = [configuration.get("outcome_source")]
+    outcome_sources = [
+        (
+            configuration.get("outcome_source"),
+            mapping(configuration.get("prediction_study_template")).get(
+                "outcome_labeler"
+            ),
+        )
+    ]
     outcomes = configuration.get("outcomes")
     if not isinstance(outcomes, list):
         raise ManifestError("feature outcome configurations must be an array")
@@ -59,7 +66,9 @@ def validate_feature_manifest(manifest: PrimitiveMapping) -> None:
         component = mapping(outcome).get("component_configuration")
         if not isinstance(component, dict):
             raise ManifestError("feature outcome configuration must be an object")
-        outcome_sources.append(component.get("outcome_source"))
+        outcome_sources.append(
+            (component.get("outcome_source"), component.get("labeler"))
+        )
     validate_prediction_input_sources(
         mapping(manifest["market_data"]),
         outcome_sources=outcome_sources,

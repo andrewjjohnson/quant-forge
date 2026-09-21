@@ -10,29 +10,48 @@ from quantforge.data.prediction_inputs import (
     validate_prediction_source_reference,
 )
 from quantforge.experiments._json import ManifestError, mapping
+from quantforge.prediction.outcome_temporal import outcome_temporal_configuration
 
 
 def validate_prediction_input_sources(
     market: PrimitiveMapping,
     *,
-    outcome_sources: Iterable[Primitive],
+    outcome_sources: Iterable[tuple[Primitive, Primitive]],
     context: Primitive,
 ) -> None:
-    """Check persisted source semantics without loading bars or running research."""
-    if (
-        "intraday_provenance" not in market
-        and market.get("corporate_action_policy") != INTRADAY_CORPORATE_ACTION_POLICY
-    ):
-        return
+    """Check (source, labeler configuration) pairs without running research."""
     try:
-        provenance = validate_prediction_provenance(market)
-        assert provenance is not None
-        for source in outcome_sources:
-            if source is not None:
-                validate_prediction_source_reference(
-                    provenance, mapping(mapping(source).get("source_reference"))
+        provenance = None
+        if (
+            "intraday_provenance" in market
+            or market.get("corporate_action_policy") == INTRADAY_CORPORATE_ACTION_POLICY
+        ):
+            provenance = validate_prediction_provenance(market)
+            assert provenance is not None
+        for source, labeler_configuration in outcome_sources:
+            if source is None:
+                continue
+            reference = mapping(mapping(source).get("source_reference"))
+            temporal = outcome_temporal_configuration(mapping(labeler_configuration))
+            timeframe = temporal.observation_timeframe
+            if (
+                timeframe is None
+                or reference.get("timeframe_configuration_id")
+                != timeframe.configuration_id
+            ):
+                raise ValidationError(
+                    "outcome source timeframe differs from its observation timeframe"
                 )
-        if context is None:
+            if provenance is not None:
+                if (
+                    configuration_identity(timeframe.session_policy.to_primitive())
+                    != provenance.session_policy_id
+                ):
+                    raise ValidationError(
+                        "outcome source session policy is incompatible"
+                    )
+                validate_prediction_source_reference(provenance, reference)
+        if provenance is None or context is None:
             return
         captured = mapping(context)
         # SKIP deliberately retains rejected evidence for auditability.

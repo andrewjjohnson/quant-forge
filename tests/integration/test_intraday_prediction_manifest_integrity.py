@@ -32,7 +32,7 @@ from quantforge.prediction.feature_dataset import (
     _finalize_export,  # pyright: ignore[reportPrivateUsage]
     _row_id,  # pyright: ignore[reportPrivateUsage]
 )
-from quantforge.timeframes import ExchangeSessionPolicy
+from quantforge.timeframes import ExchangeSessionPolicy, IntradayInterval, Timeframe
 from tests.integration.test_intraday_prediction_provenance import (
     DAILY,
     TWO_MINUTES,
@@ -172,6 +172,122 @@ def _change_context_session_policy(
     captured["context_id"] = configuration_identity(
         {key: value for key, value in captured.items() if key != "context_id"}
     )
+
+
+def _different_outcome_timeframe(change: str) -> Timeframe:
+    if change == "interval":
+        return Timeframe.us_equity(IntradayInterval(timedelta(minutes=5)))
+    return replace(
+        TWO_MINUTES,
+        session_policy=(
+            ExchangeSessionPolicy("XNAS", "America/New_York")
+            if change == "calendar"
+            else ExchangeSessionPolicy("XLON", "Europe/London")
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "change", ["interval", "calendar", "timezone", "source_and_declared_policy"]
+)
+def test_rehashed_prediction_outcome_source_must_match_observation_timeframe(
+    fixture: Fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    rule, provider = study_inputs(fixture)
+    outcome = intraday_forward_return_outcome(timedelta(minutes=30), fixture.primary)
+    result = run_prediction_study(
+        fixture.dataset,
+        PredictionStudy[SignalFeatureCandidate, Any, Any].create(
+            rule, outcome.labeler, outcome.evaluator, outcome_source=fixture.primary
+        ),
+        context_provider=provider,
+    )
+    manifest = result.manifest_primitive()
+    configuration = cast(PrimitiveMapping, manifest["configuration"])
+    labeler = cast(PrimitiveMapping, configuration["outcome_labeler"])
+    reference = cast(
+        PrimitiveMapping,
+        cast(PrimitiveMapping, labeler["outcome_source"])["source_reference"],
+    )
+    changed_timeframe = _different_outcome_timeframe(change)
+    reference["timeframe_configuration_id"] = changed_timeframe.configuration_id
+    expected_error = "outcome source timeframe"
+    if change == "source_and_declared_policy":
+        definition = cast(PrimitiveMapping, labeler["configuration"])
+        temporal = cast(PrimitiveMapping, definition["temporal_configuration"])
+        temporal["observation_timeframe"] = {
+            "configuration_id": changed_timeframe.configuration_id,
+            "configuration": changed_timeframe.to_primitive(),
+        }
+        labeler["temporal_configuration"] = deepcopy(temporal)
+        labeler["configuration_id"] = configuration_identity(definition)
+        expected_error = "outcome source session policy"
+    manifest["study_id"] = configuration_identity(
+        {
+            "component": manifest["component"],
+            "engine_version": manifest["engine_version"],
+            "market_data": manifest["market_data"],
+            "study_configuration": configuration,
+            "prediction_context": manifest["prediction_context"],
+        }
+    )
+    path = tmp_path / "prediction-manifest.json"
+    write_json(path, manifest)
+    block_research(monkeypatch)
+    with pytest.raises(ManifestError, match=expected_error):
+        inspect_study(StudyType.PREDICTION, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("directory", [False, True], ids=["snapshot", "directory"])
+@pytest.mark.parametrize("source", ["template", "outcome"])
+@pytest.mark.parametrize(
+    "change", ["interval", "calendar", "timezone", "source_and_declared_policy"]
+)
+def test_rehashed_feature_outcome_source_must_match_observation_timeframe(
+    feature_result: SignalFeatureDatasetResult,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    directory: bool,
+    source: str,
+    change: str,
+) -> None:
+    configuration = feature_result.configuration
+    outcome: PrimitiveMapping | None = None
+    owner = configuration
+    if source == "outcome":
+        outcome = cast(list[PrimitiveMapping], configuration["outcomes"])[0]
+        owner = cast(PrimitiveMapping, outcome["component_configuration"])
+    reference = cast(
+        PrimitiveMapping,
+        cast(PrimitiveMapping, owner["outcome_source"])["source_reference"],
+    )
+    changed_timeframe = _different_outcome_timeframe(change)
+    reference["timeframe_configuration_id"] = changed_timeframe.configuration_id
+    expected_error = "outcome source timeframe"
+    if change == "source_and_declared_policy":
+        labeler = (
+            cast(PrimitiveMapping, owner["labeler"])
+            if outcome is not None
+            else cast(
+                PrimitiveMapping,
+                cast(PrimitiveMapping, configuration["prediction_study_template"])[
+                    "outcome_labeler"
+                ],
+            )
+        )
+        cast(PrimitiveMapping, labeler["temporal_configuration"])[
+            "observation_timeframe"
+        ] = {
+            "configuration_id": changed_timeframe.configuration_id,
+            "configuration": changed_timeframe.to_primitive(),
+        }
+        expected_error = "outcome source session policy"
+    if outcome is not None:
+        outcome["configuration_id"] = configuration_identity(owner)
+    path = _write_rehashed_feature(feature_result, configuration, tmp_path, directory)
+    block_research(monkeypatch)
+    with pytest.raises(ManifestError, match=expected_error):
+        inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)
 
 
 @pytest.mark.parametrize(
