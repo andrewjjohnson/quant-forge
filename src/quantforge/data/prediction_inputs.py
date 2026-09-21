@@ -14,7 +14,11 @@ from quantforge.configuration import (
 from quantforge.data.corporate_actions import corporate_action_snapshot_id
 from quantforge.data.exceptions import ValidationError
 from quantforge.data.intraday import IntradayBar
-from quantforge.data.intraday_ingestion import IntradayDataset, IntradayMarketDataCache
+from quantforge.data.intraday_ingestion import (
+    IntradayDataset,
+    IntradayMarketDataCache,
+    validate_intraday_manifest_identity,
+)
 from quantforge.data.lineage import (
     DATASET_FAMILY_SCHEMA_VERSION,
     AdjustmentBasis,
@@ -135,7 +139,42 @@ def validate_prediction_provenance(
         cast(bool, record.get("adjusted_fields_used")),
     )
     _validate_family_evidence(provenance, record, basis)
+    _validate_source_evidence(provenance)
     return provenance
+
+
+def _validate_source_evidence(provenance: IntradayPredictionProvenance) -> None:
+    """Bind raw IDs and family semantics to the canonical intraday dataset ID."""
+    try:
+        manifest = provenance.source_manifest.to_primitive()
+        validate_intraday_manifest_identity(manifest)
+        request = cast(PrimitiveMapping, manifest["request"])
+        configuration = cast(PrimitiveMapping, request["configuration"])
+        chunks = cast(list[PrimitiveMapping], manifest["chunks"])
+        source = cast(
+            PrimitiveMapping,
+            provenance.family_manifest.to_primitive()["canonical_source"],
+        )
+        if (
+            manifest["dataset_id"] != provenance.source_dataset_id
+            or request["request_id"] != provenance.source_request_id
+            or tuple(chunk["raw_snapshot_id"] for chunk in chunks)
+            != provenance.source_raw_snapshot_ids
+            or manifest["provider_name"] != source["provider"]
+            or any(
+                configuration[name] != source[name]
+                for name in ("symbol", "feed_scope", "adjustment_basis", "timeframe")
+            )
+            or any(
+                manifest[name] != source[name]
+                for name in ("feed_scope", "source_interval", "session_scope")
+            )
+        ):
+            raise ValueError("raw identifiers or source semantics differ")
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValidationError(
+            f"prediction input source manifest is invalid: {error}"
+        ) from error
 
 
 def _validate_family_evidence(
@@ -213,6 +252,12 @@ def _validate_family_evidence(
         raise ValidationError(
             "prediction input session artifact lineage is incompatible"
         )
+    try:
+        DatasetFamily.from_manifest(manifest)
+    except ValueError as error:
+        raise ValidationError(
+            f"prediction input family lineage is invalid: {error}"
+        ) from error
 
 
 def prediction_dataset_from_intraday(
@@ -235,6 +280,9 @@ def prediction_dataset_from_intraday(
         raise ValidationError("prediction input requires one-session derived bars")
     family = sessions.dataset_family if family is None else family
     TimeframeBarSeries.from_source_dataset(source, family=family, cache=intraday_cache)
+    source_manifest = PrimitiveMappingSnapshot.capture(
+        intraday_cache.read_manifest(source.metadata.dataset_id)
+    )
     expected = aggregate_session_dataset(
         source, target, policy=sessions.metadata.aggregation_policy
     )
@@ -273,6 +321,7 @@ def prediction_dataset_from_intraday(
         configuration_identity(family.feed_scope.to_primitive()),
         CorporateActionAvailability.UNAVAILABLE,
         PrimitiveMappingSnapshot.capture(family.to_manifest()),
+        source_manifest,
     )
     # The immutable raw extract is the original derived artifact manifest. It
     # records the full source family and aggregation evidence, not invented events.
@@ -289,6 +338,7 @@ def prediction_dataset_from_intraday(
                 "component": "quantforge_intraday_prediction_input",
                 "session_dataset": sessions.to_manifest(),
                 "dataset_family": family.to_manifest(),
+                "source_dataset": source_manifest.to_primitive(),
             },
         ),
         "quantforge_intraday_prediction_input_v1",

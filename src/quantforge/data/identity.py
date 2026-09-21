@@ -49,14 +49,14 @@ def serialize_metadata_values(
         provenance = cast(dict[str, object], provenance)
         value["intraday_provenance"] = {
             **provenance,
-            "family_manifest": PrimitiveMappingSnapshot(
-                cast(
-                    str,
-                    cast(dict[str, object], provenance["family_manifest"])[
-                        "canonical_json"
-                    ],
-                )
-            ).to_primitive(),
+            **{
+                name: PrimitiveMappingSnapshot(
+                    cast(
+                        str, cast(dict[str, object], provenance[name])["canonical_json"]
+                    )
+                ).to_primitive()
+                for name in ("family_manifest", "source_manifest")
+            },
             "source_raw_snapshot_ids": list(
                 cast(tuple[str, ...], provenance["source_raw_snapshot_ids"])
             ),

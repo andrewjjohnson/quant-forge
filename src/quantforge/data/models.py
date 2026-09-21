@@ -55,13 +55,16 @@ class IntradayPredictionProvenance:
     feed_scope_id: str
     corporate_action_availability: CorporateActionAvailability
     family_manifest: PrimitiveMappingSnapshot
-    schema_version: str = "2"
+    source_manifest: PrimitiveMappingSnapshot
+    schema_version: str = "3"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "2":
+        if self.schema_version != "3":
             raise ValueError("unsupported intraday prediction provenance schema")
         if not isinstance(cast(object, self.family_manifest), PrimitiveMappingSnapshot):
             raise ValueError("intraday prediction family manifest must be immutable")
+        if not isinstance(cast(object, self.source_manifest), PrimitiveMappingSnapshot):
+            raise ValueError("intraday prediction source manifest must be immutable")
         if not isinstance(
             cast(object, self.corporate_action_availability),
             CorporateActionAvailability,
@@ -106,6 +109,7 @@ class IntradayPredictionProvenance:
             "feed_scope_id": self.feed_scope_id,
             "corporate_action_availability": self.corporate_action_availability.value,
             "family_manifest": self.family_manifest.to_primitive(),
+            "source_manifest": self.source_manifest.to_primitive(),
         }
 
     @classmethod
@@ -122,10 +126,14 @@ class IntradayPredictionProvenance:
         family_manifest = record["family_manifest"]
         if not isinstance(family_manifest, dict):
             raise ValueError("intraday prediction family manifest must be a record")
+        source_manifest = record["source_manifest"]
+        if not isinstance(source_manifest, dict):
+            raise ValueError("intraday prediction source manifest must be a record")
         strings = fields - {
             "source_raw_snapshot_ids",
             "corporate_action_availability",
             "family_manifest",
+            "source_manifest",
         }
         if any(not isinstance(record[name], str) for name in strings):
             raise ValueError("intraday prediction provenance requires text identities")
@@ -137,6 +145,9 @@ class IntradayPredictionProvenance:
             ),
             family_manifest=PrimitiveMappingSnapshot.capture(
                 cast(PrimitiveMapping, family_manifest)
+            ),
+            source_manifest=PrimitiveMappingSnapshot.capture(
+                cast(PrimitiveMapping, source_manifest)
             ),
         )
 

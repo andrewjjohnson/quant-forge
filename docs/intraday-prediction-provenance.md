@@ -49,11 +49,11 @@ used to bind both context series. Their separate aggregation families are not
 interchangeable. Existing QF-20 artifact composition rules remain authoritative.
 
 The new optional `IntradayPredictionProvenance` record contains its own schema
-version (`2`), explicit event availability, source dataset/request/raw-snapshot
+version (`3`), explicit event availability, source dataset/request/raw-snapshot
 references, session dataset/timeframe references, chosen family identity, feed
-identity, session-policy identity, and an immutable copy of the selected family
-manifest. The cache's raw extract also retains the original session manifest
-and full selected family manifest. `provider_name`
+identity, session-policy identity, and immutable copies of the selected family
+manifest and canonical intraday source manifest. The cache's raw extract also
+retains these manifests alongside the original session manifest. `provider_name`
 remains the original provider; `adapter_version` identifies QuantForge's
 projection. Requested session bounds describe the projected completed sessions;
 the original intraday request bounds remain in the retained source evidence.
@@ -105,7 +105,22 @@ stand in for a missing dataset or a dataset recorded at another timeframe.
 Cache and experiment validation also bind the projection's session dataset and
 timeframe IDs to its retained one-session artifact and session policy. Embedded
 timeframe definitions must reproduce their declared IDs. These checks do not
-change schema version 2 or the identities of valid artifacts.
+accept a self-consistent hash as proof of a valid graph: `DatasetFamily.from_manifest`
+reconstructs every member through the domain types and enforces unique datasets,
+one canonical root, valid parents, reciprocal child links, and absence of cycles.
+It verifies the complete canonical manifest after construction, including
+members not used by the current study.
+
+The retained intraday source manifest must reproduce `source_dataset_id` using
+the existing intraday cache identity algorithm. Its request configuration must
+reproduce `source_request_id`, and its ordered raw chunk references must equal
+`source_raw_snapshot_ids`. Source symbol, provider, feed, timeframe, and price
+basis must agree with the family. Rehashing a changed source manifest creates a
+different source dataset identity; it cannot retain the original family binding.
+The producer reloads bars/raw extracts through the cache before capturing this
+evidence. Observational readers validate the retained metadata without I/O or
+recomputing bars; hashes establish consistency, not provider authenticity.
+
 Prediction and feature
 manifests bind every recorded outcome source and available context source to the
 input's family, canonical snapshot, and feed. Available context timeframes must
@@ -133,8 +148,8 @@ by the cache reader. The additive intraday record round-trips with canonical
 sorted JSON and participates in dataset, study, feature, and checkpoint identity.
 Changes to adjustment semantics or source/event provenance cannot alias an
 existing artifact. Compatible runs use existing cache/resume validation.
-Earlier intraday provenance version-1 projections lack the required embedded
-evidence and are rejected. Regenerate those projections from the existing
+Earlier intraday provenance version-1 and version-2 projections lack the complete
+required source evidence and are rejected. Regenerate those projections from the existing
 intraday cache and session aggregates, then recreate dependent studies/features;
 do not relabel or reuse their old checkpoint identities. Legacy daily artifacts
 remain unchanged.
@@ -156,5 +171,6 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_manifest_integrity.py \
   tests/integration/test_intraday_prediction_feed_integrity.py \
   tests/integration/test_intraday_prediction_family_integrity.py \
-  tests/integration/test_intraday_prediction_lineage_integrity.py
+  tests/integration/test_intraday_prediction_lineage_integrity.py \
+  tests/integration/test_intraday_prediction_evidence_integrity.py
 ```

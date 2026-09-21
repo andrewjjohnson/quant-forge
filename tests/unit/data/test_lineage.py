@@ -437,3 +437,53 @@ def test_external_validation_policy_cannot_mutate_while_authorizing_mixed_data()
 def test_family_references_only_record_manifested_datasets() -> None:
     with pytest.raises(DatasetFamilyValidationError, match="not recorded"):
         _family().reference("provider-native-daily")
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        _family(),
+        _family(feed_scope=FeedScope.iex_only()),
+        _family(adjustment_basis=_adjustment_basis(AdjustmentMode.SPLIT_ADJUSTED)),
+        _family(source_timeframe=Timeframe.us_equity(SessionInterval(1))),
+    ],
+)
+def test_complete_family_manifest_roundtrips_through_domain_validation(
+    family: DatasetFamily,
+) -> None:
+    manifest = family.to_manifest()
+    restored = DatasetFamily.from_manifest(manifest)
+    assert restored == family
+    assert restored.to_manifest() == manifest
+    manifest["lineage"] = []
+    assert restored.serialize_manifest() == family.serialize_manifest()
+
+
+@pytest.mark.parametrize(
+    "change", ["extra_field", "role", "timeframe_identity", "source_policy"]
+)
+def test_family_parser_rejects_rehashed_noncanonical_evidence(change: str) -> None:
+    manifest = _family().to_manifest()
+    lineage = cast(list[PrimitiveMapping], manifest["lineage"])
+    if change == "extra_field":
+        lineage[0]["extra"] = True
+    elif change == "role":
+        lineage[0]["role"] = "invented"
+    elif change == "timeframe_identity":
+        cast(PrimitiveMapping, lineage[0]["timeframe"])["configuration_id"] = "0" * 64
+    else:
+        cast(PrimitiveMapping, manifest["source_consistency"])["required_policy"] = (
+            "unchecked"
+        )
+        manifest["family_id"] = configuration_identity(
+            {
+                key: value
+                for key, value in manifest.items()
+                if key not in {"family_id", "lineage", "manifest_id"}
+            }
+        )
+    manifest["manifest_id"] = configuration_identity(
+        {key: value for key, value in manifest.items() if key != "manifest_id"}
+    )
+    with pytest.raises(DatasetFamilyValidationError, match="family lineage manifest"):
+        DatasetFamily.from_manifest(manifest)

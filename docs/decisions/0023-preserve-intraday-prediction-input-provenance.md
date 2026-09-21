@@ -22,10 +22,13 @@ semantics, explicit unavailable events, source/family/feed/session identity, and
 full source evidence. Context and generic outcome dispatch require matching
 provenance; their original price-basis equality checks remain intact.
 
-Provenance version 2 embeds an immutable family manifest so observational cache
-and experiment readers can recompute both its family and exact-graph identities.
+Provenance version 3 embeds immutable family and intraday source manifests so
+observational cache and experiment readers can recompute the source dataset,
+request, family, and exact-graph identities. Request and raw-snapshot IDs must
+match the source manifest; complete family DAG validation reuses the domain
+constructor, including members unused by a study.
 The declared adjustment basis must match the committed canonical source, and
-outcome manifest IDs must match the retained graph. Version-1 intraday projections
+outcome manifest IDs must match the retained graph. Version-1/2 intraday projections
 must be regenerated from canonical caches; no missing evidence is inferred.
 
 Omit the additive reference for legacy daily serialization so existing daily

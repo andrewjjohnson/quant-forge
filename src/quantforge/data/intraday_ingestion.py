@@ -9,7 +9,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, cast
 
-from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
 from quantforge.data.exceptions import CacheError, ProviderError, RequestError
 from quantforge.data.identity import canonical_json_bytes, sha256_hex
 from quantforge.data.intraday import (
@@ -279,6 +283,37 @@ class IntradayMarketDataCache:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+
+    def read_manifest(self, dataset_id: str) -> PrimitiveMapping:
+        """Read identity-checked source evidence without loading market observations.
+
+        Consumers that use bars must still call ``load`` to verify those bars
+        and raw extracts. This method exposes the same immutable manifest.
+        """
+        try:
+            manifest = cast(
+                PrimitiveMapping,
+                _string_mapping(
+                    json.loads(
+                        (
+                            self.root
+                            / "intraday"
+                            / "datasets"
+                            / dataset_id
+                            / "manifest.json"
+                        ).read_text()
+                    ),
+                    "intraday manifest",
+                ),
+            )
+            validate_intraday_manifest_identity(manifest)
+            if manifest["dataset_id"] != dataset_id:
+                raise ValueError("intraday manifest dataset identifier mismatch")
+            return manifest
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise CacheError(
+                f"incomplete or corrupt intraday manifest: {dataset_id}"
+            ) from error
 
     def find(
         self, provider_name: str, request: IntradayBarRequest
@@ -615,6 +650,60 @@ def _manifest_identity(manifest: dict[str, object]) -> dict[str, object]:
     return identity
 
 
+def validate_intraday_manifest_identity(manifest: PrimitiveMapping) -> None:
+    """Verify retained source identity and request/raw-extract links without I/O."""
+    if (
+        set(manifest)
+        != {
+            "schema_version",
+            "artifact_type",
+            "provider_name",
+            "provider_symbol",
+            "adapter_version",
+            "retrieved_at",
+            "request",
+            "feed_scope",
+            "source_interval",
+            "session_scope",
+            "capabilities_configuration_id",
+            "chunks",
+            "batch_id",
+            "bar_count",
+            "data_sha256",
+            "quality_report",
+            "dataset_id",
+            "normalized_location",
+        }
+        or manifest["schema_version"] != INTRADAY_DATASET_SCHEMA_VERSION
+        or manifest["artifact_type"] != "intraday_dataset_manifest"
+    ):
+        raise ValueError("intraday source manifest schema is invalid")
+    identity = _manifest_identity(cast(dict[str, object], manifest))
+    dataset_id = sha256_hex(canonical_json_bytes(identity))
+    request = _string_mapping(manifest["request"], "source manifest request")
+    configuration = _string_mapping(
+        request["configuration"], "source request configuration"
+    )
+    chunks = _mapping_list(manifest["chunks"], "source manifest chunks")
+    if (
+        dataset_id != manifest["dataset_id"]
+        or manifest["normalized_location"]
+        != f"intraday/datasets/{dataset_id}/bars.json"
+        or request["request_id"]
+        != configuration_identity(cast(PrimitiveMapping, configuration))
+        or not chunks
+    ):
+        raise ValueError("intraday source manifest identity is inconsistent")
+    for index, chunk in enumerate(chunks):
+        snapshot_id = _json_string(chunk, "raw_snapshot_id", "source manifest chunk")
+        if (
+            chunk.get("chunk_index") != index
+            or chunk.get("raw_sha256") != snapshot_id
+            or chunk.get("raw_location") != f"intraday/raw/{snapshot_id}.json"
+        ):
+            raise ValueError("intraday source manifest raw references are inconsistent")
+
+
 def _batch_from_primitive(
     value: object, request: IntradayBarRequest
 ) -> IntradayBarBatch:
@@ -696,4 +785,5 @@ __all__ = [
     "IntradayMarketDataCache",
     "IntradayMarketDataService",
     "IntradayRawSnapshot",
+    "validate_intraday_manifest_identity",
 ]

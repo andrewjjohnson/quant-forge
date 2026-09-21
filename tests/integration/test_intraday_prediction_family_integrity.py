@@ -56,7 +56,7 @@ def test_family_evidence_roundtrip_is_immutable(fixture: Fixture) -> None:
     provenance = fixture.dataset.metadata.intraday_provenance
     assert provenance is not None
     serialized = provenance.to_primitive()
-    assert serialized["schema_version"] == "2"
+    assert serialized["schema_version"] == "3"
     restored = IntradayPredictionProvenance.from_primitive(serialized)
     evidence = cast(PrimitiveMapping, serialized["family_manifest"])
     assert evidence["manifest_id"] == fixture.primary.dataset_family_manifest_id
@@ -90,15 +90,19 @@ def test_family_evidence_must_reproduce_its_identities(
         validate_prediction_provenance(market)
 
 
-@pytest.mark.parametrize("change", ["version", "missing_evidence"])
+@pytest.mark.parametrize(
+    "change", ["version1", "version2", "missing_evidence", "missing_source_evidence"]
+)
 def test_old_or_incomplete_intraday_provenance_is_rejected(
     prediction_manifest: PrimitiveMapping,
     change: str,
 ) -> None:
     market = deepcopy(cast(PrimitiveMapping, prediction_manifest["market_data"]))
     provenance = cast(PrimitiveMapping, market["intraday_provenance"])
-    if change == "version":
-        provenance["schema_version"] = "1"
+    if change.startswith("version"):
+        provenance["schema_version"] = change[-1]
+    elif change == "missing_source_evidence":
+        del provenance["source_manifest"]
     else:
         del provenance["family_manifest"]
     with pytest.raises(ValueError, match="provenance"):
