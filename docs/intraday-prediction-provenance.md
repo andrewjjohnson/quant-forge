@@ -191,8 +191,9 @@ The producer reloads bars/raw extracts through the cache before capturing this
 evidence. Cache loading reconstructs the raw snapshots and the fetch result,
 then reproduces the manifest from those records; checksum-valid raw files alone
 cannot justify endpoint or other acquisition metadata that contradicts their bodies.
-Observational readers validate retained evidence without I/O or rerunning
-aggregation; hashes establish consistency, not provider authenticity.
+Observational readers validate retained evidence without source I/O or rerunning
+research. They check the retained constituent-to-session OHLCV relationship;
+hashes establish consistency, not provider authenticity.
 
 Session evidence binds the projected OHLCV values to the named QF-19 artifact.
 Readers reconstruct typed session bars and their report, verify the original bar
@@ -215,6 +216,21 @@ the same session and order; matching counts alone is insufficient. Forged IDs,
 swapped sessions, reordered constituents, and changed observations cannot retain
 the original source binding. The compact representation preserves exact decimal
 strings and all canonical bar fields while storing repeated metadata once.
+Readers reconstruct the typed intraday request, bars, and batch through the
+existing ingestion decoder before accepting that digest. Domain validation and
+canonical reserialization reject invalid prices, timestamps, extra fields,
+duplicate bars, ordering errors, and inconsistent request bindings even when
+all enclosing hashes have been recomputed.
+
+Each retained session's OHLCV must also equal the reduction of its ordered source
+constituents: first open, maximum high, minimum low, last close, and summed
+volume. The reader and QF-19 producer share this reduction. Volume summation
+reserves enough Decimal precision for an exact total, independent of the
+caller's arithmetic context. This preserves ordinary existing values and
+identities; previously rounded session volumes must be regenerated from their
+canonical source before projection. The evidence format remains version 5.
+This check uses only retained observations and does not fetch data, reconstruct
+corporate actions, or execute contexts, signals, or outcome labels.
 
 Prediction and feature
 manifests bind every recorded outcome source and available context source to the

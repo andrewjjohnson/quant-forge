@@ -35,8 +35,8 @@ Retain the original QF-19 session manifest and normalized session bars in immuta
 session evidence. The QF-19 and QF-3 byte formats differ, so their digests cannot be
 compared directly. Readers rebuild the typed session artifact and verify its
 original identity before comparing the canonical projected OHLCV digest with the
-recorded dataset fingerprint. This preserves QF-19 schemas and identities and
-does not rerun aggregation. Projected decimals use exact canonical strings so
+recorded dataset fingerprint. This preserves QF-19 schemas. Projected decimals use
+exact canonical strings so
 the same values have a reproducible fingerprint. Retaining the session evidence
 increases manifest size but permits standalone QF-9 checks without source I/O.
 
@@ -46,7 +46,13 @@ both its existing batch ID and data digest. Each session's ordered constituent
 IDs must equal those of the authenticated source session. An ID list alone
 cannot prove membership under the existing full-record batch hash. This adds
 intraday observations to manifests, but does not change the source/QF-19 schemas
-or identities and does not rerun aggregation or provider normalization.
+or rerun provider normalization. Reconstruct the typed request, bars, and batch
+with the ingestion decoder, verifying canonical serialization as well as hashes.
+Verify each retained session's OHLCV from its ordered source bars with the same
+reduction used by QF-19. Volume summation is exact and independent of the ambient
+Decimal context; existing exact totals retain their identities, while previously
+rounded session volumes require regeneration. This bounded derivation check
+requires no source I/O or research execution and adds no provenance fields.
 
 Namespace projection IDs as `intraday-projection-<sha256>`, keeping their existing
 256-bit content digest. The namespace and adapter version independently require

@@ -1,9 +1,16 @@
 """Lossless source-bar evidence authenticated by the existing canonical batch hash."""
 
-from collections import defaultdict
+from decimal import InvalidOperation
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
-from quantforge.data.intraday import INTRADAY_CONTRACT_SCHEMA_VERSION, IntradayBar
+from quantforge.data.exceptions import CacheError
+from quantforge.data.intraday import (
+    INTRADAY_CONTRACT_SCHEMA_VERSION,
+    IntradayBar,
+    IntradayBarBatch,
+)
+from quantforge.data.intraday_coverage_evidence import intraday_request_from_primitive
+from quantforge.data.intraday_ingestion import intraday_batch_from_primitive
 
 # Only repeated metadata is shared. All observation fields remain exact primitives.
 _OBSERVATION_FIELDS = frozenset(
@@ -49,8 +56,8 @@ def capture_source_bar_evidence(bars: tuple[IntradayBar, ...]) -> PrimitiveMappi
 
 def validate_source_bar_evidence(
     evidence: PrimitiveMapping, source: PrimitiveMapping
-) -> dict[str, tuple[str, ...]]:
-    """Authenticate ordered constituents by reproducing the retained source batch."""
+) -> IntradayBarBatch:
+    """Reproduce the source digest and validate its canonical typed bar batch."""
     templates = evidence.get("templates")
     observations = evidence.get("observations")
     if (
@@ -62,7 +69,6 @@ def validate_source_bar_evidence(
     ):
         raise ValueError("source bar evidence fields or count are invalid")
     entries: list[Primitive] = []
-    by_session: defaultdict[str, list[str]] = defaultdict(list)
     for observation in observations:
         if not isinstance(observation, dict) or set(observation) != {
             "template_index",
@@ -78,10 +84,6 @@ def validate_source_bar_evidence(
         bar = {**template, **{key: observation[key] for key in _OBSERVATION_FIELDS}}
         bar_id = configuration_identity(bar)
         entries.append({"bar_id": bar_id, "bar": bar})
-        session = bar.get("session_identifier")
-        if not isinstance(session, str):
-            raise ValueError("source bar session is invalid")
-        by_session[session].append(bar_id)
     batch: PrimitiveMapping = {
         "schema_version": INTRADAY_CONTRACT_SCHEMA_VERSION,
         "contract_type": "intraday_bar_batch",
@@ -91,4 +93,24 @@ def validate_source_bar_evidence(
     digest = configuration_identity(batch)
     if digest != source.get("batch_id") or digest != source.get("data_sha256"):
         raise ValueError("source bar evidence differs from the canonical source batch")
-    return {session: tuple(bar_ids) for session, bar_ids in by_session.items()}
+    try:
+        request_record = source["request"]
+        if not isinstance(request_record, dict):
+            raise ValueError("source request must be a record")
+        configuration = request_record["configuration"]
+        if not isinstance(configuration, dict):
+            raise ValueError("source request configuration must be a record")
+        request = intraday_request_from_primitive(configuration)
+        restored = intraday_batch_from_primitive(batch, request)
+        if restored.batch_id != digest:
+            raise ValueError("source batch serialization is not canonical")
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+        InvalidOperation,
+        CacheError,
+    ) as error:
+        raise ValueError(f"source bar evidence is invalid: {error}") from error
+    return restored

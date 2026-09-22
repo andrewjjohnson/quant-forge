@@ -58,7 +58,10 @@ def _session_date(value: Primitive) -> date:
     return session_date
 
 
-def _request(configuration: PrimitiveMapping) -> IntradayBarRequest:
+def intraday_request_from_primitive(
+    configuration: PrimitiveMapping,
+) -> IntradayBarRequest:
+    """Reconstruct a canonical request with its existing domain invariants."""
     feed = _record(configuration["feed_scope"])
     basis = _record(configuration["adjustment_basis"])
     request = IntradayBarRequest(
@@ -201,7 +204,9 @@ def validate_retained_coverage_report(
     """
     try:
         request_record = _record(manifest["request"])
-        request = _request(_record(request_record["configuration"]))
+        request = intraday_request_from_primitive(
+            _record(request_record["configuration"])
+        )
         quality = _record(manifest["quality_report"])
         recorded = _record(quality["report"])
         sessions = _sessions(_records(recorded["sessions"]), request)

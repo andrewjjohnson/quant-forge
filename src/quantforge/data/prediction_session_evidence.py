@@ -1,5 +1,6 @@
-"""Verify projected prices against immutable QF-19 evidence without aggregation."""
+"""Verify projected prices and their retained QF-19 constituent relationships."""
 
+from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
@@ -11,6 +12,7 @@ from quantforge.configuration import (
 )
 from quantforge.data.exceptions import ValidationError
 from quantforge.data.identity import serialize_bars_csv, sha256_hex
+from quantforge.data.intraday import IntradayBar
 from quantforge.data.intraday_aggregation import MissingConstituentPolicy
 from quantforge.data.intraday_coverage_evidence import validate_retained_coverage_report
 from quantforge.data.lineage import DatasetFamily
@@ -24,6 +26,7 @@ from quantforge.data.session_aggregation import (
     SessionAggregationPolicy,
     SessionAggregationReport,
     SessionAggregationWindowQuality,
+    session_constituent_ohlcv,
 )
 from quantforge.timeframes import SessionInterval, Timeframe
 
@@ -105,18 +108,28 @@ def validate_session_projection_evidence(
         entries = serialized["bars"]
         if not isinstance(entries, list):
             raise ValueError("session bars must be an array")
-        bars = tuple(_bar(entry) for entry in entries)
         source = provenance.source_manifest.to_primitive()
-        source_bar_ids = validate_source_bar_evidence(
+        source_batch = validate_source_bar_evidence(
             provenance.source_bar_evidence.to_primitive(), source
         )
+        bars = tuple(_bar(entry) for entry in entries)
+        by_session: defaultdict[date, list[IntradayBar]] = defaultdict(list)
+        for source_bar in source_batch.bars:
+            by_session[source_bar.session_date].append(source_bar)
         if any(
-            bar.source_bar_ids != source_bar_ids.get(bar.session_dates[0].isoformat())
+            bar.source_bar_ids
+            != tuple(item.bar_id for item in by_session[bar.session_dates[0]])
             for bar in bars
         ):
             raise ValueError(
                 "session constituent IDs differ from their canonical source session"
             )
+        if any(
+            (bar.open, bar.high, bar.low, bar.close, bar.volume)
+            != session_constituent_ohlcv(tuple(by_session[bar.session_dates[0]]))
+            for bar in bars
+        ):
+            raise ValueError("session OHLCV differs from its source constituents")
         coverage = validate_retained_coverage_report(source)
         full_sessions = tuple(
             session

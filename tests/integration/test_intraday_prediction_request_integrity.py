@@ -242,7 +242,7 @@ def _rehash_source_evidence(
         cast(str, original["source_request_id"]): cast(str, request["request_id"]),
     }
     evidence = cast(
-        PrimitiveMapping, _replace_ids(original["source_bar_evidence"], replacements)
+        PrimitiveMapping, _replace_ids(provenance["source_bar_evidence"], replacements)
     )
     previous_evidence = cast(PrimitiveMapping, original["source_bar_evidence"])
     entries: list[Primitive] = []

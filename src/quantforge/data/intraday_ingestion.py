@@ -429,7 +429,7 @@ class IntradayMarketDataCache:
             identity = _manifest_identity(manifest)
             if sha256_hex(canonical_json_bytes(identity)) != dataset_id:
                 raise CacheError("intraday dataset identity mismatch")
-            batch = _batch_from_primitive(normalized_value, request)
+            batch = intraday_batch_from_primitive(normalized_value, request)
             if batch.batch_id != manifest.get("batch_id"):
                 raise CacheError("intraday batch identity mismatch")
             quality_report = validate_intraday_coverage(
@@ -764,9 +764,10 @@ def validate_intraday_manifest_identity(manifest: PrimitiveMapping) -> None:
     validate_retained_coverage_report(manifest)
 
 
-def _batch_from_primitive(
+def intraday_batch_from_primitive(
     value: object, request: IntradayBarRequest
 ) -> IntradayBarBatch:
+    """Decode canonical bars through the request, bar, and batch domain checks."""
     mapping = _string_mapping(value, "normalized batch")
     request_value = _string_mapping(mapping["request"], "normalized request")
     if request_value.get("request_id") != request.request_id or (
@@ -845,5 +846,6 @@ __all__ = [
     "IntradayMarketDataCache",
     "IntradayMarketDataService",
     "IntradayRawSnapshot",
+    "intraday_batch_from_primitive",
     "validate_intraday_manifest_identity",
 ]
