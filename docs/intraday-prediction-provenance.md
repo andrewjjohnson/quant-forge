@@ -135,6 +135,15 @@ The projection's `retrieved_at` must equal the source manifest's retrieval time
 after both timezone-aware timestamps are normalized to UTC. Equivalent offset
 representations are accepted; missing, malformed, naive, or different timestamps
 are rejected. These checks preserve schema version 3 and valid artifact identities.
+Retained request and chunk bounds must use the canonical UTC ISO representation
+emitted by intraday ingestion. The request must have a strictly increasing range;
+its nonempty chunks must be ordered, contiguous, and cover that exact range.
+The request must include the full first and last projected exchange sessions,
+resolved under the retained timeframe's session policy, and the requested and
+actual projection session bounds must be ordered. Wider source requests remain
+valid; calendar dates alone cannot establish full-session coverage. These checks
+apply even when every enclosing request, source, family, and artifact ID has been
+recomputed, without fetching data or regenerating research results.
 The producer reloads bars/raw extracts through the cache before capturing this
 evidence. Observational readers validate the retained metadata without I/O or
 recomputing bars; hashes establish consistency, not provider authenticity.

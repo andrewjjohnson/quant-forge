@@ -676,7 +676,8 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_family_integrity.py \
   tests/integration/test_intraday_prediction_lineage_integrity.py \
   tests/integration/test_intraday_prediction_evidence_integrity.py \
-  tests/integration/test_intraday_prediction_projection_boundaries.py
+  tests/integration/test_intraday_prediction_projection_boundaries.py \
+  tests/integration/test_intraday_prediction_request_integrity.py
 ```
 
 The synthetic cache-only fixture exercises canonical SPY one-minute input,
@@ -687,5 +688,7 @@ session-policy mismatches in prediction/feature artifacts without executing
 research. Projection tests also reject source metadata, bars, and raw extracts that differ from the
 immutable intraday cache, and incomplete diagnostic session aggregates. Runtime
 context tests reject missing or different exact family manifests in prediction
-and feature generation. See
+and feature generation. Rehashed request-evidence tests reject malformed or
+unordered bounds, incomplete chunk coverage, and requests that exclude projected
+sessions, including prediction and feature inspection with research blocked. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

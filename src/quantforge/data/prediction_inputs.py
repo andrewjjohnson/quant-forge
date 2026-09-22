@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, cast
 
 from quantforge.configuration import (
@@ -44,7 +44,7 @@ from quantforge.data.session_aggregation import (
     AggregatedSessionDataset,
     aggregate_session_dataset,
 )
-from quantforge.timeframes import SessionInterval, Timeframe
+from quantforge.timeframes import SessionInterval, Timeframe, resolve_exchange_session
 
 if TYPE_CHECKING:
     from quantforge.data.cache import MarketDataCache
@@ -200,10 +200,77 @@ def _validate_source_evidence(
             )
         ):
             raise ValueError("raw identifiers or source semantics differ")
+        _validate_source_request_bounds(configuration, chunks, record)
     except (KeyError, TypeError, ValueError) as error:
         raise ValidationError(
             f"prediction input source manifest is invalid: {error}"
         ) from error
+
+
+def _source_boundary(value: Primitive) -> datetime:
+    """Require the canonical UTC representation emitted by intraday requests."""
+    try:
+        if not isinstance(value, str):
+            raise ValueError
+        timestamp = datetime.fromisoformat(value)
+        if timestamp.utcoffset() is None:
+            raise ValueError
+        timestamp = timestamp.astimezone(UTC)
+        if value != timestamp.isoformat():
+            raise ValueError
+        return timestamp
+    except (ValueError, OverflowError) as error:
+        raise ValueError(
+            "source request bounds require canonical UTC timestamps"
+        ) from error
+
+
+def _validate_source_request_bounds(
+    configuration: PrimitiveMapping,
+    chunks: list[PrimitiveMapping],
+    record: PrimitiveMapping,
+) -> None:
+    """Bind the half-open request to contiguous chunks and complete sessions."""
+    start = _source_boundary(configuration.get("start_timestamp"))
+    end = _source_boundary(configuration.get("end_timestamp"))
+    if start >= end:
+        raise ValueError("source request start must be earlier than end")
+    previous_end = start
+    for chunk in chunks:
+        chunk_start = _source_boundary(chunk.get("chunk_start_timestamp"))
+        chunk_end = _source_boundary(chunk.get("chunk_end_timestamp"))
+        if chunk_start != previous_end or not chunk_start < chunk_end <= end:
+            raise ValueError("source request chunks must be ordered and contiguous")
+        previous_end = chunk_end
+    if previous_end != end:
+        raise ValueError("source request chunks must cover the request bounds")
+
+    sessions: list[date] = []
+    for field in (
+        "requested_start",
+        "actual_first_session",
+        "actual_last_session",
+        "requested_end",
+    ):
+        value = record.get(field)
+        if not isinstance(value, str):
+            raise ValueError("source request projection sessions must be ISO dates")
+        session = date.fromisoformat(value)
+        if value != session.isoformat():
+            raise ValueError("source request projection sessions must be ISO dates")
+        sessions.append(session)
+    if sessions != sorted(sessions):
+        raise ValueError("source request projection sessions must be ordered")
+    timeframe = Timeframe.from_primitive(
+        cast(
+            PrimitiveMapping,
+            cast(PrimitiveMapping, configuration["timeframe"])["configuration"],
+        )
+    )
+    first = resolve_exchange_session(sessions[0], timeframe.session_policy)
+    last = resolve_exchange_session(sessions[-1], timeframe.session_policy)
+    if start > first.open_timestamp or end < last.close_timestamp:
+        raise ValueError("source request must cover complete projection sessions")
 
 
 def _validate_family_evidence(
