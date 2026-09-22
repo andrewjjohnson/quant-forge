@@ -22,13 +22,13 @@ semantics, explicit unavailable events, source/family/feed/session identity, and
 full source evidence. Context and generic outcome dispatch require matching
 provenance; their original price-basis equality checks remain intact.
 
-Provenance version 4 embeds immutable family and intraday source manifests so
+Provenance version 5 embeds immutable family and intraday source manifests so
 observational cache and experiment readers can recompute the source dataset,
 request, family, and exact-graph identities. Request and raw-snapshot IDs must
 match the source manifest; complete family DAG validation reuses the domain
 constructor, including members unused by a study.
 The declared adjustment basis must match the committed canonical source, and
-outcome manifest IDs must match the retained graph. Version-1/2/3 intraday projections
+outcome manifest IDs must match the retained graph. Version-1/2/3/4 intraday projections
 must be regenerated from canonical caches; no missing evidence is inferred.
 
 Retain the original QF-19 session manifest and normalized session bars in immutable
@@ -39,6 +39,22 @@ recorded dataset fingerprint. This preserves QF-19 schemas and identities and
 does not rerun aggregation. Projected decimals use exact canonical strings so
 the same values have a reproducible fingerprint. Retaining the session evidence
 increases manifest size but permits standalone QF-9 checks without source I/O.
+
+Retain source bar observations with shared timeframe/provenance templates. This
+lossless representation reconstructs the canonical intraday batch and must match
+both its existing batch ID and data digest. Each session's ordered constituent
+IDs must equal those of the authenticated source session. An ID list alone
+cannot prove membership under the existing full-record batch hash. This adds
+intraday observations to manifests, but does not change the source/QF-19 schemas
+or identities and does not rerun aggregation or provider normalization.
+
+Namespace projection IDs as `intraday-projection-<sha256>`, keeping their existing
+256-bit content digest. The namespace and adapter version independently require
+intraday provenance, even if the declared event policy changes. Cache readers
+also check the immutable raw extract's origin. Removing the namespace changes
+the dataset reference; standalone checks prove consistency with that reference,
+not external authenticity of an entirely replaced artifact. Daily IDs stay bare
+SHA-256 values and remain unchanged.
 
 Omit the additive reference for legacy daily serialization so existing daily
 identities remain stable. New provenance participates in existing identities

@@ -71,11 +71,13 @@ must carry source evidence even when a feature dataset has zero candidates;
 only explicitly skipped contexts may omit it.
 
 The new optional `IntradayPredictionProvenance` record contains its own schema
-version (`4`), explicit event availability, source dataset/request/raw-snapshot
+version (`5`), explicit event availability, source dataset/request/raw-snapshot
 references, session dataset/timeframe references, chosen family identity, feed
 identity, session-policy identity, and immutable copies of the selected family
 manifest and canonical intraday source manifest. Its immutable `session_evidence`
 also retains the original QF-19 session manifest and normalized bar artifact.
+Its `source_bar_evidence` retains all canonical source observations with shared
+timeframe/provenance templates, allowing reconstruction of the original batch.
 The cache's raw extract also
 retains these manifests alongside the original session manifest. `provider_name`
 remains the original provider; `adapter_version` identifies QuantForge's
@@ -207,6 +209,13 @@ the original session-family manifest ID in its supported composition policy;
 an uncomposed family must equal the artifact's own family. A valid generic DAG
 and recomputed family hashes alone do not establish this artifact binding.
 
+Source-bar evidence must reproduce both the canonical source's `batch_id` and
+`data_sha256`. Session constituent IDs must equal the authenticated source IDs in
+the same session and order; matching counts alone is insufficient. Forged IDs,
+swapped sessions, reordered constituents, and changed observations cannot retain
+the original source binding. The compact representation preserves exact decimal
+strings and all canonical bar fields while storing repeated metadata once.
+
 Prediction and feature
 manifests bind every recorded outcome source and available context source to the
 input's family, canonical snapshot, and feed. Every aligned timeframe in an
@@ -245,20 +254,29 @@ now include the exact family manifest ID, changing dependent study/feature IDs.
 Older intraday studies/features without that context evidence must be regenerated
 from their existing source caches. Contexts without a common family manifest
 retain their previous serialization, but are not valid for intraday-backed inputs.
-An absent `intraday_provenance` field means the established daily contract; it
-never implies unavailable intraday events. Explicit null or malformed new records are rejected
+Projection dataset IDs use `intraday-projection-<sha256>`; their original 256-bit
+digest still commits to the complete QF-3 metadata and content. That namespace
+requires intraday provenance independently of the event-policy declaration.
+The QF-3 adapter marker also requires provenance, and the cache checks origin in
+the checksum-verified raw extract even if manifest metadata is relabeled.
+Removing provenance and claiming a daily policy cannot downgrade the same
+dataset reference. Replacing all evidence and the dataset reference is a new
+artifact, whose external authenticity cannot be proved by standalone hashes.
+An absent `intraday_provenance` field is accepted only for the established daily
+contract without projection markers. Explicit null or malformed new records are rejected
 by the cache reader. The additive intraday record round-trips with canonical
 sorted JSON and participates in dataset, study, feature, and checkpoint identity.
 Changes to adjustment semantics or source/event provenance cannot alias an
 existing artifact. Compatible runs use existing cache/resume validation.
-Earlier intraday provenance versions 1–3 lack the complete required session
-price evidence and are rejected. Version 4 changes intraday projection, study,
+Earlier intraday provenance versions 1–4 lack the complete required source-bar
+evidence and are rejected. Version 5 changes intraday projection, study,
 feature, and checkpoint identities. Regenerate those projections from the existing
 intraday cache and session aggregates, then recreate dependent studies/features;
 do not relabel or reuse their old checkpoint identities. Legacy daily artifacts
-remain unchanged. Manifests now include completed session OHLCV and constituent
-identities as well as metadata, increasing their size with the source history;
-they do not include the underlying intraday OHLCV observations.
+remain unchanged. Manifests now include completed session OHLCV, constituent
+identities, and compact canonical intraday observations, increasing their size
+and validation cost with the source history. Raw provider responses remain in
+the source cache and are not copied into experiment manifests.
 
 The original QF-45 cache-only reproducer used 8,190 Tiingo SPY one-minute bars
 for January 2–31, 2024, 4,095 derived two-minute bars, and 21 derived session bars.
@@ -282,5 +300,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_price_integrity.py \
   tests/integration/test_intraday_prediction_session_evidence.py \
   tests/integration/test_intraday_prediction_composition_integrity.py \
-  tests/integration/test_intraday_prediction_context_semantics.py
+  tests/integration/test_intraday_prediction_context_semantics.py \
+  tests/integration/test_intraday_prediction_origin_integrity.py \
+  tests/integration/test_intraday_prediction_constituent_integrity.py
 ```

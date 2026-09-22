@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.data.exceptions import ValidationError
+from quantforge.data.identity import INTRADAY_PREDICTION_DATASET_PREFIX
 from quantforge.data.prediction_inputs import (
     INTRADAY_CORPORATE_ACTION_POLICY,
     validate_prediction_provenance,
@@ -59,6 +60,9 @@ def validate_prediction_input_sources(
         if (
             "intraday_provenance" in market
             or market.get("corporate_action_policy") == INTRADAY_CORPORATE_ACTION_POLICY
+            or str(market.get("dataset_id", "")).startswith(
+                INTRADAY_PREDICTION_DATASET_PREFIX
+            )
         ):
             provenance = validate_prediction_provenance(market)
             assert provenance is not None

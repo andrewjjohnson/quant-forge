@@ -57,10 +57,11 @@ class IntradayPredictionProvenance:
     family_manifest: PrimitiveMappingSnapshot
     source_manifest: PrimitiveMappingSnapshot
     session_evidence: PrimitiveMappingSnapshot
-    schema_version: str = "4"
+    source_bar_evidence: PrimitiveMappingSnapshot
+    schema_version: str = "5"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "4":
+        if self.schema_version != "5":
             raise ValueError("unsupported intraday prediction provenance schema")
         if not isinstance(cast(object, self.family_manifest), PrimitiveMappingSnapshot):
             raise ValueError("intraday prediction family manifest must be immutable")
@@ -70,6 +71,10 @@ class IntradayPredictionProvenance:
             cast(object, self.session_evidence), PrimitiveMappingSnapshot
         ):
             raise ValueError("intraday prediction session evidence must be immutable")
+        if not isinstance(
+            cast(object, self.source_bar_evidence), PrimitiveMappingSnapshot
+        ):
+            raise ValueError("intraday prediction source bars must be immutable")
         if not isinstance(
             cast(object, self.corporate_action_availability),
             CorporateActionAvailability,
@@ -116,6 +121,7 @@ class IntradayPredictionProvenance:
             "family_manifest": self.family_manifest.to_primitive(),
             "source_manifest": self.source_manifest.to_primitive(),
             "session_evidence": self.session_evidence.to_primitive(),
+            "source_bar_evidence": self.source_bar_evidence.to_primitive(),
         }
 
     @classmethod
@@ -138,12 +144,16 @@ class IntradayPredictionProvenance:
         session_evidence = record["session_evidence"]
         if not isinstance(session_evidence, dict):
             raise ValueError("intraday prediction session evidence must be a record")
+        source_bar_evidence = record["source_bar_evidence"]
+        if not isinstance(source_bar_evidence, dict):
+            raise ValueError("intraday prediction source bars must be a record")
         strings = fields - {
             "source_raw_snapshot_ids",
             "corporate_action_availability",
             "family_manifest",
             "source_manifest",
             "session_evidence",
+            "source_bar_evidence",
         }
         if any(not isinstance(record[name], str) for name in strings):
             raise ValueError("intraday prediction provenance requires text identities")
@@ -161,6 +171,9 @@ class IntradayPredictionProvenance:
             ),
             session_evidence=PrimitiveMappingSnapshot.capture(
                 cast(PrimitiveMapping, session_evidence)
+            ),
+            source_bar_evidence=PrimitiveMappingSnapshot.capture(
+                cast(PrimitiveMapping, source_bar_evidence)
             ),
         )
 

@@ -16,6 +16,7 @@ from quantforge.data.intraday_coverage_evidence import validate_retained_coverag
 from quantforge.data.lineage import DatasetFamily
 from quantforge.data.models import DailyBar, IntradayPredictionProvenance
 from quantforge.data.multi_timeframe import TimeframeBarSeries
+from quantforge.data.prediction_source_bars import validate_source_bar_evidence
 from quantforge.data.session_aggregation import (
     AggregatedSessionBar,
     AggregatedSessionDataset,
@@ -106,6 +107,16 @@ def validate_session_projection_evidence(
             raise ValueError("session bars must be an array")
         bars = tuple(_bar(entry) for entry in entries)
         source = provenance.source_manifest.to_primitive()
+        source_bar_ids = validate_source_bar_evidence(
+            provenance.source_bar_evidence.to_primitive(), source
+        )
+        if any(
+            bar.source_bar_ids != source_bar_ids.get(bar.session_dates[0].isoformat())
+            for bar in bars
+        ):
+            raise ValueError(
+                "session constituent IDs differ from their canonical source session"
+            )
         coverage = validate_retained_coverage_report(source)
         full_sessions = tuple(
             session

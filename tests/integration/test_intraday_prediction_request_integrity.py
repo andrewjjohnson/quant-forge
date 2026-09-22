@@ -238,6 +238,59 @@ def _rehash_source_evidence(
     manifest = cast(PrimitiveMapping, provenance["source_manifest"])
     request = cast(PrimitiveMapping, manifest["request"])
     chunks = cast(list[PrimitiveMapping], manifest["chunks"])
+    replacements = {
+        cast(str, original["source_request_id"]): cast(str, request["request_id"]),
+    }
+    evidence = cast(
+        PrimitiveMapping, _replace_ids(original["source_bar_evidence"], replacements)
+    )
+    previous_evidence = cast(PrimitiveMapping, original["source_bar_evidence"])
+    entries: list[Primitive] = []
+    for current, previous in zip(
+        cast(list[PrimitiveMapping], evidence["observations"]),
+        cast(list[PrimitiveMapping], previous_evidence["observations"]),
+        strict=True,
+    ):
+
+        def expand(
+            observation: PrimitiveMapping, retained: PrimitiveMapping
+        ) -> PrimitiveMapping:
+            return {
+                **cast(list[PrimitiveMapping], retained["templates"])[
+                    cast(int, observation["template_index"])
+                ],
+                **{
+                    key: value
+                    for key, value in observation.items()
+                    if key != "template_index"
+                },
+            }
+
+        bar = expand(current, evidence)
+        bar_id = configuration_identity(bar)
+        replacements[configuration_identity(expand(previous, previous_evidence))] = (
+            bar_id
+        )
+        entries.append({"bar_id": bar_id, "bar": bar})
+    batch_id = configuration_identity(
+        {
+            "schema_version": "1",
+            "contract_type": "intraday_bar_batch",
+            "request": request,
+            "bars": entries,
+        }
+    )
+    if batch_id != cast(PrimitiveMapping, original["source_manifest"])["batch_id"]:
+        # Only update evidence changed by the request rewrite. Preserve deliberate
+        # coverage corruption when its original source batch remains unchanged.
+        manifest["batch_id"] = batch_id
+        manifest["data_sha256"] = batch_id
+        quality = cast(PrimitiveMapping, manifest["quality_report"])
+        cast(PrimitiveMapping, quality["report"])["batch_id"] = batch_id
+        quality["report_id"] = configuration_identity(
+            cast(PrimitiveMapping, quality["report"])
+        )
+    provenance["source_bar_evidence"] = evidence
     identity = {
         key: value
         for key, value in manifest.items()
@@ -252,10 +305,7 @@ def _rehash_source_evidence(
     manifest["normalized_location"] = f"intraday/datasets/{source_id}/bars.json"
     provenance["source_dataset_id"] = source_id
     assert manifest["dataset_id"] == configuration_identity(identity)
-    replacements = {
-        cast(str, original["source_dataset_id"]): source_id,
-        cast(str, original["source_request_id"]): cast(str, request["request_id"]),
-    }
+    replacements[cast(str, original["source_dataset_id"])] = source_id
     _rehash_session_evidence(provenance, original, replacements)
     original_family = cast(PrimitiveMapping, original["family_manifest"])
     family = cast(PrimitiveMapping, _replace_ids(original_family, replacements))

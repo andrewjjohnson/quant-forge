@@ -15,6 +15,10 @@ from quantforge.configuration import (
 )
 from quantforge.data.corporate_actions import corporate_action_snapshot_id
 from quantforge.data.exceptions import ValidationError
+from quantforge.data.identity import (
+    INTRADAY_PREDICTION_ADAPTER_VERSION,
+    INTRADAY_PREDICTION_DATASET_PREFIX,
+)
 from quantforge.data.intraday import IntradayBar
 from quantforge.data.intraday_ingestion import (
     IntradayDataset,
@@ -44,6 +48,7 @@ from quantforge.data.prediction_session_evidence import (
     session_projection_bars,
     validate_session_projection_evidence,
 )
+from quantforge.data.prediction_source_bars import capture_source_bar_evidence
 from quantforge.data.session_aggregation import (
     AggregatedSessionDataset,
     aggregate_session_dataset,
@@ -119,10 +124,30 @@ def validate_prediction_provenance(
         else None
     )
     policy = record.get("corporate_action_policy")
+    dataset_id = record.get("dataset_id")
+    projection_id = isinstance(dataset_id, str) and dataset_id.startswith(
+        INTRADAY_PREDICTION_DATASET_PREFIX
+    )
     if provenance is None:
+        if (
+            projection_id
+            or record.get("adapter_version") == INTRADAY_PREDICTION_ADAPTER_VERSION
+        ):
+            raise ValidationError(
+                "intraday projection identity requires corporate-action provenance"
+            )
         if policy != DAILY_CORPORATE_ACTION_POLICY:
             raise ValidationError("unsupported corporate-action dataset policy")
         return None
+    if not projection_id:
+        raise ValidationError(
+            "intraday projection requires its namespaced dataset identity"
+        )
+    suffix = cast(str, dataset_id).removeprefix(INTRADAY_PREDICTION_DATASET_PREFIX)
+    if len(suffix) != 64 or any(
+        character not in "0123456789abcdef" for character in suffix
+    ):
+        raise ValidationError("intraday projection dataset identity is malformed")
     if (
         provenance.corporate_action_availability
         is not CorporateActionAvailability.UNAVAILABLE
@@ -466,6 +491,7 @@ def prediction_dataset_from_intraday(
                 "bars": json.loads(sessions.serialize_bars()),
             }
         ),
+        PrimitiveMappingSnapshot.capture(capture_source_bar_evidence(source.bars)),
     )
     # The immutable raw extract is the original derived artifact manifest. It
     # records the full source family and aggregation evidence, not invented events.
@@ -485,7 +511,7 @@ def prediction_dataset_from_intraday(
                 "source_dataset": source_manifest.to_primitive(),
             },
         ),
-        "quantforge_intraday_prediction_input_v1",
+        INTRADAY_PREDICTION_ADAPTER_VERSION,
     )
     metadata: dict[str, object] = {
         "canonical_symbol": source.request.symbol,

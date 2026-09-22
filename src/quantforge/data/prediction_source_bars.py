@@ -1,0 +1,94 @@
+"""Lossless source-bar evidence authenticated by the existing canonical batch hash."""
+
+from collections import defaultdict
+
+from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
+from quantforge.data.intraday import INTRADAY_CONTRACT_SCHEMA_VERSION, IntradayBar
+
+# Only repeated metadata is shared. All observation fields remain exact primitives.
+_OBSERVATION_FIELDS = frozenset(
+    {
+        "session_identifier",
+        "start_timestamp",
+        "end_timestamp",
+        "actual_duration_microseconds",
+        "completion",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    }
+)
+
+
+def capture_source_bar_evidence(bars: tuple[IntradayBar, ...]) -> PrimitiveMapping:
+    """Deduplicate repeated timeframe/provenance metadata without altering bars."""
+    templates: list[Primitive] = []
+    indexes: dict[str, int] = {}
+    observations: list[Primitive] = []
+    for bar in bars:
+        record = bar.to_primitive()
+        template = {
+            key: value
+            for key, value in record.items()
+            if key not in _OBSERVATION_FIELDS
+        }
+        template_id = configuration_identity(template)
+        if template_id not in indexes:
+            indexes[template_id] = len(templates)
+            templates.append(template)
+        observations.append(
+            {
+                "template_index": indexes[template_id],
+                **{key: record[key] for key in _OBSERVATION_FIELDS},
+            }
+        )
+    return {"templates": templates, "observations": observations}
+
+
+def validate_source_bar_evidence(
+    evidence: PrimitiveMapping, source: PrimitiveMapping
+) -> dict[str, tuple[str, ...]]:
+    """Authenticate ordered constituents by reproducing the retained source batch."""
+    templates = evidence.get("templates")
+    observations = evidence.get("observations")
+    if (
+        set(evidence) != {"templates", "observations"}
+        or not isinstance(templates, list)
+        or not isinstance(observations, list)
+        or type(source.get("bar_count")) is not int
+        or len(observations) != source["bar_count"]
+    ):
+        raise ValueError("source bar evidence fields or count are invalid")
+    entries: list[Primitive] = []
+    by_session: defaultdict[str, list[str]] = defaultdict(list)
+    for observation in observations:
+        if not isinstance(observation, dict) or set(observation) != {
+            "template_index",
+            *_OBSERVATION_FIELDS,
+        }:
+            raise ValueError("source bar observation fields are invalid")
+        index = observation["template_index"]
+        if type(index) is not int or not 0 <= index < len(templates):
+            raise ValueError("source bar template index is invalid")
+        template = templates[index]
+        if not isinstance(template, dict) or set(template) & _OBSERVATION_FIELDS:
+            raise ValueError("source bar template is invalid")
+        bar = {**template, **{key: observation[key] for key in _OBSERVATION_FIELDS}}
+        bar_id = configuration_identity(bar)
+        entries.append({"bar_id": bar_id, "bar": bar})
+        session = bar.get("session_identifier")
+        if not isinstance(session, str):
+            raise ValueError("source bar session is invalid")
+        by_session[session].append(bar_id)
+    batch: PrimitiveMapping = {
+        "schema_version": INTRADAY_CONTRACT_SCHEMA_VERSION,
+        "contract_type": "intraday_bar_batch",
+        "request": source["request"],
+        "bars": entries,
+    }
+    digest = configuration_identity(batch)
+    if digest != source.get("batch_id") or digest != source.get("data_sha256"):
+        raise ValueError("source bar evidence differs from the canonical source batch")
+    return {session: tuple(bar_ids) for session, bar_ids in by_session.items()}

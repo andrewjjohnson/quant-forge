@@ -689,6 +689,8 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_session_evidence.py \
   tests/integration/test_intraday_prediction_composition_integrity.py \
   tests/integration/test_intraday_prediction_context_semantics.py \
+  tests/integration/test_intraday_prediction_origin_integrity.py \
+  tests/integration/test_intraday_prediction_constituent_integrity.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -737,5 +739,10 @@ serialization. Composition tests require the selected family's policy to bind
 the original session-family manifest, including after enclosing identities are
 recomputed. Context-semantics tests reject rehashed completion-policy, source
 requirement, staleness, and selected-bar inconsistencies in feature snapshots and
-directories, with and without candidates. See
+directories, with and without candidates. Origin regressions reject stripped
+provenance and relabeled daily policies while retaining a projection reference,
+including a relabeled adapter over an immutable projection raw extract.
+Constituent regressions authenticate source observations against the original
+batch digest and reject rehashed arbitrary, swapped, or reordered session IDs.
+See
 [intraday prediction provenance](intraday-prediction-provenance.md).

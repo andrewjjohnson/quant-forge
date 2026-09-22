@@ -18,6 +18,7 @@ from quantforge.data.corporate_actions import (
 )
 from quantforge.data.exceptions import CacheError, ValidationError
 from quantforge.data.identity import (
+    INTRADAY_PREDICTION_ADAPTER_VERSION,
     calculate_dataset_id,
     canonical_json_bytes,
     serialize_bars_csv,
@@ -172,6 +173,30 @@ class MarketDataCache:
                 or sha256_hex(raw_bytes) != manifest["raw_sha256"]
             ):
                 raise CacheError("cached artifact checksum mismatch")
+            raw_value: object = json.loads(raw_bytes)
+            raw_record = (
+                cast(dict[str, object], raw_value)
+                if isinstance(raw_value, dict)
+                else {}
+            )
+            raw_metadata = raw_record.get("metadata")
+            raw_metadata = (
+                cast(dict[str, object], raw_metadata)
+                if isinstance(raw_metadata, dict)
+                else {}
+            )
+            if (
+                raw_record.get("adapter_version") == INTRADAY_PREDICTION_ADAPTER_VERSION
+                or raw_metadata.get("component")
+                == "quantforge_intraday_prediction_input"
+            ) and (
+                manifest.get("adapter_version") != INTRADAY_PREDICTION_ADAPTER_VERSION
+                or manifest.get("intraday_provenance") is None
+            ):
+                raise CacheError(
+                    "intraday projection raw artifact requires its provenance "
+                    "and adapter identity"
+                )
             with data_path.open(newline="") as stream:
                 bars = tuple(
                     DailyBar(
