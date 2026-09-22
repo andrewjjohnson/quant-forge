@@ -10,7 +10,13 @@ from quantforge.data.prediction_inputs import (
     validate_prediction_source_reference,
 )
 from quantforge.experiments._json import ManifestError, mapping
-from quantforge.prediction.outcome_temporal import outcome_temporal_configuration
+from quantforge.prediction.outcome_temporal import (
+    ElapsedDurationHorizon,
+    outcome_temporal_configuration,
+)
+from quantforge.prediction.window_timeframe_validation import (
+    validate_source_timeframe_definition,
+)
 
 
 def _context_feed_scope(
@@ -54,10 +60,21 @@ def validate_prediction_input_sources(
             provenance = validate_prediction_provenance(market)
             assert provenance is not None
         for source, labeler_configuration in outcome_sources:
+            # Legacy session labelers and custom feature components may omit
+            # typed temporal declarations. Preserve their source-free contract.
+            if source is None and (
+                not isinstance(labeler_configuration, dict)
+                or "temporal_configuration" not in labeler_configuration
+            ):
+                continue
+            temporal = outcome_temporal_configuration(mapping(labeler_configuration))
             if source is None:
+                if isinstance(temporal.horizon, ElapsedDurationHorizon):
+                    raise ValidationError(
+                        "elapsed outcomes require a canonical outcome source"
+                    )
                 continue
             reference = mapping(mapping(source).get("source_reference"))
-            temporal = outcome_temporal_configuration(mapping(labeler_configuration))
             timeframe = temporal.observation_timeframe
             if (
                 timeframe is None
@@ -113,10 +130,18 @@ def validate_prediction_input_sources(
             expanded_reference = dict(mapping(reference))
             expanded_reference.setdefault("feed_scope", feed_scope)
             requirement = mapping(aligned.get("requirement"))
-            definition = mapping(
-                mapping(requirement.get("timeframe")).get("configuration")
+            declared_timeframe = validate_source_timeframe_definition(
+                mapping(requirement.get("timeframe"))
             )
-            session_policy = mapping(definition.get("session_policy"))
+            if (
+                expanded_reference.get("timeframe_configuration_id")
+                != declared_timeframe.configuration_id
+            ):
+                raise ValidationError(
+                    "prediction context source lineage timeframe differs "
+                    "from its aligned requirement"
+                )
+            session_policy = declared_timeframe.session_policy.to_primitive()
             if configuration_identity(session_policy) != provenance.session_policy_id:
                 raise ValidationError("prediction input session policy is incompatible")
             validate_prediction_source_reference(provenance, expanded_reference)

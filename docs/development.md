@@ -683,6 +683,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_endpoint_integrity.py \
   tests/integration/test_intraday_prediction_context_evidence.py \
   tests/integration/test_intraday_prediction_raw_integrity.py \
+  tests/integration/test_intraday_prediction_source_requirements.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -712,5 +713,7 @@ Available empty feature datasets must retain their source context; explicitly
 skipped contexts may omit it. Raw-snapshot regressions reject rehashed manifests
 whose acquisition metadata contradicts their retained raw files, and reject
 malformed rehashed raw bodies before projection creates output. Valid one- and
-two-chunk caches still reload and project successfully. See
+two-chunk caches still reload and project successfully. Empty-artifact tests also
+require sources for elapsed outcomes and bind each context reference to its own
+aligned timeframe, including after every enclosing identity is recomputed. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

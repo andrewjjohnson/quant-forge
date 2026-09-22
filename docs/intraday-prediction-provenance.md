@@ -184,11 +184,20 @@ Outcome references must explicitly record their feed scope. Compact context
 references obtain it from the captured requirements, whose primary, contextual,
 and selected-timeframe feeds must all match the input provenance. A missing feed
 or a different feed cannot be accepted by omitting it from a source reference.
+Each aligned context reference must also match the timeframe of its own
+requirement, whose definition must reproduce its declared configuration ID.
+Another valid member of the same family cannot substitute a daily source for
+an intraday requirement, or the reverse.
 Every outcome source's timeframe identity must match its labeler's declared
 observation timeframe. Intraday-backed outcome timeframes must also retain the
 input's session policy. This covers the feature study template and every exported
 outcome independently; rehashing both a source reference and its enclosing
 configuration does not waive those bindings.
+Typed elapsed-duration labelers require a canonical outcome source in prediction
+and feature manifests, including the feature study template and each configured
+outcome. Missing or null sources are rejected even when the artifact has no rows.
+Legacy session labelers and custom feature components retain their existing
+source-free contracts; this check does not add typed declarations to old artifacts.
 These checks still apply when artifact hashes are recomputed; skipped contexts
 retain their rejected evidence for auditability. Existing outer manifest,
 producer identity, hash, and row checks still apply.
