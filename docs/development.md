@@ -715,5 +715,8 @@ whose acquisition metadata contradicts their retained raw files, and reject
 malformed rehashed raw bodies before projection creates output. Valid one- and
 two-chunk caches still reload and project successfully. Empty-artifact tests also
 require sources for elapsed outcomes and bind each context reference to its own
-aligned timeframe, including after every enclosing identity is recomputed. See
+aligned timeframe, including after every enclosing identity is recomputed. Every
+available primary and contextual timeframe must retain its dataset reference in
+both feature snapshots and exported directories, including when no candidates
+were generated. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

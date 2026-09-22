@@ -169,3 +169,39 @@ def test_context_member_must_match_its_aligned_timeframe(
             ManifestError, match=r"source lineage timeframe|source timeframe"
         ):
             inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("change", ["same", "missing", "null"])
+@pytest.mark.parametrize("target", [0, 1], ids=["primary", "contextual"])
+@pytest.mark.parametrize("directory", [False, True], ids=["snapshot", "directory"])
+def test_empty_available_context_requires_every_timeframe_reference(
+    empty_artifacts: tuple[PrimitiveMapping, SignalFeatureDatasetResult],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+    target: int,
+    directory: bool,
+) -> None:
+    result = empty_artifacts[1]
+    configuration = result.configuration
+    context = cast(PrimitiveMapping, configuration["prediction_context"])
+    captured = cast(PrimitiveMapping, context["source_context"])
+    aligned = cast(list[PrimitiveMapping], captured["timeframes"])[target]
+    assert context["status"] == "available"
+    assert aligned["availability"] == "available"
+    assert aligned["visible_bar_ids"]
+    for field in ("dataset_reference", "dataset_id"):
+        if change == "missing":
+            del aligned[field]
+        elif change == "null":
+            aligned[field] = None
+    captured["context_id"] = configuration_identity(
+        {key: value for key, value in captured.items() if key != "context_id"}
+    )
+    path = _write_rehashed_feature(result, configuration, tmp_path, directory)
+    block_research(monkeypatch)
+    if change == "same":
+        inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)
+    else:
+        with pytest.raises(ManifestError, match=r"context timeframe.*provenance"):
+            inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)

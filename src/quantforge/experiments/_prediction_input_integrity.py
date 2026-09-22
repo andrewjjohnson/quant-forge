@@ -124,7 +124,9 @@ def validate_prediction_input_sources(
             aligned = mapping(timeframe)
             reference = aligned.get("dataset_reference")
             if reference is None:
-                continue
+                raise ValidationError(
+                    "prediction context timeframe has no dataset provenance"
+                )
             # QF-20's compact reference omits feed scope. Expand it only from
             # declarations already checked against the input's feed identity.
             expanded_reference = dict(mapping(reference))

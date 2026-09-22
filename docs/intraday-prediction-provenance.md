@@ -178,8 +178,11 @@ recomputing bars; hashes establish consistency, not provider authenticity.
 
 Prediction and feature
 manifests bind every recorded outcome source and available context source to the
-input's family, canonical snapshot, and feed. Available context timeframes must
-also retain the input's exchange-session policy, including calendar and timezone.
+input's family, canonical snapshot, and feed. Every aligned timeframe in an
+available context must retain its dataset reference, even in zero-row artifacts;
+visible-bar evidence cannot replace missing or null dataset provenance.
+Available context timeframes must also retain the input's exchange-session policy,
+including calendar and timezone.
 Outcome references must explicitly record their feed scope. Compact context
 references obtain it from the captured requirements, whose primary, contextual,
 and selected-timeframe feeds must all match the input provenance. A missing feed
