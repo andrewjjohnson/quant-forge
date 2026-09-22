@@ -216,6 +216,10 @@ the same session and order; matching counts alone is insufficient. Forged IDs,
 swapped sessions, reordered constituents, and changed observations cannot retain
 the original source binding. The compact representation preserves exact decimal
 strings and all canonical bar fields while storing repeated metadata once.
+The complete evidence must equal a fresh canonical capture of the reconstructed
+bars: templates are unique, ordered by first use, and all referenced. Unused,
+duplicated, or reordered template tables are rejected even if remapped indices
+reproduce the same source batch. Valid producer output and identities are unchanged.
 Readers reconstruct the typed intraday request, bars, and batch through the
 existing ingestion decoder before accepting that digest. Domain validation and
 canonical reserialization reject invalid prices, timestamps, extra fields,

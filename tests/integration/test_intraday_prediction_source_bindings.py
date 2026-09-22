@@ -33,6 +33,88 @@ from tests.unit.experiments.test_adapters import block_research
 BOUNDARIES = ("dataset", "cache", "prediction", "feature", "feature_directory")
 
 
+@pytest.mark.parametrize("change", ["same", "unused", "duplicate", "reordered"])
+@pytest.mark.parametrize("boundary", BOUNDARIES)
+def test_rehashed_source_templates_require_canonical_encoding(
+    fixture: Fixture,
+    empty_artifacts: tuple[PrimitiveMapping, SignalFeatureDatasetResult],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+    boundary: str,
+) -> None:
+    original = fixture.dataset.metadata.intraday_provenance
+    assert original is not None
+    primitive, replacements = _alter_bounds(original.to_primitive(), "contiguous")
+    source = cast(PrimitiveMapping, primitive["source_manifest"])
+    evidence = cast(PrimitiveMapping, primitive["source_bar_evidence"])
+    templates = cast(list[PrimitiveMapping], evidence["templates"])
+    observations = cast(list[PrimitiveMapping], evidence["observations"])
+    assert len(templates) == 2
+    if change == "unused":
+        unused = deepcopy(templates[0])
+        cast(PrimitiveMapping, unused["provenance"])["provider_name"] = "unused"
+        templates.append(unused)
+    elif change == "duplicate":
+        templates.append(deepcopy(templates[0]))
+        observations[0]["template_index"] = 2
+    elif change == "reordered":
+        templates.reverse()
+        for observation in observations:
+            observation["template_index"] = 1 - cast(int, observation["template_index"])
+    expanded = [
+        {
+            **templates[cast(int, observation["template_index"])],
+            **{
+                key: value
+                for key, value in observation.items()
+                if key != "template_index"
+            },
+        }
+        for observation in observations
+    ]
+    # Every variant retains the exact source batch and both source digests.
+    assert (
+        configuration_identity(
+            {
+                "schema_version": "1",
+                "contract_type": "intraday_bar_batch",
+                "request": source["request"],
+                "bars": [
+                    {"bar_id": configuration_identity(bar), "bar": bar}
+                    for bar in expanded
+                ],
+            }
+        )
+        == source["batch_id"]
+        == source["data_sha256"]
+    )
+    altered = _rehash_dataset(
+        replace(
+            fixture.dataset,
+            metadata=replace(
+                fixture.dataset.metadata,
+                intraday_provenance=IntradayPredictionProvenance.from_primitive(
+                    primitive
+                ),
+            ),
+        )
+    )
+    assert dataset_identity_matches(altered)
+    block_research(monkeypatch)
+    if change == "same":
+        inspect_projection(
+            fixture, altered, empty_artifacts, tmp_path, boundary, replacements
+        )
+    else:
+        with pytest.raises(
+            (ValidationError, CacheError, ManifestError), match="canonical template"
+        ):
+            inspect_projection(
+                fixture, altered, empty_artifacts, tmp_path, boundary, replacements
+            )
+
+
 @pytest.mark.parametrize(
     "change",
     [

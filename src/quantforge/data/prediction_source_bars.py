@@ -150,6 +150,12 @@ def validate_source_bar_evidence(
         if restored.batch_id != digest:
             raise ValueError("source batch serialization is not canonical")
         _validate_raw_chunk_bindings(restored, source)
+        if configuration_identity(evidence) != configuration_identity(
+            capture_source_bar_evidence(restored.bars)
+        ):
+            raise ValueError(
+                "source bar evidence must use the canonical template table"
+            )
     except (
         KeyError,
         TypeError,

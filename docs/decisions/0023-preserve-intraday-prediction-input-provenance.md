@@ -48,6 +48,9 @@ cannot prove membership under the existing full-record batch hash. This adds
 intraday observations to manifests, but does not change the source/QF-19 schemas
 or rerun provider normalization. Reconstruct the typed request, bars, and batch
 with the ingestion decoder, verifying canonical serialization as well as hashes.
+Require the complete compact evidence to equal a fresh capture of those bars,
+including unique templates in first-use order without unused entries. Equivalent
+noncanonical tables cannot create additional accepted identities for the same bars.
 Bind each bar to its retained raw chunk's interval, retrieval instant, and source
 provider/symbol/adapter/request metadata. Recompute diagnostic coverage from the
 typed batch and compare the complete report, preserving truthful zero-volume
