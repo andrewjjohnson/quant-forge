@@ -167,6 +167,14 @@ def _validate_source_evidence(
     try:
         manifest = provenance.source_manifest.to_primitive()
         validate_intraday_manifest_identity(manifest)
+        coverage = cast(
+            PrimitiveMapping,
+            cast(PrimitiveMapping, manifest["quality_report"])["report"],
+        )
+        if coverage["is_complete"] is not True:
+            raise ValueError(
+                "prediction input requires a complete source coverage report"
+            )
         # QF-3 cache metadata requires this field; QF-9 market records omit it.
         if (
             "provider_symbol" in record

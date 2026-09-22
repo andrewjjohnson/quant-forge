@@ -144,6 +144,17 @@ actual projection session bounds must be ordered. Wider source requests remain
 valid; calendar dates alone cannot establish full-session coverage. These checks
 apply even when every enclosing request, source, family, and artifact ID has been
 recomputed, without fetching data or regenerating research results.
+The source manifest's coverage report is also reconstructed and must reproduce
+its own `report_id`. Its request, batch, timeframe, feed, session scope, bounds,
+and observation count must agree with the source manifest. Calendar-derived
+expected intervals constrain session counts and missing/unexpected findings;
+session-level findings must reproduce the report's aggregate lists, counts,
+completeness, and warning flags. Duplicate, unordered, overlapping, or out-of-range
+evidence is rejected. Prediction projections require a complete validated report.
+The general intraday manifest reader still accepts truthful incomplete diagnostic
+reports and warnings. This metadata-only check cannot authenticate observations
+that are absent from the manifest; loading the full cache still verifies the
+report against normalized bars and retained raw extracts.
 The producer reloads bars/raw extracts through the cache before capturing this
 evidence. Observational readers validate the retained metadata without I/O or
 recomputing bars; hashes establish consistency, not provider authenticity.

@@ -14,7 +14,6 @@ from quantforge.data import (
     validate_market_dataset,
 )
 from quantforge.data.exceptions import ValidationError
-from quantforge.data.intraday_ingestion import validate_intraday_manifest_identity
 from quantforge.data.models import IntradayPredictionProvenance
 from quantforge.data.prediction_inputs import validate_prediction_provenance
 from quantforge.experiments import ManifestError, StudyType, inspect_study
@@ -144,6 +143,15 @@ def _alter_bounds(
         requested_end_timestamp=configuration.get("end_timestamp"),
     )
     quality["report_id"] = configuration_identity(report)
+    return _rehash_source_evidence(provenance, original)
+
+
+def _rehash_source_evidence(
+    provenance: PrimitiveMapping, original: PrimitiveMapping
+) -> tuple[PrimitiveMapping, dict[str, str]]:
+    manifest = cast(PrimitiveMapping, provenance["source_manifest"])
+    request = cast(PrimitiveMapping, manifest["request"])
+    chunks = cast(list[PrimitiveMapping], manifest["chunks"])
     identity = {
         key: value
         for key, value in manifest.items()
@@ -157,10 +165,10 @@ def _alter_bounds(
     manifest["dataset_id"] = source_id
     manifest["normalized_location"] = f"intraday/datasets/{source_id}/bars.json"
     provenance["source_dataset_id"] = source_id
-    validate_intraday_manifest_identity(manifest)
+    assert manifest["dataset_id"] == configuration_identity(identity)
     replacements = {
         cast(str, original["source_dataset_id"]): source_id,
-        cast(str, original["source_request_id"]): request["request_id"],
+        cast(str, original["source_request_id"]): cast(str, request["request_id"]),
     }
     original_family = cast(PrimitiveMapping, original["family_manifest"])
     family = cast(PrimitiveMapping, _replace_ids(original_family, replacements))

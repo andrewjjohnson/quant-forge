@@ -23,6 +23,7 @@ from quantforge.data.intraday import (
     IntradayBarRequest,
     IntradayProviderCapabilities,
 )
+from quantforge.data.intraday_coverage_evidence import validate_retained_coverage_report
 from quantforge.data.intraday_validation import (
     IntradayCoverageReport,
     IntradayValidationMode,
@@ -702,6 +703,7 @@ def validate_intraday_manifest_identity(manifest: PrimitiveMapping) -> None:
             or chunk.get("raw_location") != f"intraday/raw/{snapshot_id}.json"
         ):
             raise ValueError("intraday source manifest raw references are inconsistent")
+    validate_retained_coverage_report(manifest)
 
 
 def _batch_from_primitive(

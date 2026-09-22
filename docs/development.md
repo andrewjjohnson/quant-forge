@@ -677,7 +677,9 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_lineage_integrity.py \
   tests/integration/test_intraday_prediction_evidence_integrity.py \
   tests/integration/test_intraday_prediction_projection_boundaries.py \
-  tests/integration/test_intraday_prediction_request_integrity.py
+  tests/integration/test_intraday_prediction_request_integrity.py \
+  tests/integration/test_intraday_prediction_coverage_integrity.py \
+  tests/unit/test_intraday_coverage_evidence.py
 ```
 
 The synthetic cache-only fixture exercises canonical SPY one-minute input,
@@ -690,5 +692,9 @@ immutable intraday cache, and incomplete diagnostic session aggregates. Runtime
 context tests reject missing or different exact family manifests in prediction
 and feature generation. Rehashed request-evidence tests reject malformed or
 unordered bounds, incomplete chunk coverage, and requests that exclude projected
-sessions, including prediction and feature inspection with research blocked. See
+sessions, including prediction and feature inspection with research blocked.
+Coverage-report regressions reject stale report IDs, source-reference mismatches,
+false completeness, and inconsistent session evidence after rehashing enclosing
+artifacts. Round-trip tests preserve legitimate diagnostic gaps, warnings,
+holidays, early closes, DST, extended hours, and developing bars. See
 [intraday prediction provenance](intraday-prediction-provenance.md).
