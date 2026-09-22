@@ -134,7 +134,11 @@ QF-9 market records omit this field and retain it inside the source evidence.
 The projection's `retrieved_at` must equal the source manifest's retrieval time
 after both timezone-aware timestamps are normalized to UTC. Equivalent offset
 representations are accepted; missing, malformed, naive, or different timestamps
-are rejected. These checks preserve schema version 3 and valid artifact identities.
+are rejected. The source timestamp must also equal the latest retrieval instant
+among all retained raw chunks, matching the ingestion producer's rule. Every
+chunk must carry an aware timestamp; chunk order and equivalent UTC-offset
+representations do not affect the maximum. These checks preserve schema version
+3 and valid artifact identities.
 Retained request and chunk bounds must use the canonical UTC ISO representation
 emitted by intraday ingestion. The request must have a strictly increasing range;
 its nonempty chunks must be ordered, contiguous, and cover that exact range.

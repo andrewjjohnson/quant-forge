@@ -679,6 +679,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_projection_boundaries.py \
   tests/integration/test_intraday_prediction_request_integrity.py \
   tests/integration/test_intraday_prediction_coverage_integrity.py \
+  tests/integration/test_intraday_prediction_retrieval_integrity.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -696,5 +697,8 @@ sessions, including prediction and feature inspection with research blocked.
 Coverage-report regressions reject stale report IDs, source-reference mismatches,
 false completeness, and inconsistent session evidence after rehashing enclosing
 artifacts. Round-trip tests preserve legitimate diagnostic gaps, warnings,
-holidays, early closes, DST, extended hours, and developing bars. See
+holidays, early closes, DST, extended hours, and developing bars.
+Retrieval regressions bind the projection and source timestamps to the latest
+retained chunk instant after rehashing cache, prediction, and feature artifacts.
+They reject invalid chunk timestamps and compare differing offsets as UTC instants. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

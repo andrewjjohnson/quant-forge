@@ -181,13 +181,18 @@ def _validate_source_evidence(
             and record["provider_symbol"] != manifest["provider_symbol"]
         ):
             raise ValueError("provider symbol differs from the canonical source")
-        if _retrieval_instant(record.get("retrieved_at")) != _retrieval_instant(
-            manifest.get("retrieved_at")
-        ):
+        source_retrieved_at = _retrieval_instant(manifest.get("retrieved_at"))
+        if _retrieval_instant(record.get("retrieved_at")) != source_retrieved_at:
             raise ValueError("retrieval timestamp differs from the canonical source")
         request = cast(PrimitiveMapping, manifest["request"])
         configuration = cast(PrimitiveMapping, request["configuration"])
         chunks = cast(list[PrimitiveMapping], manifest["chunks"])
+        if source_retrieved_at != max(
+            _retrieval_instant(chunk.get("retrieved_at")) for chunk in chunks
+        ):
+            raise ValueError(
+                "source retrieval timestamp differs from the latest raw chunk"
+            )
         source = cast(
             PrimitiveMapping,
             provenance.family_manifest.to_primitive()["canonical_source"],
