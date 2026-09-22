@@ -62,6 +62,10 @@ as part of its `context_id`. QF-9 requires that ID to match the retained family
 manifest before accepting individual timeframe references. For available contexts,
 QF-9 also recomputes `context_id` from all remaining source-context fields before
 trusting their lineage, including in empty feature snapshots and directories.
+Available feature contexts also pass the existing window-context semantic
+validator: completion policy, declared source requirements, staleness limits,
+aligned timeframes, and selected bars must agree with their captured rule
+requirements. Rehashing context and feature identities cannot waive those checks.
 Available contexts
 must carry source evidence even when a feature dataset has zero candidates;
 only explicitly skipped contexts may omit it.
@@ -197,6 +201,11 @@ replacing its evidence prices cannot preserve the original session artifact ID.
 Projection decimal strings use the existing canonical exact-decimal formatter;
 removing representation-only zeros changes no numerical values. This makes the
 fingerprint reproducible from canonical session evidence.
+Readers also bind the reconstructed session artifact to the selected family
+through the same QF-20 artifact API used at runtime. A composed family must name
+the original session-family manifest ID in its supported composition policy;
+an uncomposed family must equal the artifact's own family. A valid generic DAG
+and recomputed family hashes alone do not establish this artifact binding.
 
 Prediction and feature
 manifests bind every recorded outcome source and available context source to the
@@ -271,5 +280,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_lineage_integrity.py \
   tests/integration/test_intraday_prediction_evidence_integrity.py \
   tests/integration/test_intraday_prediction_price_integrity.py \
-  tests/integration/test_intraday_prediction_session_evidence.py
+  tests/integration/test_intraday_prediction_session_evidence.py \
+  tests/integration/test_intraday_prediction_composition_integrity.py \
+  tests/integration/test_intraday_prediction_context_semantics.py
 ```

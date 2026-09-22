@@ -15,6 +15,7 @@ from quantforge.data.intraday_aggregation import MissingConstituentPolicy
 from quantforge.data.intraday_coverage_evidence import validate_retained_coverage_report
 from quantforge.data.lineage import DatasetFamily
 from quantforge.data.models import DailyBar, IntradayPredictionProvenance
+from quantforge.data.multi_timeframe import TimeframeBarSeries
 from quantforge.data.session_aggregation import (
     AggregatedSessionBar,
     AggregatedSessionDataset,
@@ -197,7 +198,13 @@ def validate_session_projection_evidence(
                 manifest_location=f"session/derived/{dataset_id}/manifest.json",
             ),
         )
-        dataset.validate()
+        # Reuse runtime artifact binding; generic family DAG checks are insufficient.
+        TimeframeBarSeries.from_aggregated_session_dataset(
+            dataset,
+            family=DatasetFamily.from_manifest(
+                provenance.family_manifest.to_primitive()
+            ),
+        )
         if configuration_identity(dataset.to_manifest()) != configuration_identity(
             manifest
         ):

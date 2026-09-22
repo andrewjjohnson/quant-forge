@@ -14,6 +14,9 @@ from quantforge.prediction.outcome_temporal import (
     ElapsedDurationHorizon,
     outcome_temporal_configuration,
 )
+from quantforge.prediction.window_context_validation import (
+    validate_window_context_snapshot,
+)
 from quantforge.prediction.window_timeframe_validation import (
     validate_source_timeframe_definition,
 )
@@ -151,7 +154,18 @@ def validate_prediction_input_sources(
             if configuration_identity(session_policy) != provenance.session_policy_id:
                 raise ValidationError("prediction input session policy is incompatible")
             validate_prediction_source_reference(provenance, expanded_reference)
-    except (TypeError, ValueError, ValidationError) as error:
+        # Hash consistency alone does not prove source/rule semantics agree.
+        requirements = mapping(captured.get("requirements"))
+        validate_window_context_snapshot(
+            context=captured,
+            source=source_context,
+            requirements=requirements,
+            market_data=market,
+            primary_timeframe=mapping(
+                mapping(requirements.get("primary")).get("timeframe")
+            ),
+        )
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
         raise ManifestError(
             f"prediction input provenance is invalid: {error}"
         ) from error

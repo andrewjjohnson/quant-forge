@@ -687,6 +687,8 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_session_range.py \
   tests/integration/test_intraday_prediction_price_integrity.py \
   tests/integration/test_intraday_prediction_session_evidence.py \
+  tests/integration/test_intraday_prediction_composition_integrity.py \
+  tests/integration/test_intraday_prediction_context_semantics.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -731,5 +733,9 @@ with and without candidate rows. Price-binding tests change each OHLCV field and
 recompute projection identities, then check dataset validation, cache reload,
 prediction inspection, and feature snapshot/directory inspection. Retained
 session-evidence tests also reject altered proofs and preserve exact decimal
-serialization. See
+serialization. Composition tests require the selected family's policy to bind
+the original session-family manifest, including after enclosing identities are
+recomputed. Context-semantics tests reject rehashed completion-policy, source
+requirement, staleness, and selected-bar inconsistencies in feature snapshots and
+directories, with and without candidates. See
 [intraday prediction provenance](intraday-prediction-provenance.md).
