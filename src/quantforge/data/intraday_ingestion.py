@@ -695,7 +695,12 @@ def validate_intraday_manifest_identity(manifest: PrimitiveMapping) -> None:
         or not chunks
     ):
         raise ValueError("intraday source manifest identity is inconsistent")
+    endpoint = _validated_text(
+        chunks[0].get("endpoint"), "source manifest chunk endpoint"
+    )
     for index, chunk in enumerate(chunks):
+        if chunk.get("endpoint") != endpoint:
+            raise ValueError("raw chunks must use one provider endpoint revision")
         snapshot_id = _json_string(chunk, "raw_snapshot_id", "source manifest chunk")
         if (
             chunk.get("chunk_index") != index

@@ -680,6 +680,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_request_integrity.py \
   tests/integration/test_intraday_prediction_coverage_integrity.py \
   tests/integration/test_intraday_prediction_retrieval_integrity.py \
+  tests/integration/test_intraday_prediction_endpoint_integrity.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -700,5 +701,8 @@ artifacts. Round-trip tests preserve legitimate diagnostic gaps, warnings,
 holidays, early closes, DST, extended hours, and developing bars.
 Retrieval regressions bind the projection and source timestamps to the latest
 retained chunk instant after rehashing cache, prediction, and feature artifacts.
-They reject invalid chunk timestamps and compare differing offsets as UTC instants. See
+They reject invalid chunk timestamps and compare differing offsets as UTC instants.
+Endpoint regressions reject missing, malformed, or mixed provider endpoints in
+retained chunks while accepting a shared revision in rehashed prediction and
+feature artifacts. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

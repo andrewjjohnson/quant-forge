@@ -128,6 +128,9 @@ reproduce `source_request_id`, and its ordered raw chunk references must equal
 `source_raw_snapshot_ids`. Source symbol, provider, feed, timeframe, and price
 basis must agree with the family. Rehashing a changed source manifest creates a
 different source dataset identity; it cannot retain the original family binding.
+Every retained raw chunk must name the same nonempty, trimmed provider endpoint,
+matching ingestion's requirement for one endpoint revision per fetch result.
+Recomputed source, family, and artifact identities do not waive this constraint.
 The projection cache's `provider_symbol` must exactly match the retained source
 manifest, including provider aliases that differ from the canonical symbol.
 QF-9 market records omit this field and retain it inside the source evidence.
