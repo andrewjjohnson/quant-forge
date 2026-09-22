@@ -16,6 +16,7 @@ from quantforge.data import (
     IntradayRawSnapshot,
     MarketDataCache,
     MissingConstituentPolicy,
+    MultiTimeframeContext,
     SessionAggregationPolicy,
     TimeframeBarSeries,
     aggregate_intraday_dataset,
@@ -121,10 +122,9 @@ def test_complete_diagnostic_sessions_can_be_projected(
     assert cache.load(projected.metadata.dataset_id) == projected
 
 
-@pytest.mark.parametrize("mixed_graphs", [False, True], ids=["changed", "missing"])
-def test_prediction_context_requires_exact_family_manifest(
-    fixture: Fixture, tmp_path: Path, mixed_graphs: bool
-) -> None:
+def _alternate_family_context(
+    fixture: Fixture, mixed_graphs: bool = False
+) -> MultiTimeframeContext:
     provenance = fixture.dataset.metadata.intraday_provenance
     assert provenance is not None
     original_family = DatasetFamily.from_manifest(
@@ -169,9 +169,18 @@ def test_prediction_context_requires_exact_family_manifest(
     assert context.dataset_family_manifest_id == (
         None if mixed_graphs else family.manifest_id
     )
+    return context
+
+
+@pytest.mark.parametrize("mixed_graphs", [False, True], ids=["changed", "missing"])
+def test_prediction_context_requires_exact_family_manifest(
+    fixture: Fixture, tmp_path: Path, mixed_graphs: bool
+) -> None:
+    context = _alternate_family_context(fixture, mixed_graphs)
     with pytest.raises(ValidationError, match="context family manifest"):
         validate_prediction_context_sources(fixture.dataset, context)
 
+    rule, _ = study_inputs(fixture)
     provider = FixtureContextProvider(context)
     outcome = intraday_forward_return_outcome(timedelta(minutes=30), fixture.primary)
     study = PredictionStudy[SignalFeatureCandidate, Any, Any].create(

@@ -87,13 +87,20 @@ def validate_prediction_input_sources(
             return
         captured = mapping(context)
         # SKIP deliberately retains rejected evidence for auditability.
+        if captured.get("status") == "skipped":
+            return
         if captured.get("status") != "available":
-            return
+            raise ValidationError("prediction source context status is invalid")
         source_context = captured.get("source_context")
-        if source_context is None:
-            return
+        if not isinstance(source_context, dict):
+            raise ValidationError("prediction source context evidence is missing")
+        if (
+            source_context.get("dataset_family_manifest_id")
+            != (provenance.family_manifest.to_primitive()["manifest_id"])
+        ):
+            raise ValidationError("prediction context family manifest is incompatible")
         feed_scope = _context_feed_scope(captured, provenance.feed_scope_id)
-        timeframes = mapping(source_context).get("timeframes")
+        timeframes = source_context.get("timeframes")
         if not isinstance(timeframes, list):
             raise ManifestError("prediction source timeframes are invalid")
         for timeframe in timeframes:

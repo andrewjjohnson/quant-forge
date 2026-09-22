@@ -807,7 +807,7 @@ class MultiTimeframeContext:
         return bars[-1]
 
     def _identity_primitive(self) -> PrimitiveMapping:
-        return {
+        identity: PrimitiveMapping = {
             "schema_version": self.schema_version,
             "artifact_type": "multi_timeframe_context",
             "as_of": self.as_of.isoformat(),
@@ -819,6 +819,9 @@ class MultiTimeframeContext:
             "source_consistency": self.source_consistency.to_primitive(),
             "timeframes": [aligned.to_primitive() for aligned in self.timeframes],
         }
+        if self.dataset_family_manifest_id is not None:
+            identity["dataset_family_manifest_id"] = self.dataset_family_manifest_id
+        return identity
 
     @property
     def context_id(self) -> str:

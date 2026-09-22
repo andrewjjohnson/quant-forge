@@ -681,6 +681,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_coverage_integrity.py \
   tests/integration/test_intraday_prediction_retrieval_integrity.py \
   tests/integration/test_intraday_prediction_endpoint_integrity.py \
+  tests/integration/test_intraday_prediction_context_evidence.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -704,5 +705,8 @@ retained chunk instant after rehashing cache, prediction, and feature artifacts.
 They reject invalid chunk timestamps and compare differing offsets as UTC instants.
 Endpoint regressions reject missing, malformed, or mixed provider endpoints in
 retained chunks while accepting a shared revision in rehashed prediction and
-feature artifacts. See
+feature artifacts. Context-evidence regressions bind serialized context identities
+to the exact family manifest and reject rehashed references to another valid graph.
+Available empty feature datasets must retain their source context; explicitly
+skipped contexts may omit it. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

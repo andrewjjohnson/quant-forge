@@ -55,6 +55,11 @@ Prediction and feature generation require the context's exact family manifest ID
 to match the projection's retained manifest before checking individual timeframes.
 A missing ID, including one caused by mixing series from different graphs, or a
 different graph with the same family ID and referenced members is rejected.
+The context's serialized `source_context` retains `dataset_family_manifest_id`
+as part of its `context_id`. QF-9 requires that ID to match the retained family
+manifest before accepting individual timeframe references. Available contexts
+must carry source evidence even when a feature dataset has zero candidates;
+only explicitly skipped contexts may omit it.
 
 The new optional `IntradayPredictionProvenance` record contains its own schema
 version (`3`), explicit event availability, source dataset/request/raw-snapshot
@@ -186,9 +191,14 @@ producer identity, hash, and row checks still apply.
 ## Serialization, identity, and resume
 
 Legacy daily schema-4 metadata omits `intraday_provenance` entirely. Its original
-serialized bytes, dataset identity, and prediction identity remain unchanged.
-An absent field means the established daily contract; it never implies
-unavailable intraday events. Explicit null or malformed new records are rejected
+serialized bytes and dataset identity remain unchanged, as do context-free
+daily prediction identities. Artifact-bound multi-timeframe context identities
+now include the exact family manifest ID, changing dependent study/feature IDs.
+Older intraday studies/features without that context evidence must be regenerated
+from their existing source caches. Contexts without a common family manifest
+retain their previous serialization, but are not valid for intraday-backed inputs.
+An absent `intraday_provenance` field means the established daily contract; it
+never implies unavailable intraday events. Explicit null or malformed new records are rejected
 by the cache reader. The additive intraday record round-trips with canonical
 sorted JSON and participates in dataset, study, feature, and checkpoint identity.
 Changes to adjustment semantics or source/event provenance cannot alias an
