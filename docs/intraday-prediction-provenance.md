@@ -24,9 +24,11 @@ Availability is separate from `corporate_actions_complete`.
 
 It reloads the source through the intraday cache and requires an exact match to
 the supplied dataset before creating any projection artifacts. This verifies
-the source identity, normalized bars, and raw-extract checksums. It then verifies
-the session aggregation against that source, verifies the
-family binding through the existing artifact APIs, and persists those completed
+the source identity, normalized bars, and raw-extract checksums. Cache loading
+also reconstructs typed raw snapshots and checks their identities against the
+normalized bars and retained manifest metadata, including each chunk's endpoint.
+The adapter then verifies the session aggregation and family binding through
+the existing artifact APIs, and persists those completed
 session prices as QF-11's session carrier. This retains the current QF-11/QF-48
 session-coverage contract; exact decisions and future labels still consume the
 canonical intraday series. No intraday bar is presented as a daily provider bar.
@@ -168,7 +170,10 @@ reports and warnings. This metadata-only check cannot authenticate observations
 that are absent from the manifest; loading the full cache still verifies the
 report against normalized bars and retained raw extracts.
 The producer reloads bars/raw extracts through the cache before capturing this
-evidence. Observational readers validate the retained metadata without I/O or
+evidence. Cache loading reconstructs the raw snapshots and the fetch result,
+then reproduces the manifest from those records; checksum-valid raw files alone
+cannot justify endpoint or other acquisition metadata that contradicts their bodies.
+Observational readers validate the retained metadata without I/O or
 recomputing bars; hashes establish consistency, not provider authenticity.
 
 Prediction and feature

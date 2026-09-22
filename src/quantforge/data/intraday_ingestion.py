@@ -409,6 +409,7 @@ class IntradayMarketDataCache:
             chunks = _mapping_list(manifest["chunks"], "manifest chunks")
             raw_snapshot_ids: list[str] = []
             raw_locations: list[str] = []
+            raw_snapshots: list[IntradayRawSnapshot] = []
             for chunk in chunks:
                 snapshot_id = _json_string(chunk, "raw_snapshot_id", "chunk")
                 raw_location = _json_string(chunk, "raw_location", "chunk")
@@ -417,6 +418,10 @@ class IntradayMarketDataCache:
                 raw_bytes = (self.root / raw_location).read_bytes()
                 if sha256_hex(raw_bytes) != snapshot_id:
                     raise CacheError("intraday raw artifact checksum mismatch")
+                snapshot = _raw_snapshot_from_primitive(json.loads(raw_bytes))
+                if snapshot.snapshot_id != snapshot_id:
+                    raise CacheError("intraday raw snapshot identity mismatch")
+                raw_snapshots.append(snapshot)
                 raw_snapshot_ids.append(snapshot_id)
                 raw_locations.append(raw_location)
             if sha256_hex(normalized_bytes) != manifest.get("data_sha256"):
@@ -436,6 +441,20 @@ class IntradayMarketDataCache:
             }
             if manifest.get("quality_report") != expected_quality:
                 raise CacheError("intraday quality report mismatch")
+            result = IntradayFetchResult(
+                batch,
+                tuple(raw_snapshots),
+                _json_string(manifest, "capabilities_configuration_id", "manifest"),
+            )
+            expected_identity = self._identity_value(
+                result, sha256_hex(normalized_bytes), quality_report
+            )
+            if canonical_json_bytes(identity) != canonical_json_bytes(
+                expected_identity
+            ):
+                raise CacheError(
+                    "intraday manifest metadata differs from raw snapshots"
+                )
             metadata = IntradayDatasetMetadata(
                 dataset_id=dataset_id,
                 request_id=request.request_id,
@@ -458,7 +477,7 @@ class IntradayMarketDataCache:
             )
         except CacheError:
             raise
-        except (KeyError, OSError, TypeError, ValueError) as error:
+        except (KeyError, OSError, OverflowError, TypeError, ValueError) as error:
             raise CacheError(
                 f"incomplete or corrupt intraday cache entry: {dataset_id}"
             ) from error
@@ -638,6 +657,40 @@ def _parse_utc(value: str) -> datetime:
     if parsed.utcoffset() is None:
         raise ValueError("cached timestamp must include a UTC offset")
     return parsed.astimezone(UTC)
+
+
+def _raw_snapshot_from_primitive(value: object) -> IntradayRawSnapshot:
+    mapping = _string_mapping(value, "raw snapshot")
+    if (
+        mapping.get("schema_version") != INTRADAY_RAW_SNAPSHOT_SCHEMA_VERSION
+        or mapping.get("artifact_type") != "intraday_raw_snapshot"
+    ):
+        raise CacheError("unsupported intraday raw snapshot schema")
+    parameters = _string_mapping(
+        mapping["request_parameters"], "raw request parameters"
+    )
+    return IntradayRawSnapshot(
+        provider_name=_json_string(mapping, "provider_name", "raw snapshot"),
+        provider_symbol=_json_string(mapping, "provider_symbol", "raw snapshot"),
+        adapter_version=_json_string(mapping, "adapter_version", "raw snapshot"),
+        endpoint=_json_string(mapping, "endpoint", "raw snapshot"),
+        source_request_id=_json_string(mapping, "source_request_id", "raw snapshot"),
+        chunk_start_timestamp=_parse_utc(
+            _json_string(mapping, "chunk_start_timestamp", "raw snapshot")
+        ),
+        chunk_end_timestamp=_parse_utc(
+            _json_string(mapping, "chunk_end_timestamp", "raw snapshot")
+        ),
+        retrieved_at=_parse_utc(_json_string(mapping, "retrieved_at", "raw snapshot")),
+        request_parameters=tuple(
+            (name, _json_string(parameters, name, "raw request parameters"))
+            for name in parameters
+        ),
+        records=tuple(
+            cast(ProviderRecord, record)
+            for record in _mapping_list(mapping["records"], "raw records")
+        ),
+    )
 
 
 def _manifest_identity(manifest: dict[str, object]) -> dict[str, object]:

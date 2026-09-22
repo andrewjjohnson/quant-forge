@@ -682,6 +682,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_retrieval_integrity.py \
   tests/integration/test_intraday_prediction_endpoint_integrity.py \
   tests/integration/test_intraday_prediction_context_evidence.py \
+  tests/integration/test_intraday_prediction_raw_integrity.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -708,5 +709,8 @@ retained chunks while accepting a shared revision in rehashed prediction and
 feature artifacts. Context-evidence regressions bind serialized context identities
 to the exact family manifest and reject rehashed references to another valid graph.
 Available empty feature datasets must retain their source context; explicitly
-skipped contexts may omit it. See
+skipped contexts may omit it. Raw-snapshot regressions reject rehashed manifests
+whose acquisition metadata contradicts their retained raw files, and reject
+malformed rehashed raw bodies before projection creates output. Valid one- and
+two-chunk caches still reload and project successfully. See
 [intraday prediction provenance](intraday-prediction-provenance.md).
