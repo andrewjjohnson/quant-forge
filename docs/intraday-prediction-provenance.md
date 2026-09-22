@@ -221,6 +221,15 @@ existing ingestion decoder before accepting that digest. Domain validation and
 canonical reserialization reject invalid prices, timestamps, extra fields,
 duplicate bars, ordering errors, and inconsistent request bindings even when
 all enclosing hashes have been recomputed.
+Every bar must name one retained raw chunk and start within that chunk's
+half-open request interval. Its provider, provider symbol, adapter version,
+request ID, and retrieval instant must match the corresponding acquisition
+metadata, using the same relationships enforced by `IntradayFetchResult`.
+Retrieval times are compared as instants, including equivalent offset notation.
+Readers also run the existing diagnostic coverage validator on the reconstructed
+batch and require exact agreement with the retained report. Missing, unexpected,
+developing, and zero-volume findings and their warnings must describe the actual
+observations; self-consistent report hashes alone are insufficient.
 
 Each retained session's OHLCV must also equal the reduction of its ordered source
 constituents: first open, maximum high, minimum low, last close, and summed
@@ -318,5 +327,6 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_composition_integrity.py \
   tests/integration/test_intraday_prediction_context_semantics.py \
   tests/integration/test_intraday_prediction_origin_integrity.py \
-  tests/integration/test_intraday_prediction_constituent_integrity.py
+  tests/integration/test_intraday_prediction_constituent_integrity.py \
+  tests/integration/test_intraday_prediction_source_bindings.py
 ```

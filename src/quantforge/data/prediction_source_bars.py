@@ -1,6 +1,8 @@
 """Lossless source-bar evidence authenticated by the existing canonical batch hash."""
 
+from datetime import datetime
 from decimal import InvalidOperation
+from typing import cast
 
 from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 from quantforge.data.exceptions import CacheError
@@ -54,6 +56,49 @@ def capture_source_bar_evidence(bars: tuple[IntradayBar, ...]) -> PrimitiveMappi
     return {"templates": templates, "observations": observations}
 
 
+def _validate_raw_chunk_bindings(
+    batch: IntradayBarBatch, source: PrimitiveMapping
+) -> None:
+    """Apply the fetch-result bar/raw provenance relationships to retained facts."""
+    chunks = source["chunks"]
+    if not isinstance(chunks, list) or any(
+        not isinstance(chunk, dict) for chunk in chunks
+    ):
+        raise ValueError("source raw chunks must be records")
+    by_snapshot: dict[str, PrimitiveMapping] = {}
+    for chunk in cast(list[PrimitiveMapping], chunks):
+        snapshot_id = chunk["raw_snapshot_id"]
+        if not isinstance(snapshot_id, str) or snapshot_id in by_snapshot:
+            raise ValueError("source raw snapshot identities must be unique strings")
+        by_snapshot[snapshot_id] = chunk
+    for bar in batch.bars:
+        chunk = by_snapshot.get(bar.provenance.source_snapshot_id)
+        if chunk is None:
+            raise ValueError("bar provenance names an unknown raw snapshot")
+        if not (
+            datetime.fromisoformat(cast(str, chunk["chunk_start_timestamp"]))
+            <= bar.start_timestamp
+            < datetime.fromisoformat(cast(str, chunk["chunk_end_timestamp"]))
+        ):
+            raise ValueError(
+                "bar start falls outside its referenced raw snapshot chunk"
+            )
+        if (
+            bar.provenance.provider_name,
+            bar.provenance.provider_symbol,
+            bar.provenance.adapter_version,
+            bar.provenance.retrieved_at,
+            bar.provenance.source_request_id,
+        ) != (
+            source["provider_name"],
+            source["provider_symbol"],
+            source["adapter_version"],
+            datetime.fromisoformat(cast(str, chunk["retrieved_at"])),
+            batch.request.request_id,
+        ):
+            raise ValueError("bar provenance differs from its retained raw snapshot")
+
+
 def validate_source_bar_evidence(
     evidence: PrimitiveMapping, source: PrimitiveMapping
 ) -> IntradayBarBatch:
@@ -104,6 +149,7 @@ def validate_source_bar_evidence(
         restored = intraday_batch_from_primitive(batch, request)
         if restored.batch_id != digest:
             raise ValueError("source batch serialization is not canonical")
+        _validate_raw_chunk_bindings(restored, source)
     except (
         KeyError,
         TypeError,

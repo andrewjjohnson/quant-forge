@@ -47,6 +47,7 @@ from tests.integration.test_intraday_prediction_request_integrity import (
     _rehash_nested,  # pyright: ignore[reportPrivateUsage]
     _rehash_source_evidence,  # pyright: ignore[reportPrivateUsage]
     _replace_ids,  # pyright: ignore[reportPrivateUsage]
+    bind_source_bars_to_chunks,
 )
 from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
@@ -209,6 +210,7 @@ def test_retrieval_uses_the_latest_chunk_instant(
     source["retrieved_at"] = (
         "2024-01-04T00:00:00+00:00" if wrong_maximum else "2024-01-04T01:00:00+00:00"
     )
+    bind_source_bars_to_chunks(provenance)
     provenance, _ = _rehash_source_evidence(provenance, original.to_primitive())
     market = PredictionMarketData.from_qf3(fixture.dataset.metadata).to_primitive()
     market.update(intraday_provenance=provenance, retrieved_at=source["retrieved_at"])

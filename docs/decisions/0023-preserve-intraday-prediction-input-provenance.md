@@ -48,6 +48,10 @@ cannot prove membership under the existing full-record batch hash. This adds
 intraday observations to manifests, but does not change the source/QF-19 schemas
 or rerun provider normalization. Reconstruct the typed request, bars, and batch
 with the ingestion decoder, verifying canonical serialization as well as hashes.
+Bind each bar to its retained raw chunk's interval, retrieval instant, and source
+provider/symbol/adapter/request metadata. Recompute diagnostic coverage from the
+typed batch and compare the complete report, preserving truthful zero-volume
+warnings and rejecting reports that contradict their observations.
 Verify each retained session's OHLCV from its ordered source bars with the same
 reduction used by QF-19. Volume summation is exact and independent of the ambient
 Decimal context; existing exact totals retain their identities, while previously

@@ -15,6 +15,10 @@ from quantforge.data.identity import serialize_bars_csv, sha256_hex
 from quantforge.data.intraday import IntradayBar
 from quantforge.data.intraday_aggregation import MissingConstituentPolicy
 from quantforge.data.intraday_coverage_evidence import validate_retained_coverage_report
+from quantforge.data.intraday_validation import (
+    IntradayValidationMode,
+    validate_intraday_coverage,
+)
 from quantforge.data.lineage import DatasetFamily
 from quantforge.data.models import DailyBar, IntradayPredictionProvenance
 from quantforge.data.multi_timeframe import TimeframeBarSeries
@@ -131,6 +135,10 @@ def validate_session_projection_evidence(
         ):
             raise ValueError("session OHLCV differs from its source constituents")
         coverage = validate_retained_coverage_report(source)
+        if coverage != validate_intraday_coverage(
+            source_batch, mode=IntradayValidationMode.DIAGNOSTIC
+        ):
+            raise ValueError("source coverage report differs from retained source bars")
         full_sessions = tuple(
             session
             for session in coverage.sessions

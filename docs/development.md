@@ -691,6 +691,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_context_semantics.py \
   tests/integration/test_intraday_prediction_origin_integrity.py \
   tests/integration/test_intraday_prediction_constituent_integrity.py \
+  tests/integration/test_intraday_prediction_source_bindings.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 

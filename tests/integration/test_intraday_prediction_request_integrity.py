@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -65,6 +66,40 @@ def _replace_ids(record: Primitive, replacements: dict[str, str]) -> Primitive:
     if isinstance(record, list):
         return [_replace_ids(value, replacements) for value in record]
     return replacements.get(record, record) if isinstance(record, str) else record
+
+
+def bind_source_bars_to_chunks(provenance: PrimitiveMapping) -> None:
+    """Rebind observations when a valid fixture changes chunk acquisition facts."""
+    source = cast(PrimitiveMapping, provenance["source_manifest"])
+    chunks = cast(list[PrimitiveMapping], source["chunks"])
+    evidence = cast(PrimitiveMapping, provenance["source_bar_evidence"])
+    original_templates = cast(list[PrimitiveMapping], evidence["templates"])
+    templates: list[Primitive] = []
+    indexes: dict[str, int] = {}
+    for observation in cast(list[PrimitiveMapping], evidence["observations"]):
+        timestamp = datetime.fromisoformat(cast(str, observation["start_timestamp"]))
+        chunk = next(
+            chunk
+            for chunk in chunks
+            if datetime.fromisoformat(cast(str, chunk["chunk_start_timestamp"]))
+            <= timestamp
+            < datetime.fromisoformat(cast(str, chunk["chunk_end_timestamp"]))
+        )
+        template = deepcopy(
+            original_templates[cast(int, observation["template_index"])]
+        )
+        cast(PrimitiveMapping, template["provenance"]).update(
+            source_snapshot_id=chunk["raw_snapshot_id"],
+            retrieved_at=datetime.fromisoformat(cast(str, chunk["retrieved_at"]))
+            .astimezone(UTC)
+            .isoformat(),
+        )
+        template_id = configuration_identity(template)
+        if template_id not in indexes:
+            indexes[template_id] = len(templates)
+            templates.append(template)
+        observation["template_index"] = indexes[template_id]
+    evidence["templates"] = templates
 
 
 def _alter_bounds(
@@ -143,6 +178,8 @@ def _alter_bounds(
         requested_end_timestamp=configuration.get("end_timestamp"),
     )
     quality["report_id"] = configuration_identity(report)
+    if change == "contiguous":
+        bind_source_bars_to_chunks(provenance)
     return _rehash_source_evidence(provenance, original)
 
 
@@ -183,6 +220,12 @@ def _rehash_session_evidence(
     report = cast(PrimitiveMapping, aggregation["report"])
     report["source_quality_report_id"] = quality["report_id"]
     report["source_batch_id"] = source["batch_id"]
+    report["source_zero_volume_interval_count"] = len(
+        cast(
+            list[Primitive],
+            cast(PrimitiveMapping, quality["report"])["zero_volume_intervals"],
+        )
+    )
     aggregation["report_id"] = configuration_identity(report)
     family = cast(PrimitiveMapping, manifest["dataset_family"])
     old_family_id = cast(str, family["family_id"])
