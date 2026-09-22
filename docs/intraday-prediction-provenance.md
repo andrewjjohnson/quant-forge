@@ -70,7 +70,8 @@ identity, session-policy identity, and immutable copies of the selected family
 manifest and canonical intraday source manifest. The cache's raw extract also
 retains these manifests alongside the original session manifest. `provider_name`
 remains the original provider; `adapter_version` identifies QuantForge's
-projection. Requested session bounds describe the projected completed sessions;
+projection. Requested session bounds equal the actual first and last projected
+completed sessions, and `missing_sessions` is always empty;
 the original intraday request bounds remain in the retained source evidence.
 
 This adapter handles sources explicitly reporting unavailable events. It does
@@ -153,9 +154,12 @@ Retained request and chunk bounds must use the canonical UTC ISO representation
 emitted by intraday ingestion. The request must have a strictly increasing range;
 its nonempty chunks must be ordered, contiguous, and cover that exact range.
 The request must include the full first and last projected exchange sessions,
-resolved under the retained timeframe's session policy, and the requested and
-actual projection session bounds must be ordered. Wider source requests remain
-valid; calendar dates alone cannot establish full-session coverage. These checks
+resolved under the retained timeframe's session policy. The projection's session
+bounds must be ordered, with each requested bound equal to its corresponding
+actual bound and no missing sessions. Rehashed projections cannot trim the actual
+interval while retaining broader requested session bounds or relabel completed
+sessions as missing. Wider source requests remain valid; calendar dates alone
+cannot establish full-session coverage. These checks
 apply even when every enclosing request, source, family, and artifact ID has been
 recomputed, without fetching data or regenerating research results.
 The source manifest's coverage report is also reconstructed and must reproduce

@@ -684,6 +684,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_context_evidence.py \
   tests/integration/test_intraday_prediction_raw_integrity.py \
   tests/integration/test_intraday_prediction_source_requirements.py \
+  tests/integration/test_intraday_prediction_session_range.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -718,5 +719,7 @@ require sources for elapsed outcomes and bind each context reference to its own
 aligned timeframe, including after every enclosing identity is recomputed. Every
 available primary and contextual timeframe must retain its dataset reference in
 both feature snapshots and exported directories, including when no candidates
-were generated. See
+were generated. Session-range regressions reject projections whose requested and
+actual bounds differ or that declare missing sessions, even after recomputing bar
+digests and dataset/study/feature identities. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

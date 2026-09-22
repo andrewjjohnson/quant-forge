@@ -274,6 +274,15 @@ def _validate_source_request_bounds(
         sessions.append(session)
     if sessions != sorted(sessions):
         raise ValueError("source request projection sessions must be ordered")
+    if (
+        sessions[0] != sessions[1]
+        or sessions[2] != sessions[3]
+        or record.get("missing_sessions") != []
+    ):
+        raise ValueError(
+            "projection session range must match its actual bounds "
+            "without missing sessions"
+        )
     timeframe = Timeframe.from_primitive(
         cast(
             PrimitiveMapping,
