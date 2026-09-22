@@ -37,6 +37,9 @@ from tests.integration.test_intraday_prediction_projection_boundaries import (
 )
 from tests.integration.test_intraday_prediction_provenance import Fixture, study_inputs
 from tests.integration.test_intraday_prediction_provenance import fixture as fixture
+from tests.integration.test_intraday_prediction_source_requirements import (
+    empty_artifacts as empty_artifacts,
+)
 from tests.unit.experiments.test_adapters import block_research
 from tests.unit.experiments.test_contracts import write_json
 from tests.unit.prediction.test_multi_timeframe_feature_dataset import (
@@ -198,4 +201,37 @@ def test_empty_feature_context_requires_source_evidence_unless_skipped(
         inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)
     else:
         with pytest.raises(ManifestError, match="prediction source context"):
+            inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("change", ["same", "missing", "null", "altered", "stale"])
+@pytest.mark.parametrize("empty", [False, True], ids=["candidates", "no_candidates"])
+@pytest.mark.parametrize("directory", [False, True], ids=["snapshot", "directory"])
+def test_feature_source_context_requires_its_own_identity(
+    feature_result: SignalFeatureDatasetResult,
+    empty_artifacts: tuple[PrimitiveMapping, SignalFeatureDatasetResult],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+    empty: bool,
+    directory: bool,
+) -> None:
+    result = empty_artifacts[1] if empty else feature_result
+    configuration = result.configuration
+    context = cast(PrimitiveMapping, configuration["prediction_context"])
+    source = cast(PrimitiveMapping, context["source_context"])
+    if change == "missing":
+        del source["context_id"]
+    elif change == "null":
+        source["context_id"] = None
+    elif change == "altered":
+        source["context_id"] = "0" * 64
+    elif change == "stale":
+        source["completion_policy"] = "developing_bar_as_of"
+    path = _write_rehashed_feature(result, configuration, tmp_path, directory)
+    block_research(monkeypatch)
+    if change == "same":
+        inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)
+    else:
+        with pytest.raises(ManifestError, match="source context identity"):
             inspect_study(StudyType.FEATURE_DATASET, path, artifact_root=tmp_path)

@@ -721,5 +721,9 @@ available primary and contextual timeframe must retain its dataset reference in
 both feature snapshots and exported directories, including when no candidates
 were generated. Session-range regressions reject projections whose requested and
 actual bounds differ or that declare missing sessions, even after recomputing bar
-digests and dataset/study/feature identities. See
+digests and dataset/study/feature identities. They also bind the range and bar count
+to every full session retained in source coverage while preserving excluded
+partial edge sessions. Feature context tests reject missing, altered, or stale
+source-context identities after the enclosing feature identity is recomputed,
+with and without candidate rows. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

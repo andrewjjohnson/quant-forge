@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import Primitive, PrimitiveMapping
 from quantforge.data import (
     MarketDataset,
     dataset_identity_matches,
@@ -16,6 +16,7 @@ from quantforge.data import (
 )
 from quantforge.data.exceptions import ValidationError
 from quantforge.data.identity import serialize_bars_csv, sha256_hex
+from quantforge.data.prediction_inputs import validate_prediction_provenance
 from quantforge.experiments import ManifestError, StudyType, inspect_study
 from quantforge.prediction import PredictionMarketData, SignalFeatureDatasetResult
 from tests.integration.test_intraday_prediction_feed_integrity import (
@@ -46,6 +47,8 @@ CHANGES = (
     "leading_bound",
     "trailing_bound",
     "missing_only",
+    "leading_subset",
+    "trailing_subset",
 )
 
 
@@ -71,6 +74,16 @@ def _alter_projection(fixture: Fixture, change: str) -> MarketDataset:
                 original.metadata,
                 actual_first_session=bars[0].session_date,
                 actual_last_session=bars[-1].session_date,
+                requested_start=(
+                    bars[0].session_date
+                    if change.endswith("subset")
+                    else original.metadata.requested_start
+                ),
+                requested_end=(
+                    bars[-1].session_date
+                    if change.endswith("subset")
+                    else original.metadata.requested_end
+                ),
                 bar_count=len(bars),
                 missing_sessions=missing,
                 data_sha256=sha256_hex(serialize_bars_csv(bars)),
@@ -81,7 +94,10 @@ def _alter_projection(fixture: Fixture, change: str) -> MarketDataset:
     return altered
 
 
-@pytest.mark.parametrize("change", ["same", "leading_gap", "trailing_gap"])
+@pytest.mark.parametrize(
+    "change",
+    ["same", "leading_gap", "trailing_gap", "leading_subset", "trailing_subset"],
+)
 def test_dataset_projection_cannot_relabel_edge_sessions_as_missing(
     fixture: Fixture, change: str
 ) -> None:
@@ -139,3 +155,13 @@ def test_projection_session_range_survives_rehashed_artifacts(
     else:
         with pytest.raises(ManifestError, match="projection session range"):
             inspect_study(study_type, path, artifact_root=tmp_path)
+
+
+@pytest.mark.parametrize("bar_count", [1, 3, True, None])
+def test_projection_count_matches_retained_full_sessions(
+    fixture: Fixture, bar_count: Primitive
+) -> None:
+    market = PredictionMarketData.from_qf3(fixture.dataset.metadata).to_primitive()
+    market["bar_count"] = bar_count
+    with pytest.raises(ValidationError, match="projection session range"):
+        validate_prediction_provenance(market)

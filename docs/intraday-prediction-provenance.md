@@ -59,7 +59,10 @@ A missing ID, including one caused by mixing series from different graphs, or a
 different graph with the same family ID and referenced members is rejected.
 The context's serialized `source_context` retains `dataset_family_manifest_id`
 as part of its `context_id`. QF-9 requires that ID to match the retained family
-manifest before accepting individual timeframe references. Available contexts
+manifest before accepting individual timeframe references. For available contexts,
+QF-9 also recomputes `context_id` from all remaining source-context fields before
+trusting their lineage, including in empty feature snapshots and directories.
+Available contexts
 must carry source evidence even when a feature dataset has zero candidates;
 only explicitly skipped contexts may omit it.
 
@@ -158,7 +161,11 @@ resolved under the retained timeframe's session policy. The projection's session
 bounds must be ordered, with each requested bound equal to its corresponding
 actual bound and no missing sessions. Rehashed projections cannot trim the actual
 interval while retaining broader requested session bounds or relabel completed
-sessions as missing. Wider source requests remain valid; calendar dates alone
+sessions as missing. The first and last sessions and the integer bar count must
+also match all fully requested sessions in the validated source coverage report,
+so shrinking both requested and actual bounds to a subset is invalid. Partially
+requested edge sessions remain excluded, matching one-session aggregation.
+Wider source requests remain valid; calendar dates alone
 cannot establish full-session coverage. These checks
 apply even when every enclosing request, source, family, and artifact ID has been
 recomputed, without fetching data or regenerating research results.

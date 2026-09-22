@@ -22,6 +22,7 @@ from quantforge.data import (
     aggregate_intraday_dataset,
     aggregate_session_dataset,
     build_multi_timeframe_context,
+    validate_market_dataset,
 )
 from quantforge.data.exceptions import ValidationError
 from quantforge.data.prediction_inputs import (
@@ -119,6 +120,74 @@ def test_complete_diagnostic_sessions_can_be_projected(
         intraday_cache=IntradayMarketDataCache(fixture.cache.root),
     )
     assert projected.bars == fixture.dataset.bars
+    assert cache.load(projected.metadata.dataset_id) == projected
+
+
+@pytest.mark.parametrize("edge", ["leading", "trailing"])
+def test_projection_excludes_partially_requested_edge_sessions(
+    fixture: Fixture, tmp_path: Path, edge: str
+) -> None:
+    original = fixture.source
+    request = replace(
+        original.request,
+        start_timestamp=(
+            original.request.start_timestamp + timedelta(minutes=1)
+            if edge == "leading"
+            else original.request.start_timestamp
+        ),
+        end_timestamp=(
+            original.request.end_timestamp - timedelta(minutes=1)
+            if edge == "trailing"
+            else original.request.end_timestamp
+        ),
+    )
+    metadata = original.metadata
+    raw = IntradayRawSnapshot(
+        metadata.provider_name,
+        metadata.provider_symbol,
+        metadata.adapter_version,
+        "offline-fixture",
+        request.request_id,
+        request.start_timestamp,
+        request.end_timestamp,
+        metadata.retrieved_at,
+        (),
+        ({"partial_edge": edge},),
+    )
+    bars = tuple(
+        replace(
+            bar,
+            provenance=replace(
+                bar.provenance,
+                source_request_id=request.request_id,
+                source_snapshot_id=raw.snapshot_id,
+            ),
+        )
+        for bar in original.bars
+        if request.start_timestamp <= bar.start_timestamp
+        and bar.end_timestamp <= request.end_timestamp
+    )
+    intraday_cache = IntradayMarketDataCache(tmp_path / "source")
+    source = intraday_cache.persist(
+        IntradayFetchResult(
+            IntradayBarBatch(request, bars),
+            (raw,),
+            metadata.capabilities_configuration_id,
+        )
+    )
+    assert source.quality_report.is_complete
+    assert len(source.quality_report.sessions) == 2
+    sessions = aggregate_session_dataset(source, DAILY)
+    cache = MarketDataCache(tmp_path / "projection")
+    projected = prediction_dataset_from_intraday(
+        source, sessions, cache=cache, intraday_cache=intraday_cache
+    )
+    expected = (
+        fixture.dataset.bars[1:] if edge == "leading" else fixture.dataset.bars[:-1]
+    )
+    assert projected.bars == expected
+    assert projected.metadata.bar_count == 1
+    assert validate_market_dataset(projected) == ()
     assert cache.load(projected.metadata.dataset_id) == projected
 
 

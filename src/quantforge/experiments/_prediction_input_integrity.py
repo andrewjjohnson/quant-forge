@@ -111,6 +111,10 @@ def validate_prediction_input_sources(
         source_context = captured.get("source_context")
         if not isinstance(source_context, dict):
             raise ValidationError("prediction source context evidence is missing")
+        if source_context.get("context_id") != configuration_identity(
+            {key: value for key, value in source_context.items() if key != "context_id"}
+        ):
+            raise ValidationError("prediction source context identity is inconsistent")
         if (
             source_context.get("dataset_family_manifest_id")
             != (provenance.family_manifest.to_primitive()["manifest_id"])

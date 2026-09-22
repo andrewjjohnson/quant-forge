@@ -214,6 +214,24 @@ def _validate_source_evidence(
         ):
             raise ValueError("raw identifiers or source semantics differ")
         _validate_source_request_bounds(configuration, chunks, record)
+        # The validated coverage report contains every session considered by
+        # one-session aggregation; partially requested edge sessions are excluded.
+        full_sessions = [
+            session["session_date"]
+            for session in cast(list[PrimitiveMapping], coverage["sessions"])
+            if session["request_covers_full_session"] is True
+        ]
+        if (
+            not full_sessions
+            or record.get("actual_first_session") != full_sessions[0]
+            or record.get("actual_last_session") != full_sessions[-1]
+            or type(record.get("bar_count")) is not int
+            or record["bar_count"] != len(full_sessions)
+        ):
+            raise ValueError(
+                "projection session range or bar count differs from "
+                "complete source sessions"
+            )
     except (KeyError, TypeError, ValueError) as error:
         raise ValidationError(
             f"prediction input source manifest is invalid: {error}"
