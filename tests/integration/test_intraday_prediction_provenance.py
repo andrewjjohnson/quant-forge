@@ -765,7 +765,7 @@ def test_incompatible_context_is_rejected_or_recorded_as_skipped(
         rule, outcome.labeler, outcome.evaluator, outcome_source=fixture.primary
     )
     if not skip:
-        with pytest.raises(InvalidPredictionDataError, match="source lineage"):
+        with pytest.raises(InvalidPredictionDataError, match="context family manifest"):
             run_prediction_study(
                 fixture.dataset, study, context_provider=other_provider
             )

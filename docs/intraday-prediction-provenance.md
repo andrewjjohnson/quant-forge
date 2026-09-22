@@ -31,6 +31,10 @@ session prices as QF-11's session carrier. This retains the current QF-11/QF-48
 session-coverage contract; exact decisions and future labels still consume the
 canonical intraday series. No intraday bar is presented as a daily provider bar.
 No provider client, network call, or second cache is introduced.
+The session aggregation report must be complete before any projection is
+persisted. Diagnostic aggregates with missing constituents or incomplete source
+coverage are rejected because the session carrier cannot preserve partial-bar
+quality evidence. A diagnostic policy is accepted when its report is complete.
 
 ```python
 from quantforge.data.prediction_inputs import prediction_dataset_from_intraday
@@ -47,6 +51,10 @@ prediction_input = prediction_dataset_from_intraday(
 When combining 2-minute and daily artifacts, pass the **same composed family**
 used to bind both context series. Their separate aggregation families are not
 interchangeable. Existing QF-20 artifact composition rules remain authoritative.
+Prediction and feature generation require the context's exact family manifest ID
+to match the projection's retained manifest before checking individual timeframes.
+A missing ID, including one caused by mixing series from different graphs, or a
+different graph with the same family ID and referenced members is rejected.
 
 The new optional `IntradayPredictionProvenance` record contains its own schema
 version (`3`), explicit event availability, source dataset/request/raw-snapshot

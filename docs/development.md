@@ -675,7 +675,8 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_feed_integrity.py \
   tests/integration/test_intraday_prediction_family_integrity.py \
   tests/integration/test_intraday_prediction_lineage_integrity.py \
-  tests/integration/test_intraday_prediction_evidence_integrity.py
+  tests/integration/test_intraday_prediction_evidence_integrity.py \
+  tests/integration/test_intraday_prediction_projection_boundaries.py
 ```
 
 The synthetic cache-only fixture exercises canonical SPY one-minute input,
@@ -684,5 +685,7 @@ QF-49/QF-47 outcomes, QF-9 integrity, and compatible/incompatible resume. The re
 regressions reject rehashed source-lineage, feed-scope, outcome-timeframe, and
 session-policy mismatches in prediction/feature artifacts without executing
 research. Projection tests also reject source metadata, bars, and raw extracts that differ from the
-immutable intraday cache. See
+immutable intraday cache, and incomplete diagnostic session aggregates. Runtime
+context tests reject missing or different exact family manifests in prediction
+and feature generation. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

@@ -325,6 +325,8 @@ def prediction_dataset_from_intraday(
         raise ValidationError(
             "prediction session dataset differs from its intraday source"
         )
+    if not sessions.aggregation_report.is_complete:
+        raise ValidationError("prediction input requires complete session aggregates")
     TimeframeBarSeries.from_aggregated_session_dataset(sessions, family=family)
     basis = source.request.adjustment_basis
     if basis.corporate_action_policy != INTRADAY_CORPORATE_ACTION_POLICY:
@@ -511,6 +513,13 @@ def validate_prediction_context_sources(
     """Bind visible context sources without rewriting or stripping provenance."""
     if not isinstance(cast(object, context), MultiTimeframeContext):
         raise ValidationError("prediction context provider returned an invalid context")
+    provenance = dataset.metadata.intraday_provenance
+    if (
+        provenance is not None
+        and context.dataset_family_manifest_id
+        != provenance.family_manifest.to_primitive()["manifest_id"]
+    ):
+        raise ValidationError("prediction context family manifest is incompatible")
     for item in context.timeframes:
         if item.dataset_reference is not None:
             _validate_source(
