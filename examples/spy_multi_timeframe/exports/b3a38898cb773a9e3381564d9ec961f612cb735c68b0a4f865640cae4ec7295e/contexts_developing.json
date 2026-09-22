@@ -5,7 +5,8 @@
         "artifact_type": "multi_timeframe_context",
         "as_of": "2024-07-01T15:00:00+00:00",
         "completion_policy": "developing_bar_as_of",
-        "context_id": "d197f9d6bdb62ad8733a0626cb66a1c092629784bffb72f9e0a22876fe96ddb7",
+        "context_id": "4abbbc5cafac6c99b83825c2c305ee6f48099761ace5c7b65db14b7042ba9e30",
+        "dataset_family_manifest_id": "9499fc0fad05b6ec8e57db0032f1ad78c24f1bba8b2cc36a057b528210ee6cea",
         "primary_timeframe": {
           "configuration": {
             "bar_label": "bar_start",
@@ -1034,7 +1035,7 @@
           }
         ]
       },
-      "context_id": "d197f9d6bdb62ad8733a0626cb66a1c092629784bffb72f9e0a22876fe96ddb7",
+      "context_id": "4abbbc5cafac6c99b83825c2c305ee6f48099761ace5c7b65db14b7042ba9e30",
       "latest_bars": {
         "4h": {
           "bar": {
@@ -1427,7 +1428,8 @@
         "artifact_type": "multi_timeframe_context",
         "as_of": "2024-07-03T16:55:00+00:00",
         "completion_policy": "developing_bar_as_of",
-        "context_id": "e0a6e2e14167068923c106ab8d49cd225b8a06118ecc2d511fa4b8487f9e7537",
+        "context_id": "7d109ecfb22de3578a53dcda6d13c109dc5b9ca2ef3df10ccb5f02fefd7c0625",
+        "dataset_family_manifest_id": "9499fc0fad05b6ec8e57db0032f1ad78c24f1bba8b2cc36a057b528210ee6cea",
         "primary_timeframe": {
           "configuration": {
             "bar_label": "bar_start",
@@ -2868,7 +2870,7 @@
           }
         ]
       },
-      "context_id": "e0a6e2e14167068923c106ab8d49cd225b8a06118ecc2d511fa4b8487f9e7537",
+      "context_id": "7d109ecfb22de3578a53dcda6d13c109dc5b9ca2ef3df10ccb5f02fefd7c0625",
       "latest_bars": {
         "4h": {
           "bar": {
@@ -3488,7 +3490,8 @@
         "artifact_type": "multi_timeframe_context",
         "as_of": "2024-07-10T16:00:00+00:00",
         "completion_policy": "developing_bar_as_of",
-        "context_id": "11f35eebb53897c378d807a9d19192617f34d4b5793fe7afa930c137e794a0b6",
+        "context_id": "be5d03efc8c113421c7ff06ca3ed717b38c6f0a264109d89cf763ffe1bcdc893",
+        "dataset_family_manifest_id": "9499fc0fad05b6ec8e57db0032f1ad78c24f1bba8b2cc36a057b528210ee6cea",
         "primary_timeframe": {
           "configuration": {
             "bar_label": "bar_start",
@@ -5173,7 +5176,7 @@
           }
         ]
       },
-      "context_id": "11f35eebb53897c378d807a9d19192617f34d4b5793fe7afa930c137e794a0b6",
+      "context_id": "be5d03efc8c113421c7ff06ca3ed717b38c6f0a264109d89cf763ffe1bcdc893",
       "latest_bars": {
         "4h": {
           "bar": {
@@ -5760,7 +5763,8 @@
         "artifact_type": "multi_timeframe_context",
         "as_of": "2024-07-12T19:55:00+00:00",
         "completion_policy": "developing_bar_as_of",
-        "context_id": "7e504cbc53daf1635c7f3f8ea08bb6f30865646f333b0a78b57268d3153d1a59",
+        "context_id": "3f66cd442ab1d86b1be4b1b5f253bcdf62519bbf701f070c25a318a190ce6bf0",
+        "dataset_family_manifest_id": "9499fc0fad05b6ec8e57db0032f1ad78c24f1bba8b2cc36a057b528210ee6cea",
         "primary_timeframe": {
           "configuration": {
             "bar_label": "bar_start",
@@ -7906,7 +7910,7 @@
           }
         ]
       },
-      "context_id": "7e504cbc53daf1635c7f3f8ea08bb6f30865646f333b0a78b57268d3153d1a59",
+      "context_id": "3f66cd442ab1d86b1be4b1b5f253bcdf62519bbf701f070c25a318a190ce6bf0",
       "latest_bars": {
         "4h": {
           "bar": {

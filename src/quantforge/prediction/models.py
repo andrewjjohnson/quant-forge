@@ -13,7 +13,7 @@ from quantforge.configuration import (
     PrimitiveScalar,
     decimal_to_primitive,
 )
-from quantforge.data.models import DatasetMetadata
+from quantforge.data.models import DatasetMetadata, IntradayPredictionProvenance
 from quantforge.prediction.errors import InvalidPredictionOutputError
 
 
@@ -162,6 +162,7 @@ class PredictionMarketData:
     volume_basis: str
     adjusted_fields_used: bool
     corporate_action_policy: str
+    intraday_provenance: IntradayPredictionProvenance | None = None
 
     @classmethod
     def from_qf3(cls, metadata: DatasetMetadata) -> "PredictionMarketData":
@@ -190,6 +191,7 @@ class PredictionMarketData:
             volume_basis=metadata.volume_basis,
             adjusted_fields_used=metadata.adjusted_fields_used,
             corporate_action_policy=metadata.corporate_action_policy,
+            intraday_provenance=metadata.intraday_provenance,
         )
 
     def to_primitive(self) -> PrimitiveMapping:
@@ -220,6 +222,11 @@ class PredictionMarketData:
             "volume_basis": self.volume_basis,
             "adjusted_fields_used": self.adjusted_fields_used,
             "corporate_action_policy": self.corporate_action_policy,
+            **(
+                {"intraday_provenance": self.intraday_provenance.to_primitive()}
+                if self.intraday_provenance is not None
+                else {}
+            ),
         }
 
 

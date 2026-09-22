@@ -224,6 +224,15 @@ chunk range, retrieval timestamp, parent request ID, and adapter version. Its
 SHA-256 is both its immutable filename and the `source_snapshot_id` retained by
 every canonical bar derived from it.
 
+Loading a dataset verifies each raw checksum and reconstructs its typed
+`IntradayRawSnapshot`. The reconstructed snapshot must reproduce the raw identity.
+The loader then validates the original `IntradayFetchResult` contract against
+the normalized bars and rebuilds the manifest identity from those snapshots.
+Provider identity, endpoint, chunk ranges, retrieval times, and request/bar
+references must match the retained raw metadata. Rehashing a manifest cannot
+substitute a different endpoint while keeping the original raw extracts.
+This requires no provider calls and does not rerun provider normalization.
+
 The normalized artifact is the QF-15 canonical `IntradayBarBatch`. Dataset
 schema version 1 manifests bind:
 

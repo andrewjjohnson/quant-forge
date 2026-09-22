@@ -985,3 +985,12 @@ native/TA-Lib computation before manifest generation. They cover successful and
 failed holdout consumption, regeneration, integrity, schemas, relationships,
 historical backend preservation and immutable serialization. Existing QF-34
 HTML is indexed directly. No live API, credential or profitability claim is used.
+
+## Intraday input provenance (QF-51)
+
+Prediction and feature `market_data` records can retain the versioned
+`intraday_provenance` reference, including explicit unavailable corporate-action
+events and source/family/session/feed identity. QF-9 checks contradictory event
+claims and incompatible recorded context/outcome references while retaining all
+existing identity and artifact checks. No alternate manifest is introduced.
+See [intraday prediction provenance](intraday-prediction-provenance.md).

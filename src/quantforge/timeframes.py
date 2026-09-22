@@ -8,7 +8,7 @@ from importlib import import_module
 from typing import Protocol, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.configuration import Primitive, PrimitiveMapping, configuration_identity
 
 TIMEFRAME_SCHEMA_VERSION = "1"
 XNYS_CALENDAR = "XNYS"
@@ -303,6 +303,10 @@ class TradingWeekInterval:
         return {"kind": self.kind.value, "week_count": self.week_count}
 
 
+def _time_from_primitive(value: Primitive) -> time | None:
+    return None if value is None else time.fromisoformat(cast(str, value))
+
+
 type BarInterval = IntradayInterval | SessionInterval | TradingWeekInterval
 
 
@@ -340,6 +344,60 @@ class Timeframe:
     def us_equity(cls, interval: BarInterval | None = None) -> "Timeframe":
         """Build the canonical XNYS regular-hours configuration."""
         return cls(SessionInterval() if interval is None else interval)
+
+    @classmethod
+    def from_primitive(cls, configuration: PrimitiveMapping) -> "Timeframe":
+        """Restore canonical semantics through the same validated domain types."""
+        try:
+            interval = cast(PrimitiveMapping, configuration["interval"])
+            session = cast(PrimitiveMapping, configuration["session_policy"])
+            kind = IntervalKind(cast(str, interval["kind"]))
+            canonical_interval: BarInterval
+            if kind is IntervalKind.INTRADAY:
+                canonical_interval = IntradayInterval(
+                    timedelta(
+                        microseconds=cast(
+                            int, interval["nominal_duration_microseconds"]
+                        )
+                    ),
+                    anchor=IntradayAnchor(cast(str, interval["anchor"])),
+                    clock_anchor=_time_from_primitive(interval["clock_anchor"]),
+                    cross_session_policy=CrossSessionPolicy(
+                        cast(str, interval["cross_session_policy"])
+                    ),
+                )
+            elif kind is IntervalKind.EXCHANGE_SESSIONS:
+                canonical_interval = SessionInterval(
+                    cast(int, interval["session_count"])
+                )
+            else:
+                canonical_interval = TradingWeekInterval(
+                    cast(int, interval["week_count"])
+                )
+            canonical = cls(
+                canonical_interval,
+                session_policy=ExchangeSessionPolicy(
+                    calendar_name=cast(str, session["calendar"]),
+                    timezone_name=cast(str, session["timezone"]),
+                    scope=SessionScope(cast(str, session["scope"])),
+                    extended_hours_start=_time_from_primitive(
+                        session["extended_hours_start"]
+                    ),
+                    extended_hours_end=_time_from_primitive(
+                        session["extended_hours_end"]
+                    ),
+                ),
+                bar_label=BarLabel(cast(str, configuration["bar_label"])),
+                developing_bar_exposure=DevelopingBarExposure(
+                    cast(str, configuration["developing_bar_exposure"])
+                ),
+                schema_version=cast(str, configuration["schema_version"]),
+            )
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise TimeframeValidationError("timeframe definition is invalid") from error
+        if configuration_identity(configuration) != canonical.configuration_id:
+            raise TimeframeValidationError("timeframe definition is noncanonical")
+        return canonical
 
     def to_primitive(self) -> PrimitiveMapping:
         """Return every material semantic policy in a stable primitive schema."""

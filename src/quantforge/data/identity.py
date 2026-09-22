@@ -6,12 +6,16 @@ from dataclasses import asdict
 from datetime import UTC, date, datetime
 from typing import cast
 
+from quantforge.configuration import PrimitiveMappingSnapshot
 from quantforge.data.corporate_actions import (
     action_seeds_from_records,
     bind_corporate_actions,
     corporate_action_snapshot_id,
 )
 from quantforge.data.models import AdjustmentMode, DailyBar, MarketDataset
+
+INTRADAY_PREDICTION_ADAPTER_VERSION = "quantforge_intraday_prediction_input_v1"
+INTRADAY_PREDICTION_DATASET_PREFIX = "intraday-projection-"
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -40,6 +44,37 @@ def serialize_metadata_values(
 ) -> dict[str, object]:
     """Return metadata in the canonical JSON-compatible representation."""
     value = metadata_values.copy()
+    # Omit the additive reference for legacy daily schema-4 identities.
+    provenance = value.get("intraday_provenance")
+    if provenance is None:
+        value.pop("intraday_provenance", None)
+    elif isinstance(provenance, dict):
+        provenance = cast(dict[str, object], provenance)
+        value["intraday_provenance"] = {
+            **provenance,
+            **{
+                name: PrimitiveMappingSnapshot(
+                    cast(
+                        str, cast(dict[str, object], provenance[name])["canonical_json"]
+                    )
+                ).to_primitive()
+                for name in (
+                    "family_manifest",
+                    "source_manifest",
+                    "session_evidence",
+                    "source_bar_evidence",
+                )
+            },
+            "source_raw_snapshot_ids": list(
+                cast(tuple[str, ...], provenance["source_raw_snapshot_ids"])
+            ),
+        }
+    else:
+        from quantforge.data.models import IntradayPredictionProvenance
+
+        value["intraday_provenance"] = cast(
+            IntradayPredictionProvenance, provenance
+        ).to_primitive()
     for field in (
         "requested_start",
         "requested_end",
@@ -72,7 +107,13 @@ def calculate_dataset_id(
         "data_sha256": data_sha256,
         "schema_version": schema_version,
     }
-    return sha256_hex(canonical_json_bytes(identity))
+    digest = sha256_hex(canonical_json_bytes(identity))
+    if (
+        metadata_values.get("intraday_provenance") is not None
+        or metadata_values.get("adapter_version") == INTRADAY_PREDICTION_ADAPTER_VERSION
+    ):
+        return INTRADAY_PREDICTION_DATASET_PREFIX + digest
+    return digest
 
 
 def dataset_identity_matches(dataset: MarketDataset) -> bool:

@@ -24,6 +24,10 @@ same content-addressed directory and verifies every existing byte. It never
 overwrites a differing artifact. Use `--cache-root` and `--output-root` to run
 an isolated copy.
 
+The golden export includes each context's exact `dataset_family_manifest_id`
+in its identity. Regenerating the export for this evidence changes the context
+and example hashes; the synthetic bars and source/derived manifests are unchanged.
+
 ## Data scope and limitations
 
 The input is a deterministic, redistributable synthetic fixture with canonical

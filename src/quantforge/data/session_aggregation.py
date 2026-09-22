@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 from typing import cast
 
 from quantforge.configuration import (
@@ -803,6 +803,30 @@ def _complete_target_periods(
     return tuple(periods), tuple(excluded)
 
 
+def session_constituent_ohlcv(
+    bars: tuple[IntradayBar, ...],
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
+    """Reduce ordered, validated constituents with exact volume summation.
+
+    All volumes are nonnegative finite decimals. Reserve enough digits for their
+    common exponent and a carry from every constituent, independent of the
+    caller's Decimal context. This same reduction verifies retained evidence.
+    """
+    if not bars:
+        raise SessionAggregationValidationError("session constituents are empty")
+    exponent = min(cast(int, bar.volume.as_tuple().exponent) for bar in bars)
+    precision = max(bar.volume.adjusted() for bar in bars) - exponent + 1
+    with localcontext(Context(prec=max(1, precision) + len(str(len(bars))))):
+        volume = sum((bar.volume for bar in bars), start=Decimal(0))
+    return (
+        bars[0].open,
+        max(bar.high for bar in bars),
+        min(bar.low for bar in bars),
+        bars[-1].close,
+        volume,
+    )
+
+
 def _aggregate_period(
     source_dataset: IntradayDataset,
     target_timeframe: Timeframe,
@@ -836,6 +860,9 @@ def _aggregate_period(
         )
     output: AggregatedSessionBar | None = None
     if observed:
+        open_price, high_price, low_price, close_price, volume = (
+            session_constituent_ohlcv(observed)
+        )
         output = AggregatedSessionBar(
             symbol=source_dataset.request.symbol,
             timeframe=target_timeframe,
@@ -859,11 +886,11 @@ def _aggregate_period(
                     if value.session_date == session_dates[-1]
                 )
             ].session_close_timestamp,
-            open=observed[0].open,
-            high=max(bar.high for bar in observed),
-            low=min(bar.low for bar in observed),
-            close=observed[-1].close,
-            volume=sum((bar.volume for bar in observed), start=Decimal(0)),
+            open=open_price,
+            high=high_price,
+            low=low_price,
+            close=close_price,
+            volume=volume,
             source_bar_ids=tuple(bar.bar_id for bar in observed),
             source_dataset_id=source_dataset.metadata.dataset_id,
         )
@@ -1132,4 +1159,5 @@ __all__ = [
     "SessionAggregationValidationError",
     "SessionAggregationWindowQuality",
     "aggregate_session_dataset",
+    "session_constituent_ohlcv",
 ]

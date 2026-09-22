@@ -233,6 +233,7 @@ ephemeral context results and require the explicit context policy.
 - the sorted contextual requirements and freshness limits;
 - the selected completion policy;
 - common-family validation evidence and family identity;
+- the exact `dataset_family_manifest_id` when all input series share one;
 - each timeframe's dataset reference, availability, age, latest completion,
   and ordered visible bar IDs.
 
@@ -244,7 +245,14 @@ dataset reference, reconstruction policy, `as_of`, exact constituents,
 boundaries, and OHLCV. Reproducing the context still requires the referenced
 immutable source dataset.
 
-The schema version is `1`.
+The schema version is `1`. Artifact-bound contexts include the optional
+`dataset_family_manifest_id` in both serialization and identity, so two graphs
+with the same family and visible members cannot share a context identity.
+Contexts without one common manifest omit the field and retain their previous
+serialization. Intraday prediction inputs require that exact manifest to match
+their retained source family, including during saved prediction/feature inspection.
+Regenerate older intraday context studies and feature artifacts that omit this
+evidence; their source caches remain usable.
 
 ## Deliberate limitations
 

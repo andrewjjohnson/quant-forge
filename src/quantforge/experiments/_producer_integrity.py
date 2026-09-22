@@ -4,6 +4,9 @@ from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._json import ManifestError, mapping, text
+from quantforge.experiments._prediction_input_integrity import (
+    validate_prediction_input_sources,
+)
 from quantforge.experiments._prediction_row_integrity import validate_prediction_row
 from quantforge.experiments._prediction_sessions import recorded_session_indexes
 from quantforge.experiments._prediction_temporal_integrity import (
@@ -36,6 +39,7 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
     ):
         raise ManifestError("prediction feature/outcome boundary is invalid")
     configuration = mapping(manifest.get("configuration"))
+    market = mapping(manifest.get("market_data"))
     identity: PrimitiveMapping = {
         "component": "quantforge_prediction_study",
         "engine_version": text(manifest.get("engine_version")),
@@ -48,6 +52,16 @@ def validate_prediction_identity(manifest: PrimitiveMapping) -> None:
         "study_id"
     ) != configuration_identity(identity):
         raise ManifestError("prediction study identity is inconsistent")
+    validate_prediction_input_sources(
+        market,
+        outcome_sources=(
+            (
+                mapping(configuration.get("outcome_labeler")).get("outcome_source"),
+                mapping(configuration.get("outcome_labeler")).get("configuration"),
+            ),
+        ),
+        context=manifest.get("prediction_context"),
+    )
     for name in ("prediction_rule", "outcome_labeler", "evaluator"):
         component = mapping(configuration.get(name))
         definition = mapping(component.get("configuration"))

@@ -1,21 +1,25 @@
 """Deterministic canonical-bar validation."""
 
+from dataclasses import asdict
 from datetime import date, datetime
 from decimal import Decimal
 from typing import cast
 
+from quantforge.configuration import PrimitiveMapping
 from quantforge.data.calendar import expected_sessions
 from quantforge.data.exceptions import ValidationError
-from quantforge.data.identity import dataset_identity_matches
+from quantforge.data.identity import dataset_identity_matches, serialize_metadata_values
 from quantforge.data.models import (
     SCHEMA_VERSION,
     AdjustmentMode,
     CashDividend,
     DailyBar,
     DatasetMetadata,
+    IntradayPredictionProvenance,
     MarketDataset,
     StockSplit,
 )
+from quantforge.data.prediction_inputs import validate_prediction_provenance
 
 
 def _calendar_sessions(start: date, end: date, calendar: str) -> tuple[date, ...]:
@@ -274,10 +278,16 @@ def validate_market_dataset(dataset: MarketDataset) -> tuple[date, ...]:
         )
     if not metadata.corporate_action_snapshot_id:
         raise ValidationError("corporate-action snapshot identity is required")
-    if metadata.corporate_action_policy != (
-        "separate_provider_reported_cash_dividends_and_splits"
+    if metadata.intraday_provenance is not None and not isinstance(
+        cast(object, metadata.intraday_provenance), IntradayPredictionProvenance
     ):
-        raise ValidationError("unsupported corporate-action dataset policy")
+        raise ValidationError("intraday prediction provenance must be typed")
+    try:
+        validate_prediction_provenance(
+            cast(PrimitiveMapping, serialize_metadata_values(asdict(metadata)))
+        )
+    except (TypeError, ValueError) as error:
+        raise ValidationError(str(error)) from error
     if not isinstance(cast(object, metadata.adjusted_fields_used), bool):
         raise ValidationError("adjusted-field usage must be explicit")
     expected_basis = (

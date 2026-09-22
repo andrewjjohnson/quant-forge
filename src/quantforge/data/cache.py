@@ -18,6 +18,7 @@ from quantforge.data.corporate_actions import (
 )
 from quantforge.data.exceptions import CacheError, ValidationError
 from quantforge.data.identity import (
+    INTRADAY_PREDICTION_ADAPTER_VERSION,
     calculate_dataset_id,
     canonical_json_bytes,
     serialize_bars_csv,
@@ -31,6 +32,7 @@ from quantforge.data.models import (
     CorporateAction,
     DailyBar,
     DatasetMetadata,
+    IntradayPredictionProvenance,
     MarketDataset,
     ProviderResponse,
     StockSplit,
@@ -171,6 +173,30 @@ class MarketDataCache:
                 or sha256_hex(raw_bytes) != manifest["raw_sha256"]
             ):
                 raise CacheError("cached artifact checksum mismatch")
+            raw_value: object = json.loads(raw_bytes)
+            raw_record = (
+                cast(dict[str, object], raw_value)
+                if isinstance(raw_value, dict)
+                else {}
+            )
+            raw_metadata = raw_record.get("metadata")
+            raw_metadata = (
+                cast(dict[str, object], raw_metadata)
+                if isinstance(raw_metadata, dict)
+                else {}
+            )
+            if (
+                raw_record.get("adapter_version") == INTRADAY_PREDICTION_ADAPTER_VERSION
+                or raw_metadata.get("component")
+                == "quantforge_intraday_prediction_input"
+            ) and (
+                manifest.get("adapter_version") != INTRADAY_PREDICTION_ADAPTER_VERSION
+                or manifest.get("intraday_provenance") is None
+            ):
+                raise CacheError(
+                    "intraday projection raw artifact requires its provenance "
+                    "and adapter identity"
+                )
             with data_path.open(newline="") as stream:
                 bars = tuple(
                     DailyBar(
@@ -336,6 +362,11 @@ def _metadata_from_dict(value: dict[str, Any]) -> DatasetMetadata:
         adjusted_fields_used=_manifest_boolean(value, "adjusted_fields_used"),
         corporate_action_policy=_manifest_string(value, "corporate_action_policy"),
         adapter_version=_manifest_string(value, "adapter_version"),
+        intraday_provenance=(
+            IntradayPredictionProvenance.from_primitive(value["intraday_provenance"])
+            if "intraday_provenance" in value
+            else None
+        ),
     )
 
 

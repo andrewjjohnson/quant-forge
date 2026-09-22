@@ -1,7 +1,7 @@
 import json
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from pathlib import Path
 from typing import cast
 from zoneinfo import ZoneInfo
@@ -142,6 +142,36 @@ def _dataset(*, omit_index: int | None = None) -> IntradayDataset:
 
 def _daily() -> Timeframe:
     return Timeframe.us_equity(SessionInterval())
+
+
+@pytest.mark.parametrize("precision", [2, 28, 50])
+def test_session_volume_reduction_is_exact_and_context_independent(
+    precision: int,
+) -> None:
+    source = _dataset()
+    first_volume = Decimal("1000.12345678901234567890123456789")
+    bars = tuple(
+        replace(bar, volume=first_volume if index == 0 else Decimal(1000))
+        for index, bar in enumerate(source.bars)
+    )
+    batch = IntradayBarBatch(source.request, bars)
+    source = replace(
+        source,
+        bars=bars,
+        metadata=replace(
+            source.metadata,
+            batch_id=batch.batch_id,
+            data_sha256=sha256_hex(batch.serialize()),
+            quality_report=validate_intraday_coverage(
+                batch, mode=IntradayValidationMode.DIAGNOSTIC
+            ),
+        ),
+    )
+    expected = aggregate_session_dataset(source, _daily())
+    assert expected.bars[0].volume == Decimal("2000.12345678901234567890123456789")
+    with localcontext() as context:
+        context.prec = precision
+        assert aggregate_session_dataset(source, _daily()) == expected
 
 
 def _weekly() -> Timeframe:

@@ -231,3 +231,11 @@ The real example is fixed at 2020-01-01 through 2025-12-31, explicitly selects
 `DividendPolicy.PRICE_RETURN_ONLY`, prints ignored-dividend disclosures and a
 price-return warning, and writes only under Git-ignored `data/` and `reports/`
 roots.
+
+## Intraday prediction input (QF-51)
+
+The additive, versioned `intraday_provenance` reference permits truthful
+unavailable corporate-action events on a validated intraday-derived session
+input. Legacy daily metadata and identities stay unchanged. See
+[intraday prediction provenance](intraday-prediction-provenance.md) for the
+adapter, strict compatibility rules, and existing-cache behavior.

@@ -666,3 +666,84 @@ See [intraday path outcomes](intraday-path-outcomes.md) for exact intervals,
 reference price, ratio conventions, ambiguity, completeness, and provenance.
 The fixtures cover real QF-7/QF-29/QF-39 exports, QF-48 timestamp validation,
 QF-40 aggregation without path recomputation, safe resume, and QF-9 inspection.
+
+## Intraday prediction provenance acceptance tests (QF-51)
+
+```bash
+uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py \
+  tests/integration/test_intraday_prediction_manifest_integrity.py \
+  tests/integration/test_intraday_prediction_feed_integrity.py \
+  tests/integration/test_intraday_prediction_family_integrity.py \
+  tests/integration/test_intraday_prediction_lineage_integrity.py \
+  tests/integration/test_intraday_prediction_evidence_integrity.py \
+  tests/integration/test_intraday_prediction_projection_boundaries.py \
+  tests/integration/test_intraday_prediction_request_integrity.py \
+  tests/integration/test_intraday_prediction_coverage_integrity.py \
+  tests/integration/test_intraday_prediction_retrieval_integrity.py \
+  tests/integration/test_intraday_prediction_endpoint_integrity.py \
+  tests/integration/test_intraday_prediction_context_evidence.py \
+  tests/integration/test_intraday_prediction_raw_integrity.py \
+  tests/integration/test_intraday_prediction_source_requirements.py \
+  tests/integration/test_intraday_prediction_session_range.py \
+  tests/integration/test_intraday_prediction_price_integrity.py \
+  tests/integration/test_intraday_prediction_session_evidence.py \
+  tests/integration/test_intraday_prediction_composition_integrity.py \
+  tests/integration/test_intraday_prediction_context_semantics.py \
+  tests/integration/test_intraday_prediction_origin_integrity.py \
+  tests/integration/test_intraday_prediction_constituent_integrity.py \
+  tests/integration/test_intraday_prediction_source_bindings.py \
+  tests/unit/test_intraday_coverage_evidence.py
+```
+
+The synthetic cache-only fixture exercises canonical SPY one-minute input,
+derived two-minute/daily bars, truthful unavailable events, context construction,
+QF-49/QF-47 outcomes, QF-9 integrity, and compatible/incompatible resume. The reader
+regressions reject rehashed source-lineage, feed-scope, outcome-timeframe, and
+session-policy mismatches in prediction/feature artifacts without executing
+research. Projection tests also reject source metadata, bars, and raw extracts that differ from the
+immutable intraday cache, and incomplete diagnostic session aggregates. Runtime
+context tests reject missing or different exact family manifests in prediction
+and feature generation. Rehashed request-evidence tests reject malformed or
+unordered bounds, incomplete chunk coverage, and requests that exclude projected
+sessions, including prediction and feature inspection with research blocked.
+Coverage-report regressions reject stale report IDs, source-reference mismatches,
+false completeness, and inconsistent session evidence after rehashing enclosing
+artifacts. Round-trip tests preserve legitimate diagnostic gaps, warnings,
+holidays, early closes, DST, extended hours, and developing bars.
+Retrieval regressions bind the projection and source timestamps to the latest
+retained chunk instant after rehashing cache, prediction, and feature artifacts.
+They reject invalid chunk timestamps and compare differing offsets as UTC instants.
+Endpoint regressions reject missing, malformed, or mixed provider endpoints in
+retained chunks while accepting a shared revision in rehashed prediction and
+feature artifacts. Context-evidence regressions bind serialized context identities
+to the exact family manifest and reject rehashed references to another valid graph.
+Available empty feature datasets must retain their source context; explicitly
+skipped contexts may omit it. Raw-snapshot regressions reject rehashed manifests
+whose acquisition metadata contradicts their retained raw files, and reject
+malformed rehashed raw bodies before projection creates output. Valid one- and
+two-chunk caches still reload and project successfully. Empty-artifact tests also
+require sources for elapsed outcomes and bind each context reference to its own
+aligned timeframe, including after every enclosing identity is recomputed. Every
+available primary and contextual timeframe must retain its dataset reference in
+both feature snapshots and exported directories, including when no candidates
+were generated. Session-range regressions reject projections whose requested and
+actual bounds differ or that declare missing sessions, even after recomputing bar
+digests and dataset/study/feature identities. They also bind the range and bar count
+to every full session retained in source coverage while preserving excluded
+partial edge sessions. Feature context tests reject missing, altered, or stale
+source-context identities after the enclosing feature identity is recomputed,
+with and without candidate rows. Price-binding tests change each OHLCV field and
+recompute projection identities, then check dataset validation, cache reload,
+prediction inspection, and feature snapshot/directory inspection. Retained
+session-evidence tests also reject altered proofs and preserve exact decimal
+serialization. Composition tests require the selected family's policy to bind
+the original session-family manifest, including after enclosing identities are
+recomputed. Context-semantics tests reject rehashed completion-policy, source
+requirement, staleness, and selected-bar inconsistencies in feature snapshots and
+directories, with and without candidates. Origin regressions reject stripped
+provenance and relabeled daily policies while retaining a projection reference,
+including a relabeled adapter over an immutable projection raw extract.
+Constituent regressions authenticate source observations against the original
+batch digest and reject rehashed arbitrary, swapped, or reordered session IDs.
+See
+[intraday prediction provenance](intraday-prediction-provenance.md).

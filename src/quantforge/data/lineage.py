@@ -25,6 +25,12 @@ class MixedDatasetFamilyError(DatasetFamilyValidationError):
     """A context silently combines datasets without common-source provenance."""
 
 
+def _record(value: object) -> PrimitiveMapping:
+    if not isinstance(value, dict):
+        raise DatasetFamilyValidationError("family manifest values must be records")
+    return cast(PrimitiveMapping, value)
+
+
 def _validated_text(value: object, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise DatasetFamilyValidationError(f"{field_name} must be a nonempty string")
@@ -313,6 +319,74 @@ class DatasetFamily:
     canonical_source_snapshot_id: str
     datasets: tuple[DatasetLineage, ...]
     schema_version: str = DATASET_FAMILY_SCHEMA_VERSION
+
+    @classmethod
+    def from_manifest(cls, manifest: PrimitiveMapping) -> "DatasetFamily":
+        """Rebuild and validate every family member and DAG link, then its identity."""
+        try:
+            source = _record(manifest["canonical_source"])
+            feed = _record(source["feed_scope"])
+            basis = _record(source["adjustment_basis"])
+            aggregation = _record(
+                _record(source["aggregation_policy"])["configuration"]
+            )
+            lineage = manifest["lineage"]
+            if not isinstance(lineage, list):
+                raise DatasetFamilyValidationError("family lineage must be an array")
+            datasets: list[DatasetLineage] = []
+            for primitive in lineage:
+                entry = _record(primitive)
+                children = entry["child_dataset_ids"]
+                if not isinstance(children, list):
+                    raise DatasetFamilyValidationError(
+                        "family children must be an array"
+                    )
+                datasets.append(
+                    DatasetLineage(
+                        cast(str, entry["dataset_id"]),
+                        Timeframe.from_primitive(
+                            _record(_record(entry["timeframe"])["configuration"])
+                        ),
+                        cast(str, entry["canonical_source_snapshot_id"]),
+                        cast(str | None, entry["parent_dataset_id"]),
+                        tuple(cast(list[str], children)),
+                    )
+                )
+            family = cls(
+                cast(str, source["symbol"]),
+                cast(str, source["provider"]),
+                FeedScope(
+                    FeedCoverage(cast(str, feed["coverage"])),
+                    cast(str | None, feed["market_center"]),
+                    cast(str | None, feed["provider_scope"]),
+                ),
+                AdjustmentBasis(
+                    AdjustmentMode(cast(str, basis["adjustment_mode"])),
+                    cast(str, basis["ohlc_basis"]),
+                    cast(str, basis["volume_basis"]),
+                    cast(str, basis["corporate_action_policy"]),
+                    cast(bool, basis["adjusted_fields_used"]),
+                ),
+                AggregationPolicy(
+                    cast(str, aggregation["policy_name"]),
+                    cast(str, aggregation["policy_version"]),
+                    _record(aggregation["configuration"]),
+                ),
+                cast(str, source["snapshot_id"]),
+                tuple(datasets),
+                cast(str, manifest["schema_version"]),
+            )
+            if configuration_identity(family.to_manifest()) != configuration_identity(
+                manifest
+            ):
+                raise DatasetFamilyValidationError(
+                    "family manifest is noncanonical or has inconsistent identities"
+                )
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise DatasetFamilyValidationError(
+                f"family lineage manifest is invalid: {error}"
+            ) from error
+        return family
 
     def __post_init__(self) -> None:
         symbol = _validated_text(self.canonical_symbol, "canonical symbol")

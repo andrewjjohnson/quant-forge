@@ -1607,6 +1607,16 @@ def _capture_multi_timeframe_feature_context(
         if isinstance(provider_context, MultiTimeframeContext):
             source_context = provider_context
         metadata = dataset.metadata
+        if source_context is not None and metadata.intraday_provenance is not None:
+            from quantforge.data.exceptions import ValidationError
+            from quantforge.data.prediction_inputs import (
+                validate_prediction_context_sources,
+            )
+
+            try:
+                validate_prediction_context_sources(dataset, source_context)
+            except (ValueError, ValidationError) as error:
+                raise PredictionContextError(str(error)) from error
         rule_context = build_prediction_rule_context(
             requirements,
             cast(MultiTimeframeContext, provider_context),
