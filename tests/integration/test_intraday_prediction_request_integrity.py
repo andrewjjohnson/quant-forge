@@ -146,6 +146,92 @@ def _alter_bounds(
     return _rehash_source_evidence(provenance, original)
 
 
+def _rehash_session_evidence(
+    provenance: PrimitiveMapping,
+    original: PrimitiveMapping,
+    replacements: dict[str, str],
+) -> None:
+    """Rebind retained QF-19 evidence when a test changes its canonical source."""
+    source = cast(PrimitiveMapping, provenance["source_manifest"])
+    evidence = cast(
+        PrimitiveMapping, _replace_ids(original["session_evidence"], replacements)
+    )
+    manifest = cast(PrimitiveMapping, evidence["manifest"])
+    serialized = cast(PrimitiveMapping, evidence["bars"])
+    old_session_id = cast(str, manifest["dataset_id"])
+    old_digest = cast(str, manifest["data_sha256"])
+    for entry in cast(list[PrimitiveMapping], serialized["bars"]):
+        previous = cast(str, entry["bar_id"])
+        entry["bar_id"] = configuration_identity(cast(PrimitiveMapping, entry["bar"]))
+        replacements[previous] = entry["bar_id"]
+    manifest = cast(PrimitiveMapping, _replace_ids(manifest, replacements))
+    quality = cast(PrimitiveMapping, source["quality_report"])
+    manifest["source_dataset"] = {
+        "dataset_id": source["dataset_id"],
+        "request_id": cast(PrimitiveMapping, source["request"])["request_id"],
+        "batch_id": source["batch_id"],
+        "data_sha256": source["data_sha256"],
+        "raw_snapshot_ids": [
+            chunk["raw_snapshot_id"]
+            for chunk in cast(list[PrimitiveMapping], source["chunks"])
+        ],
+        "quality_report": deepcopy(quality),
+        "provider_name": source["provider_name"],
+        "provider_symbol": source["provider_symbol"],
+    }
+    aggregation = cast(PrimitiveMapping, manifest["aggregation_report"])
+    report = cast(PrimitiveMapping, aggregation["report"])
+    report["source_quality_report_id"] = quality["report_id"]
+    report["source_batch_id"] = source["batch_id"]
+    aggregation["report_id"] = configuration_identity(report)
+    family = cast(PrimitiveMapping, manifest["dataset_family"])
+    old_family_id = cast(str, family["family_id"])
+    old_manifest_id = cast(str, family["manifest_id"])
+    family["family_id"] = configuration_identity(
+        {
+            key: value
+            for key, value in family.items()
+            if key not in {"family_id", "manifest_id", "lineage"}
+        }
+    )
+    cast(PrimitiveMapping, manifest["source_dataset_family"])["family_id"] = family[
+        "family_id"
+    ]
+    manifest["data_sha256"] = configuration_identity(serialized)
+    session_id = configuration_identity(
+        {
+            key: value
+            for key, value in manifest.items()
+            if key
+            not in {
+                "dataset_id",
+                "normalized_location",
+                "manifest_location",
+                "dataset_family",
+            }
+        }
+    )
+    replacements[old_session_id] = session_id
+    replacements[old_digest] = manifest["data_sha256"]
+    family = cast(PrimitiveMapping, _replace_ids(family, {old_session_id: session_id}))
+    cast(list[PrimitiveMapping], family["lineage"]).sort(
+        key=lambda entry: cast(str, entry["dataset_id"])
+    )
+    family["manifest_id"] = configuration_identity(
+        {key: value for key, value in family.items() if key != "manifest_id"}
+    )
+    replacements[old_family_id] = cast(str, family["family_id"])
+    replacements[old_manifest_id] = family["manifest_id"]
+    manifest.update(
+        dataset_id=session_id,
+        normalized_location=f"session/derived/{session_id}/bars.json",
+        manifest_location=f"session/derived/{session_id}/manifest.json",
+        dataset_family=family,
+    )
+    provenance["session_evidence"] = {"manifest": manifest, "bars": serialized}
+    provenance["session_dataset_id"] = session_id
+
+
 def _rehash_source_evidence(
     provenance: PrimitiveMapping, original: PrimitiveMapping
 ) -> tuple[PrimitiveMapping, dict[str, str]]:
@@ -170,8 +256,10 @@ def _rehash_source_evidence(
         cast(str, original["source_dataset_id"]): source_id,
         cast(str, original["source_request_id"]): cast(str, request["request_id"]),
     }
+    _rehash_session_evidence(provenance, original, replacements)
     original_family = cast(PrimitiveMapping, original["family_manifest"])
     family = cast(PrimitiveMapping, _replace_ids(original_family, replacements))
+    _rehash_nested(family)
     family["family_id"] = configuration_identity(
         {
             key: value
@@ -180,6 +268,8 @@ def _rehash_source_evidence(
         }
     )
     # Source ID changes can change canonical ordering of the lineage entries.
+    for entry in cast(list[PrimitiveMapping], family["lineage"]):
+        cast(list[str], entry["child_dataset_ids"]).sort()
     cast(list[PrimitiveMapping], family["lineage"]).sort(
         key=lambda entry: cast(str, entry["dataset_id"])
     )

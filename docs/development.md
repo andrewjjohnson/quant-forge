@@ -685,6 +685,8 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_raw_integrity.py \
   tests/integration/test_intraday_prediction_source_requirements.py \
   tests/integration/test_intraday_prediction_session_range.py \
+  tests/integration/test_intraday_prediction_price_integrity.py \
+  tests/integration/test_intraday_prediction_session_evidence.py \
   tests/unit/test_intraday_coverage_evidence.py
 ```
 
@@ -725,5 +727,9 @@ digests and dataset/study/feature identities. They also bind the range and bar c
 to every full session retained in source coverage while preserving excluded
 partial edge sessions. Feature context tests reject missing, altered, or stale
 source-context identities after the enclosing feature identity is recomputed,
-with and without candidate rows. See
+with and without candidate rows. Price-binding tests change each OHLCV field and
+recompute projection identities, then check dataset validation, cache reload,
+prediction inspection, and feature snapshot/directory inspection. Retained
+session-evidence tests also reject altered proofs and preserve exact decimal
+serialization. See
 [intraday prediction provenance](intraday-prediction-provenance.md).

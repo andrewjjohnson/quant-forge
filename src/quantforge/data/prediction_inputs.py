@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, cast
@@ -29,7 +30,6 @@ from quantforge.data.lineage import (
 from quantforge.data.models import (
     AdjustmentMode,
     CorporateActionAvailability,
-    DailyBar,
     IntradayPredictionProvenance,
     JsonValue,
     MarketDataset,
@@ -39,6 +39,10 @@ from quantforge.data.multi_timeframe import (
     ContextBar,
     MultiTimeframeContext,
     TimeframeBarSeries,
+)
+from quantforge.data.prediction_session_evidence import (
+    session_projection_bars,
+    validate_session_projection_evidence,
 )
 from quantforge.data.session_aggregation import (
     AggregatedSessionDataset,
@@ -141,6 +145,7 @@ def validate_prediction_provenance(
     )
     _validate_family_evidence(provenance, record, basis)
     _validate_source_evidence(provenance, record)
+    validate_session_projection_evidence(provenance, record)
     return provenance
 
 
@@ -440,18 +445,7 @@ def prediction_dataset_from_intraday(
         raise ValidationError(
             "intraday prediction projection requires explicit unavailable events"
         )
-    bars = tuple(
-        DailyBar(
-            bar.symbol,
-            bar.session_dates[0],
-            bar.open,
-            bar.high,
-            bar.low,
-            bar.close,
-            bar.volume,
-        )
-        for bar in sessions.bars
-    )
+    bars = session_projection_bars(sessions.bars)
     if not bars:
         raise ValidationError("prediction input requires completed session coverage")
     provenance = IntradayPredictionProvenance(
@@ -466,6 +460,12 @@ def prediction_dataset_from_intraday(
         CorporateActionAvailability.UNAVAILABLE,
         PrimitiveMappingSnapshot.capture(family.to_manifest()),
         source_manifest,
+        PrimitiveMappingSnapshot.capture(
+            {
+                "manifest": sessions.to_manifest(),
+                "bars": json.loads(sessions.serialize_bars()),
+            }
+        ),
     )
     # The immutable raw extract is the original derived artifact manifest. It
     # records the full source family and aggregation evidence, not invented events.

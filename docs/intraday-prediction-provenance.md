@@ -67,10 +67,12 @@ must carry source evidence even when a feature dataset has zero candidates;
 only explicitly skipped contexts may omit it.
 
 The new optional `IntradayPredictionProvenance` record contains its own schema
-version (`3`), explicit event availability, source dataset/request/raw-snapshot
+version (`4`), explicit event availability, source dataset/request/raw-snapshot
 references, session dataset/timeframe references, chosen family identity, feed
 identity, session-policy identity, and immutable copies of the selected family
-manifest and canonical intraday source manifest. The cache's raw extract also
+manifest and canonical intraday source manifest. Its immutable `session_evidence`
+also retains the original QF-19 session manifest and normalized bar artifact.
+The cache's raw extract also
 retains these manifests alongside the original session manifest. `provider_name`
 remains the original provider; `adapter_version` identifies QuantForge's
 projection. Requested session bounds equal the actual first and last projected
@@ -151,8 +153,7 @@ representations are accepted; missing, malformed, naive, or different timestamps
 are rejected. The source timestamp must also equal the latest retrieval instant
 among all retained raw chunks, matching the ingestion producer's rule. Every
 chunk must carry an aware timestamp; chunk order and equivalent UTC-offset
-representations do not affect the maximum. These checks preserve schema version
-3 and valid artifact identities.
+representations do not affect the maximum.
 Retained request and chunk bounds must use the canonical UTC ISO representation
 emitted by intraday ingestion. The request must have a strictly increasing range;
 its nonempty chunks must be ordered, contiguous, and cover that exact range.
@@ -184,8 +185,18 @@ The producer reloads bars/raw extracts through the cache before capturing this
 evidence. Cache loading reconstructs the raw snapshots and the fetch result,
 then reproduces the manifest from those records; checksum-valid raw files alone
 cannot justify endpoint or other acquisition metadata that contradicts their bodies.
-Observational readers validate the retained metadata without I/O or
-recomputing bars; hashes establish consistency, not provider authenticity.
+Observational readers validate retained evidence without I/O or rerunning
+aggregation; hashes establish consistency, not provider authenticity.
+
+Session evidence binds the projected OHLCV values to the named QF-19 artifact.
+Readers reconstruct typed session bars and their report, verify the original bar
+IDs, serialized content digest, dataset identity, family, and source bindings,
+then serialize the projected daily bars and compare that digest with QF-3's
+`data_sha256` or QF-9's `bars_fingerprint`. Rehashing a changed projection or
+replacing its evidence prices cannot preserve the original session artifact ID.
+Projection decimal strings use the existing canonical exact-decimal formatter;
+removing representation-only zeros changes no numerical values. This makes the
+fingerprint reproducible from canonical session evidence.
 
 Prediction and feature
 manifests bind every recorded outcome source and available context source to the
@@ -231,11 +242,14 @@ by the cache reader. The additive intraday record round-trips with canonical
 sorted JSON and participates in dataset, study, feature, and checkpoint identity.
 Changes to adjustment semantics or source/event provenance cannot alias an
 existing artifact. Compatible runs use existing cache/resume validation.
-Earlier intraday provenance version-1 and version-2 projections lack the complete
-required source evidence and are rejected. Regenerate those projections from the existing
+Earlier intraday provenance versions 1–3 lack the complete required session
+price evidence and are rejected. Version 4 changes intraday projection, study,
+feature, and checkpoint identities. Regenerate those projections from the existing
 intraday cache and session aggregates, then recreate dependent studies/features;
 do not relabel or reuse their old checkpoint identities. Legacy daily artifacts
-remain unchanged.
+remain unchanged. Manifests now include completed session OHLCV and constituent
+identities as well as metadata, increasing their size with the source history;
+they do not include the underlying intraday OHLCV observations.
 
 The original QF-45 cache-only reproducer used 8,190 Tiingo SPY one-minute bars
 for January 2–31, 2024, 4,095 derived two-minute bars, and 21 derived session bars.
@@ -255,5 +269,7 @@ uv run --frozen pytest tests/integration/test_intraday_prediction_provenance.py 
   tests/integration/test_intraday_prediction_feed_integrity.py \
   tests/integration/test_intraday_prediction_family_integrity.py \
   tests/integration/test_intraday_prediction_lineage_integrity.py \
-  tests/integration/test_intraday_prediction_evidence_integrity.py
+  tests/integration/test_intraday_prediction_evidence_integrity.py \
+  tests/integration/test_intraday_prediction_price_integrity.py \
+  tests/integration/test_intraday_prediction_session_evidence.py
 ```

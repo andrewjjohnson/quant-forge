@@ -55,7 +55,7 @@ def serialize_metadata_values(
                         str, cast(dict[str, object], provenance[name])["canonical_json"]
                     )
                 ).to_primitive()
-                for name in ("family_manifest", "source_manifest")
+                for name in ("family_manifest", "source_manifest", "session_evidence")
             },
             "source_raw_snapshot_ids": list(
                 cast(tuple[str, ...], provenance["source_raw_snapshot_ids"])

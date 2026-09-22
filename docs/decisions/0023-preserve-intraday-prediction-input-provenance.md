@@ -22,14 +22,23 @@ semantics, explicit unavailable events, source/family/feed/session identity, and
 full source evidence. Context and generic outcome dispatch require matching
 provenance; their original price-basis equality checks remain intact.
 
-Provenance version 3 embeds immutable family and intraday source manifests so
+Provenance version 4 embeds immutable family and intraday source manifests so
 observational cache and experiment readers can recompute the source dataset,
 request, family, and exact-graph identities. Request and raw-snapshot IDs must
 match the source manifest; complete family DAG validation reuses the domain
 constructor, including members unused by a study.
 The declared adjustment basis must match the committed canonical source, and
-outcome manifest IDs must match the retained graph. Version-1/2 intraday projections
+outcome manifest IDs must match the retained graph. Version-1/2/3 intraday projections
 must be regenerated from canonical caches; no missing evidence is inferred.
+
+Retain the original QF-19 session manifest and normalized session bars in immutable
+session evidence. The QF-19 and QF-3 byte formats differ, so their digests cannot be
+compared directly. Readers rebuild the typed session artifact and verify its
+original identity before comparing the canonical projected OHLCV digest with the
+recorded dataset fingerprint. This preserves QF-19 schemas and identities and
+does not rerun aggregation. Projected decimals use exact canonical strings so
+the same values have a reproducible fingerprint. Retaining the session evidence
+increases manifest size but permits standalone QF-9 checks without source I/O.
 
 Omit the additive reference for legacy daily serialization so existing daily
 identities remain stable. New provenance participates in existing identities
