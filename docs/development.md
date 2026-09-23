@@ -4,7 +4,8 @@ QF-52 bounded intraday input regression (synthetic immutable caches, no network)
 
 ```bash
 uv run --frozen pytest tests/integration/test_bounded_prediction_views.py \
-  tests/integration/test_bounded_prediction_workflow.py
+  tests/integration/test_bounded_prediction_workflow.py \
+  tests/integration/test_bounded_session_integrity.py
 ```
 
 See [the bounded-input contract](bounded-prediction-inputs.md) for ancestry,

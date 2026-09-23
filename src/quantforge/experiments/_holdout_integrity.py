@@ -25,6 +25,7 @@ from quantforge.experiments._producer_integrity import validate_backtest_identit
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.oos.models import OOSSource
 from quantforge.oos.prediction import PredictionMetricFields
+from quantforge.oos.source import prediction_view_bounds
 from quantforge.prediction import PredictionDecisionSchedule
 from quantforge.timeframes import resolve_exchange_session
 
@@ -193,20 +194,22 @@ def validate_holdout_artifact(
         canonical_metadata = (
             source.plan.environment.outcome_dataset.market_data_metadata
         )
-        if canonical_metadata is not None:
+        if (
+            canonical_metadata is not None
+            and canonical_metadata.intraday_provenance is not None
+        ):
             try:
+                cutoff, start = prediction_view_bounds(
+                    source.plan,
+                    source.plan.final_holdout.window,
+                    membership,
+                    expected_schedule.decision_timestamps[0],
+                )
                 validate_prediction_view_lineage(
                     market,
                     canonical_metadata,
-                    expected_schedule.decision_timestamps[0]
-                    if source.plan.prediction_membership is not None
-                    else resolve_exchange_session(
-                        date.fromisoformat(text(market["actual_last_session"])),
-                        primary.session_policy,
-                    ).close_timestamp,
-                    start=None
-                    if source.plan.prediction_membership is not None
-                    else date.fromisoformat(text(market["actual_first_session"])),
+                    cutoff,
+                    start=start,
                 )
             except (ValidationError, ValueError) as error:
                 raise ManifestError(str(error)) from error

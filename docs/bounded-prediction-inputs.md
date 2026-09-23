@@ -72,6 +72,13 @@ cutoff from the exact decision schedule. Rehashed ancestry, prices/evidence, or
 cutoff changes are rejected. The parent stays outside the evaluator. No provider
 request or research callback is needed.
 
+For session-based plans, both offline readers derive the start from the plan's
+warm-up requirement and retained membership, and the end from the last retained
+evaluation session plus the configured label horizon in canonical observation
+order. Captured warm-up keys must match the plan's preceding observations. The
+candidate market record's own range never supplies its expected ancestry bounds;
+even a valid, fully rehashed canonical subview is rejected if its range differs.
+
 ## Integration and compatibility
 
 `prediction_metadata_prefix` routes intraday inputs to the factory at the first

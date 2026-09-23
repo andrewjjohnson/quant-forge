@@ -119,6 +119,7 @@ def cached_fixture(
     *,
     provider_symbol: str = "SPY",
     session_dates: tuple[date, ...] = (date(2024, 1, 2), date(2024, 1, 3)),
+    primary_timeframe: Timeframe = TWO_MINUTES,
 ) -> Fixture:
     """Synthetic prices, same SPY/1m/unavailable contract as real QF-45 data."""
     request = IntradayBarRequest(
@@ -184,7 +185,7 @@ def cached_fixture(
     )
     # Core reproducer starts at the cache boundary; no provider is constructed.
     source = intraday_cache.load(source.metadata.dataset_id, request)
-    primary = aggregate_intraday_dataset(source, TWO_MINUTES)
+    primary = aggregate_intraday_dataset(source, primary_timeframe)
     daily = aggregate_session_dataset(source, DAILY)
     children = (primary.metadata.dataset_id, daily.metadata.dataset_id)
     source_id = source.metadata.dataset_id
@@ -211,7 +212,7 @@ def cached_fixture(
         source_id,
         (
             DatasetLineage(source_id, ONE_MINUTE, source_id, None, children),
-            DatasetLineage(children[0], TWO_MINUTES, source_id, source_id),
+            DatasetLineage(children[0], primary_timeframe, source_id, source_id),
             DatasetLineage(children[1], DAILY, source_id, source_id),
         ),
     )
