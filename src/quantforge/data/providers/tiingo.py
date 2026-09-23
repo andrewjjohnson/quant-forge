@@ -25,6 +25,7 @@ from quantforge.data.intraday_ingestion import (
     IntradayRawSnapshot,
 )
 from quantforge.data.intraday_validation import (
+    IntradayCoverageReport,
     IntradayCoverageValidationError,
     validate_intraday_coverage,
 )
@@ -203,6 +204,11 @@ class TiingoProvider:
     def fetch_intraday_bars(self, request: IntradayBarRequest) -> IntradayBarBatch:
         """Return QF-15 canonical bars for an explicit Tiingo feed request."""
         return self.fetch_intraday(request).batch
+
+    @staticmethod
+    def can_reuse_intraday_cache(quality_report: IntradayCoverageReport) -> bool:
+        """Apply current coverage requirements to any cached adapter revision."""
+        return quality_report.is_complete
 
     def fetch_intraday(self, request: IntradayBarRequest) -> IntradayFetchResult:
         """Retrieve bounded raw chunks and normalize them into one stable batch."""

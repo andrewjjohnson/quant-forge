@@ -42,6 +42,15 @@ Bump only the Tiingo intraday adapter version to 2. Logical request identity and
 raw/dataset schemas remain unchanged. Raw layout/version are already identity
 material, and old valid cache artifacts remain reusable before provider access.
 
+Apply that same Tiingo completeness requirement when reusing caches, including
+adapter-1 diagnostic artifacts. The provider boundary resolves the policy by name
+without constructing a credentialed client; orchestration remains provider-neutral.
+Reuse complete legacy artifacts unchanged. Reacquire incompatible coverage when
+a provider is configured, replacing only the request pointer after success, or
+fail explicitly offline. Preserve direct diagnostic cache inspection and other
+providers' existing reuse policies. No cache schema or request-identity migration
+is required.
+
 ## Consequences
 
 Request counts rise to roughly one per session; correctness takes precedence
@@ -73,3 +82,6 @@ rows, duplicate/overlapping chunks, safe diagnostics, immutable old/new caches,
 a non-Tiingo single-range provider, and QF-51/QF-52 composition. Controlled live
 verification uses the normal market-data service/cache; results are reported in
 the PR without committing licensed observations or credentials.
+Cache regressions cover missing legacy bars and whole sessions, credential-free
+rejection, successful replacement and replay, unchanged artifacts/pointers after
+failed reacquisition, and continued diagnostic reuse by another provider.

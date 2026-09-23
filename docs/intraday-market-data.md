@@ -236,6 +236,13 @@ unchanged. Raw layout, adapter version, and retrieval timestamps already
 participate in snapshot/dataset identity, so a fresh acquisition has its own
 immutable identity. Existing valid adapter-1 caches remain readable and reusable
 before credentials/network; they are not overwritten or silently upgraded.
+Cache reuse applies Tiingo's current completeness requirement to every adapter
+revision using the quality report recomputed by the cache reader. An incomplete
+legacy artifact is reacquired through the configured provider, with the request
+pointer replaced only after acquisition succeeds. Without a provider, the service
+raises `RequestError` rather than returning incomplete history. Failed acquisition
+leaves the previous pointer and immutable artifacts unchanged. Direct cache loads
+remain available for diagnostic inspection of historical incomplete artifacts.
 
 Errors retain symbol, interval, endpoint (hence feed), logical range, and available
 session/retention/chunk context. Row failures include index, a normalized valid
@@ -252,6 +259,12 @@ access. A cached request can therefore be replayed with only
 `provider_name="tiingo"`; constructing a provider or supplying
 `TIINGO_API_KEY` is unnecessary. A cache miss without a provider fails
 explicitly.
+
+Credential-free cache compatibility policies live at the provider boundary in
+`quantforge.data.providers`; Tiingo owns its complete-coverage requirement.
+The service delegates reuse eligibility there before returning cached data.
+Providers without a stricter policy retain their existing diagnostic cache reuse,
+including when the service is configured with only a provider name.
 
 The intraday namespace is separate from QF-3 daily schema version 4:
 

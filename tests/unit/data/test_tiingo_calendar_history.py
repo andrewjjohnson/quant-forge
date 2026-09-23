@@ -25,6 +25,7 @@ from quantforge.data import (
     IntradayMarketDataService,
     IntradayRawSnapshot,
     ProviderError,
+    RequestError,
     validate_intraday_coverage,
 )
 from quantforge.data.calendar import expected_sessions
@@ -573,3 +574,135 @@ def test_malformed_in_session_extra_cannot_hide_behind_partial_end_clipping(
     # itself; a missing-coverage check cannot detect this case.
     with pytest.raises(ProviderError, match=r"row 210.*timestamp=2024-07-03T16:59:30"):
         TiingoProvider(TOKEN).fetch_intraday(request)
+
+
+@pytest.fixture(params=["missing_bar", "missing_session"])
+def incomplete_history(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> IntradayFetchResult:
+    install_history(monkeypatch)
+    logical_request = history_request("2024-07-02T00:00:00Z", "2024-07-06T00:00:00Z")
+    result = TiingoProvider(TOKEN).fetch_intraday(logical_request)
+    bars = result.batch.bars
+    retained = (
+        bars[1:]
+        if request.param == "missing_bar"
+        else tuple(bar for bar in bars if bar.session_date != date(2024, 7, 3))
+    )
+    return replace(result, batch=IntradayBarBatch(logical_request, retained))
+
+
+def test_incomplete_legacy_cache_is_reacquired_and_reused(
+    incomplete_history: IntradayFetchResult,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache = IntradayMarketDataCache(tmp_path)
+    legacy = cache.persist(single_snapshot_result(incomplete_history, "tiingo"))
+    assert legacy.metadata.adapter_version == "1"
+    assert not legacy.quality_report.is_complete
+    original_artifacts = {
+        path: path.read_bytes()
+        for directory in ("raw", "datasets")
+        for path in (tmp_path / "intraday" / directory).rglob("*.json")
+    }
+    calls = install_history(monkeypatch)
+    service = IntradayMarketDataService(cache, provider=TiingoProvider(TOKEN))
+    acquired = service.get_intraday_bars(legacy.request)
+    assert calls == [date(2024, 7, 2), date(2024, 7, 3), date(2024, 7, 5)]
+    assert acquired.quality_report.is_complete
+    assert acquired.metadata.adapter_version == "2"
+    assert acquired.metadata.dataset_id != legacy.metadata.dataset_id
+    assert cache.find("tiingo", legacy.request) == acquired
+    assert cache.load(legacy.metadata.dataset_id, legacy.request) == legacy
+    assert all(path.read_bytes() == body for path, body in original_artifacts.items())
+    calls.clear()
+    assert service.get_intraday_bars(legacy.request) == acquired
+    assert (
+        IntradayMarketDataService(cache, provider_name="tiingo").get_intraday_bars(
+            legacy.request
+        )
+        == acquired
+    )
+    assert calls == []
+
+
+def test_incomplete_legacy_cache_is_rejected_without_credentials_or_mutation(
+    incomplete_history: IntradayFetchResult,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache = IntradayMarketDataCache(tmp_path)
+    legacy = cache.persist(single_snapshot_result(incomplete_history, "tiingo"))
+    original_bytes = {path: path.read_bytes() for path in tmp_path.rglob("*.json")}
+    calls = install_history(monkeypatch)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        pytest.fail("offline cache validation must not construct a provider")
+
+    monkeypatch.setattr(TiingoProvider, "__init__", forbidden)
+    with pytest.raises(RequestError, match=r"cached tiingo.*coverage"):
+        IntradayMarketDataService(cache, provider_name="tiingo").get_intraday_bars(
+            legacy.request
+        )
+    assert calls == []
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*.json")
+    } == original_bytes
+    assert cache.load(legacy.metadata.dataset_id, legacy.request) == legacy
+
+
+def test_failed_reacquisition_preserves_legacy_artifacts_and_request_pointer(
+    incomplete_history: IntradayFetchResult,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache = IntradayMarketDataCache(tmp_path)
+    legacy = cache.persist(single_snapshot_result(incomplete_history, "tiingo"))
+    original_bytes = {path: path.read_bytes() for path in tmp_path.rglob("*.json")}
+    # The last session fails after earlier sessions have already been fetched.
+    calls = install_history(
+        monkeypatch,
+        responses={date(2024, 7, 5): session_rows(date(2024, 7, 5))[1:]},
+    )
+    service = IntradayMarketDataService(cache, provider=TiingoProvider(TOKEN))
+    with pytest.raises(ProviderError, match="missing"):
+        service.get_intraday_bars(legacy.request)
+    assert calls == [date(2024, 7, 2), date(2024, 7, 3), date(2024, 7, 5)]
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*.json")
+    } == original_bytes
+    assert cache.find("tiingo", legacy.request) == legacy
+
+
+def test_other_provider_still_acquires_and_reuses_diagnostic_cache(
+    incomplete_history: IntradayFetchResult,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    result = single_snapshot_result(incomplete_history, "other-provider")
+    received: list[IntradayBarRequest] = []
+
+    class OtherProvider:
+        name = "other-provider"
+        intraday_capabilities = TiingoProvider.intraday_capabilities
+
+        def fetch_intraday(self, request: IntradayBarRequest) -> IntradayFetchResult:
+            received.append(request)
+            return result
+
+    calls = install_history(monkeypatch)
+    cache = IntradayMarketDataCache(tmp_path)
+    service = IntradayMarketDataService(cache, provider=OtherProvider())
+    acquired = service.get_intraday_bars(result.batch.request)
+    assert not acquired.quality_report.is_complete
+    assert len(acquired.metadata.raw_snapshot_ids) == 1
+    assert service.get_intraday_bars(acquired.request) == acquired
+    assert (
+        IntradayMarketDataService(
+            cache, provider_name="other-provider"
+        ).get_intraday_bars(acquired.request)
+        == acquired
+    )
+    assert received == [result.batch.request]
+    assert calls == []
