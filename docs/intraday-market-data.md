@@ -210,6 +210,10 @@ cannot prove exclusion and fails closed. In-session OHLCV, alignment, duplicate,
 and session violations still fail canonical construction. No rows are repaired.
 Partial user boundaries retain only complete canonical bars within the original
 half-open range; they do not expose the rest of either edge session.
+Rows starting within retention are checked for duplicate timestamps before a
+valid final bar is excluded for extending beyond the logical end. Identical and
+conflicting duplicates both fail acquisition, even when neither row would be
+retained. Rows whose starts are outside retention remain excluded as before.
 
 Raw chunk bounds remain **logical coverage envelopes**, partitioning the exact
 request without gaps as required by `IntradayFetchResult` and QF-51. Each

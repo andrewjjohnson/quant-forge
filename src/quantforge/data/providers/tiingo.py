@@ -469,14 +469,14 @@ def _intraday_bars_from_snapshot(
                 volume=_tiingo_intraday_decimal(record["volume"], "volume"),
                 provenance=provenance,
             )
-            # Validate in-session rows before excluding a valid bar that is not
-            # fully inside a partial logical range. A bad last-minute timestamp
-            # must not escape validation merely because its computed end is late.
-            if end_timestamp > request.end_timestamp:
-                continue
             if start_timestamp in seen_starts:
                 raise ProviderError("intraday bar batch contains a duplicate bar key")
             seen_starts.add(start_timestamp)
+            # Validate in-session rows before excluding a valid bar that is not
+            # fully inside a partial logical range. Malformed or duplicate rows
+            # must not escape validation merely because their computed end is late.
+            if end_timestamp > request.end_timestamp:
+                continue
             bars.append(bar)
         except (KeyError, ValueError, ProviderError) as error:
             raise ProviderError(

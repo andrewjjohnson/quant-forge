@@ -576,6 +576,50 @@ def test_malformed_in_session_extra_cannot_hide_behind_partial_end_clipping(
         TiingoProvider(TOKEN).fetch_intraday(request)
 
 
+@pytest.mark.parametrize("minutes", [1, 5])
+@pytest.mark.parametrize("conflicting_volume", [False, True])
+def test_duplicate_in_session_row_cannot_hide_behind_partial_end_clipping(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    minutes: int,
+    conflicting_volume: bool,
+) -> None:
+    rows = session_rows(date(2024, 7, 3), minutes)
+    last_in_session_index = 210 // minutes - 1
+    duplicate = rows[last_in_session_index].copy()
+    if conflicting_volume:
+        duplicate["volume"] = 9999
+    rows.insert(last_in_session_index + 1, duplicate)
+    install_history(monkeypatch, responses={date(2024, 7, 3): rows}, minutes=minutes)
+    request = history_request("2024-07-03T13:30:00Z", "2024-07-03T16:59:45Z", minutes)
+    service = IntradayMarketDataService(
+        IntradayMarketDataCache(tmp_path), provider=TiingoProvider(TOKEN)
+    )
+    with pytest.raises(ProviderError, match="duplicate bar key") as raised:
+        service.get_intraday_bars(request)
+    message = str(raised.value)
+    assert f"row {last_in_session_index + 1};" in message
+    assert f"timestamp={duplicate['date']}" in message
+    assert "session=2024-07-03" in message
+    assert TOKEN not in message
+    assert not tuple(tmp_path.rglob("*.json"))
+
+
+@pytest.mark.parametrize("minutes", [1, 5])
+def test_partial_end_clips_unique_final_bar_and_excludes_post_close_duplicates(
+    monkeypatch: pytest.MonkeyPatch, minutes: int
+) -> None:
+    rows = session_rows(date(2024, 7, 3), minutes)
+    rows.append(rows[210 // minutes].copy())  # 17:00 UTC is outside retention.
+    install_history(monkeypatch, responses={date(2024, 7, 3): rows}, minutes=minutes)
+    request = history_request("2024-07-03T13:30:00Z", "2024-07-03T16:59:45Z", minutes)
+    result = TiingoProvider(TOKEN).fetch_intraday(request)
+    assert len(result.batch.bars) == 210 // minutes - 1
+    assert all(bar.end_timestamp <= request.end_timestamp for bar in result.batch.bars)
+    assert validate_intraday_coverage(result.batch).is_complete
+    assert result.raw_snapshots[0].records == tuple(rows)
+
+
 @pytest.fixture(params=["missing_bar", "missing_session"])
 def incomplete_history(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
