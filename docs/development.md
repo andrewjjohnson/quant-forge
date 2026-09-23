@@ -138,7 +138,9 @@ uv run pytest tests/unit/backtesting/test_evaluation.py \
 Run the deterministic offline Tiingo intraday adapter and cache tests:
 
 ```bash
-uv run pytest tests/unit/data/test_tiingo_intraday.py
+uv run --frozen pytest tests/unit/data/test_tiingo_intraday.py \
+  tests/unit/data/test_tiingo_calendar_history.py \
+  tests/integration/test_tiingo_history_prediction_inputs.py
 ```
 
 Run the focused provider-neutral intraday coverage validation tests:

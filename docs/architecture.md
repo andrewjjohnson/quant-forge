@@ -845,3 +845,13 @@ evaluation, enforces exact frozen requests and conservative prior-exposure check
 and delegates execution to the existing QF-42/QF-43 adapter paths. Structured
 outputs stop before QF-9 manifest infrastructure and QF-41 rendering. See
 [`oos-holdout-aggregation.md`](oos-holdout-aggregation.md) and ADR 0018.
+
+## Tiingo historical acquisition (QF-53)
+
+Tiingo alone decomposes XNYS/RTH history into calendar-session wire requests.
+Its raw snapshots retain contiguous logical coverage envelopes, actual session
+wire parameters, and lossless responses; canonical retention intersects each
+window with exact session and user boundaries. The adapter applies existing
+strict coverage validation before returning one normal `IntradayFetchResult`.
+No generic provider, prediction, outcome, or cache contract changes. See
+[ADR 0025](decisions/0025-plan-tiingo-history-by-exchange-session.md).

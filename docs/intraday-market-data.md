@@ -192,14 +192,58 @@ therefore use `TiingoProvider.intraday_adjustment_basis`, whose policy records
 `not_provided_for_intraday_bars`; the adapter rejects a request that claims the
 daily provider-reported dividend/split policy.
 
-The adapter divides a half-open request into contiguous chunks of at most 30
-days by default. The bound is configurable for testing and provider-plan
-constraints. Chunk boundaries are deterministic from the exact request start,
-end, and bound. Tiingo's documented date parameters can cause adjacent raw
-responses to include the same boundary session; normalization assigns a row to
-exactly one half-open chunk by bar start, sorts the merged bars, and then lets
-`IntradayBarBatch` reject any remaining duplicate key or ordering problem.
-Detailed expected-session completeness checks remain deferred.
+QF-53 intraday adapter version 2 plans one HTTP request per expected exchange
+session using `expected_sessions()` and `resolve_exchange_session()`. The wire
+`startDate` and `endDate` both identify that session. Weekends and holidays have
+no acquisition unit. The existing `intraday_chunk_duration` option remains an
+upper bound on the retained window *within* a session; its 30-day default yields
+one response per session. Smaller bounds may repeat a date-only wire request,
+but half-open ownership by bar start prevents duplicate canonical observations.
+
+Retention intersects the exact logical request with the calendar session, using
+UTC timestamps and actual exchange-local opens/closes. A normal one-minute day
+has 390 bars; the July 3, November 29, and December 24, 2024 early closes have
+210. Validly timestamped rows outside that exact retention window are excluded,
+including Tiingo holiday and post-close observations, while remaining in the
+lossless raw response. They are never relabeled as RTH. An unparseable timestamp
+cannot prove exclusion and fails closed. In-session OHLCV, alignment, duplicate,
+and session violations still fail canonical construction. No rows are repaired.
+Partial user boundaries retain only complete canonical bars within the original
+half-open range; they do not expose the rest of either edge session.
+
+Raw chunk bounds remain **logical coverage envelopes**, partitioning the exact
+request without gaps as required by `IntradayFetchResult` and QF-51. Each
+contains one retained session window (or subwindow) and adjacent closed-market
+time: the first starts at the logical request start, subsequent ones start at
+their retained window start, and each ends at the next window start or logical
+request end. Closed-market time adds no expected observations. These envelopes
+are not HTTP date parameters or a claim that the market was open throughout.
+The raw snapshot records the actual session-date wire parameters and full body;
+the canonical quality report records actual session opens/closes, counts, and
+partial coverage. Intersecting an envelope with those session bounds and the
+logical request recovers its retention window. Ordered hashes bind each bar to
+exactly one response. No synthetic holiday response is created.
+
+Tiingo invokes the existing strict coverage validator before returning its
+logical fetch result. Missing any expected bar/session fails the acquisition
+before successful cache persistence, even when another session succeeded. Other
+providers retain their existing acquisition and diagnostic-persistence behavior.
+A request containing no retained bars still fails as an empty response, without
+network access when no session intersects it.
+
+Logical request IDs, raw schema 1, dataset schema 2, and generic APIs are
+unchanged. Raw layout, adapter version, and retrieval timestamps already
+participate in snapshot/dataset identity, so a fresh acquisition has its own
+immutable identity. Existing valid adapter-1 caches remain readable and reusable
+before credentials/network; they are not overwritten or silently upgraded.
+
+Errors retain symbol, interval, endpoint (hence feed), logical range, and available
+session/retention/chunk context. Row failures include index, a normalized valid
+timestamp (or an invalid/missing marker), and the underlying validation reason.
+Missing coverage identifies the first missing interval. HTTP failures retain
+status and bounded-retry behavior. Untrusted HTTP bodies/headers and malformed
+field contents are not echoed; the configured token is redacted from translated
+row errors. See [ADR 0025](decisions/0025-plan-tiingo-history-by-exchange-session.md).
 
 ## Intraday immutable cache
 
