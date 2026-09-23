@@ -38,7 +38,7 @@ def test_compact_source_evidence_reproduces_the_immutable_batch(
     fixture: Fixture,
 ) -> None:
     provenance = fixture.dataset.metadata.intraday_provenance
-    assert provenance is not None
+    assert isinstance(provenance, IntradayPredictionProvenance)
     evidence = provenance.source_bar_evidence.to_primitive()
     assert evidence == capture_source_bar_evidence(fixture.source.bars)
     restored = IntradayPredictionProvenance.from_primitive(provenance.to_primitive())
@@ -71,7 +71,7 @@ def test_rehashed_session_constituents_require_canonical_source_membership(
     boundary: str,
 ) -> None:
     original = fixture.dataset.metadata.intraday_provenance
-    assert original is not None
+    assert isinstance(original, IntradayPredictionProvenance)
     primitive = original.to_primitive()
     evidence = cast(PrimitiveMapping, primitive["session_evidence"])
     bars = [
@@ -145,7 +145,7 @@ def test_rehashed_source_evidence_requires_valid_typed_bars(
     boundary: str,
 ) -> None:
     original = fixture.dataset.metadata.intraday_provenance
-    assert original is not None
+    assert isinstance(original, IntradayPredictionProvenance)
     primitive = original.to_primitive()
     evidence = cast(PrimitiveMapping, primitive["source_bar_evidence"])
     observations = cast(list[PrimitiveMapping], evidence["observations"])
@@ -201,7 +201,7 @@ def test_rehashed_source_prices_must_reproduce_the_retained_session_ohlcv(
     boundary: str,
 ) -> None:
     original = fixture.dataset.metadata.intraday_provenance
-    assert original is not None
+    assert isinstance(original, IntradayPredictionProvenance)
     primitive = original.to_primitive()
     evidence = cast(PrimitiveMapping, primitive["source_bar_evidence"])
     observations = cast(list[PrimitiveMapping], evidence["observations"])

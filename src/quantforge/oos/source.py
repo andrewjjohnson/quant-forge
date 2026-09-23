@@ -14,6 +14,8 @@ from quantforge.configuration import (
     configuration_identity,
 )
 from quantforge.data.calendar import expected_sessions
+from quantforge.data.exceptions import ValidationError
+from quantforge.data.prediction_views import validate_prediction_view_lineage
 from quantforge.oos._records import (
     OOSIntegrityError,
     mapping,
@@ -285,6 +287,24 @@ def _validate_prediction(
         ).close_timestamp,
     )
     market = mapping(manifest["market_data"])
+    canonical_metadata = plan.environment.outcome_dataset.market_data_metadata
+    if canonical_metadata is not None:
+        try:
+            validate_prediction_view_lineage(
+                market,
+                canonical_metadata,
+                schedule.decision_timestamps[0]
+                if plan.prediction_membership is not None
+                else resolve_exchange_session(
+                    date.fromisoformat(text(market["actual_last_session"])),
+                    primary.session_policy,
+                ).close_timestamp,
+                start=None
+                if plan.prediction_membership is not None
+                else date.fromisoformat(text(market["actual_first_session"])),
+            )
+        except (ValidationError, ValueError) as error:
+            raise OOSIntegrityError(str(error)) from error
     if (
         market["dataset_id"] != part["bounded_dataset_id"]
         or market["bars_fingerprint"] != part["bounded_data_sha256"]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from datetime import UTC, date, datetime
+from decimal import InvalidOperation
 from typing import TYPE_CHECKING, cast
 
 from quantforge.configuration import (
@@ -13,13 +14,17 @@ from quantforge.configuration import (
     PrimitiveMappingSnapshot,
     configuration_identity,
 )
+from quantforge.data.calendar import expected_sessions
 from quantforge.data.corporate_actions import corporate_action_snapshot_id
 from quantforge.data.exceptions import ValidationError
 from quantforge.data.identity import (
     INTRADAY_PREDICTION_ADAPTER_VERSION,
     INTRADAY_PREDICTION_DATASET_PREFIX,
+    serialize_bars_csv,
+    sha256_hex,
 )
 from quantforge.data.intraday import IntradayBar
+from quantforge.data.intraday_aggregation import intraday_session_windows
 from quantforge.data.intraday_ingestion import (
     IntradayDataset,
     IntradayMarketDataCache,
@@ -32,11 +37,15 @@ from quantforge.data.lineage import (
     DatasetFamilyReference,
 )
 from quantforge.data.models import (
+    BOUNDED_PREDICTION_ADAPTER_VERSION,
+    BOUNDED_PREDICTION_DATASET_PREFIX,
     AdjustmentMode,
+    BoundedPredictionProvenance,
     CorporateActionAvailability,
     IntradayPredictionProvenance,
     JsonValue,
     MarketDataset,
+    PredictionInputProvenance,
     ProviderResponse,
 )
 from quantforge.data.multi_timeframe import (
@@ -45,11 +54,13 @@ from quantforge.data.multi_timeframe import (
     TimeframeBarSeries,
 )
 from quantforge.data.prediction_session_evidence import (
+    session_bar_from_evidence,
     session_projection_bars,
     validate_session_projection_evidence,
 )
 from quantforge.data.prediction_source_bars import capture_source_bar_evidence
 from quantforge.data.session_aggregation import (
+    AggregatedSessionBar,
     AggregatedSessionDataset,
     aggregate_session_dataset,
 )
@@ -63,7 +74,7 @@ INTRADAY_CORPORATE_ACTION_POLICY = "not_provided_for_intraday_bars"
 
 
 def _family_dataset_timeframe(
-    provenance: IntradayPredictionProvenance,
+    provenance: PredictionInputProvenance,
     dataset_id: Primitive,
     timeframe_configuration_id: Primitive,
     *,
@@ -111,13 +122,23 @@ def _family_dataset_timeframe(
 
 def validate_prediction_provenance(
     record: PrimitiveMapping,
-) -> IntradayPredictionProvenance | None:
+) -> PredictionInputProvenance | None:
     """Validate event availability separately from price-basis compatibility.
 
     Missing new fields mean legacy daily semantics only. An unavailable event
     source must carry explicit lineage and cannot claim a complete event history.
     Used by both dataset validation and observational manifest inspection.
     """
+    retained = record.get("intraday_provenance")
+    bounded_marker = (
+        str(record.get("dataset_id", "")).startswith(BOUNDED_PREDICTION_DATASET_PREFIX)
+        or record.get("adapter_version") == BOUNDED_PREDICTION_ADAPTER_VERSION
+        or (
+            isinstance(retained, dict) and retained.get("schema_version") == "bounded-1"
+        )
+    )
+    if bounded_marker:
+        return validate_bounded_prediction_record(record)
     provenance = (
         IntradayPredictionProvenance.from_primitive(record["intraday_provenance"])
         if "intraday_provenance" in record
@@ -168,7 +189,7 @@ def validate_prediction_provenance(
         cast(str, policy),
         cast(bool, record.get("adjusted_fields_used")),
     )
-    _validate_family_evidence(provenance, record, basis)
+    validate_prediction_family_evidence(provenance, record, basis)
     _validate_source_evidence(provenance, record)
     validate_session_projection_evidence(provenance, record)
     return provenance
@@ -343,8 +364,8 @@ def _validate_source_request_bounds(
         raise ValueError("source request must cover complete projection sessions")
 
 
-def _validate_family_evidence(
-    provenance: IntradayPredictionProvenance,
+def validate_prediction_family_evidence(
+    provenance: PredictionInputProvenance,
     record: PrimitiveMapping,
     basis: AdjustmentBasis,
 ) -> None:
@@ -552,7 +573,7 @@ def prediction_dataset_from_intraday(
 
 
 def validate_prediction_source_reference(
-    provenance: IntradayPredictionProvenance,
+    provenance: PredictionInputProvenance,
     reference: PrimitiveMapping,
 ) -> None:
     """Require a recorded family member, immutable source, and matching feed."""
@@ -610,7 +631,13 @@ def _validate_source(
             canonical_source = (
                 original.provider_name == metadata.provider_name
                 and original.source_request_id == provenance.source_request_id
-                and original.source_snapshot_id in provenance.source_raw_snapshot_ids
+                and (
+                    # Bounded inputs omit future raw-chunk metadata. Their
+                    # artifact-certified reference above still binds the exact
+                    # canonical snapshot, family, feed, and timeframe.
+                    isinstance(provenance, BoundedPredictionProvenance)
+                    or original.source_snapshot_id in provenance.source_raw_snapshot_ids
+                )
             )
             derived_source = (
                 reference.dataset_id != provenance.source_dataset_id
@@ -658,3 +685,148 @@ def validate_prediction_context_sources(
             _validate_source(
                 dataset, item.dataset_reference, item.requirement.timeframe, item.bars
             )
+
+
+def _digest(value: str, *, prefix: str = "") -> None:
+    suffix = value.removeprefix(prefix)
+    if (
+        not value.startswith(prefix)
+        or len(suffix) != 64
+        or any(c not in "0123456789abcdef" for c in suffix)
+    ):
+        raise ValueError("bounded prediction ancestry or digest is malformed")
+
+
+def _session_bars(
+    provenance: BoundedPredictionProvenance,
+) -> tuple[AggregatedSessionBar, ...]:
+    evidence = provenance.session_evidence.to_primitive()
+    if set(evidence) != {"bars"} or not isinstance(evidence["bars"], list):
+        raise ValueError("bounded session evidence fields are invalid")
+    bars = tuple(session_bar_from_evidence(entry) for entry in evidence["bars"])
+    if not bars:
+        raise ValueError("bounded prediction requires completed session context")
+    return bars
+
+
+def validate_bounded_prediction_record(
+    record: PrimitiveMapping,
+) -> BoundedPredictionProvenance:
+    """Validate bounded metadata/evidence without weakening canonical validation."""
+    try:
+        provenance = BoundedPredictionProvenance.from_primitive(
+            record.get("intraday_provenance")
+        )
+        _digest(
+            provenance.canonical_input_id, prefix=INTRADAY_PREDICTION_DATASET_PREFIX
+        )
+        for identity in (
+            provenance.canonical_provenance_id,
+            provenance.source_dataset_id,
+            provenance.source_request_id,
+            provenance.bars_fingerprint,
+        ):
+            _digest(identity)
+        if record.get("dataset_id") != provenance.view_id:
+            raise ValueError("bounded prediction view identity is inconsistent")
+        if (
+            record.get("corporate_action_policy") != INTRADAY_CORPORATE_ACTION_POLICY
+            or record.get("corporate_actions_complete") is not False
+            or any(
+                type(record.get(name)) is not int or record[name] != 0
+                for name in ("corporate_action_count", "dividend_count", "split_count")
+            )
+            or record.get("corporate_action_snapshot_id")
+            != corporate_action_snapshot_id(())
+        ):
+            raise ValueError("contradictory bounded corporate-action provenance")
+        basis = AdjustmentBasis(
+            AdjustmentMode(cast(str, record.get("adjustment_mode"))),
+            cast(str, record.get("ohlc_basis")),
+            cast(str, record.get("volume_basis")),
+            INTRADAY_CORPORATE_ACTION_POLICY,
+            cast(bool, record.get("adjusted_fields_used")),
+        )
+        validate_prediction_family_evidence(provenance, record, basis)
+        bars = _session_bars(provenance)
+        family = provenance.family_manifest.to_primitive()
+        source = cast(PrimitiveMapping, family["canonical_source"])
+        source_timeframe = Timeframe.from_primitive(
+            cast(
+                PrimitiveMapping,
+                cast(PrimitiveMapping, source["timeframe"])["configuration"],
+            )
+        )
+        sessions = tuple(bar.session_dates[0] for bar in bars)
+        if sessions != tuple(sorted(set(sessions))):
+            raise ValueError("bounded session evidence must be ordered and unique")
+        for bar in bars:
+            session = resolve_exchange_session(
+                bar.session_dates[0], bar.timeframe.session_policy
+            )
+            if (
+                len(bar.session_dates) != 1
+                or bar.symbol != source["symbol"]
+                or bar.source_dataset_id != provenance.source_dataset_id
+                or bar.timeframe.configuration_id
+                != provenance.session_timeframe_configuration_id
+                or bar.start_timestamp != session.open_timestamp
+                or bar.end_timestamp != session.close_timestamp
+                or bar.end_timestamp > provenance.causal_cutoff
+                or len(bar.source_bar_ids)
+                != len(intraday_session_windows(bar.session_dates[0], source_timeframe))
+                or len(set(bar.source_bar_ids)) != len(bar.source_bar_ids)
+            ):
+                raise ValueError(
+                    "bounded session evidence violates source or cutoff semantics"
+                )
+            for constituent in bar.source_bar_ids:
+                _digest(constituent)
+        expected: PrimitiveMapping = {
+            "requested_start": sessions[0].isoformat(),
+            "actual_first_session": sessions[0].isoformat(),
+            "requested_end": sessions[-1].isoformat(),
+            "actual_last_session": sessions[-1].isoformat(),
+            "bar_count": len(bars),
+            "missing_sessions": [],
+        }
+        if (
+            any(record.get(name) != value for name, value in expected.items())
+            or type(record.get("bar_count")) is not int
+        ):
+            raise ValueError("bounded prediction range or count differs from evidence")
+        if sessions != expected_sessions(
+            sessions[0], sessions[-1], cast(str, record["calendar"])
+        ):
+            raise ValueError("bounded prediction session evidence has gaps")
+        fingerprint = sha256_hex(serialize_bars_csv(session_projection_bars(bars)))
+        fingerprints = [
+            record[name]
+            for name in ("data_sha256", "bars_fingerprint")
+            if name in record
+        ]
+        if (
+            not fingerprints
+            or any(value != fingerprint for value in fingerprints)
+            or fingerprint != provenance.bars_fingerprint
+        ):
+            raise ValueError("bounded content digest differs from session evidence")
+        retrieval = datetime.fromisoformat(cast(str, record.get("retrieved_at")))
+        if retrieval.utcoffset() is None or retrieval != provenance.source_retrieved_at:
+            raise ValueError(
+                "bounded retrieval timestamp differs from canonical ancestry"
+            )
+        optional: PrimitiveMapping = {
+            "provider_symbol": provenance.provider_symbol,
+            "adapter_version": BOUNDED_PREDICTION_ADAPTER_VERSION,
+            "raw_sha256": configuration_identity(provenance.to_primitive()),
+        }
+        if any(
+            name in record and record[name] != value for name, value in optional.items()
+        ):
+            raise ValueError("bounded prediction metadata differs from its ancestry")
+        return provenance
+    except (KeyError, TypeError, ValueError, OverflowError, InvalidOperation) as error:
+        raise ValidationError(
+            f"bounded prediction input is invalid: {error}"
+        ) from error

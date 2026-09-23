@@ -78,7 +78,12 @@ from quantforge.prediction.study import (
     prepare_prediction_study_dataset,
     run_prediction_study_in_session,
 )
-from quantforge.timeframes import IntradayInterval, SessionInterval, Timeframe
+from quantforge.timeframes import (
+    IntradayInterval,
+    SessionInterval,
+    Timeframe,
+    resolve_exchange_session,
+)
 from tests.unit.helpers import make_dataset
 from tests.unit.prediction.test_multi_timeframe_feature_dataset import (
     _FixtureCandidateRule,  # pyright: ignore[reportPrivateUsage]
@@ -113,17 +118,24 @@ def cached_fixture(
     basis: AdjustmentBasis = BASIS,
     *,
     provider_symbol: str = "SPY",
+    session_dates: tuple[date, ...] = (date(2024, 1, 2), date(2024, 1, 3)),
 ) -> Fixture:
     """Synthetic prices, same SPY/1m/unavailable contract as real QF-45 data."""
     request = IntradayBarRequest(
         "SPY",
-        datetime(2024, 1, 2, 14, 30, tzinfo=UTC),
-        datetime(2024, 1, 3, 21, tzinfo=UTC),
+        resolve_exchange_session(
+            session_dates[0], ONE_MINUTE.session_policy
+        ).open_timestamp,
+        resolve_exchange_session(
+            session_dates[-1], ONE_MINUTE.session_policy
+        ).close_timestamp,
         ONE_MINUTE,
         FeedScope.consolidated(),
         basis,
     )
-    retrieved = datetime(2024, 1, 4, tzinfo=UTC)
+    retrieved = datetime.combine(
+        session_dates[-1] + timedelta(days=1), datetime.min.time(), UTC
+    )
     raw = IntradayRawSnapshot(
         provider,
         provider_symbol,
@@ -161,7 +173,7 @@ def cached_fixture(
             Decimal(1000),
             provenance,
         )
-        for session in (date(2024, 1, 2), date(2024, 1, 3))
+        for session in session_dates
         for interval in intraday_session_windows(session, ONE_MINUTE)
     )
     intraday_cache = IntradayMarketDataCache(root)

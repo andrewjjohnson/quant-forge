@@ -12,6 +12,7 @@ from quantforge.data.identity import dataset_identity_matches, serialize_metadat
 from quantforge.data.models import (
     SCHEMA_VERSION,
     AdjustmentMode,
+    BoundedPredictionProvenance,
     CashDividend,
     DailyBar,
     DatasetMetadata,
@@ -279,7 +280,8 @@ def validate_market_dataset(dataset: MarketDataset) -> tuple[date, ...]:
     if not metadata.corporate_action_snapshot_id:
         raise ValidationError("corporate-action snapshot identity is required")
     if metadata.intraday_provenance is not None and not isinstance(
-        cast(object, metadata.intraday_provenance), IntradayPredictionProvenance
+        cast(object, metadata.intraday_provenance),
+        (IntradayPredictionProvenance, BoundedPredictionProvenance),
     ):
         raise ValidationError("intraday prediction provenance must be typed")
     try:

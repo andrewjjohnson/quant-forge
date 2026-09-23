@@ -5,6 +5,7 @@ from typing import cast
 
 from quantforge.configuration import configuration_identity
 from quantforge.data.identity import INTRADAY_PREDICTION_DATASET_PREFIX
+from quantforge.data.models import BOUNDED_PREDICTION_DATASET_PREFIX
 from quantforge.experiments._aggregate_schema import record, records
 from quantforge.experiments._json import ManifestError, digest, mapping, text
 from quantforge.experiments._prediction_sessions import session_text
@@ -102,7 +103,12 @@ def validate_holdout_membership(source: OOSSource, value: object) -> None:
         ):
             raise ManifestError("holdout membership differs from its source window")
         dataset_id = text(partition["bounded_dataset_id"])
-        digest(dataset_id.removeprefix(INTRADAY_PREDICTION_DATASET_PREFIX))
+        prefix = (
+            BOUNDED_PREDICTION_DATASET_PREFIX
+            if dataset_id.startswith(BOUNDED_PREDICTION_DATASET_PREFIX)
+            else INTRADAY_PREDICTION_DATASET_PREFIX
+        )
+        digest(dataset_id.removeprefix(prefix))
         digest(partition["bounded_data_sha256"])
         sessions = partition["evaluation_sessions"]
         if not isinstance(sessions, list) or not sessions:

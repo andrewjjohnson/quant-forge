@@ -1,5 +1,9 @@
 # Intraday prediction-input provenance (QF-51)
 
+For QF-39/QF-40 causal projections, see the distinct
+[bounded-view contract](bounded-prediction-inputs.md). The full canonical checks
+documented here remain authoritative and unchanged.
+
 Corporate-action **availability** describes whether a dataset path supplies
 split/dividend events. **Adjustment compatibility** describes whether its
 prices and volumes can be compared under the declared source semantics.

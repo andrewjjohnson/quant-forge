@@ -23,6 +23,7 @@ from quantforge.data import (
     validate_intraday_coverage,
 )
 from quantforge.data.identity import canonical_json_bytes, sha256_hex
+from quantforge.data.models import IntradayPredictionProvenance
 from quantforge.data.multi_timeframe import MultiTimeframeContextValidationError
 from quantforge.data.prediction_inputs import prediction_dataset_from_intraday
 from tests.integration.test_intraday_prediction_provenance import DAILY, Fixture
@@ -237,7 +238,7 @@ def test_valid_raw_snapshots_remain_reloadable_and_projectable(
         intraday_cache=cache,
     )
     provenance = projected.metadata.intraday_provenance
-    assert provenance is not None
+    assert isinstance(provenance, IntradayPredictionProvenance)
     assert provenance.source_manifest.to_primitive() == cache.read_manifest(
         source.metadata.dataset_id
     )

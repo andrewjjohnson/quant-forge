@@ -1,5 +1,8 @@
 # Timestamp prediction membership (QF-48)
 
+QF-52 supplies the [bounded input view](bounded-prediction-inputs.md) used by
+intraday-backed QF-39/QF-40 evaluators. Exact membership below is unchanged.
+
 QF-48 connects the existing QF-42 schedule, QF-46 temporal contracts, QF-8
 partition helpers, and QF-39 prediction adapter. It adds no scheduler, validation
 engine, outcome arithmetic, selection policy, or metrics.

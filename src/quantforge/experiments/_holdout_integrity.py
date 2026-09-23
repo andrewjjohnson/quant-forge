@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta
 
 from quantforge.backtesting.config import EvaluationInterval
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.data.exceptions import ValidationError
+from quantforge.data.prediction_views import validate_prediction_view_lineage
 from quantforge.experiments._aggregate_schema import record, records
 from quantforge.experiments._holdout_membership_integrity import (
     validate_holdout_membership,
@@ -188,6 +190,26 @@ def validate_holdout_artifact(
             mapping(manifest.get("context_environment")).get("configuration")
         )
         market = mapping(manifest.get("market_data"))
+        canonical_metadata = (
+            source.plan.environment.outcome_dataset.market_data_metadata
+        )
+        if canonical_metadata is not None:
+            try:
+                validate_prediction_view_lineage(
+                    market,
+                    canonical_metadata,
+                    expected_schedule.decision_timestamps[0]
+                    if source.plan.prediction_membership is not None
+                    else resolve_exchange_session(
+                        date.fromisoformat(text(market["actual_last_session"])),
+                        primary.session_policy,
+                    ).close_timestamp,
+                    start=None
+                    if source.plan.prediction_membership is not None
+                    else date.fromisoformat(text(market["actual_first_session"])),
+                )
+            except (ValidationError, ValueError) as error:
+                raise ManifestError(str(error)) from error
         if (
             context.get("partition") != membership
             or context.get("plan_id") != source.plan.plan_id

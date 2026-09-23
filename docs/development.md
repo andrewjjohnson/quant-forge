@@ -1,5 +1,15 @@
 # QuantForge Development Guide
 
+QF-52 bounded intraday input regression (synthetic immutable caches, no network):
+
+```bash
+uv run --frozen pytest tests/integration/test_bounded_prediction_views.py \
+  tests/integration/test_bounded_prediction_workflow.py
+```
+
+See [the bounded-input contract](bounded-prediction-inputs.md) for ancestry,
+cutoff, session evidence, and offline integrity semantics.
+
 This document defines the intended local workflow. Update commands when repository tooling changes.
 
 ## Prerequisites

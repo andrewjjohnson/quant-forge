@@ -93,3 +93,4 @@ How will the decision be tested or revisited?
 - Supersede an old ADR with a new one when the decision changes.
 
 - [0023: Preserve intraday prediction-input provenance](0023-preserve-intraday-prediction-input-provenance.md)
+- [0024: Separate causal prediction views from canonical source evidence](0024-separate-bounded-prediction-views.md)
