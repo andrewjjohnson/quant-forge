@@ -294,7 +294,7 @@ def test_source_manifest_is_exact_cached_evidence_and_immutable(
     fixture: Fixture,
 ) -> None:
     provenance = fixture.dataset.metadata.intraday_provenance
-    assert provenance is not None
+    assert isinstance(provenance, IntradayPredictionProvenance)
     manifest = provenance.source_manifest.to_primitive()
     cache = IntradayMarketDataCache(fixture.cache.root)
     assert manifest == cache.read_manifest(fixture.source.metadata.dataset_id)
@@ -365,7 +365,7 @@ def test_dataset_rejects_rehashed_source_or_graph(
     change: str,
 ) -> None:
     original = fixture.dataset.metadata.intraday_provenance
-    assert original is not None
+    assert isinstance(original, IntradayPredictionProvenance)
     provenance = original.to_primitive()
     expected_error = _alter_evidence(provenance, change)
     altered = _rehash_dataset(

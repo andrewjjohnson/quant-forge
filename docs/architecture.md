@@ -1,5 +1,10 @@
 # QuantForge Architecture
 
+QF-52 separates canonical prediction sources from causal evaluator views through
+the [bounded prediction-input contract](bounded-prediction-inputs.md) and
+[ADR 0024](decisions/0024-separate-bounded-prediction-views.md). It reuses the
+existing prediction carrier, partition adapters, and artifact relationships.
+
 ## Goals
 
 QuantForge must make quantitative experiments:

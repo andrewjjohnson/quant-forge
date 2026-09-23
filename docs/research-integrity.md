@@ -1,5 +1,10 @@
 # Research Integrity
 
+QF-52 causal prediction views retain only completed session evidence permitted
+by their exact cutoff. Canonical ancestry remains an opaque reference inside the
+view; offline integrity checks use the independent parent retained by the plan.
+See [bounded prediction inputs](bounded-prediction-inputs.md).
+
 QuantForge results may influence real financial decisions. The platform must make invalid or overstated conclusions difficult to produce accidentally.
 
 ## Core principle

@@ -13,7 +13,7 @@ from quantforge.configuration import (
     PrimitiveScalar,
     decimal_to_primitive,
 )
-from quantforge.data.models import DatasetMetadata, IntradayPredictionProvenance
+from quantforge.data.models import DatasetMetadata, PredictionInputProvenance
 from quantforge.prediction.errors import InvalidPredictionOutputError
 
 
@@ -162,7 +162,7 @@ class PredictionMarketData:
     volume_basis: str
     adjusted_fields_used: bool
     corporate_action_policy: str
-    intraday_provenance: IntradayPredictionProvenance | None = None
+    intraday_provenance: PredictionInputProvenance | None = None
 
     @classmethod
     def from_qf3(cls, metadata: DatasetMetadata) -> "PredictionMarketData":

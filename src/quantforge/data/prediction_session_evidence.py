@@ -53,7 +53,8 @@ def _texts(value: Primitive) -> tuple[str, ...]:
     return tuple(_text(item) for item in value)
 
 
-def _bar(value: Primitive) -> AggregatedSessionBar:
+def session_bar_from_evidence(value: Primitive) -> AggregatedSessionBar:
+    """Decode one exact, identity-bearing QF-19 session observation."""
     entry = _record(value)
     record = _record(entry["bar"])
     bar = AggregatedSessionBar(
@@ -116,7 +117,7 @@ def validate_session_projection_evidence(
         source_batch = validate_source_bar_evidence(
             provenance.source_bar_evidence.to_primitive(), source
         )
-        bars = tuple(_bar(entry) for entry in entries)
+        bars = tuple(session_bar_from_evidence(entry) for entry in entries)
         by_session: defaultdict[date, list[IntradayBar]] = defaultdict(list)
         for source_bar in source_batch.bars:
             by_session[source_bar.session_date].append(source_bar)

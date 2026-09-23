@@ -21,6 +21,7 @@ from quantforge.data.identity import (
     serialize_bars_csv,
     sha256_hex,
 )
+from quantforge.data.prediction_views import bounded_prediction_view
 from quantforge.timeframes import resolve_exchange_session
 from quantforge.validation import (
     BoundaryAxis,
@@ -194,10 +195,19 @@ def project_dataset(dataset: MarketDataset, start: date, end: date) -> MarketDat
     Bars are copied unchanged. Only range/content/action provenance is rebound,
     using QF-3 serialization. Original immutable lineage lives on the QF-39 study.
     This is neither an ingestion operation nor a new execution model.
+    Intraday-backed inputs use the distinct validated bounded-view contract.
     """
     bars = tuple(bar for bar in dataset.bars if start <= bar.session_date <= end)
     if not bars or bars[0].session_date != start or bars[-1].session_date != end:
         raise WalkForwardError("projection endpoints must be observed sessions")
+    if dataset.metadata.intraday_provenance is not None:
+        timeframe = DatasetProvenance.from_market_dataset(dataset).standalone_timeframe
+        assert timeframe is not None
+        return bounded_prediction_view(
+            dataset,
+            resolve_exchange_session(end, timeframe.session_policy).close_timestamp,
+            start=start,
+        )
     actions = tuple(
         action
         for action in dataset.corporate_actions
@@ -285,6 +295,8 @@ def prediction_metadata_prefix(
     Exact observations and future label coverage come from canonical intraday
     sources. Daily observations are not required at the scheduled decisions.
     """
+    if dataset.metadata.intraday_provenance is not None:
+        return bounded_prediction_view(dataset, decision)
     timeframe = DatasetProvenance.from_market_dataset(dataset).standalone_timeframe
     assert timeframe is not None
     completed = tuple(

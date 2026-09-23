@@ -604,6 +604,12 @@ No TA-Lib call or indicator construction is needed to index either format.
 
 ## QF-8, QF-39 and QF-40 lineage
 
+QF-52 intraday bounded views retain canonical ancestry, cutoff, local session
+evidence, and view identity in existing market-data provenance. The QF-39 source
+reader and QF-40 holdout integrity reader compare that view with canonical
+evidence independently retained by the plan. The evaluator receives only the
+bounded input. See [bounded prediction inputs](bounded-prediction-inputs.md).
+
 ```python
 from quantforge.experiments import inspect_validation
 from quantforge.oos import HoldoutLedger, load_oos_source

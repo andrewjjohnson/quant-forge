@@ -14,6 +14,8 @@ from quantforge.configuration import (
     configuration_identity,
 )
 from quantforge.data.calendar import expected_sessions
+from quantforge.data.exceptions import ValidationError
+from quantforge.data.prediction_views import validate_prediction_view_lineage
 from quantforge.oos._records import (
     OOSIntegrityError,
     mapping,
@@ -30,6 +32,7 @@ from quantforge.validation import (
     ExchangeSessionBoundary,
     TimestampBoundary,
     ValidationPlan,
+    ValidationWindow,
 )
 from quantforge.walk_forward.models import (
     BacktestOOSArtifact,
@@ -237,6 +240,62 @@ def _selection(
     )
 
 
+def prediction_view_bounds(
+    plan: ValidationPlan,
+    window: ValidationWindow,
+    part: PrimitiveMapping,
+    first_decision: datetime,
+) -> tuple[datetime, date | None]:
+    """Derive view bounds from plan membership, never the candidate market record."""
+    if plan.prediction_membership is not None:
+        return first_decision, None
+    source = plan.environment.outcome_dataset
+    metadata, timeframe = source.market_data_metadata, source.standalone_timeframe
+    if metadata is None or timeframe is None:
+        raise OOSIntegrityError(
+            "prediction ancestry requires canonical session metadata"
+        )
+    observed = tuple(
+        session
+        for session in expected_sessions(
+            metadata.actual_first_session,
+            metadata.actual_last_session,
+            metadata.calendar,
+        )
+        if session not in metadata.missing_sessions
+    )
+    keys = [
+        ExchangeSessionBoundary(session, timeframe.session_policy).to_primitive()
+        if isinstance(window.interval.start, ExchangeSessionBoundary)
+        else TimestampBoundary(
+            resolve_exchange_session(session, timeframe.session_policy).close_timestamp
+        ).to_primitive()
+        for session in observed
+    ]
+    first = keys.index(window.interval.start.to_primitive())
+    warm_up = window.warm_up_observations_for(timeframe)
+    if (
+        first < warm_up
+        or records(mapping(part["membership"])["warm_up_context"])
+        != (keys[first - warm_up : first])
+    ):
+        raise OOSIntegrityError("prediction ancestry warm-up differs from its window")
+    retained = [date.fromisoformat(s) for s in texts(part["evaluation_sessions"])]
+    start = observed[first - warm_up] if warm_up else retained[0]
+    horizon = plan.purge_policy.label_horizon.exchange_sessions
+    if horizon is None:
+        raise OOSIntegrityError("session ancestry requires an exchange-session horizon")
+    end = observed.index(retained[-1]) + horizon
+    if end >= len(observed):
+        raise OOSIntegrityError("prediction ancestry has insufficient outcome sessions")
+    return (
+        resolve_exchange_session(
+            observed[end], timeframe.session_policy
+        ).close_timestamp,
+        start,
+    )
+
+
 def _validate_prediction(
     plan: ValidationPlan,
     selection: FrozenSelection,
@@ -285,6 +344,26 @@ def _validate_prediction(
         ).close_timestamp,
     )
     market = mapping(manifest["market_data"])
+    canonical_metadata = plan.environment.outcome_dataset.market_data_metadata
+    if (
+        canonical_metadata is not None
+        and canonical_metadata.intraday_provenance is not None
+    ):
+        try:
+            window = next(
+                fold.test for fold in plan.folds if fold.fold_id == frozen["fold_id"]
+            )
+            cutoff, start = prediction_view_bounds(
+                plan, window, part, schedule.decision_timestamps[0]
+            )
+            validate_prediction_view_lineage(
+                market,
+                canonical_metadata,
+                cutoff,
+                start=start,
+            )
+        except (ValidationError, ValueError) as error:
+            raise OOSIntegrityError(str(error)) from error
     if (
         market["dataset_id"] != part["bounded_dataset_id"]
         or market["bars_fingerprint"] != part["bounded_data_sha256"]

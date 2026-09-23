@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta
 
 from quantforge.backtesting.config import EvaluationInterval
 from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.data.exceptions import ValidationError
+from quantforge.data.prediction_views import validate_prediction_view_lineage
 from quantforge.experiments._aggregate_schema import record, records
 from quantforge.experiments._holdout_membership_integrity import (
     validate_holdout_membership,
@@ -23,6 +25,7 @@ from quantforge.experiments._producer_integrity import validate_backtest_identit
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.oos.models import OOSSource
 from quantforge.oos.prediction import PredictionMetricFields
+from quantforge.oos.source import prediction_view_bounds
 from quantforge.prediction import PredictionDecisionSchedule
 from quantforge.timeframes import resolve_exchange_session
 
@@ -188,6 +191,28 @@ def validate_holdout_artifact(
             mapping(manifest.get("context_environment")).get("configuration")
         )
         market = mapping(manifest.get("market_data"))
+        canonical_metadata = (
+            source.plan.environment.outcome_dataset.market_data_metadata
+        )
+        if (
+            canonical_metadata is not None
+            and canonical_metadata.intraday_provenance is not None
+        ):
+            try:
+                cutoff, start = prediction_view_bounds(
+                    source.plan,
+                    source.plan.final_holdout.window,
+                    membership,
+                    expected_schedule.decision_timestamps[0],
+                )
+                validate_prediction_view_lineage(
+                    market,
+                    canonical_metadata,
+                    cutoff,
+                    start=start,
+                )
+            except (ValidationError, ValueError) as error:
+                raise ManifestError(str(error)) from error
         if (
             context.get("partition") != membership
             or context.get("plan_id") != source.plan.plan_id

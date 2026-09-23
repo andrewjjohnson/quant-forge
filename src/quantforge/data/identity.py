@@ -6,13 +6,23 @@ from dataclasses import asdict
 from datetime import UTC, date, datetime
 from typing import cast
 
-from quantforge.configuration import PrimitiveMappingSnapshot
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
 from quantforge.data.corporate_actions import (
     action_seeds_from_records,
     bind_corporate_actions,
     corporate_action_snapshot_id,
 )
-from quantforge.data.models import AdjustmentMode, DailyBar, MarketDataset
+from quantforge.data.models import (
+    BOUNDED_PREDICTION_DATASET_PREFIX,
+    AdjustmentMode,
+    DailyBar,
+    MarketDataset,
+    PredictionInputProvenance,
+)
 
 INTRADAY_PREDICTION_ADAPTER_VERSION = "quantforge_intraday_prediction_input_v1"
 INTRADAY_PREDICTION_DATASET_PREFIX = "intraday-projection-"
@@ -64,16 +74,26 @@ def serialize_metadata_values(
                     "session_evidence",
                     "source_bar_evidence",
                 )
+                if name in provenance
             },
-            "source_raw_snapshot_ids": list(
-                cast(tuple[str, ...], provenance["source_raw_snapshot_ids"])
+            **(
+                {
+                    "source_raw_snapshot_ids": list(
+                        cast(tuple[str, ...], provenance["source_raw_snapshot_ids"])
+                    )
+                }
+                if "source_raw_snapshot_ids" in provenance
+                else {}
             ),
+            **{
+                name: cast(datetime, provenance[name]).astimezone(UTC).isoformat()
+                for name in ("source_retrieved_at", "causal_cutoff")
+                if name in provenance
+            },
         }
     else:
-        from quantforge.data.models import IntradayPredictionProvenance
-
         value["intraday_provenance"] = cast(
-            IntradayPredictionProvenance, provenance
+            PredictionInputProvenance, provenance
         ).to_primitive()
     for field in (
         "requested_start",
@@ -107,6 +127,14 @@ def calculate_dataset_id(
         "data_sha256": data_sha256,
         "schema_version": schema_version,
     }
+    provenance = identity.get("intraday_provenance")
+    if (
+        isinstance(provenance, dict)
+        and cast(dict[str, object], provenance).get("schema_version") == "bounded-1"
+    ):
+        return BOUNDED_PREDICTION_DATASET_PREFIX + configuration_identity(
+            cast(PrimitiveMapping, provenance)
+        )
     digest = sha256_hex(canonical_json_bytes(identity))
     if (
         metadata_values.get("intraday_provenance") is not None

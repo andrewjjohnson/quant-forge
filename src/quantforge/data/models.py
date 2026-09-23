@@ -2,12 +2,16 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import cast
 
-from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
 
 SCHEMA_VERSION = "4"
 type JsonPrimitive = str | int | float | bool | None
@@ -178,6 +182,147 @@ class IntradayPredictionProvenance:
         )
 
 
+BOUNDED_PREDICTION_DATASET_PREFIX = "bounded-intraday-"
+BOUNDED_PREDICTION_ADAPTER_VERSION = "quantforge_bounded_prediction_input_v1"
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedPredictionProvenance:
+    """A causal view, with opaque canonical ancestry and local session evidence.
+
+    No canonical source manifest, coverage report, raw chunk list, or parent
+    object is retained here. The family contains identities and static policies;
+    session evidence contains only the completed observations in this view.
+    Canonical validation happens before projection, outside the evaluator.
+    """
+
+    canonical_input_id: str
+    canonical_provenance_id: str
+    family_id: str
+    source_dataset_id: str
+    source_request_id: str
+    session_dataset_id: str
+    session_timeframe_configuration_id: str
+    session_policy_id: str
+    feed_scope_id: str
+    provider_symbol: str
+    source_retrieved_at: datetime
+    causal_cutoff: datetime
+    family_manifest: PrimitiveMappingSnapshot
+    session_evidence: PrimitiveMappingSnapshot
+    bars_fingerprint: str
+    corporate_action_availability: CorporateActionAvailability = (
+        CorporateActionAvailability.UNAVAILABLE
+    )
+    schema_version: str = "bounded-1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "bounded-1":
+            raise ValueError("unsupported bounded prediction provenance schema")
+        for name in ("source_retrieved_at", "causal_cutoff"):
+            instant = getattr(self, name)
+            if not isinstance(instant, datetime) or instant.utcoffset() is None:
+                raise ValueError(f"bounded prediction {name} must be timezone-aware")
+            object.__setattr__(self, name, instant.astimezone(UTC))
+        for name in ("family_manifest", "session_evidence"):
+            if not isinstance(getattr(self, name), PrimitiveMappingSnapshot):
+                raise ValueError(f"bounded prediction {name} must be immutable")
+        if (
+            self.corporate_action_availability
+            is not CorporateActionAvailability.UNAVAILABLE
+        ):
+            raise ValueError(
+                "bounded intraday corporate actions must remain unavailable"
+            )
+        for name in (
+            "canonical_input_id",
+            "canonical_provenance_id",
+            "family_id",
+            "source_dataset_id",
+            "source_request_id",
+            "session_dataset_id",
+            "session_timeframe_configuration_id",
+            "session_policy_id",
+            "feed_scope_id",
+            "provider_symbol",
+            "bars_fingerprint",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value or value != value.strip():
+                raise ValueError(f"bounded prediction {name} must be nonempty text")
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            name: (
+                value.to_primitive()
+                if isinstance(value, PrimitiveMappingSnapshot)
+                else value.isoformat()
+                if isinstance(value, datetime)
+                else value.value
+                if isinstance(value, CorporateActionAvailability)
+                else value
+            )
+            for name in self.__dataclass_fields__
+            for value in (getattr(self, name),)
+        }
+
+    @property
+    def view_id(self) -> str:
+        return BOUNDED_PREDICTION_DATASET_PREFIX + configuration_identity(
+            self.to_primitive()
+        )
+
+    @classmethod
+    def from_primitive(cls, value: object) -> "BoundedPredictionProvenance":
+        if not isinstance(value, dict) or set(cast(dict[str, object], value)) != set(
+            cls.__dataclass_fields__
+        ):
+            raise ValueError("bounded prediction provenance fields are invalid")
+        record = cast(dict[str, object], value).copy()
+        for name in ("family_manifest", "session_evidence"):
+            if not isinstance(record[name], dict):
+                raise ValueError(f"bounded prediction {name} must be a record")
+            record[name] = PrimitiveMappingSnapshot.capture(
+                cast(PrimitiveMapping, record[name])
+            )
+        for name in ("source_retrieved_at", "causal_cutoff"):
+            if not isinstance(record[name], str):
+                raise ValueError(f"bounded prediction {name} must be a timestamp")
+            record[name] = datetime.fromisoformat(cast(str, record[name]))
+        record["corporate_action_availability"] = CorporateActionAvailability(
+            record["corporate_action_availability"]
+        )
+        restored = cls(
+            canonical_input_id=cast(str, record["canonical_input_id"]),
+            canonical_provenance_id=cast(str, record["canonical_provenance_id"]),
+            family_id=cast(str, record["family_id"]),
+            source_dataset_id=cast(str, record["source_dataset_id"]),
+            source_request_id=cast(str, record["source_request_id"]),
+            session_dataset_id=cast(str, record["session_dataset_id"]),
+            session_timeframe_configuration_id=cast(
+                str, record["session_timeframe_configuration_id"]
+            ),
+            session_policy_id=cast(str, record["session_policy_id"]),
+            feed_scope_id=cast(str, record["feed_scope_id"]),
+            provider_symbol=cast(str, record["provider_symbol"]),
+            source_retrieved_at=cast(datetime, record["source_retrieved_at"]),
+            causal_cutoff=cast(datetime, record["causal_cutoff"]),
+            family_manifest=cast(PrimitiveMappingSnapshot, record["family_manifest"]),
+            session_evidence=cast(PrimitiveMappingSnapshot, record["session_evidence"]),
+            bars_fingerprint=cast(str, record["bars_fingerprint"]),
+            corporate_action_availability=record["corporate_action_availability"],
+            schema_version=cast(str, record["schema_version"]),
+        )
+        if restored.to_primitive() != value:
+            raise ValueError("bounded prediction provenance must be canonical")
+        return restored
+
+
+type PredictionInputProvenance = (
+    IntradayPredictionProvenance | BoundedPredictionProvenance
+)
+
+
 @dataclass(frozen=True, slots=True)
 class DailyBar:
     """One completed exchange trading session, represented without a timezone."""
@@ -296,7 +441,7 @@ class DatasetMetadata:
     adjusted_fields_used: bool
     corporate_action_policy: str
     adapter_version: str
-    intraday_provenance: IntradayPredictionProvenance | None = None
+    intraday_provenance: PredictionInputProvenance | None = None
 
     @property
     def corporate_action_availability(self) -> CorporateActionAvailability:
@@ -310,7 +455,7 @@ class DatasetMetadata:
 
 @dataclass(frozen=True, slots=True)
 class MarketDataset:
-    """Canonical bars permanently associated with their immutable manifest."""
+    """Session bars with canonical source or explicit bounded-view provenance."""
 
     bars: tuple[DailyBar, ...]
     metadata: DatasetMetadata
