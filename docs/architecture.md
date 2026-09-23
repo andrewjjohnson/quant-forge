@@ -150,6 +150,11 @@ content-addressed intraday raw-chunk, canonical-batch, manifest, and request-
 pointer namespace. The cache-aware service can replay an identical request
 without constructing a provider or accessing credentials. See
 `docs/market-data.md` and `docs/intraday-market-data.md`.
+Provider-owned, credential-free cache compatibility checks also apply to old
+adapter revisions: Tiingo requires complete coverage, while other providers
+retain their existing diagnostic reuse. The service delegates eligibility to
+the provider boundary and replaces an incompatible request pointer only after
+successful reacquisition; historical artifacts remain immutable.
 
 Responsibilities:
 
@@ -845,3 +850,13 @@ evaluation, enforces exact frozen requests and conservative prior-exposure check
 and delegates execution to the existing QF-42/QF-43 adapter paths. Structured
 outputs stop before QF-9 manifest infrastructure and QF-41 rendering. See
 [`oos-holdout-aggregation.md`](oos-holdout-aggregation.md) and ADR 0018.
+
+## Tiingo historical acquisition (QF-53)
+
+Tiingo alone decomposes XNYS/RTH history into calendar-session wire requests.
+Its raw snapshots retain contiguous logical coverage envelopes, actual session
+wire parameters, and lossless responses; canonical retention intersects each
+window with exact session and user boundaries. The adapter applies existing
+strict coverage validation before returning one normal `IntradayFetchResult`.
+No generic provider, prediction, outcome, or cache contract changes. See
+[ADR 0025](decisions/0025-plan-tiingo-history-by-exchange-session.md).

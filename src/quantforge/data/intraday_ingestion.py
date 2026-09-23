@@ -603,10 +603,22 @@ class IntradayMarketDataService:
         self, request: IntradayBarRequest, *, refresh: bool = False
     ) -> IntradayDataset:
         """Return an immutable dataset, using cache before provider access."""
+        # Resolve adapter policy here, after their shared ingestion records exist.
+        from quantforge.data.providers import can_reuse_intraday_cache
+
+        replace_request_index = refresh
         if not refresh:
             cached = self.cache.find(self.provider_name, request)
             if cached is not None:
-                return cached
+                if can_reuse_intraday_cache(self.provider_name, cached.quality_report):
+                    return cached
+                if self.provider is None:
+                    raise RequestError(
+                        f"cached {self.provider_name} intraday dataset "
+                        f"{cached.metadata.dataset_id} has incompatible coverage; "
+                        "configure a provider to reacquire it"
+                    )
+                replace_request_index = True
         if self.provider is None:
             raise RequestError(
                 "intraday request is not cached and no provider is configured"
@@ -620,7 +632,7 @@ class IntradayMarketDataService:
             raise ProviderError(
                 f"{self.provider.name} intraday provider failed"
             ) from error
-        return self.cache.persist(result, replace_request_index=refresh)
+        return self.cache.persist(result, replace_request_index=replace_request_index)
 
 
 def _string_mapping(value: object, field_name: str) -> dict[str, object]:

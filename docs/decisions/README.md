@@ -94,3 +94,5 @@ How will the decision be tested or revisited?
 
 - [0023: Preserve intraday prediction-input provenance](0023-preserve-intraday-prediction-input-provenance.md)
 - [0024: Separate causal prediction views from canonical source evidence](0024-separate-bounded-prediction-views.md)
+
+- [0025: Plan Tiingo history by exchange session](0025-plan-tiingo-history-by-exchange-session.md)
