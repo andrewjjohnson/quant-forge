@@ -442,6 +442,23 @@ def test_pages_without_retained_bars_still_follow_pagination(
     assert len(result.batch.bars) == 3
 
 
+def test_documented_date_bounds_in_next_url_keep_exact_logical_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    next_url = NEXT.replace("1719840779999", "2024-07-01")
+    calls = install_responses(
+        monkeypatch,
+        [
+            page(rows(count=1), next_url),
+            page(rows(START + timedelta(minutes=1), 3)),
+        ],
+    )
+    result = MassiveProvider(TOKEN).fetch_intraday(request())
+    assert calls[1].full_url == next_url
+    assert len(result.batch.bars) == 3
+    assert result.batch.bars[-1].end_timestamp == request().end_timestamp
+
+
 @pytest.mark.parametrize("missing_index", [0, 1, 2])
 def test_missing_required_bar_is_never_filled(
     monkeypatch: pytest.MonkeyPatch, missing_index: int

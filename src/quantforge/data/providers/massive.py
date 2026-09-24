@@ -215,11 +215,14 @@ class MassiveProvider:
 def _page_url(url: str, prefix: str, adjusted: bool) -> str:
     """Validate the destination before attaching a credential to any page."""
     parsed = urlsplit(url)
+    # Massive documents dates as well as milliseconds in returned page paths.
+    # These are wire bounds only; canonical retention uses the original request.
+    boundary = r"(?:\d+|\d{4}-\d{2}-\d{2})"
     if (
         parsed.scheme != "https"
         or parsed.netloc != "api.massive.com"
         or parsed.fragment
-        or not re.fullmatch(re.escape(prefix) + r"\d+/\d+", parsed.path)
+        or not re.fullmatch(re.escape(prefix) + f"{boundary}/{boundary}", parsed.path)
     ):
         raise ProviderError("unsafe or incompatible pagination URL")
     parameters = [
