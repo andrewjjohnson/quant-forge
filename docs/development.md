@@ -783,4 +783,5 @@ uv run --frozen python scripts/verify_massive_history.py --offline
 The script reports HTTP/page counts, raw and canonical counts, exact cached
 ranges, source identities, and offline replay. See
 [the provider contract](massive-market-data.md) for adjustment, unavailable
-events, strict coverage, and longer historical range options.
+events, diagnostic coverage and strict SPY verification, and longer historical
+range options.

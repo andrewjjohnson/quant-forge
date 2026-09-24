@@ -89,17 +89,27 @@ start plus the requested interval. No float conversion is used for timestamps.
 Exchange-local session dates and actual opens/closes come from the existing
 XNYS calendar. Pre-market, post-market, holiday, and out-of-range rows with
 valid timestamps are excluded. Early closes retain only the actual RTH window
-(210 one-minute bars rather than 390). Invalid timestamps fail closed. Retained
+(210 expected one-minute intervals rather than 390 on a normal session).
+Observed aggregate counts may be lower. Invalid timestamps fail closed. Retained
 rows use the existing canonical Decimal, OHLC, volume, alignment, session, and
 batch validators. Rows are sorted explicitly; duplicate in-session starts fail,
 including at a partial final request bar. VWAP and trade count are optional and
 remain in raw responses only.
 
-The existing strict coverage validator rejects missing required bars or sessions
-before cache persistence. No absent aggregate is synthesized or forward-filled.
-Massive can omit intervals with no qualifying trades; such a dataset cannot
-pass the strict SPY research coverage policy. Zero volume remains permitted by
-the canonical model and produces its existing quality warning.
+Massive documents that an interval can have no aggregate when no qualifying trade
+occurs. The adapter preserves missing intervals, including successful responses
+with no retained bars; it never synthesizes or forward-fills an observation.
+An omission alone does not establish its cause. The existing cache's diagnostic
+coverage report records missing intervals and incomplete sessions truthfully.
+Massive adds no universal requirement for every expected RTH interval to contain
+an aggregate.
+
+Acceptance remains with existing QuantForge completeness policies: strict
+coverage validation and default aggregation reject incomplete inputs, while
+diagnostic acquisition and replay preserve them with their quality evidence.
+QF-45/SPY contracts and the optional SPY verifier can require complete RTH coverage.
+Zero volume remains permitted by the canonical model and produces its existing
+quality warning.
 
 ## Adjustment and events
 
@@ -135,18 +145,21 @@ also bind `massive`. Numerically identical Tiingo bars cannot alias the source.
 Page layout and retrieval timestamps affect immutable acquisition identity,
 as existing contracts require, but do not change the logical request ID.
 
-The entire pagination and strict validation must succeed before persistence.
-A failure leaves no successful partial dataset or new request pointer. Reruns
-reuse a complete immutable dataset offline; an interrupted acquisition restarts
-its range. There is no persisted page-level resume checkpoint. Refresh preserves
-old snapshots and advances the pointer only after success. Changed range,
-interval, adjustment, feed, or session policies cannot reuse an incompatible
-request. Massive rejects reuse of incomplete diagnostic caches; fake providers
-retain their existing diagnostic reuse policy and Tiingo retains its own policy.
+All pages and canonical structural validation must succeed before persistence.
+A failed or interrupted page acquisition leaves no successful partial dataset or
+new request pointer; restarting it refetches the range. Successfully acquired
+sparse or empty datasets can be cached and replayed with their diagnostic coverage
+reports. Finishing pagination does not assert complete market-session coverage.
+There is no persisted page-level resume checkpoint. Refresh preserves old
+snapshots and advances the pointer only after success. Changed range, interval,
+adjustment, feed, or session policies cannot reuse an incompatible request.
+Massive uses the existing default diagnostic cache reuse policy, as do fake
+providers; Tiingo retains its own policy.
 
 Errors distinguish configuration, unsupported capabilities, authentication (401),
 subscription/authorization (403), other HTTP failures, malformed JSON/payloads,
-row errors, pagination, and incomplete coverage. Safe diagnostics include ticker,
+row errors, and pagination. Strict consumers report incomplete required coverage
+through the existing validation/aggregation errors. Safe diagnostics include ticker,
 interval, endpoint family, range, and available page/row/timestamp context.
 HTTP bodies, exception causes, and malformed field contents are not echoed.
 Configured secrets are redacted from translated errors and retained responses.
@@ -161,13 +174,17 @@ uv run --frozen pytest tests/unit/data/test_massive_provider.py \
 ```
 
 Synthetic tests exercise both adjustment modes, pagination/security, exact range
-boundaries, missing bars, immutable cache/replay, and unchanged QF-51/QF-52
+boundaries, sparse/empty responses, strict consumer rejection of incomplete inputs,
+immutable cache/replay, and unchanged QF-51/QF-52
 composition. A three-session fixture spanning July 4, 2024 contains 990 source
 bars, 495 derived two-minute bars, and three completed daily bars, with the July 3
 early close respected. No study or EMA logic is added.
 
 With the key set, the opt-in verifier acquires normal/early-close sessions,
-a month, a pagination range, and a full 2025 SPY year through the normal service:
+a month, a pagination range, and a full 2025 SPY year through the normal service.
+It requires complete coverage using the existing quality report and checks 390/210
+bars for its specific normal/early-close SPY cases. These are verification
+requirements for SPY, not universal Massive-provider invariants:
 
 ```bash
 uv run --frozen python scripts/verify_massive_history.py
@@ -180,6 +197,8 @@ uv run --frozen python scripts/verify_massive_history.py \
 Each JSON result reports exact request/observed bounds, HTTP attempts, retained
 page count, raw/canonical row counts, source identities, complete coverage, and
 credential-free cache replay. Licensed responses remain in ignored `data/`.
-Account entitlements and actual historical gaps can still prevent acquisition;
-a failed range is never reported as successfully cached. QF-45 strategy/study
-execution, flat files, streaming, options, ML, and trading remain outside QF-54.
+Account entitlements can prevent acquisition. Historical gaps can fail the strict
+SPY verification even when acquisition and diagnostic caching succeed. Failed
+acquisition is never reported as successfully cached, and incomplete coverage is
+never reported as complete. QF-45 strategy/study execution, flat files, streaming,
+options, ML, and trading remain outside QF-54.

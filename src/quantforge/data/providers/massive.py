@@ -17,11 +17,6 @@ from quantforge.data.intraday import (
     IntradayProviderCapabilities,
 )
 from quantforge.data.intraday_ingestion import IntradayFetchResult, IntradayRawSnapshot
-from quantforge.data.intraday_validation import (
-    IntradayCoverageReport,
-    IntradayCoverageValidationError,
-    validate_intraday_coverage,
-)
 from quantforge.data.lineage import AdjustmentBasis, FeedScope
 from quantforge.data.models import AdjustmentMode, JsonValue, ProviderRecord
 from quantforge.data.providers._massive_http import MassiveHTTPClient
@@ -40,7 +35,7 @@ _SECRET_PARAMETERS = frozenset(("apikey", "api_key", "token", "authorization"))
 
 
 class MassiveProvider:
-    """Fetch complete XNYS/RTH 1m or 5m stock history, with no event feed."""
+    """Fetch observed XNYS/RTH 1m or 5m stock history, with no event feed."""
 
     name = "massive"
     intraday_adapter_version = "1"
@@ -80,10 +75,6 @@ class MassiveProvider:
     def http_request_count(self) -> int:
         """Count actual HTTP attempts, including retries, for acquisition audits."""
         return self._http.request_count
-
-    @staticmethod
-    def can_reuse_intraday_cache(quality_report: IntradayCoverageReport) -> bool:
-        return quality_report.is_complete
 
     def fetch_intraday_bars(self, request: IntradayBarRequest) -> IntradayBarBatch:
         return self.fetch_intraday(request).batch
@@ -170,18 +161,11 @@ class MassiveProvider:
                 records=tuple(pages),
             )
             batch = _canonical_batch(request, snapshot)
-            validate_intraday_coverage(batch)
+            # No qualifying trades can mean no aggregate. Existing cache and
+            # consumer coverage policies assess those gaps without repairing them.
             return IntradayFetchResult(
                 batch, (snapshot,), self.intraday_capabilities.configuration_id
             )
-        except IntradayCoverageValidationError as error:
-            first = (
-                error.report.missing_intervals or error.report.unexpected_intervals
-            )[0]
-            raise ProviderError(
-                context + f"incomplete required coverage: {error}; "
-                f"first failed interval={first.start_timestamp.isoformat()}"
-            ) from None
         except (ProviderError, ValueError, TypeError, OverflowError) as error:
             # Underlying HTTP bodies and malformed field contents are never echoed.
             reason = (
@@ -356,7 +340,5 @@ def _canonical_batch(
                     f"page={page_index + 1} row={row_index} "
                     f"timestamp={timestamp_context}: {error}"
                 ) from None
-    if not bars:
-        raise ProviderError("empty aggregate response (no retained RTH bars)")
     bars.sort(key=lambda bar: bar.start_timestamp)
     return IntradayBarBatch(request, tuple(bars))

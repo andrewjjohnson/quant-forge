@@ -1,14 +1,18 @@
 """Massive composes with unchanged aggregation and QF-51/QF-52 validation."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from scripts.verify_massive_history import verify_range
 
 from quantforge.data import (
+    IntradayAggregationQualityError,
     IntradayMarketDataCache,
     IntradayMarketDataService,
     MarketDataCache,
+    SessionAggregationQualityError,
     aggregate_intraday_dataset,
     aggregate_session_dataset,
     validate_market_dataset,
@@ -29,6 +33,7 @@ from quantforge.timeframes import IntradayInterval, SessionInterval, Timeframe
 from quantforge.walk_forward.partitions import prediction_metadata_prefix
 from tests.fixtures.massive.helpers import (
     NEXT,
+    START,
     TOKEN,
     install_responses,
     page,
@@ -115,3 +120,41 @@ def test_massive_sessions_aggregation_provenance_and_bounded_input(
     assert view == bounded_prediction_view(canonical, cutoff)
     assert market_cache.load(canonical.metadata.dataset_id) == canonical
     assert source_cache.load(source.metadata.dataset_id, source.request) == source
+
+
+@pytest.mark.parametrize("symbol", ["AAPL", "SPY"])
+def test_sparse_full_session_keeps_existing_strict_consumer_policy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, symbol: str
+) -> None:
+    # Successfully acquired stock aggregates need not cover all 390 RTH minutes.
+    observed_starts = [START, START + timedelta(minutes=389)]
+    payload = page([row(start) for start in observed_starts])
+    payload["ticker"] = symbol
+    calls = install_responses(monkeypatch, [payload])
+    logical = replace(
+        request(datetime(2024, 7, 1, tzinfo=UTC), datetime(2024, 7, 2, tzinfo=UTC)),
+        symbol=symbol,
+    )
+    cache = IntradayMarketDataCache(tmp_path)
+    source = IntradayMarketDataService(
+        cache, provider=create_intraday_provider("massive", api_key=TOKEN)
+    ).get_intraday_bars(logical)
+    assert [bar.start_timestamp for bar in source.bars] == observed_starts
+    report = source.quality_report
+    assert not report.is_complete
+    assert report.expected_completed_interval_count == 390
+    assert len(report.missing_intervals) == 388
+    assert cache.load(source.metadata.dataset_id, logical) == source
+    with pytest.raises(IntradayAggregationQualityError):
+        aggregate_intraday_dataset(
+            source, Timeframe.us_equity(IntradayInterval(timedelta(minutes=2)))
+        )
+    with pytest.raises(SessionAggregationQualityError):
+        aggregate_session_dataset(source, Timeframe.us_equity(SessionInterval(1)))
+    if symbol == "SPY":
+        # The optional SPY verifier applies its own complete-coverage requirement.
+        with pytest.raises(RuntimeError, match="SPY verification requires complete"):
+            verify_range(
+                cache, None, date(2024, 7, 1), date(2024, 7, 2), label="sparse_session"
+            )
+    assert len(calls) == 1

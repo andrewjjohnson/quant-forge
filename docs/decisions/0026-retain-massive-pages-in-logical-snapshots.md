@@ -23,8 +23,11 @@ SHA-256 binds the complete page sequence. Canonical bars point to this single
 snapshot; its retrieval instant is the final page's retrieval instant. The raw
 coverage envelope is exactly the original logical request.
 
-Massive alone owns pagination, URL/authentication safety, row mapping, XNYS/RTH
-retention, and its strict completeness requirement. Canonical bar, coverage,
+Massive alone owns pagination, URL/authentication safety, row mapping, and XNYS/RTH
+retention. Missing aggregates remain absent, including when no qualifying trade
+occurs. Existing diagnostic coverage/cache behavior preserves sparse and empty
+datasets; strict consumer policies determine whether coverage is acceptable.
+There is no Massive-specific complete-session invariant. Canonical bar, coverage,
 cache, aggregation, prediction-provenance, and bounded-view implementations stay
 unchanged. The adapter accepts explicit raw or split-adjusted OHLCV while declaring
 corporate-action event records unavailable.
@@ -50,6 +53,7 @@ bulk-universe flat files remain a separate future story.
 
 Synthetic HTTP fixtures verify complete pagination, credential redaction, unsafe
 URL rejection, failed-acquisition atomicity, exact boundaries, sessions/early
-closes, both adjustment modes, strict missing-bar rejection, and immutable replay.
+closes, both adjustment modes, missing-interval preservation, existing strict
+consumer rejection, and immutable replay of complete, sparse, and empty datasets.
 Massive-backed fixtures pass unmodified QF-51/QF-52 validation and the existing
 1m-to-2m and daily aggregators. Existing provider regressions remain unchanged.

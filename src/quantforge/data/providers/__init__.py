@@ -21,8 +21,6 @@ def can_reuse_intraday_cache(
     """
     if provider_name == TiingoProvider.name:
         return TiingoProvider.can_reuse_intraday_cache(quality_report)
-    if provider_name == MassiveProvider.name:
-        return MassiveProvider.can_reuse_intraday_cache(quality_report)
     return True
 
 

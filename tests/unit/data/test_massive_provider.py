@@ -15,11 +15,15 @@ import quantforge.data.providers._massive_http as http_module
 from quantforge.data import (
     AdjustmentMode,
     FeedScope,
+    IntradayBarBatch,
+    IntradayCoverageValidationError,
     IntradayMarketDataCache,
     IntradayMarketDataService,
+    IntradayValidationMode,
     ProviderError,
     RequestError,
     UnsupportedCapabilityError,
+    validate_intraday_coverage,
 )
 from quantforge.data.models import JsonValue
 from quantforge.data.providers import (
@@ -196,7 +200,7 @@ def test_unsafe_next_url_fails_before_second_request(
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("failure", ["duplicate", "loop", "malformed", "http", "gap"])
+@pytest.mark.parametrize("failure", ["duplicate", "loop", "malformed", "http"])
 def test_partial_fetch_never_persisted(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
 ) -> None:
@@ -205,7 +209,6 @@ def test_partial_fetch_never_persisted(
         "loop": page(rows(START + timedelta(minutes=1), 2), NEXT),
         "malformed": page([{"t": "bad"}]),
         "http": URLError(TOKEN),
-        "gap": page([row(START + timedelta(minutes=2))]),
     }[failure]
     install_responses(monkeypatch, [page(rows(count=1), NEXT), second])
     cache = IntradayMarketDataCache(tmp_path)
@@ -271,7 +274,6 @@ def test_missing_required_field(monkeypatch: pytest.MonkeyPatch, field: str) -> 
         {**page(rows()), "next_url": 1},
         b"not-json",
         b"\xff",
-        page([]),
         page([row(o=float("nan"))]),
         page([row(v=float("inf"))]),
     ],
@@ -379,22 +381,21 @@ def test_ordering_volume_and_material_identities(
 def test_cache_policy_preserves_other_providers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    install_responses(monkeypatch, [page(rows())])
+    install_responses(monkeypatch, [page(rows(count=2))])
     result = MassiveProvider(TOKEN).fetch_intraday(request())
-    incomplete = replace(
-        result, batch=replace(result.batch, bars=result.batch.bars[:-1])
-    )
     cache = IntradayMarketDataCache(tmp_path)
-    diagnostic = cache.persist(incomplete)
+    diagnostic = cache.persist(result)
     report = diagnostic.quality_report
     assert not report.is_complete
-    assert not can_reuse_intraday_cache("massive", report)
+    assert can_reuse_intraday_cache("massive", report)
     assert not can_reuse_intraday_cache("tiingo", report)
     assert can_reuse_intraday_cache("fake", report)
-    with pytest.raises(RequestError, match="incompatible coverage"):
+    assert (
         IntradayMarketDataService(cache, provider_name="massive").get_intraday_bars(
             request()
         )
+        == diagnostic
+    )
     assert cache.load(diagnostic.metadata.dataset_id, request()) == diagnostic
 
 
@@ -460,14 +461,76 @@ def test_documented_date_bounds_in_next_url_keep_exact_logical_range(
 
 
 @pytest.mark.parametrize("missing_index", [0, 1, 2])
-def test_missing_required_bar_is_never_filled(
-    monkeypatch: pytest.MonkeyPatch, missing_index: int
+@pytest.mark.parametrize("minutes", [1, 5])
+def test_missing_bar_preserved_through_pagination_and_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing_index: int, minutes: int
 ) -> None:
-    records = rows()
+    logical = request(end=START + timedelta(minutes=3 * minutes), minutes=minutes)
+    records = rows(minutes=minutes)
     del records[missing_index]
-    install_responses(monkeypatch, [page(records)])
-    with pytest.raises(ProviderError, match="incomplete required coverage"):
-        MassiveProvider(TOKEN).fetch_intraday(request())
+    calls = install_responses(
+        monkeypatch,
+        [
+            page(records[:1], NEXT.replace("/1/minute/", f"/{minutes}/minute/")),
+            page(records[1:]),
+        ],
+    )
+    cache = IntradayMarketDataCache(tmp_path)
+    service = IntradayMarketDataService(cache, provider=MassiveProvider(TOKEN))
+    dataset = service.get_intraday_bars(logical)
+    assert [bar.start_timestamp for bar in dataset.bars] == [
+        START + timedelta(minutes=index * minutes)
+        for index in range(3)
+        if index != missing_index
+    ]
+    report = dataset.quality_report
+    assert report.validation_mode is IntradayValidationMode.DIAGNOSTIC
+    assert not report.is_complete
+    assert report.observed_bar_count == 2
+    assert report.expected_completed_interval_count == 3
+    assert [interval.start_timestamp for interval in report.missing_intervals] == [
+        START + timedelta(minutes=missing_index * minutes)
+    ]
+    assert service.get_intraday_bars(logical) == dataset
+    assert (
+        IntradayMarketDataService(cache, provider_name="massive").get_intraday_bars(
+            logical
+        )
+        == dataset
+    )
+    assert len(calls) == 2
+    # A strict consumer still rejects the same observations using existing policy.
+    with pytest.raises(IntradayCoverageValidationError) as caught:
+        validate_intraday_coverage(IntradayBarBatch(logical, dataset.bars))
+    assert caught.value.report.missing_intervals == report.missing_intervals
+
+
+@pytest.mark.parametrize("response_kind", ["empty", "omitted", "outside_rth"])
+def test_no_retained_observations_preserve_empty_batch_and_coverage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, response_kind: str
+) -> None:
+    payload = page([])
+    if response_kind == "omitted":
+        del payload["results"]
+    elif response_kind == "outside_rth":
+        payload = page([row(START - timedelta(minutes=1))])
+    calls = install_responses(monkeypatch, [payload])
+    cache = IntradayMarketDataCache(tmp_path)
+    logical = request(start=START - timedelta(minutes=1))
+    dataset = IntradayMarketDataService(
+        cache, provider=MassiveProvider(TOKEN)
+    ).get_intraday_bars(logical)
+    assert dataset.bars == ()
+    assert not dataset.quality_report.is_complete
+    assert dataset.quality_report.expected_completed_interval_count == 3
+    assert len(dataset.quality_report.missing_intervals) == 3
+    assert (
+        IntradayMarketDataService(cache, provider_name="massive").get_intraday_bars(
+            logical
+        )
+        == dataset
+    )
+    assert len(calls) == 1
 
 
 def test_duplicate_in_partial_final_bar_fails(monkeypatch: pytest.MonkeyPatch) -> None:

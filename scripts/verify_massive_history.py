@@ -26,7 +26,7 @@ def verify_range(
     *,
     label: str,
 ) -> dict[str, JsonValue]:
-    """Acquire or replay one exact half-open range; report only non-secret facts."""
+    """Require complete SPY coverage for verification using the generic report."""
     request = IntradayBarRequest(
         "SPY",
         datetime(start.year, start.month, start.day, tzinfo=UTC),
@@ -43,8 +43,11 @@ def verify_range(
     # No provider object or credential is available to this replay service.
     offline = IntradayMarketDataService(cache, provider_name="massive")
     replay = offline.get_intraday_bars(request)
-    if replay != dataset or not dataset.quality_report.is_complete:
-        raise RuntimeError("Massive offline replay/coverage verification failed")
+    if replay != dataset:
+        raise RuntimeError("Massive offline replay verification failed")
+    # This SPY verification requirement is not a Massive stock-provider invariant.
+    if not dataset.quality_report.is_complete:
+        raise RuntimeError("SPY verification requires complete RTH coverage")
     page_count = 0
     raw_count = 0
     for location in dataset.metadata.raw_locations:
@@ -103,9 +106,9 @@ def main() -> None:
         result = verify_range(cache, provider, start, end, label=label)
         print(json.dumps(result, sort_keys=True), flush=True)
         if label == "normal_session" and result["canonical_rth_count"] != 390:
-            raise RuntimeError("normal-session bar count differs from 390")
+            raise RuntimeError("SPY normal-session bar count differs from 390")
         if label == "early_close" and result["canonical_rth_count"] != 210:
-            raise RuntimeError("early-close bar count differs from 210")
+            raise RuntimeError("SPY early-close bar count differs from 210")
         if label == "pagination" and cast(int, result["retained_pages"]) < 2:
             raise RuntimeError("verification range did not exercise pagination")
 
