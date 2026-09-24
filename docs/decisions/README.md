@@ -96,3 +96,4 @@ How will the decision be tested or revisited?
 - [0024: Separate causal prediction views from canonical source evidence](0024-separate-bounded-prediction-views.md)
 
 - [0025: Plan Tiingo history by exchange session](0025-plan-tiingo-history-by-exchange-session.md)
+- [0026: Retain Massive pages in logical acquisition snapshots](0026-retain-massive-pages-in-logical-snapshots.md)

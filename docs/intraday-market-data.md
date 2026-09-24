@@ -531,3 +531,12 @@ QF-15/QF-16/QF-17/QF-18/QF-19 do not implement:
 
 Those are sibling QF-12 stories. They must consume these contracts without
 weakening QF-13 completion semantics or QF-14 source-family consistency.
+
+## Massive historical stock provider (QF-54)
+
+`create_intraday_provider("massive")` selects historical consolidated stock
+1-minute/5-minute aggregates with `MASSIVE_API_KEY`. It uses long ranges plus
+pagination, the same XNYS/RTH and immutable-cache contracts, explicit raw or
+split-adjusted OHLCV, and truthful unavailable corporate-action events. See
+[Massive configuration and semantics](massive-market-data.md) and
+[ADR 0026](decisions/0026-retain-massive-pages-in-logical-snapshots.md).
