@@ -92,14 +92,26 @@ def prediction_components_match(
 
 
 def validate_prediction_trial_result(
-    trial: PrimitiveMapping, artifact: PrimitiveMapping, study: PrimitiveMapping
+    trial: PrimitiveMapping,
+    artifact: PrimitiveMapping,
+    study: PrimitiveMapping,
+    *,
+    window_manifest: PrimitiveMapping | None = None,
 ) -> None:
     """Compare stored component/context/data inputs; never construct a candidate."""
     window = study.get("decision_schedule") is not None
     result = mapping(
         artifact.get("prediction_window" if window else "prediction_study")
     )
-    manifest = mapping(result.get("manifest"))
+    manifest = (
+        window_manifest
+        if window_manifest is not None
+        else mapping(result.get("manifest"))
+    )
+    if window and manifest.get("schema_version") != study.get(
+        "window_schema_version", "1"
+    ):
+        raise ManifestError("window representation differs from its trial definition")
     definition = mapping(trial.get("trial_definition"))
     components = frozen_prediction_components(definition, study)
     configuration = mapping(manifest.get("configuration"))

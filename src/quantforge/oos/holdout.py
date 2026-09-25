@@ -20,9 +20,10 @@ from quantforge.oos.common import provenance
 from quantforge.oos.holdout_evaluation import HoldoutEvaluation
 from quantforge.oos.models import OOSSource
 from quantforge.oos.prediction import (
-    prediction_observations,
+    iter_prediction_observations,
     summarize_prediction_observations,
 )
+from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.timeframes import resolve_exchange_session
 from quantforge.validation import ExchangeSessionBoundary, TimestampBoundary
 from quantforge.walk_forward.models import PredictionOOSArtifact
@@ -343,12 +344,14 @@ class HoldoutLedger:
             root = self.root / "lineages" / source.lineage_id
             artifact = evaluation._evaluate(root / "evaluation")  # pyright: ignore[reportPrivateUsage]
             if isinstance(artifact, PredictionOOSArtifact):
-                observations = prediction_observations(artifact, "final_holdout")
-                payload = artifact.snapshot.to_primitive()
-                decisions = payload["decisions"]
-                assert isinstance(decisions, list)
+                reader = PredictionWindowReader.from_reference(
+                    artifact.snapshot.to_primitive(), root=root / "evaluation"
+                )
+                observations = iter_prediction_observations(
+                    reader, artifact, "final_holdout"
+                )
                 summary = summarize_prediction_observations(
-                    observations, len(decisions)
+                    observations, reader.decision_count
                 )
             else:
                 # QF-5 fsyncs export files, but its directory rename is not durable.

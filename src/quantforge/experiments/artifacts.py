@@ -18,6 +18,7 @@ from quantforge.experiments._json import (
     digest,
     parse_json,
     pointer,
+    safe_metadata,
     snapshot,
     text,
 )
@@ -50,6 +51,7 @@ class ArtifactType(StrEnum):
 
 class ArtifactFormat(StrEnum):
     JSON = "json"
+    JSONL = "jsonl"
     CSV = "csv"
     PARQUET = "parquet"
     HTML = "html"
@@ -129,8 +131,8 @@ class ArtifactEntry:
             digest(self.sha256)
         if (
             self.json_pointer or self.bindings.to_primitive()
-        ) and self.file_format is not ArtifactFormat.JSON:
-            raise ManifestError("only JSON artifacts support metadata bindings")
+        ) and self.file_format not in {ArtifactFormat.JSON, ArtifactFormat.JSONL}:
+            raise ManifestError("only JSON/JSONL artifacts support metadata bindings")
         _relative_path(self.path)
         if self.producer_run_id is not None:
             text(self.producer_run_id)
@@ -261,6 +263,7 @@ class IntegrityReport:
 def verify_artifacts(index: ArtifactIndex, root: Path) -> IntegrityReport:
     issues: list[IntegrityIssue] = []
     absent: list[str] = []
+    compact_metadata: dict[Path, tuple[str, PrimitiveMapping]] = {}
     for entry in index.entries:
         code = None
         try:
@@ -282,9 +285,44 @@ def verify_artifacts(index: ArtifactIndex, root: Path) -> IntegrityReport:
                         for key, value in entry.bindings.to_primitive().items()
                     ):
                         code = "incompatible_metadata"
+            elif entry.file_format is ArtifactFormat.JSONL:
+                # JSONL metadata pointers address the two QF-55 control records.
+                # Published file hashes authenticate all decisions; presentation
+                # need not deserialize their payloads to inspect aggregate results.
+                if path not in compact_metadata:
+                    from quantforge.prediction.window_reader import (
+                        PredictionWindowReader,
+                    )
+
+                    before = file_sha256(path)
+                    reader = PredictionWindowReader.open(path)
+                    if reader.schema_version != "2" or before != file_sha256(path):
+                        raise ManifestError(
+                            "compact artifact changed during verification"
+                        )
+                    safe_metadata(reader.evidence.to_primitive())
+                    compact_metadata[path] = (
+                        before,
+                        {
+                            "header": reader.header(),
+                            "shared_evidence": reader.evidence.to_primitive(),
+                        },
+                    )
+                fingerprint, document = compact_metadata[path]
+                if entry.schema_version != "2":
+                    code = "incompatible_metadata"
+                elif entry.sha256 != fingerprint:
+                    code = "content_hash_mismatch"
+                else:
+                    pointer(document, entry.json_pointer)
+                    if any(
+                        pointer(document, key) != value
+                        for key, value in entry.bindings.to_primitive().items()
+                    ):
+                        code = "incompatible_metadata"
             elif entry.sha256 != file_sha256(path):
                 code = "content_hash_mismatch"
-        except (OSError, ManifestError):
+        except (OSError, ValueError):
             code = "invalid_artifact"
         if code:
             issues.append(IntegrityIssue(entry.artifact_id, code))

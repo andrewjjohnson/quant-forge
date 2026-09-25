@@ -1,5 +1,10 @@
 # Experiment manifests and artifact indexes
 
+QF-57 adds compact JSONL views to the existing artifact graph and preserves
+streaming scientific validation plus immutable-hash replay. See
+[compact consumers](compact-window-consumers.md) for pointers, relationships,
+canonical-parent inputs and version compatibility.
+
 QF-9 adds `quantforge.experiments`, a local provenance and artifact-index layer.
 It answers which code, dependencies, data, configuration, backend, validation
 lineage, and files produced a result. It reads existing structured exports. It

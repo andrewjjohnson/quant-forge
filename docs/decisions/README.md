@@ -100,3 +100,5 @@ How will the decision be tested or revisited?
 - [0027: Normalize historical-window evidence](0027-normalize-historical-window-evidence.md)
 
 - [0028: Checkpoint compact prediction journals](0028-checkpoint-compact-prediction-journals.md)
+
+- [0029: Consume compact window evidence downstream](0029-consume-compact-window-evidence.md)

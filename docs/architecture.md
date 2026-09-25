@@ -1,5 +1,10 @@
 # QuantForge Architecture
 
+QF-57 consumes finalized compact windows through the existing reader, QF-40
+streaming reducers, QF-9 graph and QF-41 stored-result presentation. See
+[compact consumers](compact-window-consumers.md) and
+[ADR 0029](decisions/0029-consume-compact-window-evidence.md).
+
 QF-56 adds compact prediction journals with atomic per-decision checkpoints
 and QF-32/QF-39 production. See [incremental windows](incremental-prediction-windows.md)
 and [ADR 0028](decisions/0028-checkpoint-compact-prediction-journals.md).

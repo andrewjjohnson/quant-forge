@@ -1,5 +1,10 @@
 # Static research reports (QF-41)
 
+Compact-backed reports use published aggregates and bound header metadata.
+They hash source bytes but do not iterate compact decisions to reproduce metrics.
+See [compact consumers](compact-window-consumers.md) for reserved/consumed
+holdout behavior, attachment phases and offline coverage.
+
 `quantforge.reporting.build_research_report` reads a saved QF-9 experiment
 manifest and its artifact index. `export_research_report` writes one standalone
 HTML file with inline CSS and no JavaScript, network assets, server or running

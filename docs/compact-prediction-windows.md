@@ -3,7 +3,8 @@
 QF-56 adds explicit compact incremental execution, per-decision durable progress,
 exact-prefix resume and QF-32/QF-39 production. See
 [incremental prediction windows](incremental-prediction-windows.md). The v1
-contracts below remain available; QF-57 owns downstream compact consumption.
+contracts below remain available; [QF-57 consumers](compact-window-consumers.md)
+use the same representation downstream.
 
 QF-55 adds representation version `"2"` to the existing QF-42 historical-window
 contract. Execution still returns v1 by default. QF-55 itself adds no scheduler, strategy, outcome calculator, or database.
@@ -231,5 +232,5 @@ execution and numerical behavior are unchanged.
 
 QF-56 owns incremental QF-42 execution, durable checkpoints, prefix resume, and
 QF-32/QF-39 persistence. QF-57 owns QF-40 OOS/holdout, QF-9 manifest/integrity, and
-QF-41 report integration. The QF-57 consumer migrations remain deferred. QF-45
+QF-41 report integration; see [the consumer contract](compact-window-consumers.md). QF-45
 strategy logic is untouched. No generic architectural blocker was found.

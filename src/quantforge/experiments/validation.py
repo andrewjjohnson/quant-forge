@@ -55,6 +55,7 @@ def inspect_validation(
     """
     # Importing the metadata API must not initialize research producer packages.
     from quantforge.experiments._aggregate_integrity import validate_aggregate_folds
+    from quantforge.experiments._compact_window import index_compact_window
     from quantforge.experiments._holdout_integrity import (
         validate_holdout_artifact,
         validate_holdout_consumption,
@@ -62,6 +63,8 @@ def inspect_validation(
     from quantforge.experiments._producer_integrity import validate_backtest_identity
     from quantforge.experiments._window_integrity import validate_window_snapshot
     from quantforge.oos.common import provenance as source_provenance
+    from quantforge.oos.prediction import source_prediction_reader
+    from quantforge.prediction.window_reader import PredictionWindowReader
     from quantforge.walk_forward.models import (
         BacktestOOSArtifact,
         FoldStatus,
@@ -153,7 +156,9 @@ def inspect_validation(
 
     window_entries: list[ArtifactEntry] = []
     fold_references: list[Primitive] = []
-    for fold, reference in zip(source.folds, source.references, strict=True):
+    for fold_index, (fold, reference) in enumerate(
+        zip(source.folds, source.references, strict=True)
+    ):
         captured_state = reference.to_primitive()["state"]
         if fold.status is FoldStatus.COMPLETED and fold.artifact is None:
             raise ManifestError("completed fold is missing its OOS artifact")
@@ -212,7 +217,9 @@ def inspect_validation(
             ) != configuration_identity(artifact):
                 raise ManifestError("fold artifact differs from captured source")
             if isinstance(fold.artifact, PredictionOOSArtifact):
-                validate_window_snapshot(fold.artifact.snapshot.to_primitive())
+                reader = source_prediction_reader(source, fold_index)
+                if reader.schema_version == "1":
+                    validate_window_snapshot(fold.artifact.snapshot.to_primitive())
             record["result_id"] = artifact["result_id"]
             window = add(
                 fold_root / "oos.json",
@@ -228,6 +235,17 @@ def inspect_validation(
             )
             window_entries.append(window)
             link(window, RelationshipType.SELECTED_BY, selected)
+            if isinstance(fold.artifact, PredictionOOSArtifact):
+                reader = source_prediction_reader(source, fold_index)
+                if reader.schema_version == "2":
+                    indexed, relationships = index_compact_window(
+                        reader,
+                        artifact_root=root,
+                        reads=reads,
+                    )
+                    entries.extend(indexed)
+                    edges.extend(relationships)
+                    link(window, RelationshipType.DERIVED_FROM, indexed[0])
             if isinstance(fold.artifact, BacktestOOSArtifact):
                 export = fold_root / "test" / fold.artifact.export_location
                 _validate_captured_backtest_export(
@@ -260,7 +278,7 @@ def inspect_validation(
         aggregate, aggregate_base = reads.read(aggregate_path)
         provenance = mapping(aggregate["provenance"])
         if (
-            aggregate.get("schema_version") != "1"
+            aggregate.get("schema_version") not in {"1", "2"}
             or aggregate.get("kind")
             not in {"prediction_oos_aggregate", "backtest_oos_aggregate"}
             or aggregate_path.stem != configuration_identity(aggregate)
@@ -344,7 +362,16 @@ def inspect_validation(
                 result, result_base = reads.read(result_path)
                 if configuration_identity(result) != reference["sha256"]:
                     raise ManifestError("holdout result changed during indexing")
-                validate_holdout_artifact(source, consumed, result)
+                artifact = mapping(result["artifact"])
+                payload = mapping(artifact["result"])
+                holdout_reader = None
+                if artifact["kind"] == "prediction" and "manifest" not in payload:
+                    holdout_reader = PredictionWindowReader.from_reference(
+                        payload, root=result_path.parent / "evaluation"
+                    )
+                validate_holdout_artifact(
+                    source, consumed, result, reader=holdout_reader
+                )
                 result_entry = add(
                     result_path,
                     ArtifactType.HOLDOUT_RESULT,
@@ -353,6 +380,15 @@ def inspect_validation(
                 )
                 link(result_entry, RelationshipType.DERIVED_FROM, marker)
                 holdout["result_artifact_id"] = result_entry.artifact_id
+                if holdout_reader is not None:
+                    indexed, relationships = index_compact_window(
+                        holdout_reader,
+                        artifact_root=root,
+                        reads=reads,
+                    )
+                    entries.extend(indexed)
+                    edges.extend(relationships)
+                    link(result_entry, RelationshipType.DERIVED_FROM, indexed[0])
                 artifact = mapping(result["artifact"])
                 if artifact["kind"] == "backtest":
                     from quantforge.experiments.artifacts import local_path

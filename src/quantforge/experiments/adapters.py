@@ -6,6 +6,7 @@ The caller supplies a completed export or an already-serialized result snapshot.
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._backtest_artifacts import (
@@ -40,6 +41,9 @@ from quantforge.experiments.models import (
     StudyProvenance,
     StudyType,
 )
+
+if TYPE_CHECKING:
+    from quantforge.data.models import DatasetMetadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,7 +268,11 @@ def _description(
 
 
 def inspect_study(
-    study_type: StudyType, source: Path, *, artifact_root: Path
+    study_type: StudyType,
+    source: Path,
+    *,
+    artifact_root: Path,
+    canonical_metadata: "DatasetMetadata | None" = None,
 ) -> StudyArtifacts:
     """Index QF-11/42/7/29/32/5/6 persisted outputs without loading an engine.
 
@@ -297,6 +305,10 @@ def inspect_study(
 
     source = source.resolve()
     root = artifact_root.resolve()
+    if study_type is StudyType.PREDICTION_WINDOW and source.suffix == ".jsonl":
+        return _inspect_compact_study(
+            source, root, canonical_metadata=canonical_metadata
+        )
     if (
         study_type is StudyType.BACKTEST
         and not source.is_dir()
@@ -644,10 +656,47 @@ def inspect_study(
                                 "prediction trial artifact metadata does not match "
                                 "its record"
                             )
+                        window_manifest: PrimitiveMapping | None = None
                         if configuration.get("decision_schedule") is not None:
-                            validate_window_snapshot(
-                                mapping(artifact.get("prediction_window"))
-                            )
+                            payload = mapping(artifact.get("prediction_window"))
+                            if "manifest" in payload:
+                                validate_window_snapshot(payload)
+                            else:
+                                from quantforge.experiments._compact_window import (
+                                    index_compact_window,
+                                    validate_compact_window,
+                                )
+                                from quantforge.prediction.window_reader import (
+                                    PredictionWindowReader,
+                                )
+
+                                reader = PredictionWindowReader.from_reference(
+                                    payload, root=artifact_path.parent
+                                )
+                                validate_compact_window(
+                                    reader,
+                                    canonical_metadata=canonical_metadata,
+                                    strategy_parameters=mapping(
+                                        mapping(trial["trial_definition"])[
+                                            "prediction_rule_parameters"
+                                        ]
+                                    ),
+                                )
+                                window_manifest = reader.manifest()
+                                indexed, relationships = index_compact_window(
+                                    reader,
+                                    artifact_root=root,
+                                    reads=reads,
+                                )
+                                entries.extend(indexed)
+                                edges.extend(relationships)
+                                edges.append(
+                                    ArtifactRelationship(
+                                        indexed[0].artifact_id,
+                                        RelationshipType.DERIVED_FROM,
+                                        trial_entry.artifact_id,
+                                    )
+                                )
                         else:
                             prediction = mapping(artifact.get("prediction_study"))
                             prediction_manifest = mapping(prediction.get("manifest"))
@@ -656,7 +705,17 @@ def inspect_study(
                                 prediction_manifest, prediction.get("rows")
                             )
                         validate_prediction_trial_coordinates(trial, configuration)
-                        validate_prediction_trial_result(trial, artifact, configuration)
+                        if window_manifest is None:
+                            validate_prediction_trial_result(
+                                trial, artifact, configuration
+                            )
+                        else:
+                            validate_prediction_trial_result(
+                                trial,
+                                artifact,
+                                configuration,
+                                window_manifest=window_manifest,
+                            )
                         entry = add(
                             artifact_path,
                             ArtifactType.PREDICTION_RESULT,
@@ -733,6 +792,39 @@ def inspect_study(
     return StudyArtifacts(
         StudyProvenance(
             study_type, producer_id, snapshot(configuration), snapshot(observations)
+        ),
+        index,
+    )
+
+
+def _inspect_compact_study(
+    source: Path, root: Path, *, canonical_metadata: "DatasetMetadata | None"
+) -> StudyArtifacts:
+    from quantforge.experiments._compact_window import (
+        compact_provenance,
+        index_compact_window,
+        validate_compact_window,
+    )
+    from quantforge.prediction.window_reader import PredictionWindowReader
+
+    reader = PredictionWindowReader.open(source)
+    if reader.schema_version != "2":
+        raise ManifestError("JSONL window must use compact schema")
+    validate_compact_window(reader, canonical_metadata=canonical_metadata)
+    reads = ProducerReadSet()
+    entries, relationships = index_compact_window(
+        reader,
+        artifact_root=root,
+        reads=reads,
+    )
+    index = ArtifactIndex(entries, relationships)
+    reads.verify(index, root)
+    return StudyArtifacts(
+        StudyProvenance(
+            StudyType.PREDICTION_WINDOW,
+            text(reader.header()["window_id"]),
+            snapshot(compact_provenance(reader)),
+            snapshot(reader.header()),
         ),
         index,
     )

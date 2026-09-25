@@ -168,8 +168,8 @@ The path is relative to the existing test output root. Reuse validates the fixed
 path, exact header/result ID and trusted fold/configuration. Study envelopes and
 freeze lifecycle are unchanged.
 
-QF-40 OOS/holdout consumption, QF-9 indexing/integrity and QF-41 reports remain
-**QF-57**. Those consumers do not yet support the opt-in compact reference.
+[QF-57 consumers](compact-window-consumers.md) support this finalized reference
+through QF-40 OOS/holdout, QF-9 indexing/integrity and QF-41 reports.
 Existing v1 workflows remain available. No QF-45-specific runner is introduced.
 
 ## Scale and scientific evidence

@@ -3,7 +3,11 @@
 from datetime import date, datetime, timedelta
 
 from quantforge.backtesting.config import EvaluationInterval
-from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
 from quantforge.data.exceptions import ValidationError
 from quantforge.data.prediction_views import validate_prediction_view_lineage
 from quantforge.experiments._aggregate_schema import record, records
@@ -24,10 +28,15 @@ from quantforge.experiments._prediction_trial_integrity import (
 from quantforge.experiments._producer_integrity import validate_backtest_identity
 from quantforge.experiments._window_integrity import validate_window_snapshot
 from quantforge.oos.models import OOSSource
-from quantforge.oos.prediction import PredictionMetricFields
+from quantforge.oos.prediction import (
+    PredictionMetricFields,
+    iter_prediction_observations,
+)
 from quantforge.oos.source import prediction_view_bounds
 from quantforge.prediction import PredictionDecisionSchedule
+from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.timeframes import resolve_exchange_session
+from quantforge.walk_forward.models import PredictionOOSArtifact
 
 
 def validate_holdout_consumption(
@@ -98,7 +107,11 @@ def validate_holdout_request(
 
 
 def validate_holdout_artifact(
-    source: OOSSource, consumption: PrimitiveMapping, result: PrimitiveMapping
+    source: OOSSource,
+    consumption: PrimitiveMapping,
+    result: PrimitiveMapping,
+    *,
+    reader: PredictionWindowReader | None = None,
 ) -> None:
     if (
         result.get("schema_version") != "1"
@@ -112,14 +125,29 @@ def validate_holdout_artifact(
     if artifact.get("selection_id") != frozen.get("selection_id"):
         raise ManifestError("holdout artifact differs from frozen selection")
     payload = mapping(artifact.get("result"))
-    manifest = mapping(payload.get("manifest"))
+    manifest = (
+        reader.manifest() if reader is not None else mapping(payload.get("manifest"))
+    )
     definition = mapping(mapping(frozen.get("candidate")).get("definition"))
     adapter = mapping(source.definition.to_primitive().get("adapter"))
     if (
         artifact.get("kind") == "prediction"
         and adapter.get("adapter") == "qf39_prediction"
     ):
-        validate_window_snapshot(payload)
+        if manifest.get("schema_version") != adapter.get("window_schema_version", "1"):
+            raise ManifestError("holdout representation differs from frozen adapter")
+        if reader is None:
+            validate_window_snapshot(payload)
+        else:
+            from quantforge.experiments._compact_window import validate_compact_window
+
+            if reader.header() != payload.get("header"):
+                raise ManifestError("holdout compact reference differs")
+            validate_compact_window(
+                reader,
+                canonical_metadata=source.plan.environment.outcome_dataset.market_data_metadata,
+                strategy_parameters=mapping(definition["prediction_rule_parameters"]),
+            )
         if artifact.get("result_id") != manifest.get("window_result_id"):
             raise ManifestError("holdout prediction result identity is inconsistent")
         configuration = mapping(manifest.get("configuration"))
@@ -238,8 +266,23 @@ def validate_holdout_artifact(
                     "final_holdout",
                     text(artifact["selection_id"]),
                     text(artifact["result_id"]),
+                )
+                if reader is None
+                else (
+                    item.to_primitive()
+                    for item in iter_prediction_observations(
+                        reader,
+                        PredictionOOSArtifact(
+                            text(artifact["selection_id"]),
+                            text(artifact["result_id"]),
+                            PrimitiveMappingSnapshot.capture(payload),
+                        ),
+                        "final_holdout",
+                    )
                 ),
-                len(records(payload["decisions"])),
+                len(records(payload["decisions"]))
+                if reader is None
+                else reader.decision_count,
                 PredictionMetricFields().to_primitive(),
             )
         except ManifestError as error:

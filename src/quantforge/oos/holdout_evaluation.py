@@ -1,5 +1,8 @@
 """QF-40 boundary adapter; execution stays in QF-42/QF-43 and QF-11/QF-5."""
 
+import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -10,6 +13,7 @@ from quantforge.data import MarketDataset
 from quantforge.oos._records import OOSIntegrityError, mapping
 from quantforge.oos.common import provenance
 from quantforge.oos.models import OOSSource
+from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.validation import (
     PredictionMembershipSource,
     TimestampBoundary,
@@ -18,7 +22,11 @@ from quantforge.validation import (
     select_window_observations,
 )
 from quantforge.walk_forward import BacktestEvaluator, PredictionEvaluator
-from quantforge.walk_forward.models import FrozenSelection, OOSArtifact
+from quantforge.walk_forward.models import (
+    FrozenSelection,
+    OOSArtifact,
+    PredictionOOSArtifact,
+)
 from quantforge.walk_forward.partitions import (
     observation_keys,
     prediction_metadata_prefix,
@@ -65,6 +73,7 @@ class HoldoutEvaluation:
     selection: FrozenSelection
     permitted: HoldoutPartition
     adapter_snapshot: PrimitiveMappingSnapshot
+    finalized_prediction_window: Path | None = None
 
     @classmethod
     def prepare(
@@ -73,6 +82,7 @@ class HoldoutEvaluation:
         evaluator: PredictionEvaluator | BacktestEvaluator,
         *,
         selection_fold_id: str,
+        finalized_prediction_window: Path | None = None,
     ) -> "HoldoutEvaluation":
         provenance(source)
         evaluator.validate(source.plan)
@@ -144,7 +154,14 @@ class HoldoutEvaluation:
                 timestamps,
                 plan.prediction_membership,
             )
-            return cls(source, evaluator, fold.selection, permitted, adapter)
+            return cls(
+                source,
+                evaluator,
+                fold.selection,
+                permitted,
+                adapter,
+                finalized_prediction_window,
+            )
         start_key = (member.warm_up_context or retained)[0]
         start = keys.index(start_key)
         end = keys.index(member.study_observations[-1])
@@ -159,7 +176,14 @@ class HoldoutEvaluation:
             ),
             sessions,
         )
-        return cls(source, evaluator, fold.selection, permitted, adapter)
+        return cls(
+            source,
+            evaluator,
+            fold.selection,
+            permitted,
+            adapter,
+            finalized_prediction_window,
+        )
 
     def configuration(self) -> PrimitiveMapping:
         return {
@@ -189,11 +213,75 @@ class HoldoutEvaluation:
             self.source,
             self.evaluator,
             selection_fold_id=str(self.selection.snapshot.to_primitive()["fold_id"]),
+            finalized_prediction_window=self.finalized_prediction_window,
         )
         if prepared.configuration() != self.configuration():
             raise OOSIntegrityError("holdout frozen configuration or boundary changed")
+        if self.finalized_prediction_window is not None:
+            self._finalized_artifact()
+
+    def _finalized_artifact(self) -> PredictionOOSArtifact:
+        path = self.finalized_prediction_window
+        if (
+            path is None
+            or path.name != "prediction-window.jsonl"
+            or not isinstance(self.evaluator, PredictionEvaluator)
+        ):
+            raise OOSIntegrityError(
+                "finalized holdout requires a compact prediction window"
+            )
+        reader = PredictionWindowReader.open(path)
+        if reader.schema_version != "2":
+            raise OOSIntegrityError("finalized holdout must use compact schema")
+        artifact = PredictionOOSArtifact(
+            self.selection.selection_id,
+            str(reader.header()["window_result_id"]),
+            PrimitiveMappingSnapshot.capture(
+                {"schema_version": "2", "path": path.name, "header": reader.header()}
+            ),
+        )
+        self.evaluator.validate_partition_artifact(
+            self.source.plan, self.permitted, self.selection, artifact, path.parent
+        )
+        return artifact
 
     def _evaluate(self, output_root: Path) -> OOSArtifact:
+        if self.finalized_prediction_window is not None:
+            artifact = self._finalized_artifact()
+            output_root.mkdir(parents=True, exist_ok=True)
+            destination = output_root / "prediction-window.jsonl"
+            if not destination.exists():
+                descriptor, name = tempfile.mkstemp(
+                    prefix=".holdout-window-", dir=output_root
+                )
+                temporary = Path(name)
+                try:
+                    with (
+                        os.fdopen(descriptor, "wb") as output,
+                        self.finalized_prediction_window.open("rb") as source,
+                    ):
+                        shutil.copyfileobj(source, output, length=1024 * 1024)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    # Validate the copied bytes before immutable publication.
+                    reader = PredictionWindowReader.open(temporary)
+                    reader.verify_integrity()
+                    if reader.header() != artifact.snapshot.to_primitive()["header"]:
+                        raise OOSIntegrityError(
+                            "finalized holdout changed while copying"
+                        )
+                    os.link(temporary, destination)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            self.evaluator.validate_partition_artifact(
+                self.source.plan, self.permitted, self.selection, artifact, output_root
+            )
+            descriptor = os.open(output_root, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            return artifact
         result = self.evaluator.evaluate_partition(
             self.source.plan, self.permitted, self.selection, output_root
         )

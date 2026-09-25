@@ -21,6 +21,11 @@ from quantforge.experiments._prediction_summary_integrity import (
 )
 from quantforge.oos.common import completeness as source_completeness
 from quantforge.oos.models import OOSSource
+from quantforge.oos.prediction import (
+    iter_prediction_observations,
+    prediction_window_source,
+    source_prediction_reader,
+)
 from quantforge.validation import ResearchStudyType
 from quantforge.walk_forward.models import BacktestOOSArtifact, PredictionOOSArtifact
 
@@ -48,6 +53,9 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
     ):
         raise ManifestError("OOS aggregate kind differs from captured research family")
     summary = mapping(aggregate.get("summary"))
+    if aggregate.get("schema_version") == "2":
+        _validate_compact_aggregate(source, aggregate)
+        return
     # This producer helper projects captured status metadata, not research metrics.
     if configuration_identity(
         mapping(summary.get("completeness"))
@@ -155,3 +163,66 @@ def validate_aggregate_folds(source: OOSSource, aggregate: PrimitiveMapping) -> 
                 validate_prediction_summary_counts(
                     mapping(window["summary"]), captured, scheduled, fields
                 )
+
+
+def _validate_compact_aggregate(source: OOSSource, aggregate: PrimitiveMapping) -> None:
+    """Bind compact aggregate references and counts without duplicating row graphs."""
+    if set(aggregate) != {
+        "schema_version",
+        "kind",
+        "summary",
+        "stability",
+        "window_sources",
+        "provenance",
+    }:
+        raise ManifestError("invalid compact aggregate fields")
+    summary = mapping(aggregate["summary"])
+    validate_prediction_aggregate_summary(summary)
+    validate_configuration_stability(aggregate.get("stability"), source)
+    if mapping(summary["completeness"]) != source_completeness(source):
+        raise ManifestError("OOS aggregate completeness differs from captured folds")
+    fields = mapping(summary["metric_fields"])
+    windows = _records(summary["windows"])
+    if len(windows) != len(source.folds):
+        raise ManifestError("OOS aggregate window count differs")
+    expected: list[PrimitiveMapping] = []
+    scheduled = 0
+    for index, (fold, window) in enumerate(zip(source.folds, windows, strict=True)):
+        if window["fold_id"] != fold.fold_id or window["status"] != fold.status.value:
+            raise ManifestError("OOS aggregate window membership differs")
+        if fold.artifact is None:
+            if window["summary"] is not None:
+                raise ManifestError("incomplete fold has a summary")
+            continue
+        if not isinstance(fold.artifact, PredictionOOSArtifact):
+            raise ManifestError("incompatible compact aggregate family")
+        reader = source_prediction_reader(source, index)
+        expected.append(
+            prediction_window_source(reader, fold.artifact, fold.fold_id).to_primitive()
+        )
+        scheduled += reader.decision_count
+        validate_prediction_summary_counts(
+            mapping(window["summary"]),
+            (
+                item.to_primitive()
+                for item in iter_prediction_observations(
+                    reader, fold.artifact, fold.fold_id
+                )
+            ),
+            reader.decision_count,
+            fields,
+        )
+    _same_records(aggregate["window_sources"], expected, "window sources")
+    validate_prediction_summary_counts(
+        summary,
+        (
+            item.to_primitive()
+            for index, fold in enumerate(source.folds)
+            if isinstance(fold.artifact, PredictionOOSArtifact)
+            for item in iter_prediction_observations(
+                source_prediction_reader(source, index), fold.artifact, fold.fold_id
+            )
+        ),
+        scheduled,
+        fields,
+    )
