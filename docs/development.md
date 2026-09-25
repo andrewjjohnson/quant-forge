@@ -1,5 +1,16 @@
 # QuantForge Development Guide
 
+QF-55 compact representation, bounded provenance, and structural scale checks:
+
+```bash
+uv run --frozen pytest tests/unit/prediction/test_compact_prediction_window.py \
+  tests/integration/test_compact_prediction_provenance.py \
+  tests/performance/test_compact_prediction_window_shape.py
+```
+
+See [compact prediction windows](compact-prediction-windows.md). The scale fixture
+uses synthetic shared evidence and never allocates the legacy 18.8 GB payload.
+
 QF-52 bounded intraday input regression (synthetic immutable caches, no network):
 
 ```bash
