@@ -38,6 +38,7 @@ from quantforge.prediction.errors import (
     InvalidPredictionConfigurationError,
     InvalidPredictionOutputError,
 )
+from quantforge.prediction.source_sharing import prediction_source_copy_memo
 from quantforge.prediction.study import (
     STUDY_ENGINE_VERSION,
     PredictionStudyConfiguration,
@@ -498,7 +499,10 @@ def iter_prediction_window_decisions(
     configuration = _capture_study_configuration(study)
     # Freeze a pristine template before any future-bearing labeler callback. A
     # previous decision's component state must never influence the next decision.
-    template = deepcopy(study)
+    # Check the immutable source graph once. Each copy gets a fresh memo so only
+    # the source is shared, never a previous decision's mutable component state.
+    source_memo = prediction_source_copy_memo(study.outcome_source)
+    template = deepcopy(study, source_memo.copy())
     if (
         template.strategy is study.strategy
         or template.outcome_labeler is study.outcome_labeler
@@ -509,7 +513,7 @@ def iter_prediction_window_decisions(
         )
     for sequence in range(start_sequence, len(schedule.decision_timestamps)):
         timestamp = schedule.decision_timestamps[sequence]
-        decision_study = deepcopy(template)
+        decision_study = deepcopy(template, source_memo.copy())
         if (
             decision_study.strategy is template.strategy
             or decision_study.outcome_labeler is template.outcome_labeler

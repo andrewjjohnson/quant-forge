@@ -107,6 +107,12 @@ declared `dataset_family_fingerprint`. The caller supplies immutable artifacts
 and provider-environment provenance; rules do not download data.
 
 Each decision receives an independent deep copy of one pristine study template.
+QF-58 supplies a fresh copy memo that shares only the verified immutable
+`outcome_source` backing. A one-time structural check rejects mutable/custom
+source graphs from sharing; those retain ordinary deep-copy behavior. Calendar
+timestamps with exactly representable values and no attached state receive one
+immutable standard-library backing copy. See
+[source sharing and measurements](prediction-source-sharing.md).
 Rule, labeler, and evaluator objects must support independent copying while
 retaining their scientific configuration. Future-bearing callback state cannot
 carry into the next decision. QF-11's labeler-validation memo is fresh for each

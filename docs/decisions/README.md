@@ -102,3 +102,4 @@ How will the decision be tested or revisited?
 - [0028: Checkpoint compact prediction journals](0028-checkpoint-compact-prediction-journals.md)
 
 - [0029: Consume compact window evidence downstream](0029-consume-compact-window-evidence.md)
+- [0030: Share immutable prediction source backing](0030-share-immutable-prediction-source.md)
