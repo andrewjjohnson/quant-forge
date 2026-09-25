@@ -860,3 +860,10 @@ window with exact session and user boundaries. The adapter applies existing
 strict coverage validation before returning one normal `IntradayFetchResult`.
 No generic provider, prediction, outcome, or cache contract changes. See
 [ADR 0025](decisions/0025-plan-tiingo-history-by-exchange-session.md).
+
+QF-54 adds `MassiveProvider` behind the same intraday acquisition boundary.
+The adapter owns long-range REST pagination and RTH retention; canonical
+validation, cache schemas, aggregation, and prediction inputs stay unchanged.
+Provider setup can select `massive` or `tiingo` with `create_intraday_provider`.
+See [the Massive contract](massive-market-data.md) and
+[ADR 0026](decisions/0026-retain-massive-pages-in-logical-snapshots.md).

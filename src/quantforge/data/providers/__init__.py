@@ -1,9 +1,13 @@
 """Daily adapters and provider-neutral intraday adapter contracts."""
 
+import os
+
+from quantforge.data.exceptions import RequestError
 from quantforge.data.intraday_ingestion import IntradayIngestionProvider
 from quantforge.data.intraday_validation import IntradayCoverageReport
 from quantforge.data.providers.alpha_vantage import AlphaVantageProvider
 from quantforge.data.providers.base import DailyBarProvider, IntradayBarProvider
+from quantforge.data.providers.massive import MassiveProvider
 from quantforge.data.providers.tiingo import TiingoProvider
 
 
@@ -20,11 +24,32 @@ def can_reuse_intraday_cache(
     return True
 
 
+def create_intraday_provider(
+    provider_name: str, *, api_key: str | None = None
+) -> IntradayIngestionProvider:
+    """Select an installed historical adapter at application setup.
+
+    Explicit secrets or the provider's standard environment variable are used
+    only here; offline services still need only ``provider_name``.
+    """
+    if provider_name == MassiveProvider.name:
+        return MassiveProvider(
+            os.environ.get("MASSIVE_API_KEY", "") if api_key is None else api_key
+        )
+    if provider_name == TiingoProvider.name:
+        return TiingoProvider(
+            os.environ.get("TIINGO_API_KEY", "") if api_key is None else api_key
+        )
+    raise RequestError("unsupported intraday provider name")
+
+
 __all__ = [
     "AlphaVantageProvider",
     "DailyBarProvider",
     "IntradayBarProvider",
     "IntradayIngestionProvider",
+    "MassiveProvider",
     "TiingoProvider",
     "can_reuse_intraday_cache",
+    "create_intraday_provider",
 ]

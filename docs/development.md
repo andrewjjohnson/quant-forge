@@ -760,3 +760,28 @@ Constituent regressions authenticate source observations against the original
 batch digest and reject rehashed arbitrary, swapped, or reordered session IDs.
 See
 [intraday prediction provenance](intraday-prediction-provenance.md).
+
+## Massive provider acceptance tests (QF-54)
+
+Use uv 0.12.1 and frozen dependencies. Ordinary tests require no credentials:
+
+```bash
+uv run --frozen pytest tests/unit/data/test_massive_provider.py \
+  tests/integration/test_massive_prediction_inputs.py
+uv run --frozen pytest tests/unit/data tests/integration/test_intraday_prediction*.py \
+  tests/integration/test_bounded*.py
+```
+
+With `MASSIVE_API_KEY` in the process environment, explicitly run historical
+SPY verification and a full-year acquisition; all ranges use the normal cache:
+
+```bash
+uv run --frozen python scripts/verify_massive_history.py
+uv run --frozen python scripts/verify_massive_history.py --offline
+```
+
+The script reports HTTP/page counts, raw and canonical counts, exact cached
+ranges, source identities, and offline replay. See
+[the provider contract](massive-market-data.md) for adjustment, unavailable
+events, diagnostic coverage and strict SPY verification, and longer historical
+range options.
