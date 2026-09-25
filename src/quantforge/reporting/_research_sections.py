@@ -338,7 +338,7 @@ def build_sections(
     for item in selected(ArtifactType.WALK_FORWARD_WINDOW):
         record = as_mapping(artifact_value(item))
         result = as_mapping(record.get("result"))
-        native = as_mapping(result.get("manifest"))
+        native = as_mapping(result.get("manifest", result.get("header")))
         add(
             "Per-fold OOS result",
             {

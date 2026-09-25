@@ -1,6 +1,7 @@
 """Reconcile sample metadata with captured rows without calculating statistics."""
 
 from collections import Counter
+from collections.abc import Iterable
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.experiments._aggregate_schema import records
@@ -16,82 +17,80 @@ def _same_counts(actual: PrimitiveMapping, expected: PrimitiveMapping) -> None:
 
 def validate_prediction_summary_counts(
     summary: PrimitiveMapping,
-    observations: list[PrimitiveMapping],
+    observations: Iterable[PrimitiveMapping],
     scheduled_decisions: int,
     fields: PrimitiveMapping,
 ) -> None:
-    """Count stored eligibility, labels and metric availability, never outcomes."""
-    eligible = [item for item in observations if item["eligible"] is True]
-    evaluations = [
-        {}
-        if item["row"] is None
-        else mapping(mapping(mapping(item["row"])["evaluation"])["values"])
-        for item in eligible
-    ]
+    """Count stored eligibility/availability in one pass, never calculate metrics."""
+    generated = eligible = labeled = correct_count = paired_count = 0
+    directions: Counter[str] = Counter()
+    numeric: Counter[str] = Counter()
+    events: Counter[str] = Counter()
     correct_field = text(fields["correct"])
-    correct_count = sum(
-        type(values.get(correct_field)) is bool for values in evaluations
-    )
-    directions = Counter(
-        text(
-            mapping(mapping(mapping(item["signal"])["prediction"])["values"])[
-                "direction"
-            ]
+    baseline_field = fields["baseline_correct"]
+    event_field = text(fields["event"])
+    for item in observations:
+        generated += 1
+        if item["eligible"] is not True:
+            continue
+        eligible += 1
+        labeled += item["row"] is not None
+        directions[
+            text(
+                mapping(mapping(mapping(item["signal"])["prediction"])["values"])[
+                    "direction"
+                ]
+            )
+        ] += 1
+        values = (
+            {}
+            if item["row"] is None
+            else mapping(mapping(mapping(item["row"])["evaluation"])["values"])
         )
-        for item in eligible
-    )
+        correct_count += type(values.get(correct_field)) is bool
+        if baseline_field:
+            paired_count += (
+                type(values.get(correct_field)) is bool
+                and type(values.get(text(baseline_field))) is bool
+            )
+        for name in ("signed_outcome", "mfe", "mae"):
+            numeric[name] += values.get(text(fields[name])) is not None
+        if values.get(event_field) is not None and values.get("available") is not False:
+            events[text(values[event_field])] += 1
     _same_counts(
         summary,
         {
-            "prediction_count": len(eligible),
-            "generated_signal_count": len(observations),
-            "excluded_signal_count": len(observations) - len(eligible),
+            "prediction_count": eligible,
+            "generated_signal_count": generated,
+            "excluded_signal_count": generated - eligible,
             "scheduled_decisions": scheduled_decisions,
-            "labeled_prediction_count": sum(
-                item["row"] is not None for item in eligible
-            ),
+            "labeled_prediction_count": labeled,
             "accuracy_sample_count": correct_count,
-            "accuracy_unavailable_count": len(eligible) - correct_count,
+            "accuracy_unavailable_count": eligible - correct_count,
             "direction_distribution": {
                 name: directions[name] for name in ("up", "down")
             },
         },
     )
     _same_counts(mapping(summary["accuracy_interval"]), {"sample_count": correct_count})
-    baseline_field = fields["baseline_correct"]
-    paired_count = (
-        sum(
-            type(values.get(correct_field)) is bool
-            and type(values.get(text(baseline_field))) is bool
-            for values in evaluations
-        )
-        if baseline_field
-        else 0
-    )
     _same_counts(
         mapping(summary["matched_baseline"]),
         {"name": fields["baseline_name"], "sample_count": paired_count},
     )
     for name in ("signed_outcome", "mfe", "mae"):
-        count = sum(
-            values.get(text(fields[name])) is not None for values in evaluations
-        )
         _same_counts(
             mapping(summary[name]),
-            {"sample_count": count, "unavailable_count": len(eligible) - count},
+            {
+                "sample_count": numeric[name],
+                "unavailable_count": eligible - numeric[name],
+            },
         )
-    event_field = text(fields["event"])
-    events = Counter(
-        text(values[event_field])
-        for values in evaluations
-        if values.get(event_field) is not None and values.get("available") is not False
-    )
     event_count = sum(events.values())
     _same_counts(
         mapping(summary["event_outcomes"]),
         {
             "sample_count": event_count,
-            "unavailable_count": len(eligible) - event_count,
+            "unavailable_count": eligible - event_count,
             "counts": dict(events),
         },
     )

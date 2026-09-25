@@ -175,7 +175,11 @@ def load_oos_aggregate(path: Path) -> PrimitiveMappingSnapshot:
     payload = read_record(path)
     if (
         path.stem != configuration_identity(payload)
-        or payload.get("schema_version") != "1"
+        or payload.get("schema_version") not in {"1", "2"}
+        or (
+            payload.get("schema_version") == "2"
+            and payload.get("kind") != "prediction_oos_aggregate"
+        )
         or payload.get("kind")
         not in {"prediction_oos_aggregate", "backtest_oos_aggregate"}
     ):

@@ -87,6 +87,13 @@ class PredictionWindowReader:
                 )
             stream.seek(0)
             snapshot = decode(stream.read())
+        return cls.from_snapshot(snapshot, path=path)
+
+    @classmethod
+    def from_snapshot(
+        cls, snapshot: PrimitiveMapping, *, path: Path = Path(".")
+    ) -> "PredictionWindowReader":
+        """Read an existing embedded v1 snapshot without writing or migrating it."""
         if set(snapshot) != {"manifest", "decisions"}:
             raise InvalidPredictionOutputError("unsupported embedded window shape")
         manifest = mapping(snapshot["manifest"])
@@ -117,6 +124,41 @@ class PredictionWindowReader:
             evidence,
             PrimitiveMappingSnapshot.capture(snapshot),
         )
+
+    @classmethod
+    def from_reference(
+        cls, snapshot: PrimitiveMapping, *, root: Path
+    ) -> "PredictionWindowReader":
+        """Resolve a QF-56 reference, or normalize an embedded v1 snapshot.
+
+        The producer's fixed relative filename is part of its contract. It must
+        resolve inside the supplied artifact directory, including through symlinks.
+        """
+        if "manifest" in snapshot:
+            return cls.from_snapshot(snapshot)
+        path = root / "prediction-window.jsonl"
+        if (
+            snapshot.get("schema_version") != "2"
+            or snapshot.get("path") != path.name
+            or set(snapshot) != {"schema_version", "path", "header"}
+            or not path.resolve().is_relative_to(root.resolve())
+        ):
+            raise InvalidPredictionOutputError("invalid compact window reference")
+        reader = cls.open(path)
+        if reader.schema_version != "2" or reader.header() != snapshot["header"]:
+            raise InvalidPredictionOutputError(
+                "compact reference differs from artifact"
+            )
+        return reader
+
+    def manifest(self) -> PrimitiveMapping:
+        """Scientific metadata and truthful physical identity, without decisions.
+
+        The shared identity retains QF-42's versioned scientific scope. The
+        returned schema/window/result identities describe the actual artifact.
+        This is an inspection view, never an embedded-window serialization.
+        """
+        return {**self.evidence.identity_snapshot.to_primitive(), **self.header()}
 
     @property
     def decision_count(self) -> int:

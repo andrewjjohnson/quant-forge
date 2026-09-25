@@ -1,5 +1,10 @@
 # OOS aggregation and final holdout consumption
 
+Finalized compact windows use the same frozen-test and holdout semantics.
+Compact prediction aggregates use schema 2 with window identity references, while
+legacy schema 1 remains readable. Existing finalized holdout ingestion avoids
+evaluation. See [compact consumers](compact-window-consumers.md).
+
 QF-48 adds explicit exact-timestamp prediction membership and elapsed request
 execution. See [timestamp prediction validation](timestamp-prediction-validation.md)
 for the opt-in source, replay anchors, persistence, and holdout compatibility.

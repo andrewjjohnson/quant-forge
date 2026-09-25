@@ -1,5 +1,21 @@
 # QuantForge Development Guide
 
+QF-57 compact downstream checks (uv **0.12.1**, Python 3.13, frozen lockfile):
+
+```bash
+uv sync --all-extras --frozen
+uv run --frozen pytest tests/integration/test_compact_window_consumers.py \
+  tests/integration/test_compact_window_consumer_integrity.py \
+  tests/integration/test_compact_window_outcome_consumers.py \
+  tests/integration/test_compact_window_offline.py \
+  tests/performance/test_compact_window_consumers.py \
+  tests/unit/oos/test_compact_accumulation.py \
+  tests/unit/oos/test_finalized_holdout.py
+```
+
+See [compact consumers](compact-window-consumers.md). These fixtures cover actual
+small research contracts and synthetic scale without provider access.
+
 QF-55 compact representation, bounded provenance, and structural scale checks:
 
 ```bash

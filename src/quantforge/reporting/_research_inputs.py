@@ -84,6 +84,16 @@ def read_artifacts(
             result.append(ReportArtifact(entry, status or "unavailable_optional"))
             continue
         content = None
+        if entry.file_format is ArtifactFormat.JSONL:
+            # QF-9 binds the header to the immutable file. Aggregate display
+            # consumes these small records, never scans compact decisions.
+            content = snapshot(
+                {
+                    "value": entry.bindings.to_primitive().get("/header")
+                    if entry.json_pointer == "/header"
+                    else entry.metadata.to_primitive()
+                }
+            )
         raw_records = entry.file_format is ArtifactFormat.JSON and (
             any(part in RAW_RECORD_KEYS for part in entry.json_pointer.split("/")[1:])
             or (

@@ -1,6 +1,6 @@
 """Typed QF-40 outputs; prediction and trading results remain separate."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from quantforge.configuration import (
@@ -9,6 +9,7 @@ from quantforge.configuration import (
     configuration_identity,
     decimal_to_primitive,
 )
+from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.validation import ValidationPlan
 from quantforge.walk_forward.models import FoldResult
 
@@ -90,6 +91,9 @@ class OOSSource:
     lineage: PrimitiveMappingSnapshot
     folds: tuple[FoldResult, ...]
     references: tuple[PrimitiveMappingSnapshot, ...]
+    prediction_windows: tuple[PredictionWindowReader | None, ...] = field(
+        default=(), compare=False, repr=False
+    )
 
     @property
     def lineage_id(self) -> str:
@@ -102,14 +106,23 @@ class PredictionOOSAggregate:
     stability: ConfigurationStabilitySummary
     observations: tuple[PrimitiveMappingSnapshot, ...]
     provenance: PrimitiveMappingSnapshot
+    window_sources: tuple[PrimitiveMappingSnapshot, ...] | None = None
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
-            "schema_version": "1",
+            "schema_version": "1" if self.window_sources is None else "2",
             "kind": "prediction_oos_aggregate",
             "summary": self.summary.to_primitive(),
             "stability": self.stability.to_primitive(),
-            "observations": [item.to_primitive() for item in self.observations],
+            **(
+                {"observations": [item.to_primitive() for item in self.observations]}
+                if self.window_sources is None
+                else {
+                    "window_sources": [
+                        item.to_primitive() for item in self.window_sources
+                    ]
+                }
+            ),
             "provenance": self.provenance.to_primitive(),
         }
 

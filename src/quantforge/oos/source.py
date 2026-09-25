@@ -26,6 +26,10 @@ from quantforge.oos._records import (
 )
 from quantforge.oos.models import OOSSource
 from quantforge.prediction import PredictionDecisionSchedule
+from quantforge.prediction.window_compact_validation import (
+    validate_prediction_window_reader,
+)
+from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.prediction.window_validation import validate_prediction_window_snapshot
 from quantforge.timeframes import resolve_exchange_session
 from quantforge.validation import (
@@ -300,12 +304,17 @@ def _validate_prediction(
     plan: ValidationPlan,
     selection: FrozenSelection,
     artifact: PredictionOOSArtifact,
-) -> None:
+    root: Path,
+) -> PredictionWindowReader:
     frozen = selection.snapshot.to_primitive()
     part = mapping(mapping(frozen["membership"])["test"])
     candidate = mapping(mapping(frozen["candidate"])["definition"])
     payload = artifact.snapshot.to_primitive()
-    manifest = mapping(payload["manifest"])
+    reader = PredictionWindowReader.from_reference(payload, root=root / "test")
+    adapter = mapping(mapping(frozen["study_definition"])["adapter"])
+    if reader.schema_version != adapter.get("window_schema_version", "1"):
+        raise OOSIntegrityError("window representation differs from frozen adapter")
+    manifest = reader.manifest()
     configured = mapping(manifest["configuration"])
     for component in ("prediction_rule", "outcome_labeler", "evaluator"):
         for key, value in mapping(candidate[component]).items():
@@ -378,21 +387,24 @@ def _validate_prediction(
         )
         if s.isoformat() not in texts(market["missing_sessions"])
     )
-    identity = PrimitiveMappingSnapshot.capture(
-        {
-            k: v
-            for k, v in manifest.items()
-            if k
-            not in {"window_id", "window_result_id", "schedule_id", "record_counts"}
-        }
-    )
-    validate_prediction_window_snapshot(
-        payload,
-        expected_identity=identity,
-        schedule=schedule,
-        outcome_sessions=outcome_sessions,
-        strategy_parameters=mapping(candidate["prediction_rule_parameters"]),
-    )
+    identity = reader.evidence.identity_snapshot
+    if reader.schema_version == "1":
+        validate_prediction_window_snapshot(
+            payload,
+            expected_identity=identity,
+            schedule=schedule,
+            outcome_sessions=outcome_sessions,
+            strategy_parameters=mapping(candidate["prediction_rule_parameters"]),
+        )
+    else:
+        validate_prediction_window_reader(
+            reader,
+            expected_identity=identity,
+            schedule=schedule,
+            outcome_sessions=outcome_sessions,
+            strategy_parameters=mapping(candidate["prediction_rule_parameters"]),
+            canonical_metadata=canonical_metadata,
+        )
     if artifact.window_result_id != manifest["window_result_id"]:
         raise OOSIntegrityError("prediction result ID differs")
     index = next(
@@ -404,7 +416,8 @@ def _validate_prediction(
         else plan.final_holdout.window
     )
     # A test result must never include an outcome in the next protected window.
-    for decision in records(payload["decisions"]):
+    for compact in reader.iterate_decisions():
+        decision = compact.to_primitive()
         for row in records(mapping(decision["prediction_study"])["rows"]):
             if plan.prediction_membership is not None:
                 assert isinstance(protected.interval.start, TimestampBoundary)
@@ -426,6 +439,8 @@ def _validate_prediction(
                     >= protected.interval.start.session_date
                 ):
                     raise OOSIntegrityError("test outcome reaches a protected window")
+
+    return reader
 
 
 def _validate_backtest(
@@ -544,7 +559,9 @@ def load_oos_source(plan: ValidationPlan, study_path: Path) -> OOSSource:
     folds: list[FoldResult] = []
     references: list[PrimitiveMappingSnapshot] = []
     artifact_ids: set[str] = set()
+    prediction_windows: list[PredictionWindowReader | None] = []
     for index, fold in enumerate(plan.folds):
+        prediction_reader = None
         root = study_path / "folds" / fold.fold_id
         state = (
             read_record(root / "state.json") if (root / "state.json").exists() else None
@@ -589,7 +606,9 @@ def load_oos_source(plan: ValidationPlan, study_path: Path) -> OOSSource:
                     isinstance(artifact, PredictionOOSArtifact)
                     and universe["study_type"] == "prediction"
                 ):
-                    _validate_prediction(plan, selection, artifact)
+                    prediction_reader = _validate_prediction(
+                        plan, selection, artifact, root
+                    )
                 elif (
                     isinstance(artifact, BacktestOOSArtifact)
                     and universe["study_type"] == "trading_backtest"
@@ -608,6 +627,7 @@ def load_oos_source(plan: ValidationPlan, study_path: Path) -> OOSSource:
                 ),
             )
         folds.append(result)
+        prediction_windows.append(prediction_reader)
         references.append(
             PrimitiveMappingSnapshot.capture(
                 {
@@ -635,4 +655,5 @@ def load_oos_source(plan: ValidationPlan, study_path: Path) -> OOSSource:
         validation_lineage(definition),
         tuple(folds),
         tuple(references),
+        tuple(prediction_windows),
     )

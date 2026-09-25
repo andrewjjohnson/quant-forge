@@ -1,6 +1,7 @@
 """Reduce stored prediction values only; never execute rules or outcome labels."""
 
 from collections import Counter
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 from statistics import median
@@ -21,6 +22,7 @@ from quantforge.oos.models import (
 )
 from quantforge.prediction._arithmetic import arithmetic
 from quantforge.prediction.comparison_metrics import wilson_interval
+from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.validation import ResearchStudyType
 from quantforge.walk_forward.models import PredictionOOSArtifact
 
@@ -73,117 +75,166 @@ def _booleans(values: list[Primitive]) -> list[bool]:
     return [value for value in values if isinstance(value, bool)]
 
 
+class PredictionObservationAccumulator:
+    """Counters plus only numeric samples needed by the existing exact medians."""
+
+    def __init__(self, fields: PredictionMetricFields) -> None:
+        self.fields = fields
+        self.generated = self.eligible = self.labeled = 0
+        self.correct_count = self.correct_sum = 0
+        self.paired_count = self.baseline_sum = self.difference_sum = 0
+        self.events: Counter[str] = Counter()
+        self.directions: Counter[str] = Counter()
+        self.numeric: dict[str, list[Primitive]] = {
+            name: [] for name in ("signed_outcome", "mfe", "mae")
+        }
+
+    def update(self, item: PrimitiveMapping) -> None:
+        self.generated += 1
+        if item["eligible"] is not True:
+            return
+        self.eligible += 1
+        self.labeled += item["row"] is not None
+        self.directions[
+            text(
+                mapping(mapping(mapping(item["signal"])["prediction"])["values"])[
+                    "direction"
+                ]
+            )
+        ] += 1
+        values = (
+            {}
+            if item["row"] is None
+            else mapping(mapping(mapping(item["row"])["evaluation"])["values"])
+        )
+        correct = values.get(self.fields.correct)
+        _booleans([correct])
+        if isinstance(correct, bool):
+            self.correct_count += 1
+            self.correct_sum += correct
+        if self.fields.baseline_correct:
+            baseline = values.get(self.fields.baseline_correct)
+            _booleans([baseline])
+            if isinstance(correct, bool) and isinstance(baseline, bool):
+                self.paired_count += 1
+                self.baseline_sum += baseline
+                self.difference_sum += correct - baseline
+        for name, samples in self.numeric.items():
+            value = values.get(getattr(self.fields, name))
+            if value is not None:
+                number(value)  # Fail closed even before final reduction.
+                samples.append(value)
+        event = values.get(self.fields.event)
+        if event is not None and values.get("available") is not False:
+            self.events[text(event)] += 1
+
+    def summary(self, scheduled_decisions: int) -> PrimitiveMapping:
+        with arithmetic():
+            event_count = sum(self.events.values())
+            return {
+                "prediction_count": self.eligible,
+                "generated_signal_count": self.generated,
+                "excluded_signal_count": self.generated - self.eligible,
+                "scheduled_decisions": scheduled_decisions,
+                "prediction_frequency": optional_decimal(
+                    Decimal(self.eligible) / scheduled_decisions
+                    if scheduled_decisions
+                    else None
+                ),
+                "frequency_denominator": "scheduled_decisions_in_completed_windows",
+                "direction_distribution": {
+                    name: self.directions[name] for name in ("down", "up")
+                },
+                "labeled_prediction_count": self.labeled,
+                "accuracy": optional_decimal(
+                    Decimal(self.correct_sum) / self.correct_count
+                    if self.correct_count
+                    else None
+                ),
+                "accuracy_sample_count": self.correct_count,
+                "accuracy_unavailable_count": self.eligible - self.correct_count,
+                "accuracy_interval": wilson_interval(
+                    self.correct_sum, self.correct_count
+                ).to_primitive(),
+                "matched_baseline": {
+                    "name": self.fields.baseline_name,
+                    "sample_count": self.paired_count,
+                    "status": "available" if self.paired_count else "unavailable",
+                    "accuracy": optional_decimal(
+                        Decimal(self.baseline_sum) / self.paired_count
+                        if self.paired_count
+                        else None
+                    ),
+                    "accuracy_difference": optional_decimal(
+                        Decimal(self.difference_sum) / self.paired_count
+                        if self.paired_count
+                        else None
+                    ),
+                },
+                **{
+                    name: _metric(samples, self.eligible).to_primitive()
+                    for name, samples in self.numeric.items()
+                },
+                "event_outcomes": {
+                    "status": "available" if event_count else "unavailable",
+                    "sample_count": event_count,
+                    "unavailable_count": self.eligible - event_count,
+                    "counts": dict(sorted(self.events.items())),
+                    "rates": {
+                        event: optional_decimal(Decimal(count) / event_count)
+                        for event, count in sorted(self.events.items())
+                    },
+                },
+            }
+
+
 def summarize_prediction_observations(
-    observations: tuple[PrimitiveMappingSnapshot, ...],
+    observations: Iterable[PrimitiveMappingSnapshot],
     scheduled_decisions: int,
     fields: PredictionMetricFields = PredictionMetricFields(),
 ) -> PrimitiveMapping:
-    """Pure adapter for existing row values; descriptive Wilson, no iid claim."""
-    rows = [item.to_primitive() for item in observations]
-    eligible = [item for item in rows if item["eligible"] is True]
-    evaluations = [
-        {}
-        if item["row"] is None
-        else mapping(mapping(mapping(item["row"])["evaluation"])["values"])
-        for item in eligible
-    ]
-    correct_values = [values.get(fields.correct) for values in evaluations]
-    correct = _booleans(correct_values)
-    baseline_pairs = (
-        [
-            (values.get(fields.correct), values.get(fields.baseline_correct))
-            for values in evaluations
-        ]
-        if fields.baseline_correct
-        else []
-    )
-    _booleans([pair[1] for pair in baseline_pairs])
-    paired = [
-        (a, b) for a, b in baseline_pairs if isinstance(a, bool) and isinstance(b, bool)
-    ]
-    events: Counter[str] = Counter()
-    for values in evaluations:
-        if (
-            values.get(fields.event) is not None
-            and values.get("available") is not False
-        ):
-            events[text(values[fields.event])] += 1
-    directions = Counter(
-        text(
-            mapping(mapping(mapping(item["signal"])["prediction"])["values"])[
-                "direction"
-            ]
-        )
-        for item in eligible
-    )
-    with arithmetic():
-        baseline_accuracy = (
-            Decimal(sum(b for _, b in paired)) / len(paired) if paired else None
-        )
-        difference = (
-            Decimal(sum(a - b for a, b in paired)) / len(paired) if paired else None
-        )
-        event_count = sum(events.values())
-        return {
-            "prediction_count": len(eligible),
-            "generated_signal_count": len(rows),
-            "excluded_signal_count": len(rows) - len(eligible),
-            "scheduled_decisions": scheduled_decisions,
-            "prediction_frequency": optional_decimal(
-                Decimal(len(eligible)) / scheduled_decisions
-                if scheduled_decisions
-                else None
-            ),
-            "frequency_denominator": "scheduled_decisions_in_completed_windows",
-            "direction_distribution": {
-                "down": directions["down"],
-                "up": directions["up"],
-            },
-            "labeled_prediction_count": sum(
-                item["row"] is not None for item in eligible
-            ),
-            "accuracy": optional_decimal(
-                Decimal(sum(correct)) / len(correct) if correct else None
-            ),
-            "accuracy_sample_count": len(correct),
-            "accuracy_unavailable_count": len(eligible) - len(correct),
-            "accuracy_interval": wilson_interval(
-                sum(correct), len(correct)
-            ).to_primitive(),
-            "matched_baseline": {
-                "name": fields.baseline_name,
-                "sample_count": len(paired),
-                "status": "available" if paired else "unavailable",
-                "accuracy": optional_decimal(baseline_accuracy),
-                "accuracy_difference": optional_decimal(difference),
-            },
-            "signed_outcome": _metric(
-                [v.get(fields.signed_outcome) for v in evaluations], len(eligible)
-            ).to_primitive(),
-            "mfe": _metric(
-                [v.get(fields.mfe) for v in evaluations], len(eligible)
-            ).to_primitive(),
-            "mae": _metric(
-                [v.get(fields.mae) for v in evaluations], len(eligible)
-            ).to_primitive(),
-            "event_outcomes": {
-                "status": "available" if event_count else "unavailable",
-                "sample_count": event_count,
-                "unavailable_count": len(eligible) - event_count,
-                "counts": dict(sorted(events.items())),
-                "rates": {
-                    event: optional_decimal(Decimal(count) / event_count)
-                    for event, count in sorted(events.items())
-                },
-            },
+    """Reduce stored values without retaining observation graphs."""
+    accumulator = PredictionObservationAccumulator(fields)
+    for observation in observations:
+        accumulator.update(observation.to_primitive())
+    return accumulator.summary(scheduled_decisions)
+
+
+def source_prediction_reader(source: OOSSource, index: int) -> PredictionWindowReader:
+    """Get the validated source reader, keeping legacy constructed sources usable."""
+    artifact = source.folds[index].artifact
+    if not isinstance(artifact, PredictionOOSArtifact):
+        raise OOSIntegrityError("wrong OOS artifact family")
+    reader = source.prediction_windows[index] if source.prediction_windows else None
+    if reader is None:
+        reader = PredictionWindowReader.from_snapshot(artifact.snapshot.to_primitive())
+    if reader.header()["window_result_id"] != artifact.window_result_id:
+        raise OOSIntegrityError("source window reader differs from captured artifact")
+    return reader
+
+
+def prediction_window_source(
+    reader: PredictionWindowReader, artifact: PredictionOOSArtifact, fold_id: str
+) -> PrimitiveMappingSnapshot:
+    return PrimitiveMappingSnapshot.capture(
+        {
+            "fold_id": fold_id,
+            "selection_id": artifact.selection_id,
+            "schema_version": reader.schema_version,
+            "window_id": reader.header()["window_id"],
+            "window_result_id": artifact.window_result_id,
+            "shared_evidence_id": reader.evidence.evidence_id,
+            "schedule_id": reader.evidence.schedule.schedule_id,
+            "decision_count": reader.decision_count,
         }
+    )
 
 
-def prediction_observations(
-    artifact: PredictionOOSArtifact, fold_id: str
-) -> tuple[PrimitiveMappingSnapshot, ...]:
-    observations: list[PrimitiveMappingSnapshot] = []
-    for decision in records(artifact.snapshot.to_primitive()["decisions"]):
+def iter_prediction_observations(
+    reader: PredictionWindowReader, artifact: PredictionOOSArtifact, fold_id: str
+) -> Iterator[PrimitiveMappingSnapshot]:
+    for compact in reader.iterate_decisions():
+        decision = compact.to_primitive()
         study = mapping(decision["prediction_study"])
         rows = {
             configuration_identity(
@@ -193,25 +244,32 @@ def prediction_observations(
         }
         for signal in records(decision["generated_signals"]):
             values = mapping(mapping(signal["prediction"])["values"])
-            eligible = values.get("direction") in {"up", "down"} and values.get(
-                "disposition"
-            ) in {None, "accepted"}
-            observations.append(
-                PrimitiveMappingSnapshot.capture(
-                    {
-                        "fold_id": fold_id,
-                        "selection_id": artifact.selection_id,
-                        "window_result_id": artifact.window_result_id,
-                        "decision_timestamp": decision["decision_timestamp"],
-                        "context_id": decision["context_id"],
-                        "prediction_study_id": decision["prediction_study_id"],
-                        "signal": signal,
-                        "eligible": eligible,
-                        "row": rows.get(configuration_identity(signal)),
-                    }
-                )
+            yield PrimitiveMappingSnapshot.capture(
+                {
+                    "fold_id": fold_id,
+                    "selection_id": artifact.selection_id,
+                    "window_result_id": artifact.window_result_id,
+                    "decision_timestamp": decision["decision_timestamp"],
+                    "context_id": decision["context_id"],
+                    "prediction_study_id": decision["prediction_study_id"],
+                    "signal": signal,
+                    "eligible": values.get("direction") in {"up", "down"}
+                    and values.get("disposition") in {None, "accepted"},
+                    "row": rows.get(configuration_identity(signal)),
+                }
             )
-    return tuple(observations)
+
+
+def prediction_observations(
+    artifact: PredictionOOSArtifact, fold_id: str
+) -> tuple[PrimitiveMappingSnapshot, ...]:
+    return tuple(
+        iter_prediction_observations(
+            PredictionWindowReader.from_snapshot(artifact.snapshot.to_primitive()),
+            artifact,
+            fold_id,
+        )
+    )
 
 
 def aggregate_prediction(
@@ -224,7 +282,13 @@ def aggregate_prediction(
     windows: list[PrimitiveMapping] = []
     schedules = 0
     semantics: set[str] = set()
-    for fold in source.folds:
+    compact = any(
+        reader is not None and reader.schema_version == "2"
+        for reader in source.prediction_windows
+    )
+    sources: list[PrimitiveMappingSnapshot] = []
+    pooled = PredictionObservationAccumulator(fields)
+    for index, fold in enumerate(source.folds):
         if fold.artifact is None:
             windows.append(
                 {"fold_id": fold.fold_id, "status": fold.status.value, "summary": None}
@@ -232,24 +296,31 @@ def aggregate_prediction(
             continue
         if not isinstance(fold.artifact, PredictionOOSArtifact):
             raise OOSIntegrityError("wrong OOS artifact family")
-        manifest = mapping(fold.artifact.snapshot.to_primitive()["manifest"])
+        reader = source_prediction_reader(source, index)
+        manifest = reader.manifest()
         config = mapping(manifest["configuration"])
         semantics.add(
             configuration_identity(
                 {key: config[key] for key in ("outcome_labeler", "evaluator")}
             )
         )
-        captured = prediction_observations(fold.artifact, fold.fold_id)
-        scheduled = len(records(fold.artifact.snapshot.to_primitive()["decisions"]))
+        accumulator = PredictionObservationAccumulator(fields)
+        for observation in iter_prediction_observations(
+            reader, fold.artifact, fold.fold_id
+        ):
+            record = observation.to_primitive()
+            accumulator.update(record)
+            pooled.update(record)
+            if not compact:
+                observations.append(observation)
+        scheduled = reader.decision_count
         schedules += scheduled
-        observations.extend(captured)
+        sources.append(prediction_window_source(reader, fold.artifact, fold.fold_id))
         windows.append(
             {
                 "fold_id": fold.fold_id,
                 "status": fold.status.value,
-                "summary": summarize_prediction_observations(
-                    captured, scheduled, fields
-                ),
+                "summary": accumulator.summary(scheduled),
             }
         )
     if len(semantics) > 1:
@@ -257,7 +328,7 @@ def aggregate_prediction(
             "cannot pool different outcome/evaluator semantics; summarize "
             "separate studies"
         )
-    summary = summarize_prediction_observations(tuple(observations), schedules, fields)
+    summary = pooled.summary(schedules)
     with arithmetic():
         accuracies = [
             mapping(w["summary"])["accuracy"]
@@ -297,4 +368,5 @@ def aggregate_prediction(
         configuration_stability(source),
         tuple(observations),
         source_provenance,
+        tuple(sources) if compact else None,
     )
