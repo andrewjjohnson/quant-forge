@@ -9,7 +9,8 @@ uv run --frozen pytest tests/integration/test_compact_window_consumers.py \
   tests/integration/test_compact_window_outcome_consumers.py \
   tests/integration/test_compact_window_offline.py \
   tests/performance/test_compact_window_consumers.py \
-  tests/unit/oos/test_compact_accumulation.py
+  tests/unit/oos/test_compact_accumulation.py \
+  tests/unit/oos/test_finalized_holdout.py
 ```
 
 See [compact consumers](compact-window-consumers.md). These fixtures cover actual

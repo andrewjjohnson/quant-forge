@@ -73,6 +73,14 @@ overwriting an existing final and validates the published artifact. The ordinary
 first-evaluation path remains available and can produce compact results through
 QF-56. Neither path resets a consumed marker after failure or corruption.
 
+The external finalized path is validated only when importing its bytes. Once the
+ledger publishes its own copy, ordinary retries and result reads validate that
+copy, so moving, deleting or corrupting the caller-owned original cannot break
+replay. Explicit reproduction and recovery of a missing result envelope likewise
+reuse the ledger copy. Corruption of that copy fails closed; it is never silently
+replaced from the external source. A failed first import retains the permanent
+consumption marker and no result reference.
+
 Externally supplied results must come from the authorized holdout lifecycle;
 the ledger cannot retroactively establish that externally evaluated data was
 previously unseen. The path option is for ingesting finalized evidence, not for
@@ -160,7 +168,7 @@ Seventeen production files change, confined to the downstream boundaries:
 | `experiments` | `_compact_window.py`, `adapters.py`, `artifacts.py`, `validation.py`, `_aggregate_integrity.py`, `_holdout_integrity.py`, `_prediction_counts_integrity.py`, `_prediction_trial_integrity.py` |
 | `reporting` | `_research_inputs.py`, `_research_sections.py` |
 
-Six test files are added:
+Seven test files are added:
 
 - `tests/integration/test_compact_window_consumers.py`
 - `tests/integration/test_compact_window_consumer_integrity.py`
@@ -168,6 +176,7 @@ Six test files are added:
 - `tests/integration/test_compact_window_offline.py`
 - `tests/performance/test_compact_window_consumers.py`
 - `tests/unit/oos/test_compact_accumulation.py`
+- `tests/unit/oos/test_finalized_holdout.py`
 
 QF-55 encoding/validation and QF-56 writer/checkpoint modules are reused without
 modification. No QF-45 strategy configuration or execution is introduced, and
@@ -175,7 +184,7 @@ no missing generic upstream contract was found.
 
 ## Validation record
 
-Local acceptance used uv 0.12.1, Python 3.13.14 and frozen dependencies:
+Initial PR acceptance used uv 0.12.1, Python 3.13.14 and frozen dependencies:
 
 | Check | Result |
 | --- | --- |
@@ -192,3 +201,12 @@ Skipped tests require explicit live Alpha Vantage/Tiingo opt-in; warnings are
 existing `exchange_calendars` NumPy timedelta deprecations. No live market-data
 verification was required. Commands for the focused matrix are in
 [development](development.md); the draft PR records exact acceptance commands.
+
+The PR review follow-up adds seven durable-ingestion regressions covering changes
+to the external source, result-envelope recovery, invalid first imports and
+corrupted ledger copies. The bounded offline test deletes the external source
+before result reads, compatible retries, integrity checks and report replay.
+
+Review-fix validation: 652 relevant OOS/holdout/integrity and compact integration
+tests passed, along with frozen sync, format/lint, typing and pre-commit. The
+full-suite figures above remain the initial acceptance record.

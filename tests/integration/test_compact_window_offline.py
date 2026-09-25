@@ -69,8 +69,19 @@ def test_bounded_finalized_holdout_and_offline_replay(
     monkeypatch.setattr(socket.socket, "connect", forbidden)
     monkeypatch.setattr(PredictionEvaluator, "evaluate_partition", forbidden)
     monkeypatch.setattr(CompactPredictionWindowDecision, "from_embedded", forbidden)
+    wrong_window = next(r.path for r in source.prediction_windows if r is not None)
+    invalid_ledger = HoldoutLedger.create(tmp_path / "invalid-ledger")
+    invalid_ledger.reserve(source)
+    with pytest.raises(ValueError, match=r"incompatible|scope|identity"):
+        invalid_ledger.consume(
+            replace(evaluation, finalized_prediction_window=wrong_window),
+            run_id="foreign-window",
+        )
+    assert invalid_ledger.state(source).state == "consumed"
+    assert ledger.state(source) == reserved
     consumed = ledger.consume(evaluation, run_id="accept-finalized")
     assert consumed.state == "consumed"
+    final_path.unlink()  # The caller-owned import is no longer needed for replay.
     assert (
         mapping(ledger.result(evaluation).to_primitive()["artifact"])["result_id"]
         == artifact.window_result_id
@@ -84,12 +95,6 @@ def test_bounded_finalized_holdout_and_offline_replay(
     )
     with pytest.raises(OOSIntegrityError, match="reselection"):
         ledger.consume(other_freeze, run_id="incompatible")
-    wrong_window = next(r.path for r in source.prediction_windows if r is not None)
-    with pytest.raises(ValueError, match=r"incompatible|scope|identity"):
-        ledger.consume(
-            replace(evaluation, finalized_prediction_window=wrong_window),
-            run_id="foreign-window",
-        )
     assert ledger.state(source) == consumed
     block_research(monkeypatch)
     assert load_oos_aggregate(aggregate_path).to_primitive() == aggregate.to_primitive()

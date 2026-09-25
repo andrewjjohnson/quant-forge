@@ -217,15 +217,10 @@ class HoldoutEvaluation:
         )
         if prepared.configuration() != self.configuration():
             raise OOSIntegrityError("holdout frozen configuration or boundary changed")
-        if self.finalized_prediction_window is not None:
-            self._finalized_artifact()
 
-    def _finalized_artifact(self) -> PredictionOOSArtifact:
-        path = self.finalized_prediction_window
-        if (
-            path is None
-            or path.name != "prediction-window.jsonl"
-            or not isinstance(self.evaluator, PredictionEvaluator)
+    def _finalized_artifact(self, path: Path) -> PredictionOOSArtifact:
+        if path.name != "prediction-window.jsonl" or not isinstance(
+            self.evaluator, PredictionEvaluator
         ):
             raise OOSIntegrityError(
                 "finalized holdout requires a compact prediction window"
@@ -247,9 +242,16 @@ class HoldoutEvaluation:
 
     def _evaluate(self, output_root: Path) -> OOSArtifact:
         if self.finalized_prediction_window is not None:
-            artifact = self._finalized_artifact()
             output_root.mkdir(parents=True, exist_ok=True)
             destination = output_root / "prediction-window.jsonl"
+            # Once published, the ledger's copy is authoritative, including
+            # recovery before result.json was written. The external import path
+            # is operational input and may no longer exist on a compatible retry.
+            artifact = self._finalized_artifact(
+                destination
+                if destination.exists()
+                else self.finalized_prediction_window
+            )
             if not destination.exists():
                 descriptor, name = tempfile.mkstemp(
                     prefix=".holdout-window-", dir=output_root
