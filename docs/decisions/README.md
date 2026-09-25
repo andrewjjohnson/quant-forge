@@ -97,3 +97,4 @@ How will the decision be tested or revisited?
 
 - [0025: Plan Tiingo history by exchange session](0025-plan-tiingo-history-by-exchange-session.md)
 - [0026: Retain Massive pages in logical acquisition snapshots](0026-retain-massive-pages-in-logical-snapshots.md)
+- [0027: Normalize historical-window evidence](0027-normalize-historical-window-evidence.md)

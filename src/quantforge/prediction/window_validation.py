@@ -303,6 +303,48 @@ def _validate_decision(
             "prediction_context": context,
         }
     )
+    _validate_decision_record(
+        decision,
+        identity,
+        timestamp,
+        study_id=study_id,
+        primary_timeframe=primary_timeframe,
+        decision_session=decision_session,
+        session_indexes=session_indexes,
+        strategy_parameters=strategy_parameters,
+    )
+
+
+def _validate_decision_record(
+    decision: PrimitiveMapping,
+    identity: PrimitiveMapping,
+    timestamp: str,
+    *,
+    study_id: str,
+    primary_timeframe: PrimitiveMapping,
+    decision_session: str,
+    session_indexes: dict[str, int],
+    strategy_parameters: PrimitiveMapping,
+) -> None:
+    """Shared v1/v2 semantic checks; v2 passes no embedded market/configuration.
+
+    The caller verifies the version-specific reference and supplies the original
+    QF-11 study identity computed from the authenticated shared scope/context.
+    """
+    study = decision.get("prediction_study")
+    manifest = study.get("manifest") if isinstance(study, dict) else None
+    context = manifest.get("prediction_context") if isinstance(manifest, dict) else None
+    signals = decision.get("generated_signals")
+    if (
+        decision.get("decision_timestamp") != timestamp
+        or not isinstance(manifest, dict)
+        or manifest.get("component") != "quantforge_prediction_study"
+        or not isinstance(context, dict)
+        or not isinstance(signals, list)
+    ):
+        raise InvalidPredictionOutputError(
+            "decision provenance differs from its window"
+        )
     if (
         manifest.get("study_id") != study_id
         or decision.get("prediction_study_id") != study_id
@@ -422,6 +464,11 @@ def validate_prediction_window_snapshot(
     manifest, decisions = snapshot.get("manifest"), snapshot.get("decisions")
     if not isinstance(manifest, dict) or not isinstance(decisions, list):
         raise InvalidPredictionOutputError("window manifest or decisions are missing")
+    if (
+        manifest.get("component") != "quantforge_prediction_window"
+        or manifest.get("schema_version") != "1"
+    ):
+        raise InvalidPredictionOutputError("unsupported embedded window schema version")
     identity = {
         key: value
         for key, value in manifest.items()

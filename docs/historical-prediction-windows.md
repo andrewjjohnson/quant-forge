@@ -1,5 +1,9 @@
 # Historical prediction windows
 
+QF-55 adds an opt-in [compact version 2 representation](compact-prediction-windows.md)
+and a common v1/v2 reader. The execution and embedded v1 contracts below remain
+unchanged; incremental execution and downstream migration are separate stories.
+
 QF-42 evaluates one QF-11 multi-timeframe `PredictionStudy` at every scheduled
 decision in an explicit historical interval. It returns an ordered collection
 of the original results. Fold selection, frozen configurations, walk-forward
