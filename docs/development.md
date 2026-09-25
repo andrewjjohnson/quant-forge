@@ -1,5 +1,16 @@
 # QuantForge Development Guide
 
+QF-58 immutable-source sharing, mutation isolation, exact identity and resume checks
+(uv **0.12.1**, frozen lockfile):
+
+```bash
+uv run --frozen pytest tests/unit/prediction/test_source_sharing.py \
+  tests/integration/test_prediction_source_sharing.py
+```
+
+See [prediction source sharing](prediction-source-sharing.md) for the copy
+boundary, fallback behavior, and bounded real-data profiling procedure.
+
 QF-57 compact downstream checks (uv **0.12.1**, Python 3.13, frozen lockfile):
 
 ```bash
