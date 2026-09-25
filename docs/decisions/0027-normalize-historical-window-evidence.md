@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Jira: [QF-55](https://frostfiredigital-37308542.atlassian.net/browse/QF-55)
+- Pull request: [#53](https://github.com/andrewjjohnson/quant-forge/pull/53)
 
 ## Context
 
