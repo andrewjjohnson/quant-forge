@@ -20,7 +20,7 @@ from quantforge.configuration import (
     configuration_identity,
     decimal_to_primitive,
 )
-from quantforge.data.models import MarketDataset
+from quantforge.data.models import DatasetMetadata, MarketDataset
 from quantforge.data.multi_timeframe import (
     ContextCompletionPolicy,
     MultiTimeframeContext,
@@ -68,6 +68,14 @@ from quantforge.prediction.window import (
     _capture_window_identity,  # pyright: ignore[reportPrivateUsage]
     run_prediction_window_in_session,
 )
+from quantforge.prediction.window_compact_validation import (
+    validate_prediction_window_reader,
+)
+from quantforge.prediction.window_execution import (
+    PredictionWindowDecisionError,
+    run_incremental_prediction_window_in_session,
+)
+from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.prediction.window_validation import validate_prediction_window_snapshot
 from quantforge.timeframes import Timeframe
 
@@ -265,6 +273,22 @@ class PredictionWindowAnalyzer(_PredictionAnalyzerConfiguration, Protocol):
     def analyze_window(
         self, result: PredictionWindowResult[Any, Any, Any]
     ) -> PredictionTrialAnalysis: ...
+
+
+class CompactPredictionWindowAnalyzer(_PredictionAnalyzerConfiguration, Protocol):
+    """Analyze normalized records with the same domain metric semantics.
+
+    Implementations exhaust the reader and retain only needed metric state;
+    the grid does not average per-decision metrics or expand legacy results.
+    """
+
+    def analyze_compact_window(
+        self, reader: PredictionWindowReader
+    ) -> PredictionTrialAnalysis: ...
+
+
+def _compact_sources(reader: PredictionWindowReader) -> PrimitiveMapping:
+    return {"schema_version": "2", **reader.header()}
 
 
 def _snapshots(
@@ -469,8 +493,13 @@ class PredictionGridConfig:
     stability: StabilityConfig = field(default_factory=StabilityConfig)
     retry_failed: bool = False
     maximum_combinations: int = 10_000
+    window_schema_version: str = "1"
 
     def __post_init__(self) -> None:
+        if self.window_schema_version not in ("1", "2"):
+            raise InvalidPredictionGridConfigurationError(
+                "unsupported window schema version"
+            )
         if not self.label:
             raise InvalidPredictionGridConfigurationError("grid label is required")
         if not isinstance(cast(object, self.retry_failed), bool):
@@ -1345,26 +1374,37 @@ class _PredictionGridStore:
         self,
         trial_id: str,
         result: PredictionStudyResult[Any, Any, Any]
-        | PredictionWindowResult[Any, Any, Any],
+        | PredictionWindowResult[Any, Any, Any]
+        | PredictionWindowReader,
         analysis: PredictionTrialAnalysis,
     ) -> tuple[str, str]:
-        window = isinstance(result, PredictionWindowResult)
+        window = isinstance(result, (PredictionWindowResult, PredictionWindowReader))
         relative = (
             Path("artifacts")
             / trial_id
             / ("prediction-window.json" if window else "prediction-study.json")
         )
-        result_content: PrimitiveMapping = (
-            {
-                "prediction_window_id": result.window_result_id,
-                "prediction_window": result.to_primitive(),
+        if isinstance(result, PredictionWindowReader):
+            result_content: PrimitiveMapping = {
+                "prediction_window_id": result.header()["window_result_id"],
+                "prediction_window": {
+                    "schema_version": "2",
+                    "path": "prediction-window.jsonl",
+                    "header": result.header(),
+                },
             }
-            if isinstance(result, PredictionWindowResult)
-            else {
-                "prediction_study_id": result.study_id,
-                "prediction_study": result.to_primitive(),
-            }
-        )
+        else:
+            result_content = (
+                {
+                    "prediction_window_id": result.window_result_id,
+                    "prediction_window": result.to_primitive(),
+                }
+                if isinstance(result, PredictionWindowResult)
+                else {
+                    "prediction_study_id": result.study_id,
+                    "prediction_study": result.to_primitive(),
+                }
+            )
         content: PrimitiveMapping = {
             "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
             "grid_study_id": self.study_id,
@@ -1373,13 +1413,15 @@ class _PredictionGridStore:
             "analysis": analysis.to_primitive(),
         }
         artifact_fingerprint = configuration_identity(content)
-        _atomic_json(
-            self.study_path / relative,
-            {
-                **content,
-                "artifact_fingerprint": artifact_fingerprint,
-            },
-        )
+        artifact_record = {**content, "artifact_fingerprint": artifact_fingerprint}
+        destination = self.study_path / relative
+        if isinstance(result, PredictionWindowReader) and destination.exists():
+            if _load_mapping(destination) != artifact_record:
+                raise PredictionGridPersistenceError(
+                    "immutable compact trial wrapper changed"
+                )
+        else:
+            _atomic_json(destination, artifact_record)
         return relative.as_posix(), artifact_fingerprint
 
     def validate_artifact(
@@ -1390,6 +1432,8 @@ class _PredictionGridStore:
         window_identity: PrimitiveMappingSnapshot | None = None,
         outcome_sessions: tuple[date, ...] = (),
         strategy_parameters: PrimitiveMapping | None = None,
+        canonical_metadata: DatasetMetadata | None = None,
+        compact: bool = False,
     ) -> None:
         if record.artifact_location is None or record.analysis is None:
             raise PredictionGridPersistenceError(
@@ -1412,6 +1456,55 @@ class _PredictionGridStore:
             raise PredictionGridPersistenceError(
                 "completed prediction trial artifact has no prediction study"
             )
+        if compact:
+            if (
+                schedule is None
+                or window_identity is None
+                or strategy_parameters is None
+                or prediction_study.get("schema_version") != "2"
+                or prediction_study.get("path") != "prediction-window.jsonl"
+            ):
+                raise PredictionGridPersistenceError(
+                    "incompatible compact trial reference"
+                )
+            reader = PredictionWindowReader.open(
+                (self.study_path / record.artifact_location).parent
+                / "prediction-window.jsonl"
+            )
+            validate_prediction_window_reader(
+                reader,
+                expected_identity=window_identity,
+                schedule=schedule,
+                outcome_sessions=outcome_sessions,
+                strategy_parameters=strategy_parameters,
+                canonical_metadata=canonical_metadata,
+            )
+            expected_content: PrimitiveMapping = {
+                "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
+                "grid_study_id": self.study_id,
+                "trial_id": record.trial_id,
+                "prediction_window_id": reader.header()["window_result_id"],
+                "prediction_window": {
+                    "schema_version": "2",
+                    "path": "prediction-window.jsonl",
+                    "header": reader.header(),
+                },
+                "analysis": record.analysis.to_primitive(),
+            }
+            if (
+                reader.schema_version != "2"
+                or content != expected_content
+                or persisted_fingerprint != configuration_identity(expected_content)
+                or record.artifact_fingerprint != persisted_fingerprint
+                or record.analysis.artifacts_snapshot.to_primitive().get(
+                    "prediction_window_sources"
+                )
+                != _compact_sources(reader)
+            ):
+                raise PredictionGridPersistenceError(
+                    "compact trial evidence differs from persisted record"
+                )
+            return
         manifest = prediction_study.get("manifest")
         if (
             artifact.get("schema_version") != PREDICTION_GRID_SCHEMA_VERSION
@@ -1783,6 +1876,8 @@ def _stability(
 
 def _sanitize_failure(error: Exception) -> tuple[str, str]:
     failure_type = error.__class__.__name__
+    if isinstance(error, PredictionWindowDecisionError):
+        return failure_type, error.safe_message
     return (
         failure_type,
         f"{failure_type}: prediction trial failed; raw exception text was not "
@@ -1819,14 +1914,27 @@ class PredictionGridStudy:
         dataset: MarketDataset,
         dataset_family_fingerprint: str,
         study_factory: PredictionStudyFactory,
-        analyzer: PredictionTrialAnalyzer | PredictionWindowAnalyzer,
+        analyzer: PredictionTrialAnalyzer
+        | PredictionWindowAnalyzer
+        | CompactPredictionWindowAnalyzer,
         context_provider: PredictionContextProvider | PredictionWindowContextProvider,
         context_environment: PredictionContextEnvironment,
         indicator_backend: PredictionIndicatorBackendEnvironment,
         config: PredictionGridConfig,
         decision_schedule: PredictionDecisionSchedule | None = None,
+        canonical_metadata: DatasetMetadata | None = None,
     ) -> None:
-        analyzer_method = "analyze" if decision_schedule is None else "analyze_window"
+        if config.window_schema_version == "2" and decision_schedule is None:
+            raise InvalidPredictionGridConfigurationError(
+                "compact execution requires a decision schedule"
+            )
+        analyzer_method = (
+            "analyze_compact_window"
+            if config.window_schema_version == "2"
+            else "analyze"
+            if decision_schedule is None
+            else "analyze_window"
+        )
         provider_method = (
             "get_context" if decision_schedule is None else "get_context_at"
         )
@@ -1919,6 +2027,8 @@ class PredictionGridStudy:
             identity["prediction_window_engine_version"] = (
                 PREDICTION_WINDOW_ENGINE_VERSION
             )
+        if config.window_schema_version == "2":
+            identity["window_schema_version"] = "2"
         self.study_id = configuration_identity(identity)
         self._manifest: PrimitiveMapping = {
             **identity,
@@ -1939,6 +2049,7 @@ class PredictionGridStudy:
                 "profitability or financial advice"
             ),
         }
+        self._canonical_metadata = canonical_metadata
         self._prepared = prepared
         self._dataset_family_fingerprint = dataset_family_fingerprint
         self._factory = study_factory
@@ -2145,6 +2256,7 @@ class PredictionGridStudy:
                 result: (
                     PredictionStudyResult[Any, Any, Any]
                     | PredictionWindowResult[Any, Any, Any]
+                    | PredictionWindowReader
                 )
                 if self._decision_schedule is None:
                     result = run_prediction_study_in_session(
@@ -2155,6 +2267,35 @@ class PredictionGridStudy:
                     )
                     analysis = cast(PredictionTrialAnalyzer, self._analyzer).analyze(
                         result
+                    )
+                elif self._config.window_schema_version == "2":
+                    result = run_incremental_prediction_window_in_session(
+                        self._prepared,
+                        candidate.study,
+                        path=self._store.artifacts_path
+                        / started.trial_id
+                        / "prediction-window.jsonl",
+                        schedule=self._decision_schedule,
+                        context_provider=cast(
+                            PredictionWindowContextProvider, self._context_provider
+                        ),
+                        dataset_family_fingerprint=self._dataset_family_fingerprint,
+                        context_environment=self._context_environment.to_primitive(),
+                        indicator_backend_environment=self._backend.to_primitive(),
+                        canonical_metadata=self._canonical_metadata,
+                    )
+                    analysis = cast(
+                        CompactPredictionWindowAnalyzer, self._analyzer
+                    ).analyze_compact_window(result)
+                    artifacts = analysis.artifacts_snapshot.to_primitive()
+                    if "prediction_window_sources" in artifacts:
+                        raise InvalidPredictionGridConfigurationError(
+                            "prediction_window_sources is reserved for grid provenance"
+                        )
+                    artifacts["prediction_window_sources"] = _compact_sources(result)
+                    analysis = replace(
+                        analysis,
+                        artifacts_snapshot=PrimitiveMappingSnapshot.capture(artifacts),
                     )
                 else:
                     result = run_prediction_window_in_session(
@@ -2360,6 +2501,8 @@ class PredictionGridStudy:
                 record,
                 self._decision_schedule,
                 window_identity=window_identity,
+                canonical_metadata=self._canonical_metadata,
+                compact=self._config.window_schema_version == "2",
                 outcome_sessions=tuple(self._prepared.bar_indexes),
                 strategy_parameters=(
                     None
@@ -2384,6 +2527,7 @@ class PredictionGridStudy:
 __all__ = [
     "PREDICTION_GRID_ENGINE_VERSION",
     "PREDICTION_GRID_SCHEMA_VERSION",
+    "CompactPredictionWindowAnalyzer",
     "InvalidPredictionGridConfigurationError",
     "InvalidPredictionGridParametersError",
     "PredictionContextEnvironment",

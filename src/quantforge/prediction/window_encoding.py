@@ -3,6 +3,7 @@
 import hashlib
 import json
 from collections.abc import Iterable
+from copy import copy
 from typing import cast
 
 from quantforge.configuration import (
@@ -75,6 +76,12 @@ class WindowResultIdentity:
         self._digest.update(self._separator)
         self._digest.update(canonical(decision))
         self._separator = b","
+
+    def copy(self) -> "WindowResultIdentity":
+        """Copy constant hash state for transactional persistence, unchanged bytes."""
+        duplicate = copy(self)
+        duplicate._digest = self._digest.copy()
+        return duplicate
 
     def hexdigest(self) -> str:
         digest = self._digest.copy()

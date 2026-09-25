@@ -1,8 +1,13 @@
 # Compact historical prediction windows (QF-55)
 
+QF-56 adds explicit compact incremental execution, per-decision durable progress,
+exact-prefix resume and QF-32/QF-39 production. See
+[incremental prediction windows](incremental-prediction-windows.md). The v1
+contracts below remain available; QF-57 owns downstream compact consumption.
+
 QF-55 adds representation version `"2"` to the existing QF-42 historical-window
-contract. Execution still returns v1 by default. There is no new scheduler,
-strategy, outcome calculator, database, checkpoint writer, or downstream pipeline.
+contract. Execution still returns v1 by default. QF-55 itself adds no scheduler, strategy, outcome calculator, or database.
+QF-56 builds these same records incrementally.
 
 ## Existing v1 representation
 
@@ -137,8 +142,8 @@ for decision in reader.iterate_decisions():
 ```
 
 Conversion consumes already retained v1 results; it does not solve the execution
-retention problem. QF-56 will use the same evidence/decision/serialization
-primitives while changing execution and persistence.
+retention problem. QF-56 uses the same evidence/decision/serialization primitives
+through its separate incremental execution and persistence APIs.
 
 ## Common reader and validation
 
@@ -218,13 +223,13 @@ membership and decision-specific evidence retain their necessary O(N) storage.
 
 ## Scope and follow-ups
 
-Five production files implement this foundation: `window_compact.py`,
+QF-55 introduced this foundation in five production files: `window_compact.py`,
 `window_encoding.py`, `window_reader.py`, `window_compact_validation.py`, and the
 small shared-decision-validator extraction/version check in `window_validation.py`.
-All changes stay within the prediction package. Existing prediction/outcome
+That foundation stays within the prediction package. Prediction/outcome
 execution and numerical behavior are unchanged.
 
 QF-56 owns incremental QF-42 execution, durable checkpoints, prefix resume, and
 QF-32/QF-39 persistence. QF-57 owns QF-40 OOS/holdout, QF-9 manifest/integrity, and
-QF-41 report integration. None of those migrations is implemented here. QF-45
+QF-41 report integration. The QF-57 consumer migrations remain deferred. QF-45
 strategy logic is untouched. No generic architectural blocker was found.

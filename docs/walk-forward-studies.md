@@ -1,5 +1,10 @@
 # Deterministic walk-forward studies
 
+QF-56 adds explicit compact incremental execution, per-decision durable progress,
+exact-prefix resume and QF-32/QF-39 production. See
+[incremental prediction windows](incremental-prediction-windows.md). The v1
+contracts below remain available; QF-57 owns downstream compact consumption.
+
 QF-48 adds explicit exact-timestamp prediction membership and elapsed request
 execution. See [timestamp prediction validation](timestamp-prediction-validation.md)
 for the opt-in source, replay anchors, persistence, and holdout compatibility.

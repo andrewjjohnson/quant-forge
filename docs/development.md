@@ -796,3 +796,21 @@ ranges, source identities, and offline replay. See
 [the provider contract](massive-market-data.md) for adjustment, unavailable
 events, diagnostic coverage and strict SPY verification, and longer historical
 range options.
+
+## Incremental prediction acceptance tests (QF-56)
+
+Use uv 0.12.1 and frozen dependencies:
+
+~~~bash
+uv sync --all-extras --frozen
+uv run --frozen pytest tests/unit/prediction/test_incremental_prediction_window.py \
+  tests/unit/prediction/test_incremental_prediction_grid.py \
+  tests/unit/walk_forward/test_incremental_prediction.py \
+  tests/integration/test_incremental_prediction_provenance.py
+uv run --frozen pytest tests/performance/test_incremental_prediction_window_scale.py -n 0 -s
+~~~
+
+The scale diagnostic prints byte counts, checkpoints, resume point, reused work,
+retained-state evidence and descriptive elapsed time. It uses three staging files
+regardless of decision count. See
+[incremental prediction windows](incremental-prediction-windows.md).

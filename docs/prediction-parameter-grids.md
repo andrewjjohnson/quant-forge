@@ -1,5 +1,10 @@
 # Deterministic prediction parameter grids
 
+QF-56 adds explicit compact incremental execution, per-decision durable progress,
+exact-prefix resume and QF-32/QF-39 production. See
+[incremental prediction windows](incremental-prediction-windows.md). The v1
+contracts below remain available; QF-57 owns downstream compact consumption.
+
 QF-42 optionally supplies `decision_schedule` to this same grid and analyzes a
 typed collection through `PredictionWindowAnalyzer.analyze_window()`. Existing
 single-decision behavior is unchanged. See

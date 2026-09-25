@@ -131,6 +131,78 @@ def _context_sources(
         _reference(provenance, reference, timeframe)
 
 
+class PredictionWindowDecisionValidator:
+    """QF-55 scientific checks reusable for append, resume and finalized reading."""
+
+    def __init__(
+        self,
+        *,
+        expected_identity: PrimitiveMappingSnapshot,
+        schedule: PredictionDecisionSchedule,
+        outcome_sessions: tuple[date, ...],
+        strategy_parameters: PrimitiveMapping,
+        canonical_metadata: DatasetMetadata | None = None,
+    ) -> None:
+        self.expected_identity = expected_identity
+        self.schedule = schedule
+        self.identity = expected_identity.to_primitive()
+        if self.identity.get("schedule") != schedule.to_primitive():
+            raise InvalidPredictionOutputError(
+                "window scope differs from expected schedule"
+            )
+        market = mapping(self.identity["market_data"])
+        self.provenance = validate_prediction_provenance(market)
+        if isinstance(self.provenance, BoundedPredictionProvenance):
+            if canonical_metadata is None:
+                raise InvalidPredictionOutputError(
+                    "bounded window requires independent canonical ancestry"
+                )
+            if (
+                schedule.decision_timestamps
+                and self.provenance.causal_cutoff > schedule.decision_timestamps[0]
+            ):
+                raise InvalidPredictionOutputError(
+                    "bounded cutoff is after the first decision"
+                )
+            validate_prediction_view_lineage(
+                market,
+                canonical_metadata,
+                self.provenance.causal_cutoff,
+                start=date.fromisoformat(cast(str, market["actual_first_session"])),
+            )
+        _outcome_source(self.identity, self.provenance)
+        self.study_identity = StudyIdentity(self.identity)
+        self.session_indexes = {
+            session.isoformat(): index for index, session in enumerate(outcome_sessions)
+        }
+        self.primary: PrimitiveMapping = {
+            "configuration_id": schedule.primary_timeframe.configuration_id,
+            "configuration": schedule.primary_timeframe.to_primitive(),
+        }
+        self.strategy_parameters = PrimitiveMappingSnapshot.capture(strategy_parameters)
+
+    def validate(self, decision: PrimitiveMapping, sequence: int) -> None:
+        """Check a single normalized record without expanding shared evidence."""
+        try:
+            manifest = mapping(mapping(decision["prediction_study"])["manifest"])
+            context = mapping(manifest["prediction_context"])
+            _context_sources(context, self.provenance)
+            _validate_decision_record(
+                decision,
+                self.identity,
+                self.schedule.decision_timestamps[sequence].isoformat(),
+                study_id=self.study_identity.for_context(context),
+                primary_timeframe=self.primary,
+                decision_session=self.schedule.decision_sessions[sequence].isoformat(),
+                session_indexes=self.session_indexes,
+                strategy_parameters=self.strategy_parameters.to_primitive(),
+            )
+        except (ValueError, TypeError, KeyError, IndexError, ValidationError) as error:
+            raise InvalidPredictionOutputError(
+                f"invalid historical window evidence: {error}"
+            ) from error
+
+
 def validate_prediction_window_reader(
     reader: PredictionWindowReader,
     *,
@@ -140,67 +212,24 @@ def validate_prediction_window_reader(
     strategy_parameters: PrimitiveMapping,
     canonical_metadata: DatasetMetadata | None = None,
 ) -> None:
-    """Verify v1/v2 against trusted scope, keeping only the current decision.
-
-    As in the existing v1 validator, expected_identity and outcome_sessions come
-    from validated inputs, not the artifact being checked. Bounded QF-52 views
-    additionally require their independent canonical parent for subset checking.
-    It is never attached to the reader/shared evidence or passed to research.
-    """
+    """Verify v1/v2 with trusted inputs and independent bounded-view ancestry."""
     try:
-        identity = reader.evidence.identity_snapshot.to_primitive()
         if (
-            configuration_identity(identity)
-            != configuration_identity(expected_identity.to_primitive())
+            reader.evidence.identity_snapshot != expected_identity
             or reader.evidence.schedule != schedule
         ):
             raise InvalidPredictionOutputError(
                 "window scope differs from expected identity/schedule"
             )
-        market = mapping(identity["market_data"])
-        provenance = validate_prediction_provenance(market)
-        if isinstance(provenance, BoundedPredictionProvenance):
-            if canonical_metadata is None:
-                raise InvalidPredictionOutputError(
-                    "bounded window requires independent canonical ancestry"
-                )
-            if (
-                schedule.decision_timestamps
-                and provenance.causal_cutoff > schedule.decision_timestamps[0]
-            ):
-                raise InvalidPredictionOutputError(
-                    "bounded cutoff is after the first decision"
-                )
-            validate_prediction_view_lineage(
-                market,
-                canonical_metadata,
-                provenance.causal_cutoff,
-                start=date.fromisoformat(cast(str, market["actual_first_session"])),
-            )
-        _outcome_source(identity, provenance)
-        study_identity = StudyIdentity(identity)
-        session_indexes = {
-            session.isoformat(): index for index, session in enumerate(outcome_sessions)
-        }
-        primary: PrimitiveMapping = {
-            "configuration_id": schedule.primary_timeframe.configuration_id,
-            "configuration": schedule.primary_timeframe.to_primitive(),
-        }
+        validator = PredictionWindowDecisionValidator(
+            expected_identity=expected_identity,
+            schedule=schedule,
+            outcome_sessions=outcome_sessions,
+            strategy_parameters=strategy_parameters,
+            canonical_metadata=canonical_metadata,
+        )
         for index, compact in enumerate(reader.iterate_decisions()):
-            decision = compact.to_primitive()
-            manifest = mapping(mapping(decision["prediction_study"])["manifest"])
-            context = mapping(manifest["prediction_context"])
-            _context_sources(context, provenance)
-            _validate_decision_record(
-                decision,
-                identity,
-                schedule.decision_timestamps[index].isoformat(),
-                study_id=study_identity.for_context(context),
-                primary_timeframe=primary,
-                decision_session=schedule.decision_sessions[index].isoformat(),
-                session_indexes=session_indexes,
-                strategy_parameters=strategy_parameters,
-            )
+            validator.validate(compact.to_primitive(), index)
     except (ValueError, TypeError, KeyError, IndexError, ValidationError) as error:
         raise InvalidPredictionOutputError(
             f"invalid historical window evidence: {error}"

@@ -20,6 +20,7 @@ from quantforge.prediction import (
 )
 from quantforge.prediction.grid import (
     PREDICTION_GRID_ENGINE_VERSION,
+    CompactPredictionWindowAnalyzer,
     PredictionContextEnvironment,
     PredictionGridCombination,
     PredictionGridConfig,
@@ -39,6 +40,15 @@ from quantforge.prediction.window import (
     PredictionWindowContextProvider,
     _capture_window_identity,  # pyright: ignore[reportPrivateUsage]
 )
+from quantforge.prediction.window_compact_validation import (
+    validate_prediction_window_reader,
+)
+from quantforge.prediction.window_encoding import mapping
+from quantforge.prediction.window_execution import (
+    PredictionWindowDecisionError,
+    run_incremental_prediction_window_in_session,
+)
+from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.prediction.window_validation import validate_prediction_window_snapshot
 from quantforge.timeframes import Timeframe, resolve_exchange_session
 from quantforge.validation import (
@@ -147,7 +157,7 @@ class PredictionEvaluator:
         series: tuple[TimeframeBarSeries, ...],
         primary_timeframe: Timeframe,
         study_factory: PredictionStudyFactory,
-        analyzer: PredictionWindowAnalyzer,
+        analyzer: PredictionWindowAnalyzer | CompactPredictionWindowAnalyzer,
         indicator_backend: PredictionIndicatorBackendEnvironment,
         grid_config: PredictionGridConfig,
     ) -> None:
@@ -210,6 +220,7 @@ class PredictionEvaluator:
             indicator_backend=self.backend,
             config=config,
             decision_schedule=schedule,
+            canonical_metadata=self.dataset.metadata,
         )
 
     def _capture_universe(self) -> CandidateUniverse:
@@ -275,6 +286,11 @@ class PredictionEvaluator:
 
     def configuration(self) -> PrimitiveMapping:
         return {
+            **(
+                {"window_schema_version": "2"}
+                if self.grid_config.window_schema_version == "2"
+                else {}
+            ),
             "adapter": "qf39_prediction",
             "prediction_engine": STUDY_ENGINE_VERSION,
             "grid_engine": PREDICTION_GRID_ENGINE_VERSION,
@@ -453,6 +469,52 @@ class PredictionEvaluator:
         definition, _ = _trial_definition(study, self.backend)
         if PrimitiveMappingSnapshot.capture(definition) != candidate.definition:
             raise WalkForwardError("test configuration differs from frozen selection")
+        if self.grid_config.window_schema_version == "2":
+            try:
+                reader = run_incremental_prediction_window_in_session(
+                    prepare_prediction_study_dataset(permitted.dataset),
+                    study,
+                    path=output_root / "prediction-window.jsonl",
+                    schedule=schedule,
+                    context_provider=_PermittedContextProvider(
+                        plan, permitted, self.series, schedule
+                    ),
+                    dataset_family_fingerprint=self.series[
+                        0
+                    ].dataset_reference.family_id,
+                    context_environment=self._environment(
+                        plan, permitted
+                    ).to_primitive(),
+                    indicator_backend_environment=self.backend.to_primitive(),
+                    canonical_metadata=self.dataset.metadata,
+                )
+            except PredictionWindowDecisionError as error:
+                raise WalkForwardError(error.safe_message) from error
+            has_prediction = False
+            for decision in reader.iterate_decisions():
+                rows = cast(
+                    list[PrimitiveMapping],
+                    mapping(decision.to_primitive()["prediction_study"])["rows"],
+                )
+                for row in rows:
+                    values = mapping(mapping(row["prediction"])["values"])
+                    if values.get("disposition") != "rejected":
+                        has_prediction = True
+            if not has_prediction:
+                raise WalkForwardError(
+                    "prediction test window contains no valid predictions"
+                )
+            return PredictionOOSArtifact(
+                selection.selection_id,
+                cast(str, reader.header()["window_result_id"]),
+                PrimitiveMappingSnapshot.capture(
+                    {
+                        "schema_version": "2",
+                        "path": "prediction-window.jsonl",
+                        "header": reader.header(),
+                    }
+                ),
+            )
         result = run_prediction_window(
             permitted.dataset,
             study,
@@ -523,6 +585,30 @@ class PredictionEvaluator:
             indicator_backend_environment=self.backend.to_primitive(),
         )
         snapshot = artifact.snapshot.to_primitive()
+        if self.grid_config.window_schema_version == "2":
+            reader = PredictionWindowReader.open(
+                output_root / "prediction-window.jsonl"
+            )
+            if (
+                reader.schema_version != "2"
+                or snapshot
+                != {
+                    "schema_version": "2",
+                    "path": "prediction-window.jsonl",
+                    "header": reader.header(),
+                }
+                or reader.header()["window_result_id"] != artifact.window_result_id
+            ):
+                raise WalkForwardError("incompatible compact OOS reference")
+            validate_prediction_window_reader(
+                reader,
+                expected_identity=expected,
+                schedule=schedule,
+                outcome_sessions=tuple(b.session_date for b in permitted.dataset.bars),
+                strategy_parameters=study.strategy.parameters.to_primitive(),
+                canonical_metadata=self.dataset.metadata,
+            )
+            return
         validate_prediction_window_snapshot(
             snapshot,
             expected_identity=expected,
