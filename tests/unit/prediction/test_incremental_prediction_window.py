@@ -514,6 +514,53 @@ def test_finalization_failure_preserves_recoverable_work(
     assert recovered.finalize().path.read_bytes() == compact.serialize()
 
 
+@pytest.mark.parametrize("cleanup", ["staging", "temporary"])
+def test_finalized_window_survives_cleanup_failure(
+    tmp_path: Path,
+    window: PredictionWindowResult[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup: str,
+) -> None:
+    from quantforge.prediction import window_incremental as persistence
+
+    writer = IncrementalPredictionWindowWriter.open(
+        tmp_path / "window.jsonl", validator=validator(window)
+    )
+    compact = CompactPredictionWindowResult.from_window(window)
+    for decision in compact.decisions:
+        writer.append(decision)
+    failed_paths: list[Path] = []
+
+    def fail_staging(path: Path) -> None:
+        assert path == writer.staging_path
+        failed_paths.append(path)
+        raise PermissionError("injected cleanup failure")
+
+    def fail_temporary(path: Path, *, missing_ok: bool = False) -> None:
+        assert path.parent == writer.path.parent
+        assert path.name.startswith(".pending-")
+        failed_paths.append(path)
+        raise PermissionError("injected cleanup failure")
+
+    if cleanup == "staging":
+        monkeypatch.setattr(persistence.shutil, "rmtree", fail_staging)
+    else:
+        monkeypatch.setattr(Path, "unlink", fail_temporary)
+    reader = writer.finalize()
+    assert len(failed_paths) == 1
+    assert failed_paths[0].exists()
+    assert writer.finalized
+    assert reader.path.read_bytes() == compact.serialize()
+    verify(reader, window)
+    modified = writer.path.stat().st_mtime_ns
+    resumed = IncrementalPredictionWindowWriter.open(
+        writer.path, validator=validator(window)
+    )
+    assert resumed.finalized
+    assert resumed.finalize().header() == reader.header()
+    assert writer.path.stat().st_mtime_ns == modified
+
+
 def test_empty_schedule_finalizes(tmp_path: Path) -> None:
     window = run_window(
         decision_schedule=schedule(

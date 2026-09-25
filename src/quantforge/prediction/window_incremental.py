@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Iterator
+from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
 from typing import BinaryIO
@@ -334,8 +335,11 @@ class IncrementalPredictionWindowWriter:
                 _publish(stream, temporary, self.path)
             self._finalized = True
         finally:
-            temporary.unlink(missing_ok=True)
+            # Temporary-file cleanup must not mask publication errors or success.
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
         # Invalid/stale work is preserved; only successfully finalized work is removed.
-        # A crash here leaves a valid final and redundant staging files.
-        shutil.rmtree(self.staging_path)
+        # Cleanup errors leave redundant staging, never a failed research result.
+        with suppress(OSError):
+            shutil.rmtree(self.staging_path)
         return PredictionWindowReader.open(self.path)

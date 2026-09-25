@@ -161,6 +161,40 @@ def test_compact_trial_corruption_is_not_ranked(tmp_path: Path) -> None:
         study.resume()
 
 
+@pytest.mark.parametrize("partial_cleanup", [False, True])
+def test_cleanup_failure_keeps_completed_trials_ranked_on_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    partial_cleanup: bool,
+) -> None:
+    from quantforge.prediction import window_incremental as persistence
+
+    provider = WindowProvider()
+    study = compact_grid(tmp_path, provider)
+    failed_paths: list[Path] = []
+
+    def fail_cleanup(path: Path) -> None:
+        assert path.name == "prediction-window.jsonl.in-progress"
+        assert (path.parent / "prediction-window.jsonl").is_file()
+        if partial_cleanup:
+            (path / "checkpoint.json").unlink()
+        failed_paths.append(path)
+        raise PermissionError("injected cleanup failure")
+
+    monkeypatch.setattr(persistence.shutil, "rmtree", fail_cleanup)
+    result = study.run()
+    assert len(failed_paths) == len(result.trials) == 2
+    assert all(path.exists() for path in failed_paths)
+    assert all(trial.status is TrialStatus.SUCCEEDED for trial in result.trials)
+    assert len(result.rankings) == len(result.trials)
+    assert all(not trial.failed_attempts for trial in result.trials)
+    provider.requests.clear()
+    resumed = compact_grid(tmp_path, provider).resume()
+    assert not provider.requests
+    assert resumed.trials == result.trials
+    assert resumed.rankings == result.rankings
+
+
 def test_failed_trial_reports_exact_decision_and_retries_its_prefix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

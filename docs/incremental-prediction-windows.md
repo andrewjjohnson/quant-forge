@@ -105,8 +105,10 @@ before atomic non-overwriting publication and filesystem sync.
 
 A failed publication preserves resumable work. Successfully published finals are
 immutable under the API. Cleanup removes only successfully finalized staging
-files. A crash between publication and cleanup can leave redundant staging;
-the validated final remains authoritative.
+files. Temporary-file and staging cleanup are best-effort: filesystem cleanup
+errors do not turn a durably published window into a failed trial. A cleanup
+error or crash may leave redundant files (including partially removed staging);
+the validated final remains authoritative on resume.
 
 Shared evidence is never re-embedded per decision. Atomic assembly temporarily
 has one staging copy and one final-file copy; successful completed storage has
