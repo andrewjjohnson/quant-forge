@@ -1,5 +1,9 @@
 # QuantForge Architecture
 
+QF-56 adds compact prediction journals with atomic per-decision checkpoints
+and QF-32/QF-39 production. See [incremental windows](incremental-prediction-windows.md)
+and [ADR 0028](decisions/0028-checkpoint-compact-prediction-journals.md).
+
 QF-52 separates canonical prediction sources from causal evaluator views through
 the [bounded prediction-input contract](bounded-prediction-inputs.md) and
 [ADR 0024](decisions/0024-separate-bounded-prediction-views.md). It reuses the

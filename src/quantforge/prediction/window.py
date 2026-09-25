@@ -1,5 +1,6 @@
 """Historical scheduling and collections of unchanged QF-11 decision results."""
 
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -437,6 +438,52 @@ def run_prediction_window_in_session(
     A FAIL policy aborts without returning a partial window. QF-32 persists the
     candidate failure; an interrupted window is rerun as a whole on resume.
     """
+    identity = _capture_window_identity(
+        prepared,
+        _capture_study_configuration(study),
+        schedule=schedule,
+        dataset_family_fingerprint=dataset_family_fingerprint,
+        context_environment=context_environment,
+        indicator_backend_environment=indicator_backend_environment,
+    )
+    return PredictionWindowResult(
+        schedule,
+        identity,
+        tuple(
+            iter_prediction_window_decisions(
+                prepared,
+                study,
+                schedule=schedule,
+                context_provider=context_provider,
+                dataset_family_fingerprint=dataset_family_fingerprint,
+                indicator_output_cache=indicator_output_cache,
+            )
+        ),
+    )
+
+
+def iter_prediction_window_decisions(
+    prepared: PredictionStudyDatasetSession,
+    study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
+    *,
+    schedule: PredictionDecisionSchedule,
+    context_provider: PredictionWindowContextProvider,
+    dataset_family_fingerprint: str,
+    indicator_output_cache: PredictionIndicatorOutputCache | None = None,
+    start_sequence: int = 0,
+) -> Iterator[
+    PredictionWindowDecision[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
+]:
+    """Execute an authoritative schedule suffix, retaining only the current result.
+
+    start_sequence is supplied only after the caller verifies a durable prefix.
+    Scientific execution, component isolation and QF-11 validation are shared
+    with the legacy materialized API.
+    """
+    if type(start_sequence) is not int or not 0 <= start_sequence <= len(
+        schedule.decision_timestamps
+    ):
+        raise InvalidPredictionConfigurationError("invalid historical start sequence")
     requirements = getattr(study.strategy, "context_requirements", None)
     if (
         not isinstance(requirements, PredictionContextRequirements)
@@ -449,17 +496,6 @@ def run_prediction_window_in_session(
             "a dataset family, and a timestamp-aware context provider"
         )
     configuration = _capture_study_configuration(study)
-    identity = _capture_window_identity(
-        prepared,
-        configuration,
-        schedule=schedule,
-        dataset_family_fingerprint=dataset_family_fingerprint,
-        context_environment=context_environment,
-        indicator_backend_environment=indicator_backend_environment,
-    )
-    decisions: list[
-        PredictionWindowDecision[PredictionRecordT, OutcomeValuesT, EvaluationValuesT]
-    ] = []
     # Freeze a pristine template before any future-bearing labeler callback. A
     # previous decision's component state must never influence the next decision.
     template = deepcopy(study)
@@ -471,7 +507,8 @@ def run_prediction_window_in_session(
         raise InvalidPredictionConfigurationError(
             "historical study components must support independent copies"
         )
-    for timestamp in schedule.decision_timestamps:
+    for sequence in range(start_sequence, len(schedule.decision_timestamps)):
+        timestamp = schedule.decision_timestamps[sequence]
         decision_study = deepcopy(template)
         if (
             decision_study.strategy is template.strategy
@@ -497,8 +534,9 @@ def run_prediction_window_in_session(
             raise InvalidPredictionOutputError(
                 "historical decision changed the study configuration"
             )
-        decisions.append(PredictionWindowDecision(timestamp, result))
-    return PredictionWindowResult(schedule, identity, tuple(decisions))
+        yield PredictionWindowDecision(timestamp, result)
+        # Drop the generator frame's reference before starting another decision.
+        del result, decision_study
 
 
 __all__ = [
@@ -508,6 +546,7 @@ __all__ = [
     "PredictionWindowContextProvider",
     "PredictionWindowDecision",
     "PredictionWindowResult",
+    "iter_prediction_window_decisions",
     "run_prediction_window",
     "run_prediction_window_in_session",
 ]

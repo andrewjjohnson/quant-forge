@@ -1,8 +1,13 @@
 # Historical prediction windows
 
+QF-56 adds explicit compact incremental execution, per-decision durable progress,
+exact-prefix resume and QF-32/QF-39 production. See
+[incremental prediction windows](incremental-prediction-windows.md). The v1
+contracts below remain available; QF-57 owns downstream compact consumption.
+
 QF-55 adds an opt-in [compact version 2 representation](compact-prediction-windows.md)
 and a common v1/v2 reader. The execution and embedded v1 contracts below remain
-unchanged; incremental execution and downstream migration are separate stories.
+unchanged. QF-56 adds an alternative execution path; QF-57 owns downstream migration.
 
 QF-42 evaluates one QF-11 multi-timeframe `PredictionStudy` at every scheduled
 decision in an explicit historical interval. It returns an ordered collection
@@ -203,7 +208,7 @@ They follow the same policy as standalone windows: `SKIP` records each scheduled
 decision with `source_context: null` and `FAIL` fails the candidate with a context
 data error. Neither invalid objects nor their absence become cached contexts.
 
-Persistence is **incremental per candidate**, using QF-32's atomic writes and
+Legacy v1 persistence is **incremental per candidate**, using QF-32's atomic writes and
 terminal states. A window succeeds only after every scheduled decision and the
 collection analyzer finish. Resume validates the manifest, candidate definition,
 artifact SHA-256, schedule, ordered decision coverage, result identity, and
