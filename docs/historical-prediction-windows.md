@@ -1,5 +1,10 @@
 # Historical prediction windows
 
+QF-59 prepares immutable plan identity and indexed source selection in the
+permitted-context provider before QF-42 iterates decisions. The QF-11 interface,
+schedule, causal contexts and scientific/checkpoint identities are unchanged.
+See [indexed context preparation](indexed-prediction-context.md).
+
 QF-56 adds explicit compact incremental execution, per-decision durable progress,
 exact-prefix resume and QF-32/QF-39 production. See
 [incremental prediction windows](incremental-prediction-windows.md). The v1

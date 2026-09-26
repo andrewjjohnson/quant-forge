@@ -103,3 +103,4 @@ How will the decision be tested or revisited?
 
 - [0029: Consume compact window evidence downstream](0029-consume-compact-window-evidence.md)
 - [0030: Share immutable prediction source backing](0030-share-immutable-prediction-source.md)
+- [0031: Prepare exact prediction context once per execution scope](0031-prepare-indexed-prediction-context.md)

@@ -1,5 +1,17 @@
 # QuantForge Development Guide
 
+QF-59 indexed context equivalence, invocation counts, calendar boundaries and
+compact resume checks (uv **0.12.1**, frozen dependencies):
+
+```bash
+uv run --frozen pytest tests/unit/validation/test_prepared_prediction_context.py \
+  tests/integration/test_prepared_prediction_execution.py \
+  tests/performance/test_prediction_context_index.py
+```
+
+See [indexed prediction context](indexed-prediction-context.md) for preparation
+scope, reference fallback, compatibility checks and real bounded profiling.
+
 QF-58 immutable-source sharing, mutation isolation, exact identity and resume checks
 (uv **0.12.1**, frozen lockfile):
 

@@ -1,7 +1,7 @@
 """QF-39 prediction orchestration using QF-42 windows and QF-32 grids."""
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -62,6 +62,8 @@ from quantforge.validation import (
     ValidationPlan,
     select_prediction_context_observations,
 )
+from quantforge.validation.errors import ValidationPlanError
+from quantforge.validation.prepared_context import PreparedPredictionContext
 from quantforge.walk_forward._adapters import (
     choose,
     frozen_candidate,
@@ -93,11 +95,34 @@ class _PermittedContextProvider:
     permitted: EvaluationPartition
     series: tuple[TimeframeBarSeries, ...]
     schedule: PredictionDecisionSchedule
+    _prepared_context: PreparedPredictionContext | None = field(
+        init=False, repr=False, compare=False
+    )
+    _decision_timestamps: frozenset[datetime] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "_decision_timestamps", frozenset(self.schedule.decision_timestamps)
+        )
+        try:
+            prepared = PreparedPredictionContext.capture(
+                self.plan,
+                self.permitted.window,
+                series=self.series,
+                input_identity=self.permitted.dataset.metadata.dataset_id,
+            )
+        except ValidationPlanError:
+            # Preserve the reference path's per-decision failure/skip handling
+            # for invalid contexts. Preparation never waives those checks.
+            prepared = None
+        object.__setattr__(self, "_prepared_context", prepared)
 
     def get_context_at(
         self, requirements: PredictionContextRequirements, *, as_of: datetime
     ) -> MultiTimeframeContext:
-        if as_of not in self.schedule.decision_timestamps:
+        if as_of not in self._decision_timestamps:
             raise WalkForwardError(
                 "prediction requested a decision outside permitted membership"
             )
@@ -107,6 +132,12 @@ class _PermittedContextProvider:
         }
         for source in self.series:
             if source.timeframe.configuration_id not in required_ids:
+                continue
+            if self._prepared_context is not None:
+                _, selected_source = self._prepared_context.select(
+                    source.timeframe, as_of=TimestampBoundary(as_of)
+                )
+                selected.append(selected_source)
                 continue
             evidence = select_prediction_context_observations(
                 self.plan,

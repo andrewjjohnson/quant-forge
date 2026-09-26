@@ -1,5 +1,9 @@
 # Leakage-safe validation plans
 
+Historical callers may capture [QF-59 prepared prediction context](indexed-prediction-context.md)
+to reuse plan identity and source timestamp indexes within one verified
+plan/window/view scope. The reference selector and QF-8 identities remain unchanged.
+
 QF-8 implements study-neutral chronological partition contracts in
 `quantforge.validation`. The package defines scientific boundaries and safe
 membership only. It does not run optimization, train models, execute backtests,
