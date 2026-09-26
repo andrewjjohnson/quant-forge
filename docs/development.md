@@ -853,3 +853,18 @@ The scale diagnostic prints byte counts, checkpoints, resume point, reused work,
 retained-state evidence and descriptive elapsed time. It uses three staging files
 regardless of decision count. See
 [incremental prediction windows](incremental-prediction-windows.md).
+
+## Bounded projection preparation checks (QF-60)
+
+Use uv **0.12.1** and frozen dependencies:
+
+```bash
+uv run --frozen pytest tests/integration/test_prepared_prediction_views.py \
+  tests/integration/test_prepared_projection_execution.py
+```
+
+These fixtures count actual projection construction and lineage verification,
+compare exact QF-32/QF-39 output, exercise prefix/completed resume and reject
+incompatible source/scope/evidence. Independent QF-9/QF-40/QF-41 replay disables
+registry construction and network access. See
+[prepared prediction projections](prepared-prediction-projections.md).

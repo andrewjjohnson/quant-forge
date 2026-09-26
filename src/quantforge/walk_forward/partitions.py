@@ -1,10 +1,14 @@
 """Adapt QF-8 membership to bounded, independently valid evaluator inputs."""
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import Protocol, cast
 
-from quantforge.configuration import PrimitiveMapping, configuration_identity
+from quantforge.configuration import (
+    PrimitiveMapping,
+    PrimitiveMappingSnapshot,
+    configuration_identity,
+)
 from quantforge.data import (
     CashDividend,
     MarketDataset,
@@ -22,6 +26,7 @@ from quantforge.data.identity import (
     sha256_hex,
 )
 from quantforge.data.prediction_views import bounded_prediction_view
+from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
 from quantforge.timeframes import resolve_exchange_session
 from quantforge.validation import (
     BoundaryAxis,
@@ -65,6 +70,9 @@ class PermittedPartition:
     sessions: tuple[date, ...]
     decision_timestamps: tuple[datetime, ...] = ()
     prediction_membership: PredictionMembershipSource | None = None
+    preparation_scope: PrimitiveMappingSnapshot | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def to_primitive(self) -> PrimitiveMapping:
         primitive: PrimitiveMapping = {
@@ -115,6 +123,7 @@ def partition(
     role: PartitionRole,
     *,
     minimum_observations: int,
+    projection_registry: PreparedProjectionRegistry | None = None,
 ) -> PermittedPartition:
     """Delegate all boundary/purge/context decisions to QF-8, then project rows."""
     if role is PartitionRole.FINAL_HOLDOUT:
@@ -132,6 +141,11 @@ def partition(
     }[role]
     if window is None:
         raise WalkForwardError("this fold has no selection partition")
+    preparation_scope = (
+        prediction_projection_scope(plan, window, fold.fold_id)
+        if projection_registry is not None
+        else None
+    )
     observations = observation_keys(dataset, plan)
     source = plan.prediction_membership or dataset
     source_timeframe = (
@@ -162,10 +176,16 @@ def partition(
             window,
             membership,
             purged,
-            prediction_metadata_prefix(dataset, timestamps[0]),
+            prediction_metadata_prefix(
+                dataset,
+                timestamps[0],
+                projection_registry=projection_registry,
+                projection_scope=preparation_scope,
+            ),
             tuple(plan.prediction_membership.session_for(t) for t in timestamps),
             timestamps,
             plan.prediction_membership,
+            preparation_scope,
         )
     start_key = (membership.warm_up_context or purged.retained)[0]
     start = observations.index(start_key)
@@ -183,13 +203,38 @@ def partition(
         membership,
         purged,
         project_dataset(
-            dataset, dataset.bars[start].session_date, dataset.bars[end].session_date
+            dataset,
+            dataset.bars[start].session_date,
+            dataset.bars[end].session_date,
+            projection_registry=projection_registry,
+            projection_scope=preparation_scope,
         ),
         sessions,
+        preparation_scope=preparation_scope,
     )
 
 
-def project_dataset(dataset: MarketDataset, start: date, end: date) -> MarketDataset:
+def prediction_projection_scope(
+    plan: ValidationPlan, window: ValidationWindow, fold_id: str | None = None
+) -> PrimitiveMappingSnapshot:
+    """Scientific partition identity; excludes searched strategy parameters."""
+    return PrimitiveMappingSnapshot.capture(
+        {
+            "plan_id": plan.plan_id,
+            "fold_id": fold_id,
+            "window": window.to_primitive(),
+        }
+    )
+
+
+def project_dataset(
+    dataset: MarketDataset,
+    start: date,
+    end: date,
+    *,
+    projection_registry: PreparedProjectionRegistry | None = None,
+    projection_scope: PrimitiveMappingSnapshot | None = None,
+) -> MarketDataset:
     """QF-3 in-memory projection, with no protected metadata or price references.
 
     Bars are copied unchanged. Only range/content/action provenance is rebound,
@@ -203,6 +248,15 @@ def project_dataset(dataset: MarketDataset, start: date, end: date) -> MarketDat
     if dataset.metadata.intraday_provenance is not None:
         timeframe = DatasetProvenance.from_market_dataset(dataset).standalone_timeframe
         assert timeframe is not None
+        if projection_registry is not None:
+            if projection_scope is None:
+                raise WalkForwardError("prepared projection requires a partition scope")
+            return projection_registry.project(
+                dataset,
+                resolve_exchange_session(end, timeframe.session_policy).close_timestamp,
+                start=start,
+                scope=projection_scope,
+            )
         return bounded_prediction_view(
             dataset,
             resolve_exchange_session(end, timeframe.session_policy).close_timestamp,
@@ -288,7 +342,11 @@ def project_dataset(dataset: MarketDataset, start: date, end: date) -> MarketDat
 
 
 def prediction_metadata_prefix(
-    dataset: MarketDataset, decision: datetime
+    dataset: MarketDataset,
+    decision: datetime,
+    *,
+    projection_registry: PreparedProjectionRegistry | None = None,
+    projection_scope: PrimitiveMappingSnapshot | None = None,
 ) -> MarketDataset:
     """For elapsed outcomes QF-3 supplies identity/basis, never future daily prices.
 
@@ -296,6 +354,12 @@ def prediction_metadata_prefix(
     sources. Daily observations are not required at the scheduled decisions.
     """
     if dataset.metadata.intraday_provenance is not None:
+        if projection_registry is not None:
+            if projection_scope is None:
+                raise WalkForwardError("prepared projection requires a partition scope")
+            return projection_registry.project(
+                dataset, decision, scope=projection_scope
+            )
         return bounded_prediction_view(dataset, decision)
     timeframe = DatasetProvenance.from_market_dataset(dataset).standalone_timeframe
     assert timeframe is not None

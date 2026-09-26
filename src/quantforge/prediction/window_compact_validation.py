@@ -20,6 +20,7 @@ from quantforge.data.prediction_inputs import (
     validate_prediction_source_reference,
 )
 from quantforge.data.prediction_views import validate_prediction_view_lineage
+from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.outcome_temporal import (
     ElapsedDurationHorizon,
@@ -142,6 +143,8 @@ class PredictionWindowDecisionValidator:
         outcome_sessions: tuple[date, ...],
         strategy_parameters: PrimitiveMapping,
         canonical_metadata: DatasetMetadata | None = None,
+        projection_registry: PreparedProjectionRegistry | None = None,
+        projection_scope: PrimitiveMappingSnapshot | None = None,
     ) -> None:
         self.expected_identity = expected_identity
         self.schedule = schedule
@@ -164,12 +167,26 @@ class PredictionWindowDecisionValidator:
                 raise InvalidPredictionOutputError(
                     "bounded cutoff is after the first decision"
                 )
-            validate_prediction_view_lineage(
-                market,
-                canonical_metadata,
-                self.provenance.causal_cutoff,
-                start=date.fromisoformat(cast(str, market["actual_first_session"])),
-            )
+            start = date.fromisoformat(cast(str, market["actual_first_session"]))
+            if projection_registry is None:
+                validate_prediction_view_lineage(
+                    market,
+                    canonical_metadata,
+                    self.provenance.causal_cutoff,
+                    start=start,
+                )
+            else:
+                if projection_scope is None:
+                    raise InvalidPredictionOutputError(
+                        "prepared lineage requires a scope"
+                    )
+                projection_registry.verify_lineage(
+                    market,
+                    canonical_metadata,
+                    self.provenance.causal_cutoff,
+                    start=start,
+                    scope=projection_scope,
+                )
         _outcome_source(self.identity, self.provenance)
         self.study_identity = StudyIdentity(self.identity)
         self.session_indexes = {
@@ -211,6 +228,8 @@ def validate_prediction_window_reader(
     outcome_sessions: tuple[date, ...],
     strategy_parameters: PrimitiveMapping,
     canonical_metadata: DatasetMetadata | None = None,
+    projection_registry: PreparedProjectionRegistry | None = None,
+    projection_scope: PrimitiveMappingSnapshot | None = None,
 ) -> None:
     """Verify v1/v2 with trusted inputs and independent bounded-view ancestry."""
     try:
@@ -227,6 +246,8 @@ def validate_prediction_window_reader(
             outcome_sessions=outcome_sessions,
             strategy_parameters=strategy_parameters,
             canonical_metadata=canonical_metadata,
+            projection_registry=projection_registry,
+            projection_scope=projection_scope,
         )
         for index, compact in enumerate(reader.iterate_decisions()):
             validator.validate(compact.to_primitive(), index)

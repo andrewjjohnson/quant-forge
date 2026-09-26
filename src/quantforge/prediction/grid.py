@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from decimal import ROUND_CEILING, Decimal, InvalidOperation, localcontext
@@ -25,6 +26,7 @@ from quantforge.data.multi_timeframe import (
     ContextCompletionPolicy,
     MultiTimeframeContext,
 )
+from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
 from quantforge.indicators import IndicatorBackendIdentity, TimeframeIndicatorOutput
 from quantforge.optimization.constraints import ParameterConstraint
 from quantforge.optimization.errors import InvalidStudyConfigurationError
@@ -1433,6 +1435,8 @@ class _PredictionGridStore:
         outcome_sessions: tuple[date, ...] = (),
         strategy_parameters: PrimitiveMapping | None = None,
         canonical_metadata: DatasetMetadata | None = None,
+        projection_registry: PreparedProjectionRegistry | None = None,
+        projection_scope: PrimitiveMappingSnapshot | None = None,
         compact: bool = False,
     ) -> None:
         if record.artifact_location is None or record.analysis is None:
@@ -1478,6 +1482,8 @@ class _PredictionGridStore:
                 outcome_sessions=outcome_sessions,
                 strategy_parameters=strategy_parameters,
                 canonical_metadata=canonical_metadata,
+                projection_registry=projection_registry,
+                projection_scope=projection_scope,
             )
             expected_content: PrimitiveMapping = {
                 "schema_version": PREDICTION_GRID_SCHEMA_VERSION,
@@ -1923,6 +1929,8 @@ class PredictionGridStudy:
         config: PredictionGridConfig,
         decision_schedule: PredictionDecisionSchedule | None = None,
         canonical_metadata: DatasetMetadata | None = None,
+        projection_registry: PreparedProjectionRegistry | None = None,
+        projection_scope: PrimitiveMappingSnapshot | None = None,
     ) -> None:
         if config.window_schema_version == "2" and decision_schedule is None:
             raise InvalidPredictionGridConfigurationError(
@@ -2050,6 +2058,10 @@ class PredictionGridStudy:
             ),
         }
         self._canonical_metadata = canonical_metadata
+        self._projection_registry = projection_registry
+        self._projection_scope = projection_scope or PrimitiveMappingSnapshot.capture(
+            context_environment.to_primitive()
+        )
         self._prepared = prepared
         self._dataset_family_fingerprint = dataset_family_fingerprint
         self._factory = study_factory
@@ -2087,6 +2099,10 @@ class PredictionGridStudy:
         return self._execute(resume=True)
 
     def load_result(self) -> PredictionGridResult:
+        with self._preparation_scope():
+            return self._load_result_prepared()
+
+    def _load_result_prepared(self) -> PredictionGridResult:
         self._validate_components_unchanged()
         if not self._store.manifest_path.exists():
             raise PredictionGridPersistenceError(
@@ -2190,7 +2206,24 @@ class PredictionGridStudy:
             exclusion_reason=(candidate.reason if exclusion else None),
         )
 
+    @contextmanager
+    def _preparation_scope(self) -> Generator[None]:
+        if self._projection_registry is not None:
+            yield
+            return
+        registry = PreparedProjectionRegistry()
+        self._projection_registry = registry
+        try:
+            yield
+        finally:
+            registry.clear()
+            self._projection_registry = None
+
     def _execute(self, *, resume: bool) -> PredictionGridResult:
+        with self._preparation_scope():
+            return self._execute_prepared(resume=resume)
+
+    def _execute_prepared(self, *, resume: bool) -> PredictionGridResult:
         self._store.initialize(self._manifest, resume=resume)
         self._validate_components_unchanged()
         cache = PredictionGridExecutionCache(
@@ -2283,6 +2316,8 @@ class PredictionGridStudy:
                         context_environment=self._context_environment.to_primitive(),
                         indicator_backend_environment=self._backend.to_primitive(),
                         canonical_metadata=self._canonical_metadata,
+                        projection_registry=self._projection_registry,
+                        projection_scope=self._projection_scope,
                     )
                     analysis = cast(
                         CompactPredictionWindowAnalyzer, self._analyzer
@@ -2502,6 +2537,8 @@ class PredictionGridStudy:
                 self._decision_schedule,
                 window_identity=window_identity,
                 canonical_metadata=self._canonical_metadata,
+                projection_registry=self._projection_registry,
+                projection_scope=self._projection_scope,
                 compact=self._config.window_schema_version == "2",
                 outcome_sessions=tuple(self._prepared.bar_indexes),
                 strategy_parameters=(
