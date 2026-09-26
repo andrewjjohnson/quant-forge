@@ -3,8 +3,9 @@
 from datetime import datetime
 from pathlib import Path
 
-from quantforge.configuration import PrimitiveMapping
+from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data.models import DatasetMetadata
+from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
 from quantforge.prediction.contracts import (
     EvaluationValuesT,
     OutcomeValuesT,
@@ -55,6 +56,8 @@ def run_incremental_prediction_window_in_session(
     context_environment: PrimitiveMapping,
     indicator_backend_environment: PrimitiveMapping | None = None,
     canonical_metadata: DatasetMetadata | None = None,
+    projection_registry: PreparedProjectionRegistry | None = None,
+    projection_scope: PrimitiveMappingSnapshot | None = None,
 ) -> PredictionWindowReader:
     """Resume verified work, execute/validate/compact/commit/release each suffix item.
 
@@ -76,6 +79,8 @@ def run_incremental_prediction_window_in_session(
         outcome_sessions=tuple(prepared.bar_indexes),
         strategy_parameters=study.strategy.parameters.to_primitive(),
         canonical_metadata=canonical_metadata,
+        projection_registry=projection_registry,
+        projection_scope=projection_scope,
     )
     writer = IncrementalPredictionWindowWriter.open(path, validator=validator)
     if writer.finalized:

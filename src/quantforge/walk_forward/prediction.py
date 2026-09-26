@@ -1,10 +1,13 @@
 """QF-39 prediction orchestration using QF-42 windows and QF-32 grids."""
 
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
-from typing import cast
+from typing import Concatenate, cast
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data import (
@@ -13,6 +16,7 @@ from quantforge.data import (
     TimeframeBarSeries,
     build_multi_timeframe_context,
 )
+from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
 from quantforge.prediction import (
     PredictionContextRequirements,
     PredictionDecisionSchedule,
@@ -86,6 +90,7 @@ from quantforge.walk_forward.partitions import (
     EvaluationPartition,
     PermittedPartition,
     partition,
+    prediction_projection_scope,
 )
 
 
@@ -178,6 +183,17 @@ def _logical_definition(
     return PrimitiveMappingSnapshot.capture(definition)
 
 
+def _with_projection_preparation[**P, R](
+    method: Callable[Concatenate["PredictionEvaluator", P], R],
+) -> Callable[Concatenate["PredictionEvaluator", P], R]:
+    @wraps(method)
+    def wrapped(self: "PredictionEvaluator", *args: P.args, **kwargs: P.kwargs) -> R:
+        with self.preparation_scope():
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
 class PredictionEvaluator:
     """QF-8 session or explicit timestamp membership; QF-42 decisions."""
 
@@ -206,7 +222,32 @@ class PredictionEvaluator:
         self.analyzer = deepcopy(analyzer)
         self.backend = indicator_backend
         self.grid_config = deepcopy(grid_config)
+        self._projection_registry: PreparedProjectionRegistry | None = None
         self._universe = self._capture_universe()
+
+    @contextmanager
+    def preparation_scope(self) -> Generator[None]:
+        """Share bounded preparation only within one sequential invocation."""
+        if self._projection_registry is not None:
+            yield
+            return
+        registry = PreparedProjectionRegistry()
+        self._projection_registry = registry
+        try:
+            yield
+        finally:
+            registry.clear()
+            self._projection_registry = None
+
+    def _projection_scope(
+        self, plan: ValidationPlan, permitted: EvaluationPartition
+    ) -> PrimitiveMappingSnapshot:
+        if (
+            isinstance(permitted, PermittedPartition)
+            and permitted.preparation_scope is not None
+        ):
+            return permitted.preparation_scope
+        return prediction_projection_scope(plan, permitted.window)
 
     @property
     def universe(self) -> CandidateUniverse:
@@ -240,6 +281,7 @@ class PredictionEvaluator:
         provider: PredictionWindowContextProvider,
         environment: PredictionContextEnvironment,
         config: PredictionGridConfig,
+        projection_scope: PrimitiveMappingSnapshot | None = None,
     ) -> PredictionGridStudy:
         return PredictionGridStudy(
             dataset=dataset,
@@ -252,6 +294,8 @@ class PredictionEvaluator:
             config=config,
             decision_schedule=schedule,
             canonical_metadata=self.dataset.metadata,
+            projection_registry=self._projection_registry,
+            projection_scope=projection_scope,
         )
 
     def _capture_universe(self) -> CandidateUniverse:
@@ -397,7 +441,12 @@ class PredictionEvaluator:
     def membership(
         self, config: WalkForwardConfig, fold_index: int
     ) -> PrimitiveMapping:
-        return membership(self.dataset, config, fold_index)
+        return membership(
+            self.dataset,
+            config,
+            fold_index,
+            projection_registry=self._projection_registry,
+        )
 
     def _partition(
         self, config: WalkForwardConfig, fold_index: int, *, test: bool
@@ -419,6 +468,7 @@ class PredictionEvaluator:
                 if test
                 else config.minimum_training_observations
             ),
+            projection_registry=self._projection_registry,
         )
 
     def _schedule(self, permitted: EvaluationPartition) -> PredictionDecisionSchedule:
@@ -449,6 +499,7 @@ class PredictionEvaluator:
             )
         return schedule
 
+    @_with_projection_preparation
     def select(
         self, config: WalkForwardConfig, fold_index: int, output_root: Path
     ) -> SelectionEvidence:
@@ -460,6 +511,7 @@ class PredictionEvaluator:
             _PermittedContextProvider(config.plan, permitted, self.series, schedule),
             self._environment(config.plan, permitted),
             replace(self.grid_config, output_root=output_root),
+            projection_scope=self._projection_scope(config.plan, permitted),
         )
         for item in grid.candidates:
             if isinstance(item, PredictionGridCombination):
@@ -472,6 +524,7 @@ class PredictionEvaluator:
         result = grid.resume() if exists else grid.run()
         return choose(self.universe, result, config.selection_policy)
 
+    @_with_projection_preparation
     def evaluate(
         self,
         config: WalkForwardConfig,
@@ -486,6 +539,7 @@ class PredictionEvaluator:
             output_root,
         )
 
+    @_with_projection_preparation
     def evaluate_partition(
         self,
         plan: ValidationPlan,
@@ -518,6 +572,8 @@ class PredictionEvaluator:
                     ).to_primitive(),
                     indicator_backend_environment=self.backend.to_primitive(),
                     canonical_metadata=self.dataset.metadata,
+                    projection_registry=self._projection_registry,
+                    projection_scope=self._projection_scope(plan, permitted),
                 )
             except PredictionWindowDecisionError as error:
                 raise WalkForwardError(error.safe_message) from error
@@ -571,6 +627,7 @@ class PredictionEvaluator:
             PrimitiveMappingSnapshot.capture(result.to_primitive()),
         )
 
+    @_with_projection_preparation
     def validate_artifact(
         self,
         config: WalkForwardConfig,
@@ -587,6 +644,7 @@ class PredictionEvaluator:
             output_root,
         )
 
+    @_with_projection_preparation
     def validate_partition_artifact(
         self,
         plan: ValidationPlan,
@@ -638,6 +696,8 @@ class PredictionEvaluator:
                 outcome_sessions=tuple(b.session_date for b in permitted.dataset.bars),
                 strategy_parameters=study.strategy.parameters.to_primitive(),
                 canonical_metadata=self.dataset.metadata,
+                projection_registry=self._projection_registry,
+                projection_scope=self._projection_scope(plan, permitted),
             )
             return
         validate_prediction_window_snapshot(
