@@ -143,6 +143,31 @@ Every trade must be traceable to:
 - Clearly label in-sample-only results.
 - Account for multiple comparisons when testing many indicators, ranges, symbols, or horizons.
 
+### QF-45-only smoke-test exception
+
+QF-45 is a platform acceptance smoke test that exercises parameter comparison,
+deterministic ranking, frozen selection, OOS evaluation, holdout handling,
+manifests, and reporting. It does not establish a robust or deployable
+strategy-selection policy.
+
+For QF-45 only, deterministic selection among exactly three EMA configurations
+(`8/40`, `8/48`, `12/60`, with daily EMA50 fixed) may use mean 30-minute raw return,
+with one available observation sufficient for eligibility. These configurations,
+the [study windows](docs/spy-ema-smoke-study.md#frozen-configuration), and the
+selection metric were fixed before inspecting study outcomes.
+
+A single event may determine the selected configuration. The matched always-UP
+baseline is descriptive only; it is identical for this UP-only candidate
+population and is not an independent quality or risk gate. The selected
+configuration must not be interpreted as robust, profitable, or production-worthy.
+
+Do not add sample-size, risk, stable-region, or other eligibility gates to QF-45,
+or switch it to `FIRST_STABLE`: doing so would change its frozen scientific
+configuration. Keep the existing rule, grid, dates, ranking metric, and result
+schemas unchanged. This exception applies only to QF-45; the normal prohibition
+on return-only optimization remains in force for ordinary QuantForge research.
+All other research-integrity requirements remain in force for QF-45.
+
 ## Testing expectations
 
 Every behavior change requires tests appropriate to its risk.
