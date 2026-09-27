@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
 
+from quantforge.configuration import PrimitiveMapping
 from quantforge.examples.spy_ema import (
     DAILY,
     TWO_MINUTES,
@@ -15,6 +16,7 @@ from quantforge.examples.spy_ema import (
     grid_configuration,
 )
 from quantforge.examples.spy_ema_inputs import SmokeInputs
+from quantforge.optimization import TrialStatus
 from quantforge.prediction import PredictionDecisionSchedule
 from quantforge.timeframes import resolve_exchange_session
 from quantforge.validation import (
@@ -39,7 +41,12 @@ from quantforge.validation import (
     ValidationPlan,
     ValidationWindow,
 )
-from quantforge.walk_forward import PredictionEvaluator, WalkForwardConfig
+from quantforge.walk_forward import (
+    PredictionEvaluator,
+    SelectionEvidence,
+    WalkForwardConfig,
+    WalkForwardError,
+)
 
 # Inclusive actual XNYS session dates, chosen before evaluating any returns.
 WARMUP = ("2025-01-02", "2025-03-18")
@@ -51,6 +58,41 @@ SPLITS = (
     ),
 )
 HOLDOUT = ("2025-06-30", "2025-07-31")
+
+
+class SmokePredictionEvaluator(PredictionEvaluator):
+    """Keep QF-45 comparison completion separate from scientific eligibility."""
+
+    def configuration(self) -> PrimitiveMapping:
+        # Earlier unchecked folds must not satisfy this adapter's identity.
+        return {
+            **super().configuration(),
+            "qf45_trial_completion_policy": "all_candidates_succeeded_v1",
+        }
+
+    def select(
+        self, config: WalkForwardConfig, fold_index: int, output_root: Path
+    ) -> SelectionEvidence:
+        evidence = super().select(config, fold_index, output_root)
+        # QF-32 verifies/preserves trial records and permits failed neighbors.
+        # QF-45 needs the whole comparison to finish successfully before QF-39
+        # freezes selection or evaluates OOS. Successful unrankable trials count.
+        statuses = cast(
+            list[PrimitiveMapping], evidence.evidence.to_primitive()["trial_statuses"]
+        )
+        expected = {
+            candidate.combination_id: TrialStatus.SUCCEEDED.value
+            for candidate in self.universe.candidates
+        }
+        actual = {
+            cast(str, trial["combination_id"]): trial["status"] for trial in statuses
+        }
+        if len(statuses) != len(expected) or actual != expected:
+            raise WalkForwardError(
+                "QF-45 requires every comparison trial to succeed before selection "
+                "is frozen; preserve failure evidence"
+            )
+        return evidence
 
 
 def validation_window(
@@ -78,7 +120,7 @@ def prepare_walk_forward(
 ) -> tuple[WalkForwardConfig, PredictionEvaluator]:
     """Declare the complete label reach before any selection or evaluation."""
     factory = EmaStudyFactory(inputs.primary)
-    adapter = PredictionEvaluator(
+    adapter = SmokePredictionEvaluator(
         dataset=inputs.dataset,
         series=(inputs.primary, inputs.daily),
         primary_timeframe=TWO_MINUTES,

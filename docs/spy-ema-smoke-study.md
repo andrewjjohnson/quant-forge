@@ -86,6 +86,16 @@ The fixed-run gate accepts an unrankable result only when its sole persisted
 QF-32 trial succeeded and contains completed analysis. A failed trial stops the
 command before comparison, even if its compact window was already finalized;
 resume preserves that failure rather than treating it as an empty success.
+The comparison also requires a succeeded QF-32 record for every declared
+configuration before QF-39 freezes selection or evaluates OOS. A failed analysis
+stops the fold even when another trial remains rankable; failed records and
+finalized windows are preserved on resume. Successful empty/unrankable trials
+still count as completed comparison trials. This checks execution completion,
+not sample size, risk, stability, or any other scientific eligibility criterion.
+The guard is recorded in the QF-39 adapter identity so earlier unchecked folds
+cannot be reused as guarded selections. Rules, grid, dates, ranking, and result
+schemas are unchanged; the CLI still requires the original producing commit
+for compatible resume.
 If none is eligible or OOS is empty, QF-39 fails explicitly; do not invent a
 selection, change dates or weaken the generic contract to obtain completion.
 
@@ -206,7 +216,9 @@ Focused checks:
 
 ```bash
 uv run --frozen pytest tests/unit/test_spy_ema_smoke.py \
-  tests/integration/test_spy_ema_compact.py tests/integration/test_spy_ema_runner.py
+  tests/integration/test_spy_ema_compact.py tests/integration/test_spy_ema_runner.py \
+  tests/integration/test_spy_ema_fixed_gate.py \
+  tests/integration/test_spy_ema_comparison_gate.py
 ```
 
 These use synthetic offline data and the actual normalized EMA/outcome,
