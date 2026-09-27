@@ -60,6 +60,10 @@ and uses QF-32's deterministic tie ordering. The always-UP matched baseline is
 identical by construction for this bullish-only event population; it does not
 measure incremental edge. Positive-30m fraction means strictly `return > 0`;
 zero is not positive. Empty trials are unrankable and retain native evidence.
+The fixed-run gate accepts an unrankable result only when its sole persisted
+QF-32 trial succeeded and contains completed analysis. A failed trial stops the
+command before comparison, even if its compact window was already finalized;
+resume preserves that failure rather than treating it as an empty success.
 If none is eligible or OOS is empty, QF-39 fails explicitly; do not invent a
 selection, change dates or weaken the generic contract to obtain completion.
 

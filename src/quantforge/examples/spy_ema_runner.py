@@ -1,5 +1,6 @@
 """QF-45 pre-holdout orchestration over existing research artifacts only."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -28,6 +29,8 @@ from quantforge.oos import (
     load_oos_source,
 )
 from quantforge.oos.prediction import PredictionMetricFields
+from quantforge.optimization import TrialStatus
+from quantforge.prediction.grid import PredictionGridTrialRecord
 from quantforge.prediction.window_encoding import mapping
 from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.reporting import build_research_report, export_research_report
@@ -247,9 +250,18 @@ def run_pre_holdout(
     try:
         fixed_adapter.select(fixed_config, 0, output_root / "fixed")
     except WalkForwardError as error:
-        # A scientifically empty fixed study is acceptable. Corruption, failed
-        # trials, and every other execution error still propagate unchanged.
+        # QF-39 uses this error for both failed and unrankable QF-32 trials.
+        # Only a succeeded fixed trial may proceed to the normal QF-9 checks;
+        # a finalized compact window alone does not prove analysis succeeded.
         if str(error) != "no eligible candidate under the declared selection policy":
+            raise
+        trial_paths = tuple((output_root / "fixed").glob("*/trials/*.json"))
+        if len(trial_paths) != 1:
+            raise
+        trial = PredictionGridTrialRecord.from_primitive(
+            mapping(json.loads(trial_paths[0].read_text(encoding="utf-8")))
+        )
+        if trial.status is not TrialStatus.SUCCEEDED or trial.analysis is None:
             raise
     fixed_entries, fixed_edges = inspect_phase(
         inputs,
