@@ -1,5 +1,17 @@
 # QuantForge Development Guide
 
+QF-61 source preparation, explicit anchors, invocation counts, equivalence and resume:
+
+```bash
+uv run --frozen pytest tests/unit/prediction/test_prepared_outcomes.py \
+  tests/integration/test_prepared_outcome_execution.py \
+  tests/performance/test_prepared_outcomes.py \
+  tests/integration/test_compact_window_offline.py
+```
+
+See [prepared outcome sources](prepared-outcome-sources.md) for validation scope,
+compatibility, dense request reuse and the bounded QF-45 profile.
+
 QF-59 indexed context equivalence, invocation counts, calendar boundaries and
 compact resume checks (uv **0.12.1**, frozen dependencies):
 

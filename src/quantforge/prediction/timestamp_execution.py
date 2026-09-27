@@ -1,6 +1,7 @@
 """Consume QF-46 requests in prediction execution; no outcome calculations."""
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from quantforge.configuration import PrimitiveMapping
 from quantforge.data import TimeframeBarSeries
@@ -12,6 +13,9 @@ from quantforge.prediction.outcome_resolution import (
     resolve_future_observation,
 )
 from quantforge.prediction.outcome_temporal import OutcomeTemporalConfiguration
+
+if TYPE_CHECKING:
+    from quantforge.prediction.prepared_outcomes import PreparedOutcomeSource
 
 
 def decision_timestamp(signal: PredictionRecord) -> datetime | None:
@@ -52,26 +56,41 @@ def source_provenance(
 
 
 def bounded_outcome_source(
-    source: TimeframeBarSeries, request: OutcomeEvaluationRequest
+    source: TimeframeBarSeries,
+    request: OutcomeEvaluationRequest,
+    *,
+    prepared: "PreparedOutcomeSource | None" = None,
 ) -> tuple[TimeframeBarSeries, OutcomeResolution]:
     """Bound labeler inputs, but classify availability using full source coverage."""
     decision = request.anchor.decision_timestamp
     assert decision is not None
     end = decision + request.temporal_configuration.required_future_duration
-    session_bars = tuple(
-        bar
-        for bar in source.bars
-        if getattr(bar, "session_date", None) == request.anchor.signal_session
+    resolution = (
+        resolve_future_observation(request, source)
+        if prepared is None
+        else resolve_future_observation(request, source, prepared=prepared)
     )
-    preceding = tuple(bar for bar in session_bars if bar.end_timestamp <= decision)
-    bars = (
-        *preceding[-1:],
-        *(bar for bar in session_bars if decision < bar.end_timestamp <= end),
-    )
+    if prepared is None:
+        session_bars = tuple(
+            bar
+            for bar in source.bars
+            if getattr(bar, "session_date", None) == request.anchor.signal_session
+        )
+        preceding = tuple(bar for bar in session_bars if bar.end_timestamp <= decision)
+        bars = (
+            *preceding[-1:],
+            *(bar for bar in session_bars if decision < bar.end_timestamp <= end),
+        )
+    else:
+        if source is not prepared.source:
+            raise InvalidPredictionConfigurationError(
+                "prepared outcome backing differs"
+            )
+        bars = prepared._bounded_bars(request)  # pyright: ignore[reportPrivateUsage]
     bounded = TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
         source.dataset_reference,
         source.timeframe,
         bars,
         dataset_family_manifest_id=source.dataset_family_manifest_id,
     )
-    return bounded, resolve_future_observation(request, source)
+    return bounded, resolution

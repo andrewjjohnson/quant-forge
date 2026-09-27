@@ -21,6 +21,7 @@ from quantforge.oos import (
     load_oos_aggregate,
     load_oos_source,
 )
+from quantforge.prediction.prepared_outcomes import PreparedOutcomeSources
 from quantforge.prediction.window_compact import CompactPredictionWindowDecision
 from quantforge.prediction.window_encoding import mapping
 from quantforge.prediction.window_reader import PredictionWindowReader
@@ -66,6 +67,7 @@ def test_bounded_finalized_holdout_and_offline_replay(
         )
 
     monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(PreparedOutcomeSources, "prepare", forbidden)
     monkeypatch.setattr(socket.socket, "connect", forbidden)
     monkeypatch.setattr(PredictionEvaluator, "evaluate_partition", forbidden)
     monkeypatch.setattr(CompactPredictionWindowDecision, "from_embedded", forbidden)

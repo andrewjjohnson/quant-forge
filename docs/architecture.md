@@ -1,5 +1,10 @@
 # QuantForge Architecture
 
+QF-61 separates immutable outcome-source preparation from explicit observation
+requests. Dataset sessions own reusable source indexes; future-label capabilities
+remain outside prediction contexts. See [prepared outcome sources](prepared-outcome-sources.md)
+and [ADR 0033](decisions/0033-prepare-outcome-sources.md).
+
 QF-57 consumes finalized compact windows through the existing reader, QF-40
 streaming reducers, QF-9 graph and QF-41 stored-result presentation. See
 [compact consumers](compact-window-consumers.md) and

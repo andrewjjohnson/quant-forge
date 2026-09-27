@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from quantforge.configuration import PrimitiveMapping, configuration_identity
 from quantforge.data.intraday import IntradayBar
@@ -17,6 +17,9 @@ from quantforge.prediction.outcome_temporal import (
     OutcomeTemporalError,
 )
 from quantforge.timeframes import BarCompletion, resolve_exchange_session
+
+if TYPE_CHECKING:
+    from quantforge.prediction.prepared_outcomes import PreparedOutcomeSource
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,7 +222,10 @@ def _target_boundaries(
 
 
 def resolve_future_observation(
-    request: OutcomeEvaluationRequest, source: TimeframeBarSeries
+    request: OutcomeEvaluationRequest,
+    source: TimeframeBarSeries,
+    *,
+    prepared: "PreparedOutcomeSource | None" = None,
 ) -> OutcomeResolution:
     """Ceil to an expected bar end, then require that exact completed observation.
 
@@ -236,13 +242,19 @@ def resolve_future_observation(
         raise OutcomeTemporalError(
             "outcome source does not match the request's immutable reference"
         )
+    if prepared is not None:
+        if source is not prepared.source:
+            raise OutcomeTemporalError("prepared outcome backing differs")
+        prepared.validate_request(request)
     target, expected = _target_boundaries(request)
     if expected is None:
         return OutcomeResolution(
             request, target, None, OutcomeResolutionStatus.SESSION_OVERFLOW
         )
     # Expected calendar windows drive lookup; observed rows never redefine alignment.
-    for bar in source.bars:
+    for bar in (
+        source.bars if prepared is None else prepared.endpoint_candidates(expected)
+    ):
         if not isinstance(bar, IntradayBar):
             raise OutcomeTemporalError(
                 "elapsed resolution requires canonical intraday bars"
