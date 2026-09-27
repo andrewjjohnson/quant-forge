@@ -23,7 +23,12 @@ def main() -> None:
     arguments = parser.parse_args()
     root = arguments.output_root.resolve()
     ledger_path = Path("reports/holdout-ledger").resolve()
-    if root == ledger_path:
+    # Reserve the ledger name case-insensitively, even before it exists, so
+    # case-insensitive filesystems cannot alias a fresh study to the ledger.
+    if (
+        root.parent == ledger_path.parent
+        and root.name.casefold() == ledger_path.name.casefold()
+    ):
         parser.error("output-root must be separate from the permanent holdout ledger")
     if (
         not arguments.preflight

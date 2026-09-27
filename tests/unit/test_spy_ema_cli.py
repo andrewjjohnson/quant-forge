@@ -15,7 +15,9 @@ from tests.unit.experiments.test_contracts import execution
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/run_spy_ema_smoke.py"
 
 
-@pytest.mark.parametrize("path_kind", ["relative", "absolute", "normalized", "symlink"])
+@pytest.mark.parametrize(
+    "path_kind", ["relative", "absolute", "normalized", "symlink", "case_variant"]
+)
 @pytest.mark.parametrize("existing", [False, True], ids=["fresh", "existing"])
 @pytest.mark.parametrize(
     "arguments",
@@ -39,6 +41,8 @@ def test_cli_rejects_ledger_as_output_before_any_writes(
         output_root = ledger_path
     elif path_kind == "normalized":
         output_root = Path("reports/another-run/../holdout-ledger")
+    elif path_kind == "case_variant":
+        output_root = Path("reports/HOLDOUT-LEDGER")
     elif path_kind == "symlink":
         output_root = Path("reports/ledger-alias")
         output_root.parent.mkdir(parents=True, exist_ok=True)

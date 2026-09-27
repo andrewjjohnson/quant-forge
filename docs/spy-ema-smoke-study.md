@@ -185,9 +185,12 @@ The permanent authority is **`reports/holdout-ledger/`**, shared across output
 roots, not recreated per execution. Preserve it, including all exposure markers.
 Alternate run roots must remain directly under `reports/` so the existing QF-9
 index can reference both study artifacts and the ledger. The CLI rejects the
-ledger itself as `--output-root`, including equivalent paths and symlink aliases,
-before creating a ledger or execution checkpoint, in normal, resume, and
-preflight modes. Study outputs must stay separate from permanent holdout evidence.
+ledger itself as `--output-root`, including equivalent paths and symlink aliases.
+Its name is reserved case-insensitively on every platform, including before the
+ledger exists, so `reports/HOLDOUT-LEDGER` cannot become the same directory on a
+case-insensitive filesystem. Rejection precedes ledger or checkpoint creation in
+normal, resume, and preflight modes. Study outputs must stay separate from
+permanent holdout evidence.
 Never delete the ledger to restore an unseen status. There is no
 holdout-consumption CLI flag.
 
