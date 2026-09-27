@@ -1,5 +1,9 @@
 # Bounded prediction inputs (QF-52)
 
+QF-60 adds [invocation-local projection/lineage preparation reuse](prepared-prediction-projections.md).
+The QF-52 factory, identities and independent offline validation below remain
+authoritative; operational preparation is never persisted.
+
 Canonical QF-51 inputs describe complete immutable intraday sources. They retain
 their original retrieval metadata, source manifest, coverage report, session
 artifact, source observations, and strict validation. `BoundedPredictionProvenance`

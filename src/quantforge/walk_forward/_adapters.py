@@ -5,6 +5,7 @@ from typing import cast
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data import MarketDataset
+from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
 from quantforge.optimization.models import StabilityClassification, StudyResult
 from quantforge.prediction.grid import PredictionGridResult
 from quantforge.validation import PartitionRole, ResearchRuleProvenance, ValidationPlan
@@ -49,7 +50,11 @@ def validate_fixed_backends(plan: ValidationPlan) -> None:
 
 
 def membership(
-    dataset: MarketDataset, config: WalkForwardConfig, fold_index: int
+    dataset: MarketDataset,
+    config: WalkForwardConfig,
+    fold_index: int,
+    *,
+    projection_registry: PreparedProjectionRegistry | None = None,
 ) -> PrimitiveMapping:
     fold = config.plan.folds[fold_index]
     development = partition(
@@ -58,6 +63,7 @@ def membership(
         fold_index,
         PartitionRole.DEVELOPMENT,
         minimum_observations=config.minimum_training_observations,
+        projection_registry=projection_registry,
     )
     selection = (
         None
@@ -68,6 +74,7 @@ def membership(
             fold_index,
             PartitionRole.SELECTION,
             minimum_observations=config.minimum_training_observations,
+            projection_registry=projection_registry,
         )
     )
     test = partition(
@@ -76,6 +83,7 @@ def membership(
         fold_index,
         PartitionRole.WALK_FORWARD_TEST,
         minimum_observations=config.minimum_test_observations,
+        projection_registry=projection_registry,
     )
     return {
         "development": development.to_primitive(),

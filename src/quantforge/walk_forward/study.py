@@ -1,5 +1,6 @@
 """Ordered selection/freeze/test orchestration; no combined OOS calculations."""
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import cast
 
@@ -23,6 +24,7 @@ from quantforge.walk_forward.models import (
     WalkForwardResult,
 )
 from quantforge.walk_forward.persistence import read_record, write_record
+from quantforge.walk_forward.prediction import PredictionEvaluator
 
 
 def _load_artifact(record: PrimitiveMapping) -> OOSArtifact:
@@ -94,6 +96,15 @@ class WalkForwardStudy:
         return self._execute(resume=True)
 
     def _execute(self, *, resume: bool) -> WalkForwardResult:
+        scope = (
+            self.evaluator.preparation_scope()
+            if isinstance(self.evaluator, PredictionEvaluator)
+            else nullcontext()
+        )
+        with scope:
+            return self._execute_prepared(resume=resume)
+
+    def _execute_prepared(self, *, resume: bool) -> WalkForwardResult:
         self._unchanged()
         manifest_path = self.study_path / "manifest.json"
         if manifest_path.exists() and not resume:

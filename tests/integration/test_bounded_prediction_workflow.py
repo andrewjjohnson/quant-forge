@@ -323,7 +323,7 @@ def test_resume_rejects_changed_bounded_cutoff(
         )
 
     monkeypatch.setattr(
-        "quantforge.walk_forward.partitions.bounded_prediction_view", shifted
+        "quantforge.data.prepared_prediction_views.bounded_prediction_view", shifted
     )
     with pytest.raises(WalkForwardPersistenceError):
         completed.study.resume()
