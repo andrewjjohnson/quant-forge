@@ -22,13 +22,15 @@ def main() -> None:
     )
     arguments = parser.parse_args()
     root = arguments.output_root.resolve()
+    ledger_path = Path("reports/holdout-ledger").resolve()
+    if root == ledger_path:
+        parser.error("output-root must be separate from the permanent holdout ledger")
     if (
         not arguments.preflight
         and (root / "execution.json").exists()
         and not arguments.resume
     ):
         parser.error("existing execution requires --resume; never delete checkpoints")
-    ledger_path = Path("reports/holdout-ledger").resolve()
     if root.parent != ledger_path.parent:
         parser.error(
             "output-root must be directly inside reports/ for the permanent ledger"

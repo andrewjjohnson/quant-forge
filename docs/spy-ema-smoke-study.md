@@ -184,8 +184,12 @@ Do not run two writers against one output directory.
 The permanent authority is **`reports/holdout-ledger/`**, shared across output
 roots, not recreated per execution. Preserve it, including all exposure markers.
 Alternate run roots must remain directly under `reports/` so the existing QF-9
-index can reference both study artifacts and the ledger. Never delete it to
-restore an unseen status. There is no holdout-consumption CLI flag.
+index can reference both study artifacts and the ledger. The CLI rejects the
+ledger itself as `--output-root`, including equivalent paths and symlink aliases,
+before creating a ledger or execution checkpoint, in normal, resume, and
+preflight modes. Study outputs must stay separate from permanent holdout evidence.
+Never delete the ledger to restore an unseen status. There is no
+holdout-consumption CLI flag.
 
 The historical 76-decision checkpoint is under `reports/qf45-compact/`, with
 three folds, older dates, another candidate universe and different validation/
@@ -215,7 +219,7 @@ preparation PR does not claim that manual audit or final QF-45 completion passed
 Focused checks:
 
 ```bash
-uv run --frozen pytest tests/unit/test_spy_ema_smoke.py \
+uv run --frozen pytest tests/unit/test_spy_ema_smoke.py tests/unit/test_spy_ema_cli.py \
   tests/integration/test_spy_ema_compact.py tests/integration/test_spy_ema_runner.py \
   tests/integration/test_spy_ema_fixed_gate.py \
   tests/integration/test_spy_ema_comparison_gate.py
