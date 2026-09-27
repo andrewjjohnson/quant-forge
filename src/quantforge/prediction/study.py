@@ -1,7 +1,7 @@
 """Generic orchestration for causal prediction, outcome, and evaluation stages."""
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import cast
 
@@ -59,6 +59,7 @@ from quantforge.prediction.outcome_temporal import (
     OutcomeAnchor,
     outcome_temporal_configuration,
 )
+from quantforge.prediction.prepared_outcomes import PreparedOutcomeSources
 from quantforge.prediction.timestamp_execution import (
     bounded_outcome_source,
     decision_timestamp,
@@ -80,6 +81,9 @@ class PredictionStudyDatasetSession:
     available_sessions: frozenset[date]
     bar_indexes: dict[date, int]
     validated_labelers: set[tuple[int, str]]
+    outcome_sources: PreparedOutcomeSources = field(
+        default_factory=PreparedOutcomeSources
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,9 +433,14 @@ def run_prediction_study_in_session(
     # This is intentionally after signal generation. Dataset-specific future-label
     # checks must never run early enough to influence prediction generation.
     # A reused labeler can receive a different source on each run.
+    prepared_source = None
     if study.outcome_source is not None:
         try:
-            validate_prediction_source(component_dataset, study.outcome_source)
+            prepared_source = prepared.outcome_sources.prepare(
+                component_dataset, study.outcome_source
+            )
+            if prepared_source is None:
+                validate_prediction_source(component_dataset, study.outcome_source)
         except MarketDataValidationError as error:
             raise InvalidPredictionDataError(str(error)) from error
     labeler_session_key = (
@@ -512,7 +521,13 @@ def run_prediction_study_in_session(
                 raise InvalidPredictionOutputError(
                     "outcome source and prediction context families differ"
                 )
-            bounded, resolution = bounded_outcome_source(study.outcome_source, request)
+            bounded, resolution = bounded_outcome_source(
+                study.outcome_source
+                if prepared_source is None
+                else prepared_source.source,
+                request,
+                prepared=prepared_source,
+            )
             pristine_source = deepcopy(bounded)
             component_source = deepcopy(bounded)
             component_resolution = deepcopy(resolution)

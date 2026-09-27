@@ -105,3 +105,4 @@ How will the decision be tested or revisited?
 - [0030: Share immutable prediction source backing](0030-share-immutable-prediction-source.md)
 - [0031: Prepare exact prediction context once per execution scope](0031-prepare-indexed-prediction-context.md)
 - [0032: Reuse bounded projections and immutable expected lineage locally](0032-reuse-bounded-projection-preparation.md)
+- [0033: Prepare immutable outcome sources within dataset execution sessions](0033-prepare-outcome-sources.md)
