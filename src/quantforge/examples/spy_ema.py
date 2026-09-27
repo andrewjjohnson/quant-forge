@@ -327,6 +327,17 @@ def grid_configuration(
                 ),
             }
         ),
+        # QF-45-only exception approved in AGENTS.md: this platform smoke test
+        # exercises comparison, deterministic ranking, frozen selection, OOS,
+        # holdout handling, manifests, and reporting, not a deployable policy.
+        # Exactly three EMA pairs, study windows, and mean 30m raw return were
+        # fixed before inspecting outcomes. One available observation suffices;
+        # a single event may select the configuration. The matched always-UP
+        # baseline is descriptive only, not an independent quality/risk gate.
+        # Selection does not establish robustness, profitability, or production
+        # suitability. Do not add sample-size/risk/stable-region/other eligibility
+        # gates or switch to FIRST_STABLE; preserve the frozen science and schemas.
+        # Ordinary QuantForge research still prohibits return-only optimization.
         PredictionRankingConfig(
             "mean_30m_return", "always_up_matched", minimum_prediction_count=1
         ),

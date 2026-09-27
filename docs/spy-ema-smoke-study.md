@@ -53,12 +53,34 @@ The current session's eventual daily close is never a feature. The previous and
 current normalized EMA values and daily close/EMA are preserved as causal
 features. QF-29 additionally retains indicator/source/completion provenance.
 
+### QF-45-only selection exception
+
+The owner-approved [AGENTS.md exception](../AGENTS.md#qf-45-only-smoke-test-exception)
+allows this platform acceptance smoke test to exercise parameter comparison,
+deterministic ranking, frozen selection, OOS evaluation, holdout handling,
+manifests, and reporting. It does not establish a robust or deployable
+strategy-selection policy. The three configurations, study windows, and
+selection metric were fixed before inspecting study outcomes.
+
 Exactly three QF-32 categorical configurations are declared: `8/40`, `8/48`,
 `12/60`. There is no Cartesian fast/slow expansion. Daily50 and backend stay
 fixed. Selection ranks mean 30m raw return, requires one available prediction,
-and uses QF-32's deterministic tie ordering. The always-UP matched baseline is
-identical by construction for this bullish-only event population; it does not
-measure incremental edge. Positive-30m fraction means strictly `return > 0`;
+and uses QF-32's deterministic tie ordering. A single event may determine the
+selected configuration. The always-UP matched baseline is descriptive only:
+it is identical by construction for this bullish-only event population, does
+not measure incremental edge, and is not an independent quality or risk gate.
+The selected configuration must not be interpreted as robust, profitable, or
+production-worthy. The exception applies only to QF-45; the normal prohibition
+on return-only optimization remains in force for ordinary QuantForge research.
+
+Do not add sample-size, risk, stable-region, or other eligibility gates to QF-45
+now, because that would change the frozen scientific configuration. In particular,
+do not switch to `FIRST_STABLE`: its new eligibility semantics could leave this
+intentionally small grid without a selectable configuration. Keep the rule, grid,
+dates, ranking metric, and result schemas unchanged. All other research-integrity
+requirements remain in force.
+
+Positive-30m fraction means strictly `return > 0`;
 zero is not positive. Empty trials are unrankable and retain native evidence.
 The fixed-run gate accepts an unrankable result only when its sole persisted
 QF-32 trial succeeded and contains completed analysis. A failed trial stops the
