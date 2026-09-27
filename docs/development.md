@@ -1,5 +1,8 @@
 # QuantForge Development Guide
 
+QF-45 shortened EMA smoke configuration, offline runner, checkpoints and the
+manual holdout gate: [local smoke workflow](spy-ema-smoke-study.md).
+
 QF-61 source preparation, explicit anchors, invocation counts, equivalence and resume:
 
 ```bash
