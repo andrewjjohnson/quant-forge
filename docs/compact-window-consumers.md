@@ -8,9 +8,16 @@ remain authoritative. No compact record is expanded into a legacy QF-11 result.
 
 `PredictionWindowReader` is the common semantic interface. `from_snapshot`
 accepts an embedded v1 window; `from_reference(snapshot, root=...)` resolves the
-QF-56 `{schema_version, path, header}` reference. Compact references require
-schema `"2"`, the fixed `prediction-window.jsonl` filename, confinement within
-the supplied directory and an exact header match. Unknown versions fail closed.
+QF-56 `{schema_version, path, header}` reference. Compact references require:
+
+- schema `"2"` or QF-62's `"3"`, and the reader's version must match;
+- the fixed `prediction-window.jsonl` filename;
+- confinement within the supplied directory;
+- an exact header match.
+
+Unknown versions fail closed. Consumers handle both compact versions identically.
+Version 3 membership is rebuilt only for scientific validation, through
+`expanded_record()`.
 
 `manifest()` exposes shared scientific metadata plus the actual physical
 schema/window/result identity. It is an inspection view, not a serialization

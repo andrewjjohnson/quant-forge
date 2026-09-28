@@ -1,5 +1,12 @@
 # QuantForge Architecture
 
+QF-62 adds opt-in compact window schema `"3"`. It stores visible-bar membership
+once in append-only catalogues bound to a source and timeframe, and decisions
+reference it by exact range. Validation reconstructs the expanded membership and
+checks the unchanged QF-20/QF-11 identities. See
+[normalized membership](normalized-window-membership.md) and
+[ADR 0034](decisions/0034-normalize-window-membership-catalogues.md).
+
 QF-61 separates immutable outcome-source preparation from explicit observation
 requests. Dataset sessions own reusable source indexes; future-label capabilities
 remain outside prediction contexts. See [prepared outcome sources](prepared-outcome-sources.md)
