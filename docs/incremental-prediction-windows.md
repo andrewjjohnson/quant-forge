@@ -53,7 +53,8 @@ physical file granularity are separate.
 `shared.json` is precisely the QF-55 evidence record, stored once.
 `decisions.jsonl` contains only canonical compact decisions.
 `checkpoint.json` is a small content-hashed envelope containing operational
-checkpoint version `"1"`, compact schema `"2"`, window/evidence/schedule IDs,
+checkpoint version `"1"`, compact schema `"2"` (or `"3"` for QF-62
+[normalized membership](normalized-window-membership.md)), window/evidence/schedule IDs,
 completed count, committed journal byte offset, last decision ID, QF-55 canonical
 ordered-prefix hash, and aggregate counts. It contains no completed payloads or
 shared evidence body.
@@ -125,7 +126,8 @@ same path are unsupported. No database or distributed execution is introduced.
 
 ## QF-32 integration
 
-Set `PredictionGridConfig(window_schema_version="2")` and supply a
+Set `PredictionGridConfig(window_schema_version="2")` (or `"3"` for QF-62
+normalized membership) and supply a
 `CompactPredictionWindowAnalyzer.analyze_compact_window(reader)` implementation.
 Legacy `analyze_window` remains supported with schema `"1"`. The compact analyzer
 must preserve its domain's observation eligibility, numerical ordering, metrics

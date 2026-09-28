@@ -23,7 +23,10 @@ from quantforge.prediction.window import (
     _capture_window_identity,  # pyright: ignore[reportPrivateUsage]
     iter_prediction_window_decisions,
 )
-from quantforge.prediction.window_compact import CompactPredictionWindowDecision
+from quantforge.prediction.window_compact import (
+    COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
+    CompactPredictionWindowDecision,
+)
 from quantforge.prediction.window_compact_validation import (
     PredictionWindowDecisionValidator,
 )
@@ -58,12 +61,15 @@ def run_incremental_prediction_window_in_session(
     canonical_metadata: DatasetMetadata | None = None,
     projection_registry: PreparedProjectionRegistry | None = None,
     projection_scope: PrimitiveMappingSnapshot | None = None,
+    schema_version: str = COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
 ) -> PredictionWindowReader:
     """Resume verified work, execute/validate/compact/commit/release each suffix item.
 
     Historical caches are deliberately not retained across decisions on this
     path. QF-11 still computes and validates the normal normalized indicators.
     Independent canonical metadata is used only by provenance verification.
+    ``schema_version`` "3" persists QF-62 normalized membership; execution and
+    every scientific result are identical for both physical representations.
     """
     identity = _capture_window_identity(
         prepared,
@@ -82,7 +88,9 @@ def run_incremental_prediction_window_in_session(
         projection_registry=projection_registry,
         projection_scope=projection_scope,
     )
-    writer = IncrementalPredictionWindowWriter.open(path, validator=validator)
+    writer = IncrementalPredictionWindowWriter.open(
+        path, validator=validator, schema_version=schema_version
+    )
     if writer.finalized:
         return writer.finalize()
     decisions = iter_prediction_window_decisions(
@@ -100,6 +108,7 @@ def run_incremental_prediction_window_in_session(
                 decision.to_primitive(),
                 sequence=sequence,
                 evidence=writer.evidence,
+                membership=writer.membership,
             )
             writer.append(compact)
             del decision, compact

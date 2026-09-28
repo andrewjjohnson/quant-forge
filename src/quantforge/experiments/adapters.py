@@ -805,10 +805,13 @@ def _inspect_compact_study(
         index_compact_window,
         validate_compact_window,
     )
+    from quantforge.prediction.window_compact import (
+        COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS,
+    )
     from quantforge.prediction.window_reader import PredictionWindowReader
 
     reader = PredictionWindowReader.open(source)
-    if reader.schema_version != "2":
+    if reader.schema_version not in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS:
         raise ManifestError("JSONL window must use compact schema")
     validate_compact_window(reader, canonical_metadata=canonical_metadata)
     reads = ProducerReadSet()

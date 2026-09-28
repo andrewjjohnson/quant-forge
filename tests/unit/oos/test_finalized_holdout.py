@@ -18,11 +18,13 @@ from tests.unit.walk_forward.test_incremental_prediction import compact_adapter
 from tests.unit.walk_forward.timestamp_fixtures import timestamp_fixture
 
 
-@pytest.fixture(scope="module")
-def finalized_evaluation(tmp_path_factory: pytest.TempPathFactory) -> HoldoutEvaluation:
+@pytest.fixture(scope="module", params=["2", "3"])
+def finalized_evaluation(
+    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+) -> HoldoutEvaluation:
     root = tmp_path_factory.mktemp("finalized-holdout")
     config, original = timestamp_fixture(root)
-    adapter = compact_adapter(original)
+    adapter = compact_adapter(original, request.param)
     study = WalkForwardStudy(config, adapter, root / "study")
     study.run()
     source = load_oos_source(config.plan, study.study_path)

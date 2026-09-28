@@ -1,5 +1,10 @@
 # Compact historical prediction windows (QF-55)
 
+QF-62 adds opt-in schema `"3"`. It uses the same header, shared-evidence and
+decision layout. Visible-bar membership is stored once in append-only catalogues
+and referenced by exact ranges. See [normalized membership](normalized-window-membership.md).
+Schema `"2"` below remains supported and unchanged.
+
 QF-56 adds explicit compact incremental execution, per-decision durable progress,
 exact-prefix resume and QF-32/QF-39 production. See
 [incremental prediction windows](incremental-prediction-windows.md). The v1

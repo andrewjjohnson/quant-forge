@@ -44,6 +44,9 @@ from quantforge.prediction.window import (
     PredictionWindowContextProvider,
     _capture_window_identity,  # pyright: ignore[reportPrivateUsage]
 )
+from quantforge.prediction.window_compact import (
+    COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS,
+)
 from quantforge.prediction.window_compact_validation import (
     validate_prediction_window_reader,
 )
@@ -362,8 +365,9 @@ class PredictionEvaluator:
     def configuration(self) -> PrimitiveMapping:
         return {
             **(
-                {"window_schema_version": "2"}
-                if self.grid_config.window_schema_version == "2"
+                {"window_schema_version": self.grid_config.window_schema_version}
+                if self.grid_config.window_schema_version
+                in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS
                 else {}
             ),
             "adapter": "qf39_prediction",
@@ -554,7 +558,8 @@ class PredictionEvaluator:
         definition, _ = _trial_definition(study, self.backend)
         if PrimitiveMappingSnapshot.capture(definition) != candidate.definition:
             raise WalkForwardError("test configuration differs from frozen selection")
-        if self.grid_config.window_schema_version == "2":
+        compact = self.grid_config.window_schema_version
+        if compact in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS:
             try:
                 reader = run_incremental_prediction_window_in_session(
                     prepare_prediction_study_dataset(permitted.dataset),
@@ -574,6 +579,7 @@ class PredictionEvaluator:
                     canonical_metadata=self.dataset.metadata,
                     projection_registry=self._projection_registry,
                     projection_scope=self._projection_scope(plan, permitted),
+                    schema_version=compact,
                 )
             except PredictionWindowDecisionError as error:
                 raise WalkForwardError(error.safe_message) from error
@@ -596,7 +602,7 @@ class PredictionEvaluator:
                 cast(str, reader.header()["window_result_id"]),
                 PrimitiveMappingSnapshot.capture(
                     {
-                        "schema_version": "2",
+                        "schema_version": reader.schema_version,
                         "path": "prediction-window.jsonl",
                         "header": reader.header(),
                     }
@@ -674,15 +680,16 @@ class PredictionEvaluator:
             indicator_backend_environment=self.backend.to_primitive(),
         )
         snapshot = artifact.snapshot.to_primitive()
-        if self.grid_config.window_schema_version == "2":
+        compact = self.grid_config.window_schema_version
+        if compact in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS:
             reader = PredictionWindowReader.open(
                 output_root / "prediction-window.jsonl"
             )
             if (
-                reader.schema_version != "2"
+                reader.schema_version != compact
                 or snapshot
                 != {
-                    "schema_version": "2",
+                    "schema_version": compact,
                     "path": "prediction-window.jsonl",
                     "header": reader.header(),
                 }

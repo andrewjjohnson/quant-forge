@@ -30,11 +30,12 @@ from tests.unit.walk_forward.test_incremental_prediction import compact_adapter
 from tests.unit.walk_forward.timestamp_fixtures import timestamp_fixture
 
 
-def test_compact_oos_and_holdout(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["2", "3"])
+def test_compact_oos_and_holdout(tmp_path: Path, version: str) -> None:
     config, original = timestamp_fixture(tmp_path)
     legacy = WalkForwardStudy(config, original, tmp_path / "legacy")
     legacy.run()
-    adapter = compact_adapter(original)
+    adapter = compact_adapter(original, version)
     study = WalkForwardStudy(config, adapter, tmp_path / "compact")
     study.run()
     source = load_oos_source(config.plan, study.study_path)
@@ -154,7 +155,8 @@ def test_compact_oos_and_holdout(tmp_path: Path) -> None:
             ReportPhase.HOLDOUT if expected_state == "consumed" else ReportPhase.OOS
         )
         assert any(
-            e.artifact_type is ArtifactType.SOURCE_DATASET and e.schema_version == "2"
+            e.artifact_type is ArtifactType.SOURCE_DATASET
+            and e.schema_version == version
             for e in attached.artifacts.entries
         )
         return manifest_path

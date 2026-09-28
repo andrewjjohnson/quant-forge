@@ -13,6 +13,9 @@ from quantforge.data import MarketDataset
 from quantforge.oos._records import OOSIntegrityError, mapping
 from quantforge.oos.common import provenance
 from quantforge.oos.models import OOSSource
+from quantforge.prediction.window_compact import (
+    COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS,
+)
 from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.validation import (
     PredictionMembershipSource,
@@ -226,13 +229,17 @@ class HoldoutEvaluation:
                 "finalized holdout requires a compact prediction window"
             )
         reader = PredictionWindowReader.open(path)
-        if reader.schema_version != "2":
+        if reader.schema_version not in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS:
             raise OOSIntegrityError("finalized holdout must use compact schema")
         artifact = PredictionOOSArtifact(
             self.selection.selection_id,
             str(reader.header()["window_result_id"]),
             PrimitiveMappingSnapshot.capture(
-                {"schema_version": "2", "path": path.name, "header": reader.header()}
+                {
+                    "schema_version": reader.schema_version,
+                    "path": path.name,
+                    "header": reader.header(),
+                }
             ),
         )
         self.evaluator.validate_partition_artifact(

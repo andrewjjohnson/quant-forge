@@ -283,7 +283,7 @@ def aggregate_prediction(
     schedules = 0
     semantics: set[str] = set()
     compact = any(
-        reader is not None and reader.schema_version == "2"
+        reader is not None and reader.schema_version != "1"
         for reader in source.prediction_windows
     )
     sources: list[PrimitiveMappingSnapshot] = []

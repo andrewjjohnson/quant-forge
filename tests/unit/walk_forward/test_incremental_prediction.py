@@ -14,7 +14,9 @@ from tests.unit.prediction.test_incremental_prediction_grid import CompactWindow
 from tests.unit.walk_forward.timestamp_fixtures import timestamp_fixture
 
 
-def compact_adapter(adapter: PredictionEvaluator) -> PredictionEvaluator:
+def compact_adapter(
+    adapter: PredictionEvaluator, version: str = "2"
+) -> PredictionEvaluator:
     return PredictionEvaluator(
         dataset=adapter.dataset,
         series=adapter.series,
@@ -22,17 +24,19 @@ def compact_adapter(adapter: PredictionEvaluator) -> PredictionEvaluator:
         study_factory=adapter.factory,
         analyzer=CompactWindowAnalyzer(),
         indicator_backend=adapter.backend,
-        grid_config=replace(adapter.grid_config, window_schema_version="2"),
+        grid_config=replace(adapter.grid_config, window_schema_version=version),
     )
 
 
+@pytest.mark.parametrize("version", ["2", "3"])
 def test_timestamp_selection_test_membership_and_frozen_configuration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    version: str,
 ) -> None:
     config, original = timestamp_fixture(tmp_path)
     legacy = WalkForwardStudy(config, original, tmp_path / "legacy").run()
-    adapter = compact_adapter(original)
+    adapter = compact_adapter(original, version)
     study = WalkForwardStudy(config, adapter, tmp_path / "compact")
     result = study.run()
     assert all(f.status is FoldStatus.COMPLETED for f in result.folds)
@@ -45,7 +49,7 @@ def test_timestamp_selection_test_membership_and_frozen_configuration(
         assert fold.artifact is not None
         assert old.artifact is not None
         reference = fold.artifact.snapshot.to_primitive()
-        assert reference["schema_version"] == "2"
+        assert reference["schema_version"] == version
         paths = [
             p
             for p in study.study_path.rglob("prediction-window.jsonl")
@@ -85,9 +89,11 @@ def test_timestamp_selection_test_membership_and_frozen_configuration(
     assert study.resume() == result
 
 
+@pytest.mark.parametrize("version", ["2", "3"])
 def test_interrupted_test_window_resumes_after_frozen_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    version: str,
 ) -> None:
     from typing import Any
 
@@ -96,7 +102,7 @@ def test_interrupted_test_window_resumes_after_frozen_selection(
     )
 
     config, original_adapter = timestamp_fixture(tmp_path)
-    adapter = compact_adapter(original_adapter)
+    adapter = compact_adapter(original_adapter, version)
     permitted = adapter._partition(config, 0, test=True)  # pyright: ignore[reportPrivateUsage]
     expected = adapter._schedule(permitted).decision_timestamps  # pyright: ignore[reportPrivateUsage]
     original = _PermittedContextProvider.get_context_at

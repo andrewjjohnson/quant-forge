@@ -70,6 +70,9 @@ from quantforge.prediction.window import (
     _capture_window_identity,  # pyright: ignore[reportPrivateUsage]
     run_prediction_window_in_session,
 )
+from quantforge.prediction.window_compact import (
+    COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS,
+)
 from quantforge.prediction.window_compact_validation import (
     validate_prediction_window_reader,
 )
@@ -290,7 +293,16 @@ class CompactPredictionWindowAnalyzer(_PredictionAnalyzerConfiguration, Protocol
 
 
 def _compact_sources(reader: PredictionWindowReader) -> PrimitiveMapping:
-    return {"schema_version": "2", **reader.header()}
+    return {**reader.header(), "schema_version": reader.schema_version}
+
+
+def _compact_reference(reader: PredictionWindowReader) -> PrimitiveMapping:
+    """Versioned relative reference to a finalized QF-55/QF-62 JSONL window."""
+    return {
+        "schema_version": reader.schema_version,
+        "path": "prediction-window.jsonl",
+        "header": reader.header(),
+    }
 
 
 def _snapshots(
@@ -498,7 +510,10 @@ class PredictionGridConfig:
     window_schema_version: str = "1"
 
     def __post_init__(self) -> None:
-        if self.window_schema_version not in ("1", "2"):
+        if self.window_schema_version not in (
+            "1",
+            *COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS,
+        ):
             raise InvalidPredictionGridConfigurationError(
                 "unsupported window schema version"
             )
@@ -1389,11 +1404,7 @@ class _PredictionGridStore:
         if isinstance(result, PredictionWindowReader):
             result_content: PrimitiveMapping = {
                 "prediction_window_id": result.header()["window_result_id"],
-                "prediction_window": {
-                    "schema_version": "2",
-                    "path": "prediction-window.jsonl",
-                    "header": result.header(),
-                },
+                "prediction_window": _compact_reference(result),
             }
         else:
             result_content = (
@@ -1437,8 +1448,9 @@ class _PredictionGridStore:
         canonical_metadata: DatasetMetadata | None = None,
         projection_registry: PreparedProjectionRegistry | None = None,
         projection_scope: PrimitiveMappingSnapshot | None = None,
-        compact: bool = False,
+        compact: str | None = None,
     ) -> None:
+        """``compact`` is the configured compact schema version, if any."""
         if record.artifact_location is None or record.analysis is None:
             raise PredictionGridPersistenceError(
                 "completed prediction trial has incomplete artifact metadata"
@@ -1460,12 +1472,12 @@ class _PredictionGridStore:
             raise PredictionGridPersistenceError(
                 "completed prediction trial artifact has no prediction study"
             )
-        if compact:
+        if compact is not None:
             if (
                 schedule is None
                 or window_identity is None
                 or strategy_parameters is None
-                or prediction_study.get("schema_version") != "2"
+                or prediction_study.get("schema_version") != compact
                 or prediction_study.get("path") != "prediction-window.jsonl"
             ):
                 raise PredictionGridPersistenceError(
@@ -1490,15 +1502,11 @@ class _PredictionGridStore:
                 "grid_study_id": self.study_id,
                 "trial_id": record.trial_id,
                 "prediction_window_id": reader.header()["window_result_id"],
-                "prediction_window": {
-                    "schema_version": "2",
-                    "path": "prediction-window.jsonl",
-                    "header": reader.header(),
-                },
+                "prediction_window": _compact_reference(reader),
                 "analysis": record.analysis.to_primitive(),
             }
             if (
-                reader.schema_version != "2"
+                reader.schema_version != compact
                 or content != expected_content
                 or persisted_fingerprint != configuration_identity(expected_content)
                 or record.artifact_fingerprint != persisted_fingerprint
@@ -1932,13 +1940,16 @@ class PredictionGridStudy:
         projection_registry: PreparedProjectionRegistry | None = None,
         projection_scope: PrimitiveMappingSnapshot | None = None,
     ) -> None:
-        if config.window_schema_version == "2" and decision_schedule is None:
+        compact = (
+            config.window_schema_version in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS
+        )
+        if compact and decision_schedule is None:
             raise InvalidPredictionGridConfigurationError(
                 "compact execution requires a decision schedule"
             )
         analyzer_method = (
             "analyze_compact_window"
-            if config.window_schema_version == "2"
+            if compact
             else "analyze"
             if decision_schedule is None
             else "analyze_window"
@@ -2035,8 +2046,8 @@ class PredictionGridStudy:
             identity["prediction_window_engine_version"] = (
                 PREDICTION_WINDOW_ENGINE_VERSION
             )
-        if config.window_schema_version == "2":
-            identity["window_schema_version"] = "2"
+        if compact:
+            identity["window_schema_version"] = config.window_schema_version
         self.study_id = configuration_identity(identity)
         self._manifest: PrimitiveMapping = {
             **identity,
@@ -2301,7 +2312,10 @@ class PredictionGridStudy:
                     analysis = cast(PredictionTrialAnalyzer, self._analyzer).analyze(
                         result
                     )
-                elif self._config.window_schema_version == "2":
+                elif (
+                    self._config.window_schema_version
+                    in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS
+                ):
                     result = run_incremental_prediction_window_in_session(
                         self._prepared,
                         candidate.study,
@@ -2318,6 +2332,7 @@ class PredictionGridStudy:
                         canonical_metadata=self._canonical_metadata,
                         projection_registry=self._projection_registry,
                         projection_scope=self._projection_scope,
+                        schema_version=self._config.window_schema_version,
                     )
                     analysis = cast(
                         CompactPredictionWindowAnalyzer, self._analyzer
@@ -2539,7 +2554,12 @@ class PredictionGridStudy:
                 canonical_metadata=self._canonical_metadata,
                 projection_registry=self._projection_registry,
                 projection_scope=self._projection_scope,
-                compact=self._config.window_schema_version == "2",
+                compact=(
+                    self._config.window_schema_version
+                    if self._config.window_schema_version
+                    in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS
+                    else None
+                ),
                 outcome_sessions=tuple(self._prepared.bar_indexes),
                 strategy_parameters=(
                     None

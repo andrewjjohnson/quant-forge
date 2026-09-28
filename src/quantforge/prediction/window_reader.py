@@ -12,7 +12,7 @@ from quantforge.configuration import (
 )
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.window_compact import (
-    COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
+    COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS,
     CompactPredictionWindowDecision,
     PredictionWindowEvidence,
     WindowRecordCounts,
@@ -25,6 +25,7 @@ from quantforge.prediction.window_encoding import (
     mapping,
     ordered_result_identity,
 )
+from quantforge.prediction.window_membership import MembershipCatalogues
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,9 @@ class PredictionWindowReader:
 
     V1 remains a materialized JSON document because its existing format provides
     no record boundaries. V2 retains shared evidence, schedule, and one decision.
+    V3 additionally retains its append-only membership catalogues, which grow
+    with the source bars observed, never with the number of decisions. Yielded
+    v3 decisions keep ranges; ``expanded_record()`` reconstructs lists on demand.
     A fresh file handle per traversal avoids shared cursor state.
     """
 
@@ -60,30 +64,42 @@ class PredictionWindowReader:
                 record = decode(stream.read())
             if "record_type" in record:
                 header = decode(first, canonical_line=True)
+                version = header.get("schema_version")
+                if version not in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS:
+                    raise InvalidPredictionOutputError(
+                        "unsupported compact window schema version"
+                    )
                 evidence = PredictionWindowEvidence.from_primitive(
                     decode(stream.readline(), canonical_line=True)
                 )
                 expected = {
                     "record_type": "header",
                     "component": "quantforge_prediction_window",
-                    "schema_version": COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
+                    "schema_version": evidence.schema_version,
                     "window_id": evidence.window_id,
                     "shared_evidence_id": evidence.evidence_id,
                     "schedule_id": evidence.schedule.schedule_id,
                     "decision_count": len(evidence.schedule.decision_timestamps),
                 }
+                verified_later = {"window_result_id", "record_counts"}
+                if evidence.normalized_membership:
+                    verified_later.add("membership_catalogues")
                 if (
-                    set(header) != set(expected) | {"window_result_id", "record_counts"}
+                    set(header) != set(expected) | verified_later
                     or any(header.get(key) != value for key, value in expected.items())
                     or type(header.get("decision_count")) is not int
                     or not isinstance(header.get("window_result_id"), str)
                     or not isinstance(header.get("record_counts"), dict)
+                    or not isinstance(header.get("membership_catalogues", []), list)
                 ):
                     raise InvalidPredictionOutputError(
                         "unsupported or inconsistent compact header/version"
                     )
                 return cls(
-                    path, "2", PrimitiveMappingSnapshot.capture(header), evidence
+                    path,
+                    evidence.schema_version,
+                    PrimitiveMappingSnapshot.capture(header),
+                    evidence,
                 )
             stream.seek(0)
             snapshot = decode(stream.read())
@@ -138,14 +154,18 @@ class PredictionWindowReader:
             return cls.from_snapshot(snapshot)
         path = root / "prediction-window.jsonl"
         if (
-            snapshot.get("schema_version") != "2"
+            snapshot.get("schema_version")
+            not in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS
             or snapshot.get("path") != path.name
             or set(snapshot) != {"schema_version", "path", "header"}
             or not path.resolve().is_relative_to(root.resolve())
         ):
             raise InvalidPredictionOutputError("invalid compact window reference")
         reader = cls.open(path)
-        if reader.schema_version != "2" or reader.header() != snapshot["header"]:
+        if (
+            reader.schema_version != snapshot["schema_version"]
+            or reader.header() != snapshot["header"]
+        ):
             raise InvalidPredictionOutputError(
                 "compact reference differs from artifact"
             )
@@ -202,10 +222,18 @@ class PredictionWindowReader:
                 )
 
     def iterate_decisions(self) -> Iterator[CompactPredictionWindowDecision]:
-        """Both versions expose normalized records, never expanded v2 results."""
+        """All versions expose normalized records, never expanded v2 results.
+
+        V3 catalogue segments and ranges are authenticated against the preceding
+        catalogue state before a decision is yielded with its catalogue view.
+        """
         digest = WindowResultIdentity(self.evidence.window_id)
         counts = WindowRecordCounts()
+        membership = (
+            MembershipCatalogues() if self.evidence.normalized_membership else None
+        )
         for record in checked_decisions(self._records(), self.evidence):
+            view = None if membership is None else membership.accept(record)
             digest.update(record)
             try:
                 counts.update(record)
@@ -214,7 +242,7 @@ class PredictionWindowReader:
                     "invalid decision counts payload"
                 ) from error
             yield CompactPredictionWindowDecision(
-                PrimitiveMappingSnapshot.capture(record)
+                PrimitiveMappingSnapshot.capture(record), view
             )
         header = self.header()
         if configuration_identity(counts.totals) != configuration_identity(
@@ -222,11 +250,17 @@ class PredictionWindowReader:
         ):
             raise InvalidPredictionOutputError("window record counts are inconsistent")
         if (
-            self.schema_version == "2"
+            self.schema_version != "1"
             and digest.hexdigest() != header["window_result_id"]
         ):
             raise InvalidPredictionOutputError(
                 "compact window result identity is inconsistent"
+            )
+        if membership is not None and canonical(
+            {"catalogues": membership.summaries()}
+        ) != canonical({"catalogues": header["membership_catalogues"]}):
+            raise InvalidPredictionOutputError(
+                "window membership catalogues are inconsistent"
             )
 
     def verify_integrity(self) -> None:

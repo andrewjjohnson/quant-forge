@@ -54,6 +54,18 @@ uv run --frozen pytest tests/integration/test_compact_window_consumers.py \
 See [compact consumers](compact-window-consumers.md). These fixtures cover actual
 small research contracts and synthetic scale without provider access.
 
+QF-62 normalized membership catalogues, schema 3 equivalence and scale shape:
+
+```bash
+uv run --frozen pytest tests/unit/prediction/test_window_membership.py \
+  tests/unit/prediction/test_normalized_prediction_window.py \
+  tests/integration/test_normalized_prediction_window.py \
+  tests/performance/test_normalized_window_membership_scale.py
+```
+
+See [normalized membership](normalized-window-membership.md). The QF-32/QF-39,
+QF-40/QF-9/QF-41, holdout and offline consumer suites run for schemas 2 and 3.
+
 QF-55 compact representation, bounded provenance, and structural scale checks:
 
 ```bash
