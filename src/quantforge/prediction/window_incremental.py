@@ -20,6 +20,7 @@ from quantforge.prediction.window_compact import (
     CompactPredictionWindowDecision,
     PredictionWindowEvidence,
     WindowRecordCounts,
+    window_header,
 )
 from quantforge.prediction.window_compact_validation import (
     PredictionWindowDecisionValidator,
@@ -29,6 +30,10 @@ from quantforge.prediction.window_encoding import (
     canonical,
     decode,
     mapping,
+)
+from quantforge.prediction.window_membership import (
+    CATALOGUE_SEGMENTS_FIELD,
+    MembershipCatalogues,
 )
 from quantforge.prediction.window_reader import PredictionWindowReader
 
@@ -82,18 +87,29 @@ class IncrementalPredictionWindowWriter:
     checkpoint. Recovery verifies the entire committed prefix, then truncates
     only bytes after that checkpoint's offset. Corrupt committed bytes fail
     closed. Reopen after any persistence failure. No completed payloads are kept.
+    Schema 3 journals carry catalogue segments inside their decision lines, so a
+    decision and its catalogue growth commit atomically; recovery replays them.
     """
 
     def __init__(
-        self, path: Path, validator: PredictionWindowDecisionValidator
+        self,
+        path: Path,
+        validator: PredictionWindowDecisionValidator,
+        schema_version: str = COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
     ) -> None:
         self.path = Path(path)
         self.staging_path = self.path.with_name(self.path.name + ".in-progress")
         self.validator = validator
-        self.evidence = PredictionWindowEvidence(validator.expected_identity)
+        self.evidence = PredictionWindowEvidence(
+            validator.expected_identity, schema_version
+        )
+        # Catalogues grow with observed source bars, not with committed decisions.
+        self.membership = (
+            MembershipCatalogues() if self.evidence.normalized_membership else None
+        )
         self._schedule_id = self.evidence.schedule.schedule_id
-        self.completed_count = 0
-        self._byte_offset = 0
+        self.completed_count: int = 0
+        self._byte_offset: int = 0
         self._last_decision_id: str | None = None
         self._digest = WindowResultIdentity(self.evidence.window_id)
         self._counts: WindowRecordCounts = WindowRecordCounts()
@@ -102,9 +118,13 @@ class IncrementalPredictionWindowWriter:
 
     @classmethod
     def open(
-        cls, path: Path, *, validator: PredictionWindowDecisionValidator
+        cls,
+        path: Path,
+        *,
+        validator: PredictionWindowDecisionValidator,
+        schema_version: str = COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
     ) -> "IncrementalPredictionWindowWriter":
-        writer = cls(path, validator)
+        writer = cls(path, validator, schema_version)
         try:
             if writer.path.exists():
                 writer._validate_reader(PredictionWindowReader.open(writer.path))
@@ -177,7 +197,7 @@ class IncrementalPredictionWindowWriter:
         """Return committed progress; append already persisted it atomically."""
         return {
             "checkpoint_version": "1",
-            "schema_version": COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
+            "schema_version": self.evidence.schema_version,
             "window_id": self.evidence.window_id,
             "shared_evidence_id": self.evidence.evidence_id,
             "schedule_id": self._schedule_id,
@@ -224,11 +244,22 @@ class IncrementalPredictionWindowWriter:
             or record["sequence"] != index
             or record["decision_timestamp"] != timestamps[index].isoformat()
             or record["shared_evidence_id"] != self.evidence.evidence_id
+            or (CATALOGUE_SEGMENTS_FIELD in record)
+            != self.evidence.normalized_membership
         ):
             raise PredictionWindowPersistenceError(
                 "decision reference/order differs from expected prefix"
             )
-        self.validator.validate(record, index)
+        if self.membership is None:
+            self.validator.validate(record, index)
+        else:
+            lengths = self.membership.lengths()
+            try:
+                view = self.membership.accept(record)
+                self.validator.validate(view.expand_record(record), index)
+            except BaseException:
+                self.membership.restore(lengths)
+                raise
         self._counts.update(record)
         self._digest.update(record)
         self.completed_count += 1
@@ -246,6 +277,9 @@ class IncrementalPredictionWindowWriter:
             self._last_decision_id,
             self._digest.copy(),
             deepcopy(self._counts),
+        )
+        catalogue_lengths = (
+            None if self.membership is None else self.membership.lengths()
         )
         try:
             self._accept(decision)
@@ -273,6 +307,8 @@ class IncrementalPredictionWindowWriter:
                 self._digest,
                 self._counts,
             ) = previous
+            if self.membership is not None and catalogue_lengths is not None:
+                self.membership.restore(catalogue_lengths)
             # The checkpoint may have been published before an I/O error/interrupt.
             # Always reopen to establish the authoritative committed prefix.
             if isinstance(error, OSError):
@@ -285,7 +321,10 @@ class IncrementalPredictionWindowWriter:
             raise
 
     def _validate_reader(self, reader: PredictionWindowReader) -> None:
-        if reader.schema_version != "2" or reader.evidence != self.evidence:
+        if (
+            reader.schema_version != self.evidence.schema_version
+            or reader.evidence != self.evidence
+        ):
             raise PredictionWindowPersistenceError(
                 "finalized window has incompatible evidence/version"
             )
@@ -303,22 +342,22 @@ class IncrementalPredictionWindowWriter:
             raise PredictionWindowPersistenceError(
                 "cannot finalize incomplete or failed window"
             )
-        verified = type(self).open(self.path, validator=self.validator)
+        verified = type(self).open(
+            self.path,
+            validator=self.validator,
+            schema_version=self.evidence.schema_version,
+        )
         if verified.checkpoint() != self.checkpoint():
             raise PredictionWindowPersistenceError(
                 "durable prefix changed before finalization"
             )
-        header: PrimitiveMapping = {
-            "record_type": "header",
-            "component": "quantforge_prediction_window",
-            "schema_version": COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
-            "window_id": self.evidence.window_id,
-            "window_result_id": self._digest.hexdigest(),
-            "shared_evidence_id": self.evidence.evidence_id,
-            "schedule_id": self._schedule_id,
-            "decision_count": self.completed_count,
-            "record_counts": self._counts.totals,
-        }
+        header = window_header(
+            self.evidence,
+            window_result_id=self._digest.hexdigest(),
+            decision_count=self.completed_count,
+            record_counts=self._counts.totals,
+            membership=self.membership,
+        )
         descriptor, filename = tempfile.mkstemp(
             prefix=".pending-", dir=self.path.parent
         )
@@ -330,7 +369,9 @@ class IncrementalPredictionWindowWriter:
                     with source.open("rb") as content:
                         shutil.copyfileobj(content, stream)
                 stream.flush()
-                check = type(self)(temporary, self.validator)
+                check = type(self)(
+                    temporary, self.validator, self.evidence.schema_version
+                )
                 check._validate_reader(PredictionWindowReader.open(temporary))
                 _publish(stream, temporary, self.path)
             self._finalized = True

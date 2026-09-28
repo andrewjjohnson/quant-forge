@@ -199,7 +199,12 @@ class PredictionWindowDecisionValidator:
         self.strategy_parameters = PrimitiveMappingSnapshot.capture(strategy_parameters)
 
     def validate(self, decision: PrimitiveMapping, sequence: int) -> None:
-        """Check a single normalized record without expanding shared evidence."""
+        """Check a single record without expanding shared evidence.
+
+        ``decision`` must carry exact expanded membership: schema 2 records as
+        persisted, schema 3 records via ``expanded_record()``. Range references
+        therefore cannot bypass QF-20/QF-28/QF-11 identity checks.
+        """
         try:
             manifest = mapping(mapping(decision["prediction_study"])["manifest"])
             context = mapping(manifest["prediction_context"])
@@ -250,7 +255,7 @@ def validate_prediction_window_reader(
             projection_scope=projection_scope,
         )
         for index, compact in enumerate(reader.iterate_decisions()):
-            validator.validate(compact.to_primitive(), index)
+            validator.validate(compact.expanded_record(), index)
     except (ValueError, TypeError, KeyError, IndexError, ValidationError) as error:
         raise InvalidPredictionOutputError(
             f"invalid historical window evidence: {error}"
