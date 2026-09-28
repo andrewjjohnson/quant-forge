@@ -35,12 +35,13 @@ from tests.unit.helpers import SESSIONS
 from tests.unit.walk_forward.test_incremental_prediction import compact_adapter
 
 
+@pytest.mark.parametrize("version", ["2", "3"])
 def test_bounded_finalized_holdout_and_offline_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
     fixture = cached_fixture(tmp_path / "cache", session_dates=SESSIONS[:7])
     config, original = workflow_fixture(tmp_path, fixture)
-    adapter = compact_adapter(original)
+    adapter = compact_adapter(original, version)
     study = WalkForwardStudy(config, adapter, tmp_path / "studies")
     study.run()
     source = load_oos_source(config.plan, study.study_path)
@@ -58,6 +59,7 @@ def test_bounded_finalized_holdout_and_offline_replay(
         config.plan, evaluation.permitted, evaluation.selection, tmp_path / "finalized"
     )
     final_path = tmp_path / "finalized" / "prediction-window.jsonl"
+    assert PredictionWindowReader.open(final_path).schema_version == version
     evaluation = replace(evaluation, finalized_prediction_window=final_path)
     assert ledger.state(source) == reserved
 

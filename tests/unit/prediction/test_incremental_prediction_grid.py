@@ -71,7 +71,11 @@ class CompactWindowAnalyzer(WindowAnalyzer):
 
 
 def compact_grid(
-    root: Path, provider: WindowProvider, *, retry_failed: bool = False
+    root: Path,
+    provider: WindowProvider,
+    *,
+    retry_failed: bool = False,
+    version: str = "2",
 ) -> PredictionGridStudy:
     base = grid(root, provider)
     return PredictionGridStudy(
@@ -85,18 +89,20 @@ def compact_grid(
         decision_schedule=schedule(),
         config=replace(
             base._config,  # pyright: ignore[reportPrivateUsage]
-            window_schema_version="2",
+            window_schema_version=version,
             retry_failed=retry_failed,
         ),
     )
 
 
+@pytest.mark.parametrize("version", ["2", "3"])
 def test_grid_resume_reuses_completed_trial_and_incomplete_prefix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    version: str,
 ) -> None:
     provider = WindowProvider()
-    study = compact_grid(tmp_path / "compact", provider)
+    study = compact_grid(tmp_path / "compact", provider, version=version)
     legacy = grid(tmp_path / "legacy", WindowProvider()).run()
     calls = 0
     original = provider.get_context_at
@@ -113,6 +119,7 @@ def test_grid_resume_reuses_completed_trial_and_incomplete_prefix(
         study.run()
     complete = list((tmp_path / "compact").rglob("prediction-window.jsonl"))
     assert len(complete) == 1
+    assert PredictionWindowReader.open(complete[0]).schema_version == version
     first_bytes = complete[0].read_bytes()
     stages = list((tmp_path / "compact").rglob("*.in-progress"))
     assert len(stages) == 1
@@ -152,8 +159,9 @@ def test_grid_resume_reuses_completed_trial_and_incomplete_prefix(
     assert result.cache_statistics.indicator_misses == 0
 
 
-def test_compact_trial_corruption_is_not_ranked(tmp_path: Path) -> None:
-    study = compact_grid(tmp_path, WindowProvider())
+@pytest.mark.parametrize("version", ["2", "3"])
+def test_compact_trial_corruption_is_not_ranked(tmp_path: Path, version: str) -> None:
+    study = compact_grid(tmp_path, WindowProvider(), version=version)
     study.run()
     path = next(tmp_path.rglob("prediction-window.jsonl"))
     path.write_bytes(path.read_bytes()[:-8])

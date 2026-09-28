@@ -290,13 +290,20 @@ def verify_artifacts(index: ArtifactIndex, root: Path) -> IntegrityReport:
                 # Published file hashes authenticate all decisions; presentation
                 # need not deserialize their payloads to inspect aggregate results.
                 if path not in compact_metadata:
+                    from quantforge.prediction.window_compact import (
+                        COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS,
+                    )
                     from quantforge.prediction.window_reader import (
                         PredictionWindowReader,
                     )
 
                     before = file_sha256(path)
                     reader = PredictionWindowReader.open(path)
-                    if reader.schema_version != "2" or before != file_sha256(path):
+                    if (
+                        reader.schema_version
+                        not in COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS
+                        or before != file_sha256(path)
+                    ):
                         raise ManifestError(
                             "compact artifact changed during verification"
                         )
@@ -309,7 +316,10 @@ def verify_artifacts(index: ArtifactIndex, root: Path) -> IntegrityReport:
                         },
                     )
                 fingerprint, document = compact_metadata[path]
-                if entry.schema_version != "2":
+                if (
+                    entry.schema_version
+                    != cast(PrimitiveMapping, document["header"])["schema_version"]
+                ):
                     code = "incompatible_metadata"
                 elif entry.sha256 != fingerprint:
                     code = "content_hash_mismatch"

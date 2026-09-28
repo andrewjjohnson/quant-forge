@@ -113,7 +113,7 @@ def index_compact_window(
             artifact_type=category,
             file_format=ArtifactFormat.JSONL,
             sha256=fingerprint,
-            schema_version="2",
+            schema_version=reader.schema_version,
             producer_study_id=text(header["window_id"]),
             producer_artifact_id="window" + location,
             json_pointer=location,

@@ -237,7 +237,8 @@ def inspect_validation(
             link(window, RelationshipType.SELECTED_BY, selected)
             if isinstance(fold.artifact, PredictionOOSArtifact):
                 reader = source_prediction_reader(source, fold_index)
-                if reader.schema_version == "2":
+                # Every compact physical representation is indexed identically.
+                if reader.schema_version != "1":
                     indexed, relationships = index_compact_window(
                         reader,
                         artifact_root=root,
