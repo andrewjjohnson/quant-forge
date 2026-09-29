@@ -59,6 +59,7 @@ from quantforge.prediction.outcome_temporal import (
     OutcomeAnchor,
     outcome_temporal_configuration,
 )
+from quantforge.prediction.prepared_features import validate_prepared_context_sources
 from quantforge.prediction.prepared_outcomes import PreparedOutcomeSources
 from quantforge.prediction.timestamp_execution import (
     bounded_outcome_source,
@@ -364,6 +365,19 @@ def run_prediction_study_in_session(
             configuration.strategy_configuration_id,
             component_dataset.metadata.dataset_id,
         )
+    elif rule_context.values_guarded:
+        # QF-63 prepared context: the guard compares identities with pristine
+        # evidence captured once, as strictly as the reference values snapshot.
+        output = cast(
+            MultiTimeframePredictionRule[PredictionRecordT], study.strategy
+        ).generate_with_context(rule_context)
+        try:
+            rule_context.validate_values_unchanged()
+        except PredictionContextError as error:
+            raise InvalidPredictionOutputError(
+                "prediction rule context changed while the prediction evaluator "
+                "was running"
+            ) from error
     else:
         rule_context_snapshot = _capture_values_snapshot(
             "prediction rule context", rule_context.values_primitive()
@@ -955,7 +969,8 @@ def _prepare_prediction_context(
         source_context = provider.get_context(requirements)
         if dataset.metadata.intraday_provenance is not None:
             try:
-                validate_prediction_context_sources(dataset, source_context)
+                if not validate_prepared_context_sources(dataset, source_context):
+                    validate_prediction_context_sources(dataset, source_context)
             except MarketDataValidationError as error:
                 raise PredictionContextError(str(error)) from error
         rule_context = build_prediction_rule_context(
