@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from quantforge.configuration import PrimitiveMapping, PrimitiveMappingSnapshot
 from quantforge.data.models import DatasetMetadata
@@ -15,16 +16,20 @@ from quantforge.prediction.contracts import (
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.study import (
     PredictionStudyDatasetSession,
+    PredictionStudyResult,
     _capture_study_configuration,  # pyright: ignore[reportPrivateUsage]
 )
 from quantforge.prediction.window import (
     PredictionDecisionSchedule,
     PredictionWindowContextProvider,
+    PredictionWindowDecision,
     _capture_window_identity,  # pyright: ignore[reportPrivateUsage]
     iter_prediction_window_decisions,
+    iter_prediction_window_results,
 )
 from quantforge.prediction.window_compact import (
     COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
+    CompactDecisionReceipt,
     CompactPredictionWindowDecision,
 )
 from quantforge.prediction.window_compact_validation import (
@@ -48,6 +53,53 @@ class PredictionWindowDecisionError(InvalidPredictionOutputError):
         super().__init__(self.safe_message)
 
 
+def sparse_decision_receipt(
+    sequence: int,
+    timestamp: datetime,
+    result: PredictionStudyResult[Any, Any, Any],
+    *,
+    writer: IncrementalPredictionWindowWriter,
+    validator: PredictionWindowDecisionValidator,
+) -> CompactDecisionReceipt:
+    """Schema 4 record for one executed decision (QF-64).
+
+    Decisions with generated signals, and skipped decisions with their rejected
+    context, keep the complete normalized decision and are fully validated on
+    append. An ordinary ``no_prediction`` decision builds no decision snapshot:
+    its context is decoded once, bound to the schedule, scope and both
+    identities, and only the identities are persisted.
+    """
+    snapshot = result.prediction_context_snapshot
+    if snapshot is None:
+        raise InvalidPredictionOutputError(
+            "historical results require QF-28 context evidence"
+        )
+    context = snapshot.to_primitive()
+    if result.signals or context.get("status") == "skipped":
+        decision = PredictionWindowDecision(timestamp, result)
+        return CompactDecisionReceipt.with_decision(
+            CompactPredictionWindowDecision.from_embedded(
+                decision.to_primitive(),
+                sequence=sequence,
+                evidence=writer.evidence,
+                membership=writer.membership,
+            )
+        )
+    context_id = validator.validate_no_prediction(
+        context,
+        sequence,
+        prediction_study_id=result.study_id,
+        record_counts={
+            "generated_predictions": result.generated_prediction_count,
+            "labeled_rows": len(result.rows),
+            "unavailable_outcomes": result.unavailable_outcome_count,
+        },
+    )
+    return CompactDecisionReceipt.no_prediction(
+        sequence=sequence, context_id=context_id, prediction_study_id=result.study_id
+    )
+
+
 def run_incremental_prediction_window_in_session(
     prepared: PredictionStudyDatasetSession,
     study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
@@ -68,8 +120,9 @@ def run_incremental_prediction_window_in_session(
     Historical caches are deliberately not retained across decisions on this
     path. QF-11 still computes and validates the normal normalized indicators.
     Independent canonical metadata is used only by provenance verification.
-    ``schema_version`` "3" persists QF-62 normalized membership; execution and
-    every scientific result are identical for both physical representations.
+    ``schema_version`` "3" persists QF-62 normalized membership and "4" QF-64
+    sparse decision receipts; execution and every scientific result are
+    identical for all physical representations.
     """
     identity = _capture_window_identity(
         prepared,
@@ -92,6 +145,35 @@ def run_incremental_prediction_window_in_session(
         path, validator=validator, schema_version=schema_version
     )
     if writer.finalized:
+        return writer.finalize()
+    if writer.evidence.sparse_decisions:
+        results = iter_prediction_window_results(
+            prepared,
+            study,
+            schedule=schedule,
+            context_provider=context_provider,
+            dataset_family_fingerprint=dataset_family_fingerprint,
+            start_sequence=writer.completed_count,
+        )
+        for sequence in range(
+            writer.completed_count, len(schedule.decision_timestamps)
+        ):
+            try:
+                timestamp, result = next(results)
+                receipt = sparse_decision_receipt(
+                    sequence, timestamp, result, writer=writer, validator=validator
+                )
+                del result
+                writer.append(receipt)
+                del receipt
+            except Exception as error:
+                raise PredictionWindowDecisionError(
+                    sequence=sequence,
+                    timestamp=schedule.decision_timestamps[sequence],
+                    window_id=writer.evidence.window_id,
+                    cause_type=type(error).__name__,
+                ) from error
+        del results
         return writer.finalize()
     decisions = iter_prediction_window_decisions(
         prepared,

@@ -481,6 +481,41 @@ def iter_prediction_window_decisions(
     Scientific execution, component isolation and QF-11 validation are shared
     with the legacy materialized API.
     """
+    for timestamp, result in iter_prediction_window_results(
+        prepared,
+        study,
+        schedule=schedule,
+        context_provider=context_provider,
+        dataset_family_fingerprint=dataset_family_fingerprint,
+        indicator_output_cache=indicator_output_cache,
+        start_sequence=start_sequence,
+    ):
+        decision = PredictionWindowDecision(timestamp, result)
+        del result
+        yield decision
+        del decision
+
+
+def iter_prediction_window_results(
+    prepared: PredictionStudyDatasetSession,
+    study: PredictionStudy[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
+    *,
+    schedule: PredictionDecisionSchedule,
+    context_provider: PredictionWindowContextProvider,
+    dataset_family_fingerprint: str,
+    indicator_output_cache: PredictionIndicatorOutputCache | None = None,
+    start_sequence: int = 0,
+) -> Iterator[
+    tuple[
+        datetime,
+        PredictionStudyResult[PredictionRecordT, OutcomeValuesT, EvaluationValuesT],
+    ]
+]:
+    """The same QF-42 execution, yielding each typed QF-11 result unsnapshotted.
+
+    Sparse (QF-64) persistence builds the full decision snapshot only for
+    results it retains as rich evidence; everything else is identical.
+    """
     if type(start_sequence) is not int or not 0 <= start_sequence <= len(
         schedule.decision_timestamps
     ):
@@ -541,7 +576,7 @@ def iter_prediction_window_decisions(
             raise InvalidPredictionOutputError(
                 "historical decision changed the study configuration"
             )
-        yield PredictionWindowDecision(timestamp, result)
+        yield timestamp, result
         # Drop the generator frame's reference before starting another decision.
         del result, decision_study
 
@@ -554,6 +589,7 @@ __all__ = [
     "PredictionWindowDecision",
     "PredictionWindowResult",
     "iter_prediction_window_decisions",
+    "iter_prediction_window_results",
     "run_prediction_window",
     "run_prediction_window_in_session",
 ]

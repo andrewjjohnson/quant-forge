@@ -17,6 +17,7 @@ from quantforge.configuration import (
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.window_compact import (
     COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
+    CompactDecisionReceipt,
     CompactPredictionWindowDecision,
     PredictionWindowEvidence,
     WindowRecordCounts,
@@ -89,6 +90,10 @@ class IncrementalPredictionWindowWriter:
     closed. Reopen after any persistence failure. No completed payloads are kept.
     Schema 3 journals carry catalogue segments inside their decision lines, so a
     decision and its catalogue growth commit atomically; recovery replays them.
+    Schema 4 journals hold one coverage receipt line per decision, nesting any
+    rich decision (and its catalogue growth) in that same atomic line. A committed
+    receipt, even without evidence, proves the decision executed; a decision
+    with no committed receipt never did.
     """
 
     def __init__(
@@ -215,9 +220,17 @@ class IncrementalPredictionWindowWriter:
             "fingerprint": configuration_identity(checkpoint),
         }
 
+    def _parse(
+        self, record: PrimitiveMapping
+    ) -> CompactPredictionWindowDecision | CompactDecisionReceipt:
+        snapshot = PrimitiveMappingSnapshot.capture(record)
+        if self.evidence.sparse_decisions:
+            return CompactDecisionReceipt(snapshot)
+        return CompactPredictionWindowDecision(snapshot)
+
     def _records(
         self, committed_offset: int
-    ) -> Iterator[tuple[CompactPredictionWindowDecision, int]]:
+    ) -> Iterator[tuple[CompactPredictionWindowDecision | CompactDecisionReceipt, int]]:
         with self.journal_path.open("rb") as journal:
             remaining = committed_offset
             while remaining:
@@ -228,45 +241,78 @@ class IncrementalPredictionWindowWriter:
                     )
                 record = decode(line, canonical_line=True)
                 remaining -= len(line)
-                yield (
-                    CompactPredictionWindowDecision(
-                        PrimitiveMappingSnapshot.capture(record)
-                    ),
-                    len(line),
-                )
+                yield self._parse(record), len(line)
 
-    def _accept(self, decision: CompactPredictionWindowDecision) -> None:
-        record = decision.to_primitive()
-        index = self.completed_count
-        timestamps = self.evidence.schedule.decision_timestamps
-        if (
-            index >= len(timestamps)
-            or record["sequence"] != index
-            or record["decision_timestamp"] != timestamps[index].isoformat()
-            or record["shared_evidence_id"] != self.evidence.evidence_id
-            or (CATALOGUE_SEGMENTS_FIELD in record)
-            != self.evidence.normalized_membership
-        ):
-            raise PredictionWindowPersistenceError(
-                "decision reference/order differs from expected prefix"
-            )
+    def _validate_decision(self, record: PrimitiveMapping, index: int) -> None:
+        """Scientific validation of one rich record with exact membership."""
         if self.membership is None:
             self.validator.validate(record, index)
-        else:
-            lengths = self.membership.lengths()
-            try:
-                view = self.membership.accept(record)
-                self.validator.validate(view.expand_record(record), index)
-            except BaseException:
-                self.membership.restore(lengths)
-                raise
-        self._counts.update(record)
-        self._digest.update(record)
-        self.completed_count += 1
-        self._last_decision_id = decision.decision_id
+            return
+        lengths = self.membership.lengths()
+        try:
+            view = self.membership.accept(record)
+            self.validator.validate(view.expand_record(record), index)
+        except BaseException:
+            self.membership.restore(lengths)
+            raise
 
-    def append(self, decision: CompactPredictionWindowDecision) -> None:
-        """Fsync one canonical decision, then atomically commit its checkpoint."""
+    def _accept(
+        self, decision: CompactPredictionWindowDecision | CompactDecisionReceipt
+    ) -> None:
+        index = self.completed_count
+        timestamps = self.evidence.schedule.decision_timestamps
+        if self.evidence.sparse_decisions:
+            if (
+                not isinstance(decision, CompactDecisionReceipt)
+                or index >= len(timestamps)
+                or decision.sequence != index
+            ):
+                raise PredictionWindowPersistenceError(
+                    "decision receipt coverage/order differs from expected prefix"
+                )
+            if decision.decision is not None:
+                nested = decision.decision.to_primitive()
+                if (
+                    nested["decision_timestamp"] != timestamps[index].isoformat()
+                    or nested["shared_evidence_id"] != self.evidence.evidence_id
+                ):
+                    raise PredictionWindowPersistenceError(
+                        "nested decision reference/order differs from expected prefix"
+                    )
+                self._validate_decision(nested, index)
+            self._counts.update_receipt(decision)
+            self._digest.update(decision.to_primitive())
+            self._last_decision_id = decision.receipt_id
+        else:
+            if not isinstance(decision, CompactPredictionWindowDecision):
+                raise PredictionWindowPersistenceError(
+                    "decision receipts require schema 4"
+                )
+            record = decision.to_primitive()
+            if (
+                index >= len(timestamps)
+                or record["sequence"] != index
+                or record["decision_timestamp"] != timestamps[index].isoformat()
+                or record["shared_evidence_id"] != self.evidence.evidence_id
+                or (CATALOGUE_SEGMENTS_FIELD in record)
+                != self.evidence.normalized_membership
+            ):
+                raise PredictionWindowPersistenceError(
+                    "decision reference/order differs from expected prefix"
+                )
+            self._validate_decision(record, index)
+            self._counts.update(record)
+            self._digest.update(record)
+            self._last_decision_id = decision.decision_id
+        self.completed_count += 1
+
+    def append(
+        self, decision: CompactPredictionWindowDecision | CompactDecisionReceipt
+    ) -> None:
+        """Fsync one canonical decision record, then atomically commit its checkpoint.
+
+        Schema 2/3 take a normalized decision; schema 4 takes its receipt.
+        """
         if self._finalized or self._failed:
             raise PredictionWindowPersistenceError(
                 "writer finalized or failed; reopen before use"
@@ -328,9 +374,11 @@ class IncrementalPredictionWindowWriter:
             raise PredictionWindowPersistenceError(
                 "finalized window has incompatible evidence/version"
             )
-        for decision in reader.iterate_decisions():
-            self._accept(decision)
-            self._byte_offset += len(decision.snapshot.canonical_json.encode()) + 1
+        for receipt in reader.iterate_decision_receipts():
+            self._accept(receipt.record)
+            self._byte_offset += (
+                len(receipt.record.snapshot.canonical_json.encode()) + 1
+            )
 
     def finalize(self) -> PredictionWindowReader:
         """Validate and stream the same QF-55 JSONL bytes, then publish immutably."""
