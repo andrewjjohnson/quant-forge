@@ -64,8 +64,11 @@ venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -ra -q -n 4 --dist=loadfile --durations=30"
+addopts = "--strict-config --strict-markers -ra -q -n 4 --dist=loadfile --no-loadscope-reorder --durations=30"
 testpaths = ["tests"]
 markers = [
   "integration: optional component-boundary tests selected with '-m integration'",
+  "heavy_acceptance: required long end-to-end scientific acceptance; dispatched first",
+  "regression: automatic tier for other tests under tests/integration and tests/performance",
+  "fast: automatic tier for every remaining test, including tests/unit",
 ]
