@@ -9,8 +9,12 @@ on:
 permissions:
   contents: read
 
+# Every job below is required. Independent jobs run concurrently; the final
+# `quality` job fails unless all of them succeeded. Tiers are defined in
+# tests/conftest.py and documented in docs/development.md.
 jobs:
-  quality:
+  static:
+    name: Format, lint and type check
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -35,14 +39,67 @@ jobs:
       - name: Type check
         run: uv run pyright
 
+      - name: Verify every test belongs to a CI tier
+        # pytest exits 5 when nothing is collected: no test may fall outside
+        # the heavy_acceptance, regression and fast jobs.
+        run: |
+          status=0
+          uv run pytest -n 0 --collect-only -q \
+            -m "not heavy_acceptance and not regression and not fast" || status=$?
+          test "$status" -eq 5
+
+  tests:
+    name: Tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: heavy acceptance, QF-45 runner
+            slug: heavy-acceptance
+            args: -m heavy_acceptance -n 0
+          - name: regression 1/2
+            slug: regression-1
+            args: -m regression --file-shard=1/2
+          - name: regression 2/2
+            slug: regression-2
+            args: -m regression --file-shard=2/2
+          - name: fast
+            slug: fast
+            args: -m fast
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.12.1"
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install locked dependencies
+        run: uv sync --all-extras --frozen
+
       - name: Test
-        run: uv run pytest --junitxml=reports/tests/junit.xml
+        run: uv run pytest ${{ matrix.args }} --junitxml=reports/tests/junit-${{ matrix.slug }}.xml
 
       - name: Upload test timings
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: reports/tests/junit.xml
+          name: test-results-${{ matrix.slug }}
+          path: reports/tests/junit-${{ matrix.slug }}.xml
           if-no-files-found: warn
           retention-days: 14
+
+  quality:
+    name: quality
+    if: ${{ always() }}
+    needs: [static, tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every static and test job
+        run: |
+          test "${{ needs.static.result }}" = success
+          test "${{ needs.tests.result }}" = success

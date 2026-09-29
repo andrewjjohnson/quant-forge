@@ -25,6 +25,10 @@ from quantforge.walk_forward import PredictionEvaluator, WalkForwardConfig
 from tests.integration import test_intraday_prediction_provenance as source_fixture
 from tests.unit.experiments.test_contracts import execution
 
+# Required everywhere; the marker only gives it a dedicated CI job and makes
+# xdist dispatch it first. See docs/qf45-acceptance-test.md.
+pytestmark = pytest.mark.heavy_acceptance
+
 
 @pytest.fixture(scope="module")
 def synthetic_inputs(tmp_path_factory: pytest.TempPathFactory) -> SmokeInputs:
