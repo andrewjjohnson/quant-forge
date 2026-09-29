@@ -1,5 +1,12 @@
 # Compact prediction-window consumers (QF-57)
 
+QF-64 adds `iterate_decision_receipts()` (coverage) and `iterate_observations()`
+(generated signals with their labeled rows) for every version. QF-40 streams
+observations; QF-32/QF-39/QF-45 export and QF-40's protected-reach check read
+rows from receipts' retained decisions; QF-9 checks metadata safety on every
+persisted record. `iterate_decisions()` rejects schema `"4"`. See
+[sparse event windows](sparse-event-windows.md).
+
 QF-40, QF-9 and QF-41 consume QF-56 finalized QF-55 JSONL windows directly.
 The existing scheduling, typed outcomes, frozen selections and holdout ledger
 remain authoritative. No compact record is expanded into a legacy QF-11 result.

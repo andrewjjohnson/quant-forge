@@ -1,5 +1,9 @@
 # Normalized historical-window membership (QF-62)
 
+QF-64's schema `"4"` reuses these catalogues unchanged for the rich decisions
+nested in its receipts. A catalogue therefore holds only bars visible to some
+evaluated or skipped decision. See [sparse event windows](sparse-event-windows.md).
+
 QF-62 adds compact window representation schema `"3"`. It stores each ordered
 visible-bar membership list once, in append-only catalogues owned by the window.
 Decisions refer to those lists through exact `[start_index, stop_index)`

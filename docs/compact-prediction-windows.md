@@ -1,5 +1,10 @@
 # Compact historical prediction windows (QF-55)
 
+QF-64 adds opt-in schema `"4"`: one coverage receipt per scheduled decision,
+with complete schema 3 evidence nested only for evaluated and skipped decisions.
+See [sparse event windows](sparse-event-windows.md). Schemas 2 and 3 are
+unchanged.
+
 QF-62 adds opt-in schema `"3"`. It uses the same header, shared-evidence and
 decision layout. Visible-bar membership is stored once in append-only catalogues
 and referenced by exact ranges. See [normalized membership](normalized-window-membership.md).
