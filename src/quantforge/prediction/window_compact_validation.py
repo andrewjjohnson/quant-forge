@@ -198,6 +198,90 @@ class PredictionWindowDecisionValidator:
         }
         self.strategy_parameters = PrimitiveMappingSnapshot.capture(strategy_parameters)
 
+    def validate_no_prediction(
+        self,
+        context: PrimitiveMapping,
+        sequence: int,
+        *,
+        prediction_study_id: str,
+        record_counts: PrimitiveMapping,
+    ) -> str:
+        """Bind a schema 4 ``no_prediction`` receipt to its executed context.
+
+        ``context`` is the QF-28 manifest QF-11 produced for this decision; a
+        sparse window does not persist it. This checks the scheduled timestamp
+        and session, window family, prediction dataset and shared-input
+        provenance, configured requirements and primary timeframe, empty counts,
+        and that both persisted identities are hashes of this exact context under
+        the window's scope: the QF-20 ``context_id`` of its source context and the
+        QF-11 ``prediction_study_id``. QF-20/QF-28 per-timeframe structure is
+        established when the context is built; offline re-validation of it
+        applies only to contexts a window persists. Returns the context ID.
+        """
+        try:
+            source = mapping(context["source_context"])
+            market = mapping(self.identity["market_data"])
+            configuration = mapping(self.identity["configuration"])
+            context_id = source.get("context_id")
+            expected_basis = {
+                key: market[key]
+                for key in (
+                    "adjustment_mode",
+                    "ohlc_basis",
+                    "volume_basis",
+                    "corporate_action_policy",
+                    "adjusted_fields_used",
+                )
+            }
+            if (
+                context.get("status") != "available"
+                or context.get("decision_session")
+                != self.schedule.decision_sessions[sequence].isoformat()
+                or source.get("as_of")
+                != self.schedule.decision_timestamps[sequence].isoformat()
+                or mapping(source["source_consistency"]).get("family_id")
+                != self.identity["dataset_family_fingerprint"]
+                or context.get("prediction_dataset_id") != market["dataset_id"]
+                or context.get("symbol") != market["symbol"]
+                or configuration_identity(
+                    {
+                        "basis": context.get("adjustment_basis"),
+                        "primary": source.get("primary_timeframe"),
+                        "requirements": context.get("requirements"),
+                        "counts": record_counts,
+                    }
+                )
+                != configuration_identity(
+                    {
+                        "basis": expected_basis,
+                        "primary": self.primary,
+                        "requirements": configuration.get(
+                            "prediction_context_requirements"
+                        ),
+                        "counts": {
+                            "generated_predictions": 0,
+                            "labeled_rows": 0,
+                            "unavailable_outcomes": 0,
+                        },
+                    }
+                )
+                or context_id
+                != configuration_identity(
+                    {key: value for key, value in source.items() if key != "context_id"}
+                )
+                or prediction_study_id != self.study_identity.for_context(context)
+            ):
+                raise InvalidPredictionOutputError(
+                    "no-prediction decision differs from its window scope, "
+                    "schedule or identities"
+                )
+            _context_sources(context, self.provenance)
+        except (ValueError, TypeError, KeyError, IndexError, ValidationError) as error:
+            raise InvalidPredictionOutputError(
+                f"invalid historical window evidence: {error}"
+            ) from error
+        return cast(str, context_id)
+
     def validate(self, decision: PrimitiveMapping, sequence: int) -> None:
         """Check a single record without expanding shared evidence.
 
@@ -236,7 +320,13 @@ def validate_prediction_window_reader(
     projection_registry: PreparedProjectionRegistry | None = None,
     projection_scope: PrimitiveMappingSnapshot | None = None,
 ) -> None:
-    """Verify v1/v2 with trusted inputs and independent bounded-view ancestry."""
+    """Verify versions 1-4 with trusted inputs and independent bounded ancestry.
+
+    Every persisted rich decision is validated with exact expanded membership.
+    A version 4 ``no_prediction`` receipt persists no context to re-validate;
+    the reader has already checked its coverage, order, identity format and
+    binding into the window result identity.
+    """
     try:
         if (
             reader.evidence.identity_snapshot != expected_identity
@@ -254,8 +344,9 @@ def validate_prediction_window_reader(
             projection_registry=projection_registry,
             projection_scope=projection_scope,
         )
-        for index, compact in enumerate(reader.iterate_decisions()):
-            validator.validate(compact.expanded_record(), index)
+        for receipt in reader.iterate_decision_receipts():
+            if receipt.decision is not None:
+                validator.validate(receipt.decision.expanded_record(), receipt.sequence)
     except (ValueError, TypeError, KeyError, IndexError, ValidationError) as error:
         raise InvalidPredictionOutputError(
             f"invalid historical window evidence: {error}"

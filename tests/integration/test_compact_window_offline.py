@@ -35,7 +35,7 @@ from tests.unit.helpers import SESSIONS
 from tests.unit.walk_forward.test_incremental_prediction import compact_adapter
 
 
-@pytest.mark.parametrize("version", ["2", "3"])
+@pytest.mark.parametrize("version", ["2", "3", "4"])
 def test_bounded_finalized_holdout_and_offline_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
@@ -117,6 +117,7 @@ def test_bounded_finalized_holdout_and_offline_replay(
     )
     # QF-41 must not walk decisions just to display authoritative aggregates.
     monkeypatch.setattr(PredictionWindowReader, "iterate_decisions", forbidden)
+    monkeypatch.setattr(PredictionWindowReader, "_coverage", forbidden)
     report = build_research_report(
         manifest_path,
         artifact_root=tmp_path,

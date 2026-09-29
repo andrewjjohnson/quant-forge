@@ -47,8 +47,10 @@ def export_candidate_features(
     study = factory.build(parameters)
     rule = cast(EmaSmokeRule, study.strategy)
     exports: list[Path] = []
-    for decision in reader.iterate_decisions():
-        record = decision.to_primitive()
+    for receipt in reader.iterate_decision_receipts():
+        if receipt.decision is None:
+            continue  # Sparse no-prediction receipt: no candidate.
+        record = receipt.decision.to_primitive()
         signals = cast(list[PrimitiveMapping], record["generated_signals"])
         if not signals:
             continue  # Event study: no candidate => no QF-7 outcome request.

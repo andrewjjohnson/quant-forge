@@ -623,10 +623,14 @@ class PredictionEvaluator:
             except PredictionWindowDecisionError as error:
                 raise WalkForwardError(error.safe_message) from error
             has_prediction = False
-            for decision in reader.iterate_decisions():
+            for receipt in reader.iterate_decision_receipts():
+                if receipt.decision is None:
+                    continue  # Sparse no-prediction receipts carry no rows.
                 rows = cast(
                     list[PrimitiveMapping],
-                    mapping(decision.to_primitive()["prediction_study"])["rows"],
+                    mapping(receipt.decision.to_primitive()["prediction_study"])[
+                        "rows"
+                    ],
                 )
                 for row in rows:
                     values = mapping(mapping(row["prediction"])["values"])

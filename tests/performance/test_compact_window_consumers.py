@@ -172,6 +172,7 @@ def test_5760_decisions_downstream_shape(
         manifest, tmp_path / "manifests", artifact_root=tmp_path
     )
     monkeypatch.setattr(PredictionWindowReader, "iterate_decisions", forbidden)
+    monkeypatch.setattr(PredictionWindowReader, "_coverage", forbidden)
     report = build_research_report(manifest_path, artifact_root=tmp_path)
     html = export_research_report(report, tmp_path / "reports").read_text()
     assert any(

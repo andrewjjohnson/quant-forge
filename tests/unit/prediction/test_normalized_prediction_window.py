@@ -527,7 +527,7 @@ def test_schema_2_conversion_rejects_catalogue_state(
             window.decisions[0].to_primitive(), sequence=0, evidence=normalized_evidence
         )
     with pytest.raises(InvalidPredictionOutputError, match="version"):
-        PredictionWindowEvidence(window.identity_snapshot, "4")
+        PredictionWindowEvidence(window.identity_snapshot, "5")
     assert configuration_identity(evidence.to_primitive()) == evidence.evidence_id
 
 

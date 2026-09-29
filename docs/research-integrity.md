@@ -1,5 +1,12 @@
 # Research Integrity
 
+QF-64 sparse event windows (schema `"4"`) persist every generated signal as a
+rich observation. That includes accepted and rejected candidates and signals
+whose outcome was unavailable. A decision that produced no signal keeps only a
+coverage receipt. Receipts prove a scheduled decision executed; they are not
+negative labels. An absent observation means the event policy emitted nothing,
+not that an outcome was bad. See [sparse event windows](sparse-event-windows.md).
+
 QF-63 prepared indicator series start at each decision's exact input start. The
 rolling daily start therefore produces a separate EMA seed rather than a slice of
 a full-source EMA. Rules receive only prefixes ending at their cutoff. Admitted

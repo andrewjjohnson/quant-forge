@@ -1,5 +1,14 @@
 # QuantForge Architecture
 
+QF-64 adds opt-in compact window schema `"4"` for event studies. Every
+scheduled decision has one small coverage receipt with its QF-42 status and
+original QF-20/QF-11 identities. Only evaluated and skipped decisions nest their
+complete schema 3 evidence. Readers expose `iterate_decision_receipts()` and
+`iterate_observations()` for every version, and QF-32/39/40/9/45 consume those
+views. QF-56 durability and every scientific identity are unchanged. See
+[sparse event windows](sparse-event-windows.md) and
+[ADR 0036](decisions/0036-separate-decision-coverage-from-observations.md).
+
 QF-63 gives each QF-39 permitted-context provider a `PreparedContextScope`.
 
 - **Runs.** Each scope holds validated immutable source runs ending at the

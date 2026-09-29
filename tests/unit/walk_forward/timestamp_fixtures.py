@@ -17,7 +17,9 @@ from quantforge.data.intraday_aggregation import intraday_session_windows
 from quantforge.prediction import (
     PredictionContextRequirements,
     PredictionDecisionSchedule,
+    PredictionRuleContext,
     PredictionSignal,
+    PredictionStrategyOutput,
     PredictionStudy,
 )
 from quantforge.prediction.contracts import (
@@ -164,10 +166,31 @@ class MetadataEvaluator:
         return FixtureEvaluation()
 
 
+class EventStudyRule(StudyRule):
+    """QF-64 sparse event fixture: emit only at bar ends on the half hour."""
+
+    name = "qf64_sparse_event_fixture_rule"
+
+    def generate_with_context(
+        self, context: PredictionRuleContext
+    ) -> PredictionStrategyOutput:
+        output = super().generate_with_context(context)
+        bar = context.latest_bar_for(self.context_requirements.primary.timeframe)
+        if bar.end_timestamp.minute in (0, 30):
+            return output
+        return replace(output, signals=())
+
+
 class TimestampFactory(StudyFactory):
-    def __init__(self, source: TimeframeBarSeries, horizon: timedelta) -> None:
+    def __init__(
+        self,
+        source: TimeframeBarSeries,
+        horizon: timedelta,
+        rule: type[StudyRule] = StudyRule,
+    ) -> None:
         self.source = source
         self.horizon = horizon
+        self.rule = rule
 
     def build(self, parameters: PrimitiveMapping) -> PredictionStudy[Any, Any, Any]:
         session_study = super().build(parameters)
@@ -181,7 +204,7 @@ class TimestampFactory(StudyFactory):
         return PredictionStudy[
             PredictionSignal, AvailabilityValues, FixtureEvaluation
         ].create(
-            StudyRule(requirements),
+            self.rule(requirements),
             MetadataLabeler(
                 OutcomeTemporalConfiguration.elapsed_duration(self.horizon, PRIMARY)
             ),
@@ -196,6 +219,7 @@ def timestamp_fixture(
     embargo: timedelta = timedelta(0),
     horizon: timedelta = timedelta(minutes=30),
     source_id: str = "timestamp-source",
+    sparse_events: bool = False,
 ) -> tuple[WalkForwardConfig, PredictionEvaluator]:
     legacy, old_adapter = prediction_fixture(tmp_path)
     base = _family()
@@ -250,7 +274,9 @@ def timestamp_fixture(
         tuple(_session_bar(DAILY, s) for s in SESSIONS[:7]),
         dataset_family_manifest_id=family.manifest_id,
     )
-    factory = TimestampFactory(source, horizon)
+    factory = TimestampFactory(
+        source, horizon, EventStudyRule if sparse_events else StudyRule
+    )
     adapter = PredictionEvaluator(
         dataset=old_adapter.dataset,
         series=(source, daily),

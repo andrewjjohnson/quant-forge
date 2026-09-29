@@ -1,5 +1,10 @@
 # Incremental historical prediction windows (QF-56)
 
+QF-64 schema `"4"` journals one `decision_receipt` line per decision, with
+the same three staging files and the same per-decision commit boundary.
+Checkpoint version `"1"` keeps its fields; `last_decision_id` holds the last
+`receipt_id`. See [sparse event windows](sparse-event-windows.md).
+
 QF-56 executes the existing QF-42 schedule sequentially, validates each original
 QF-11 result, compacts it with QF-55, commits it, and releases the completed full
 result before executing the next decision. It does not change prediction math,

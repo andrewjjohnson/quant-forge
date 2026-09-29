@@ -1,6 +1,6 @@
 """Version-aware read-only access to embedded and compact historical windows."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -13,10 +13,18 @@ from quantforge.configuration import (
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.window_compact import (
     COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS,
+    CompactDecisionReceipt,
     CompactPredictionWindowDecision,
     PredictionWindowEvidence,
     WindowRecordCounts,
     checked_decisions,
+    checked_receipts,
+)
+from quantforge.prediction.window_coverage import (
+    PredictionDecisionReceipt,
+    PredictionWindowObservation,
+    decision_receipt,
+    sparse_decision_receipt,
 )
 from quantforge.prediction.window_encoding import (
     WindowResultIdentity,
@@ -42,6 +50,10 @@ class PredictionWindowReader:
     V3 additionally retains its append-only membership catalogues, which grow
     with the source bars observed, never with the number of decisions. Yielded
     v3 decisions keep ranges; ``expanded_record()`` reconstructs lists on demand.
+    V4 (QF-64) holds one coverage receipt per decision and nests rich evidence
+    only for evaluated and skipped decisions. ``iterate_decision_receipts()`` and
+    ``iterate_observations()`` serve every version; ``iterate_decisions()``
+    rejects v4 because it has no rich record for every scheduled timestamp.
     A fresh file handle per traversal avoids shared cursor state.
     """
 
@@ -190,6 +202,17 @@ class PredictionWindowReader:
     def shared_evidence(self) -> PredictionWindowEvidence:
         return self.evidence
 
+    def _lines(self) -> Iterator[bytes]:
+        with self.path.open("rb") as stream:
+            if (
+                stream.readline() != canonical(self.header()) + b"\n"
+                or stream.readline() != canonical(self.evidence.to_primitive()) + b"\n"
+            ):
+                raise InvalidPredictionOutputError(
+                    "window header/evidence changed during reading"
+                )
+            yield from stream
+
     def _records(self) -> Iterator[CompactPredictionWindowDecision]:
         if self._legacy is not None:
             snapshot = self._legacy.to_primitive()
@@ -208,42 +231,71 @@ class PredictionWindowReader:
                     decision, sequence=index, evidence=self.evidence
                 )
             return
-        with self.path.open("rb") as stream:
-            if (
-                stream.readline() != canonical(self.header()) + b"\n"
-                or stream.readline() != canonical(self.evidence.to_primitive()) + b"\n"
-            ):
-                raise InvalidPredictionOutputError(
-                    "window header/evidence changed during reading"
-                )
-            for line in stream:
-                yield CompactPredictionWindowDecision(
-                    PrimitiveMappingSnapshot.capture(decode(line, canonical_line=True))
-                )
+        for line in self._lines():
+            yield CompactPredictionWindowDecision(
+                PrimitiveMappingSnapshot.capture(decode(line, canonical_line=True))
+            )
 
-    def iterate_decisions(self) -> Iterator[CompactPredictionWindowDecision]:
-        """All versions expose normalized records, never expanded v2 results.
+    def _receipts(self) -> Iterator[CompactDecisionReceipt]:
+        for line in self._lines():
+            yield CompactDecisionReceipt(
+                PrimitiveMappingSnapshot.capture(decode(line, canonical_line=True))
+            )
 
-        V3 catalogue segments and ranges are authenticated against the preceding
-        catalogue state before a decision is yielded with its catalogue view.
+    def _coverage(self) -> Iterator[PredictionDecisionReceipt]:
+        """Checked coverage of every scheduled decision, in exact order.
+
+        Each record is verified before it is yielded; totals, ordered result
+        identity and catalogue contents are verified at exhaustion. Retained
+        state is bounded: hash state, counters and (v3/v4) catalogues.
         """
         digest = WindowResultIdentity(self.evidence.window_id)
         counts = WindowRecordCounts()
         membership = (
             MembershipCatalogues() if self.evidence.normalized_membership else None
         )
-        for record in checked_decisions(self._records(), self.evidence):
-            view = None if membership is None else membership.accept(record)
-            digest.update(record)
+        timestamps = self.evidence.schedule.decision_timestamps
+        observations = 0
+
+        def count(update: Callable[[], None]) -> None:
             try:
-                counts.update(record)
+                update()
             except (KeyError, TypeError, ValueError) as error:
                 raise InvalidPredictionOutputError(
                     "invalid decision counts payload"
                 ) from error
-            yield CompactPredictionWindowDecision(
-                PrimitiveMappingSnapshot.capture(record), view
-            )
+
+        if self.evidence.sparse_decisions:
+            assert membership is not None
+            for receipt in checked_receipts(self._receipts(), self.evidence):
+                decision = receipt.decision
+                if decision is not None:
+                    view = membership.accept(decision.to_primitive())
+                    decision = CompactPredictionWindowDecision(decision.snapshot, view)
+                digest.update(receipt.to_primitive())
+                count(lambda: counts.update_receipt(receipt))
+                yield sparse_decision_receipt(
+                    receipt,
+                    decision,
+                    decision_timestamp=timestamps[receipt.sequence],
+                    observation_start=observations,
+                )
+                observations += receipt.observation_count
+        else:
+            for record in checked_decisions(self._records(), self.evidence):
+                view = None if membership is None else membership.accept(record)
+                digest.update(record)
+                count(lambda: counts.update(record))
+                item = decision_receipt(
+                    record,
+                    CompactPredictionWindowDecision(
+                        PrimitiveMappingSnapshot.capture(record), view
+                    ),
+                    decision_timestamp=timestamps[cast(int, record["sequence"])],
+                    observation_start=observations,
+                )
+                yield item
+                observations += item.observation_count
         header = self.header()
         if configuration_identity(counts.totals) != configuration_identity(
             mapping(header.get("record_counts"))
@@ -263,7 +315,38 @@ class PredictionWindowReader:
                 "window membership catalogues are inconsistent"
             )
 
+    def iterate_decision_receipts(self) -> Iterator[PredictionDecisionReceipt]:
+        """Coverage of every scheduled decision, for every physical version."""
+        return self._coverage()
+
+    def iterate_observations(self) -> Iterator[PredictionWindowObservation]:
+        """Generated signals only, in schedule then signal order.
+
+        The whole window is still verified; a v4 no-prediction receipt is a
+        small line that is checked but never expanded into a rich object.
+        """
+        for receipt in self._coverage():
+            if receipt.decision is not None:
+                yield from receipt.observations()
+
+    def iterate_decisions(self) -> Iterator[CompactPredictionWindowDecision]:
+        """Versions 1-3 expose one normalized record per scheduled decision.
+
+        V3 catalogue segments and ranges are authenticated against the preceding
+        catalogue state before a decision is yielded with its catalogue view.
+        Version 4 fails explicitly: it retains rich decisions only where they
+        carry observations or skipped-context evidence.
+        """
+        if self.evidence.sparse_decisions:
+            raise InvalidPredictionOutputError(
+                "sparse windows have no rich record per decision; use "
+                "iterate_decision_receipts() or iterate_observations()"
+            )
+        for receipt in self._coverage():
+            assert receipt.decision is not None
+            yield receipt.decision
+
     def verify_integrity(self) -> None:
         """Exhaustively check identities, references, membership, order and counts."""
-        for _ in self.iterate_decisions():
+        for _ in self._coverage():
             pass

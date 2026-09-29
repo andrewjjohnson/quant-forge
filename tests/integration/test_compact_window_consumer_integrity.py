@@ -177,7 +177,7 @@ def test_version_aware_reference_rejects_bad_or_embedded_versions(
 ) -> None:
     _, path = copy_producer(producer, tmp_path)
     header = PredictionWindowReader.open(path).header()
-    for version in ("3", 2, None):
+    for version in ("3", "4", "5", 2, None):
         reference: PrimitiveMapping = {
             "schema_version": version,
             "path": path.name,

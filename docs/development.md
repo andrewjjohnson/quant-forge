@@ -7,6 +7,19 @@ runner's invariant matrix and profile: [heavyweight acceptance test](qf45-accept
 QF-45 shortened EMA smoke configuration, offline runner, checkpoints and the
 manual holdout gate: [local smoke workflow](spy-ema-smoke-study.md).
 
+QF-64 sparse event windows (schema `"4"`): receipts, dispositions, zero-to-many
+observations, corruption, fresh-runtime resume and the 0/25/100/4,095-observation
+storage shape:
+
+```bash
+uv run --frozen pytest tests/unit/prediction/test_sparse_prediction_window.py \
+  tests/integration/test_sparse_prediction_window.py \
+  tests/performance/test_sparse_window_scale.py
+```
+
+The QF-32/QF-39/QF-40/QF-9/QF-41, finalized-holdout and offline consumer suites
+run for schemas 2, 3 and 4. See [sparse event windows](sparse-event-windows.md).
+
 QF-63 prepared context runs and indicator series: prefix stability, exact
 equivalence, causality/sentinel, reuse, mutation, fallback, resume, export and
 large-history invocation counts (uv **0.12.1**, frozen dependencies):

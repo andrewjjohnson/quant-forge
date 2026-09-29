@@ -30,9 +30,16 @@ from tests.unit.walk_forward.test_incremental_prediction import compact_adapter
 from tests.unit.walk_forward.timestamp_fixtures import timestamp_fixture
 
 
-@pytest.mark.parametrize("version", ["2", "3"])
-def test_compact_oos_and_holdout(tmp_path: Path, version: str) -> None:
-    config, original = timestamp_fixture(tmp_path)
+@pytest.mark.parametrize(
+    ("version", "sparse_events"),
+    [("2", False), ("3", False), ("4", False), ("4", True)],
+)
+def test_compact_oos_and_holdout(
+    tmp_path: Path, version: str, sparse_events: bool
+) -> None:
+    # QF-64: sparse events interleave no-prediction receipts with observations
+    # through QF-39 selection/test, QF-40 aggregation, holdout, QF-9 and QF-41.
+    config, original = timestamp_fixture(tmp_path, sparse_events=sparse_events)
     legacy = WalkForwardStudy(config, original, tmp_path / "legacy")
     legacy.run()
     adapter = compact_adapter(original, version)
@@ -44,6 +51,15 @@ def test_compact_oos_and_holdout(tmp_path: Path, version: str) -> None:
     assert result.summary == previous.summary
     assert result.observations == ()
     assert result.window_sources
+    for reader in source.prediction_windows:
+        assert reader is not None
+        receipts = list(reader.iterate_decision_receipts())
+        if sparse_events:
+            # Ordinary decisions persist receipts only; events keep evidence.
+            assert {r.status for r in receipts} == {"evaluated", "no_prediction"}
+            assert all(
+                (r.decision is None) == (r.status == "no_prediction") for r in receipts
+            )
     old_source = load_oos_source(config.plan, legacy.study_path)
     for current, old in zip(source.folds, old_source.folds, strict=True):
         assert current.selection is not None

@@ -108,3 +108,4 @@ How will the decision be tested or revisited?
 - [0033: Prepare immutable outcome sources within dataset execution sessions](0033-prepare-outcome-sources.md)
 - [0034: Normalize window membership into append-only catalogues](0034-normalize-window-membership-catalogues.md)
 - [0035: Prepare historical context runs and reusable indicator series](0035-prepare-historical-context-and-feature-series.md)
+- [0036: Separate decision coverage receipts from rich observations](0036-separate-decision-coverage-from-observations.md)

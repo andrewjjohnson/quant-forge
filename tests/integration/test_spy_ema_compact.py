@@ -136,6 +136,7 @@ def test_actual_rule_persists_zero_candidate_decisions_and_reuses_final(
         artifact_root=tmp_path,
     )
     monkeypatch.setattr(type(reader), "iterate_decisions", forbidden)
+    monkeypatch.setattr(type(reader), "_coverage", forbidden)
     report = build_research_report(manifest_path, artifact_root=tmp_path)
     assert export_research_report(report, tmp_path / "reports").is_file()
 

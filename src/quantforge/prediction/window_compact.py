@@ -1,9 +1,12 @@
-"""Versions 2 and 3 of the QF-42 window: one scope, normalized decisions.
+"""Versions 2-4 of the QF-42 window: one scope, normalized records.
 
 Construction consumes already completed results. Execution/checkpoint/resume
 remain separate concerns. No method expands shared evidence into decisions.
 Version 3 additionally stores visible-bar membership once in append-only QF-62
-catalogues referenced by exact ranges; see ``window_membership``.
+catalogues referenced by exact ranges; see ``window_membership``. Version 4
+(QF-64) persists one compact coverage receipt per scheduled decision and nests
+a complete version 3 decision only where the decision produced generated
+signals or retained skipped-context evidence.
 """
 
 from collections.abc import Iterable, Iterator
@@ -39,11 +42,28 @@ from quantforge.timeframes import Timeframe
 
 COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION = "2"
 NORMALIZED_PREDICTION_WINDOW_SCHEMA_VERSION = "3"
+SPARSE_PREDICTION_WINDOW_SCHEMA_VERSION = "4"
 # Physical JSONL representations sharing this reader/validator contract.
 COMPACT_PREDICTION_WINDOW_SCHEMA_VERSIONS = (
     COMPACT_PREDICTION_WINDOW_SCHEMA_VERSION,
     NORMALIZED_PREDICTION_WINDOW_SCHEMA_VERSION,
+    SPARSE_PREDICTION_WINDOW_SCHEMA_VERSION,
 )
+DECISION_RECEIPT_RECORD_TYPE = "decision_receipt"
+# Existing QF-42 execution dispositions; their meanings are unchanged.
+DECISION_STATUSES = ("evaluated", "skipped", "no_prediction")
+_RECEIPT_FIELDS = frozenset(
+    {
+        "record_type",
+        "sequence",
+        "status",
+        "context_id",
+        "prediction_study_id",
+        "observation_count",
+        "receipt_id",
+    }
+)
+_HEX = frozenset("0123456789abcdef")
 _IDENTITY_FIELDS = {
     "component",
     "schema_version",
@@ -142,7 +162,16 @@ class PredictionWindowEvidence:
 
     @property
     def normalized_membership(self) -> bool:
-        return self.schema_version == NORMALIZED_PREDICTION_WINDOW_SCHEMA_VERSION
+        """Versions 3 and 4 store rich-record membership in QF-62 catalogues."""
+        return self.schema_version in (
+            NORMALIZED_PREDICTION_WINDOW_SCHEMA_VERSION,
+            SPARSE_PREDICTION_WINDOW_SCHEMA_VERSION,
+        )
+
+    @property
+    def sparse_decisions(self) -> bool:
+        """Version 4 persists coverage receipts instead of one rich record each."""
+        return self.schema_version == SPARSE_PREDICTION_WINDOW_SCHEMA_VERSION
 
     def to_primitive(self) -> PrimitiveMapping:
         return {
@@ -190,7 +219,7 @@ class CompactPredictionWindowDecision:
             or cast(int, record["sequence"]) < 0
             or not isinstance(record.get("shared_evidence_id"), str)
             or not isinstance(record.get("decision_timestamp"), str)
-            or record.get("status") not in ("evaluated", "skipped", "no_prediction")
+            or record.get("status") not in DECISION_STATUSES
         ):
             raise InvalidPredictionOutputError("invalid compact decision shape")
         study = mapping(record["prediction_study"])
@@ -303,10 +332,177 @@ class CompactPredictionWindowDecision:
         return cast(str, self.to_primitive()["prediction_study_id"])
 
 
+def _is_identity(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and set(value) <= _HEX
+
+
+@dataclass(frozen=True, slots=True)
+class CompactDecisionReceipt:
+    """Schema 4 coverage record: one per scheduled decision, in schedule order.
+
+    ``status`` is the unchanged QF-42 disposition and ``observation_count`` the
+    number of generated signals. The original QF-20 ``context_id`` and QF-11
+    ``prediction_study_id`` are kept for every decision. Only ``evaluated`` and
+    ``skipped`` decisions nest their complete version 3 decision record; an
+    ordinary ``no_prediction`` receipt has no rich payload. The decision
+    timestamp is the authenticated schedule's entry at ``sequence``.
+    """
+
+    snapshot: PrimitiveMappingSnapshot
+    sequence: int = field(init=False)
+    status: str = field(init=False)
+    context_id: str | None = field(init=False)
+    prediction_study_id: str = field(init=False)
+    observation_count: int = field(init=False)
+    receipt_id: str = field(init=False)
+    decision: CompactPredictionWindowDecision | None = field(
+        init=False, compare=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        record = self.snapshot.to_primitive()
+        status = record.get("status")
+        count = record.get("observation_count")
+        context_id = record.get("context_id")
+        rich = status != "no_prediction"
+        if (
+            frozenset(record) != _RECEIPT_FIELDS | ({"decision"} if rich else set())
+            or record.get("record_type") != DECISION_RECEIPT_RECORD_TYPE
+            or type(record.get("sequence")) is not int
+            or cast(int, record["sequence"]) < 0
+            or status not in DECISION_STATUSES
+            or not _is_identity(record.get("prediction_study_id"))
+            # Only a skipped decision may lack a source context (QF-42 rule).
+            or not (
+                _is_identity(context_id) or (status == "skipped" and context_id is None)
+            )
+            or type(count) is not int
+            or (count < 1 if status == "evaluated" else count != 0)
+        ):
+            raise InvalidPredictionOutputError("invalid decision receipt shape")
+        if record["receipt_id"] != configuration_identity(
+            {key: value for key, value in record.items() if key != "receipt_id"}
+        ):
+            raise InvalidPredictionOutputError(
+                "decision receipt identity is inconsistent"
+            )
+        decision = None
+        if rich:
+            nested = mapping(record["decision"])
+            decision = CompactPredictionWindowDecision(
+                PrimitiveMappingSnapshot.capture(nested)
+            )
+            if (
+                CATALOGUE_SEGMENTS_FIELD not in nested
+                or nested["sequence"] != record["sequence"]
+                or nested["status"] != status
+                or nested["context_id"] != context_id
+                or nested["prediction_study_id"] != record["prediction_study_id"]
+                or len(cast(list[Primitive], nested["generated_signals"])) != count
+            ):
+                raise InvalidPredictionOutputError(
+                    "decision receipt differs from its nested decision evidence"
+                )
+        for name in (
+            "sequence",
+            "status",
+            "context_id",
+            "prediction_study_id",
+            "observation_count",
+            "receipt_id",
+        ):
+            object.__setattr__(self, name, record[name])
+        object.__setattr__(self, "decision", decision)
+
+    @classmethod
+    def _create(cls, record: PrimitiveMapping) -> "CompactDecisionReceipt":
+        record = {"record_type": DECISION_RECEIPT_RECORD_TYPE, **record}
+        record["receipt_id"] = configuration_identity(record)
+        return cls(PrimitiveMappingSnapshot.capture(record))
+
+    @classmethod
+    def no_prediction(
+        cls, *, sequence: int, context_id: str, prediction_study_id: str
+    ) -> "CompactDecisionReceipt":
+        """Ordinary evaluated decision that generated no signal: no rich payload."""
+        return cls._create(
+            {
+                "sequence": sequence,
+                "status": "no_prediction",
+                "context_id": context_id,
+                "prediction_study_id": prediction_study_id,
+                "observation_count": 0,
+            }
+        )
+
+    @classmethod
+    def with_decision(
+        cls, decision: CompactPredictionWindowDecision
+    ) -> "CompactDecisionReceipt":
+        """Receipt nesting a normalized ``evaluated`` or ``skipped`` decision."""
+        record = decision.to_primitive()
+        if record["status"] == "no_prediction":
+            raise InvalidPredictionOutputError(
+                "no-prediction decisions persist receipts without rich evidence"
+            )
+        return cls._create(
+            {
+                "sequence": record["sequence"],
+                "status": record["status"],
+                "context_id": record["context_id"],
+                "prediction_study_id": record["prediction_study_id"],
+                "observation_count": len(
+                    cast(list[Primitive], record["generated_signals"])
+                ),
+                "decision": record,
+            }
+        )
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return self.snapshot.to_primitive()
+
+
+def checked_receipts(
+    receipts: Iterable[CompactDecisionReceipt],
+    evidence: PredictionWindowEvidence,
+) -> Iterator[CompactDecisionReceipt]:
+    """Exact schedule coverage/order of version 4 receipts and nested decisions.
+
+    A missing, duplicate or reordered receipt breaks the sequence; nested
+    decisions must reference this window and the scheduled timestamp.
+    """
+    if not evidence.sparse_decisions:
+        raise InvalidPredictionOutputError("decision receipts require schema 4")
+    timestamps = evidence.schedule.decision_timestamps
+    count = 0
+    for count, receipt in enumerate(receipts, 1):
+        if count > len(timestamps) or receipt.sequence != count - 1:
+            raise InvalidPredictionOutputError(
+                "decision receipt coverage/order differs from the schedule"
+            )
+        if receipt.decision is not None:
+            record = receipt.decision.to_primitive()
+            if (
+                record["shared_evidence_id"] != evidence.evidence_id
+                or record["decision_timestamp"] != timestamps[count - 1].isoformat()
+            ):
+                raise InvalidPredictionOutputError(
+                    "nested decision reference/timestamp differs from window"
+                )
+        yield receipt
+    if count != len(timestamps):
+        raise InvalidPredictionOutputError("decision receipt coverage is incomplete")
+
+
 def checked_decisions(
     decisions: Iterable[CompactPredictionWindowDecision],
     evidence: PredictionWindowEvidence,
 ) -> Iterator[PrimitiveMapping]:
+    """Exact schedule membership/order of version 1-3 records."""
+    if evidence.sparse_decisions:
+        raise InvalidPredictionOutputError(
+            "sparse windows persist decision receipts, not one decision each"
+        )
     timestamps = evidence.schedule.decision_timestamps
     count = 0
     for count, decision in enumerate(decisions, 1):
@@ -345,12 +541,19 @@ class WindowRecordCounts:
             else:
                 self.totals[key] = cast(int, self.totals[key]) + cast(int, value)
 
-
-def decision_counts(decisions: Iterable[PrimitiveMapping]) -> PrimitiveMapping:
-    counts = WindowRecordCounts()
-    for decision in decisions:
-        counts.update(decision)
-    return counts.totals
+    def update_receipt(self, receipt: CompactDecisionReceipt) -> None:
+        """Same totals as the equivalent full decision; no evidence is invented."""
+        if receipt.decision is not None:
+            self.update(receipt.decision.to_primitive())
+            return
+        # A receipt without evidence has, by its validated status, no signals/rows.
+        self.update(
+            {
+                "status": receipt.status,
+                "generated_signals": [],
+                "prediction_study": {"rows": []},
+            }
+        )
 
 
 def window_header(
@@ -361,7 +564,7 @@ def window_header(
     record_counts: PrimitiveMapping,
     membership: MembershipCatalogues | None = None,
 ) -> PrimitiveMapping:
-    """Finalized header; version 3 also names each complete catalogue's content."""
+    """Finalized header; versions 3-4 also name each complete catalogue's content."""
     header: PrimitiveMapping = {
         "record_type": "header",
         "component": "quantforge_prediction_window",
@@ -380,24 +583,79 @@ def window_header(
     return header
 
 
+def receipt_from_embedded(
+    decision: PrimitiveMapping,
+    *,
+    sequence: int,
+    evidence: PredictionWindowEvidence,
+    membership: MembershipCatalogues,
+) -> CompactDecisionReceipt:
+    """Canonical schema 4 record for one embedded QF-42 decision.
+
+    ``membership`` is the preceding accepted catalogue state and is not changed.
+    A ``no_prediction`` decision keeps only its identities; its context is not
+    normalized, so it adds no catalogue entries.
+    """
+    if not evidence.sparse_decisions:
+        raise InvalidPredictionOutputError("decision receipts require schema 4")
+    compact = CompactPredictionWindowDecision.from_embedded(
+        decision, sequence=sequence, evidence=evidence, membership=membership
+    )
+    record = compact.to_primitive()
+    if record["status"] != "no_prediction":
+        return CompactDecisionReceipt.with_decision(compact)
+    study = mapping(record["prediction_study"])
+    if record["generated_signals"] or study["rows"]:
+        raise InvalidPredictionOutputError("no-prediction decision has observations")
+    return CompactDecisionReceipt.no_prediction(
+        sequence=sequence,
+        context_id=cast(str, record["context_id"]),
+        prediction_study_id=cast(str, record["prediction_study_id"]),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CompactPredictionWindowResult:
-    """A completed, immutable representation of the existing historical window."""
+    """A completed, immutable representation of the existing historical window.
+
+    Versions 2 and 3 hold one normalized ``decisions`` record per scheduled
+    timestamp; version 4 holds one coverage record per timestamp in ``receipts``.
+    """
 
     evidence: PredictionWindowEvidence
-    decisions: tuple[CompactPredictionWindowDecision, ...]
+    decisions: tuple[CompactPredictionWindowDecision, ...] = ()
+    receipts: tuple[CompactDecisionReceipt, ...] = ()
     header_snapshot: PrimitiveMappingSnapshot = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         membership = (
             MembershipCatalogues() if self.evidence.normalized_membership else None
         )
+        counts = WindowRecordCounts()
+        if self.evidence.sparse_decisions:
+            if self.decisions:
+                raise InvalidPredictionOutputError(
+                    "sparse windows persist decision receipts, not decisions"
+                )
+            assert membership is not None
 
-        def accepted() -> Iterator[PrimitiveMapping]:
-            for record in checked_decisions(self.decisions, self.evidence):
-                if membership is not None:
-                    membership.accept(record)
-                yield record
+            def accepted() -> Iterator[PrimitiveMapping]:
+                for receipt in checked_receipts(self.receipts, self.evidence):
+                    if receipt.decision is not None:
+                        membership.accept(receipt.decision.to_primitive())
+                    counts.update_receipt(receipt)
+                    yield receipt.to_primitive()
+
+        else:
+            if self.receipts:
+                raise InvalidPredictionOutputError("decision receipts require schema 4")
+
+            def accepted() -> Iterator[PrimitiveMapping]:
+                for record in checked_decisions(self.decisions, self.evidence):
+                    if membership is not None:
+                        membership.accept(record)
+                    counts.update(record)
+                    yield record
 
         result_id = ordered_result_identity(self.evidence.window_id, accepted())
         object.__setattr__(
@@ -407,10 +665,8 @@ class CompactPredictionWindowResult:
                 window_header(
                     self.evidence,
                     window_result_id=result_id,
-                    decision_count=len(self.decisions),
-                    record_counts=decision_counts(
-                        item.to_primitive() for item in self.decisions
-                    ),
+                    decision_count=self.decision_count,
+                    record_counts=counts.totals,
                     membership=membership,
                 )
             ),
@@ -425,6 +681,20 @@ class CompactPredictionWindowResult:
     ) -> "CompactPredictionWindowResult":
         evidence = PredictionWindowEvidence(window.identity_snapshot, schema_version)
         membership = MembershipCatalogues() if evidence.normalized_membership else None
+        if evidence.sparse_decisions:
+            assert membership is not None
+            receipts: list[CompactDecisionReceipt] = []
+            for index, decision in enumerate(window.decisions):
+                receipt = receipt_from_embedded(
+                    decision.to_primitive(),
+                    sequence=index,
+                    evidence=evidence,
+                    membership=membership,
+                )
+                if receipt.decision is not None:
+                    membership.accept(receipt.decision.to_primitive())
+                receipts.append(receipt)
+            return cls(evidence, receipts=tuple(receipts))
         decisions: list[CompactPredictionWindowDecision] = []
         for index, decision in enumerate(window.decisions):
             compact = CompactPredictionWindowDecision.from_embedded(
@@ -450,14 +720,24 @@ class CompactPredictionWindowResult:
 
     @property
     def decision_count(self) -> int:
-        return len(self.decisions)
+        """Scheduled decisions covered: one record each, in every version."""
+        return len(self.receipts if self.evidence.sparse_decisions else self.decisions)
+
+    @property
+    def records(
+        self,
+    ) -> (
+        tuple[CompactPredictionWindowDecision, ...] | tuple[CompactDecisionReceipt, ...]
+    ):
+        """The persisted per-decision records in schedule order."""
+        return self.receipts if self.evidence.sparse_decisions else self.decisions
 
     def iter_serialized_records(self) -> Iterator[bytes]:
         """Finalized JSONL, shared evidence once; no incremental execution writer."""
         yield canonical(self.header_snapshot.to_primitive()) + b"\n"
         yield canonical(self.evidence.to_primitive()) + b"\n"
-        for decision in self.decisions:
-            yield decision.snapshot.canonical_json.encode("utf-8") + b"\n"
+        for record in self.records:
+            yield record.snapshot.canonical_json.encode("utf-8") + b"\n"
 
     def serialize(self) -> bytes:
         return b"".join(self.iter_serialized_records())
@@ -468,6 +748,6 @@ class CompactPredictionWindowResult:
             "header": self.header_snapshot.to_primitive(),
             "shared_evidence": self.evidence.to_primitive(),
             "decisions": cast(
-                list[Primitive], [d.to_primitive() for d in self.decisions]
+                list[Primitive], [d.to_primitive() for d in self.records]
             ),
         }
