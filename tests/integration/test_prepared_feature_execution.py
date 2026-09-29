@@ -13,6 +13,7 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+import talib
 
 import quantforge.prediction.prepared_outcomes as prepared_outcomes
 from quantforge.data import IntradayBar, TimeframeBarSeries
@@ -35,6 +36,7 @@ from quantforge.indicators import (
     TimeframeIndicatorOutput,
 )
 from quantforge.indicators.backends import NATIVE_INDICATOR_BACKEND
+from quantforge.indicators.exceptions import InvalidIndicatorBackendError
 from quantforge.prediction import (
     PredictionContextRequirements,
     PredictionIndicatorRequirement,
@@ -378,6 +380,67 @@ def test_parameters_backends_and_scopes_never_share_series(scope: SmokeScope) ->
     other = scope.provider()
     assert scope_of(other) is not prepared
     assert scope_of(other).statistics()["unique_series"] == 0
+
+
+def nondefault_compatibility() -> int:
+    return 1
+
+
+def nonzero_unstable_period(function_name: str) -> int:
+    return 5
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value", "message"),
+    [
+        (
+            "get_compatibility",
+            nondefault_compatibility,
+            "default compatibility and zero unstable period",
+        ),
+        (
+            "get_unstable_period",
+            nonzero_unstable_period,
+            "default compatibility and zero unstable period",
+        ),
+        (
+            "__ta_version__",
+            b"0.7.2 (different runtime)",
+            "backend result metadata changed during calculation",
+        ),
+    ],
+    ids=["compatibility", "unstable_period", "runtime_identity"],
+)
+def test_talib_state_drift_after_caching_fails_exactly_like_reference(
+    scope: SmokeScope,
+    monkeypatch: pytest.MonkeyPatch,
+    attribute: str,
+    value: object,
+    message: str,
+) -> None:
+    """Reusing a cached talib_v1 series still applies compute()'s process checks."""
+    provider = scope.provider()
+    requirements = requirements_of(scope)
+    stamps = scope.schedule.decision_timestamps
+    rule_context(scope, provider, requirements, stamps[10])
+    before = scope_of(provider).statistics()
+    assert before["series_built"] == before["series_verified"] == 3
+    with monkeypatch.context() as drifted:
+        drifted.setattr(talib, attribute, value)
+        # Every series is cached: the prepared path must fail as a new
+        # computation (the reference path) does, not silently reuse.
+        for candidate in (provider, scope.provider(reference=True)):
+            with pytest.raises(InvalidIndicatorBackendError, match=message):
+                rule_context(scope, candidate, requirements, stamps[11])
+    after = scope_of(provider).statistics()
+    assert after["series_reused"] == before["series_reused"]
+    # Restored state: the same cached series serve again and stay exact.
+    restored = rule_context(scope, provider, requirements, stamps[11])
+    reference = rule_context(
+        scope, scope.provider(reference=True), requirements, stamps[11]
+    )
+    assert restored.values_primitive() == reference.values_primitive()
+    assert scope_of(provider).statistics()["series_built"] == 3
 
 
 # -- mutation safety ------------------------------------------------------------

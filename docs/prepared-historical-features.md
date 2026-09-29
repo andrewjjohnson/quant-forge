@@ -213,6 +213,15 @@ equal, including Decimal representation, to the reference evaluation of that
 decision's context. On a mismatch the series is rejected and the decision uses
 the reference evaluation. Real QF-45 and all fixtures recorded **0** rejections.
 
+Reusing a series skips the backend's `compute()`, so every use also repeats
+that call's per-evaluation checks. For `talib_v1` these are TA-Lib's
+process-global default compatibility and zero unstable periods; for both
+backends the current backend identity, including the TA-Lib runtime version,
+must equal the identity captured by the indicator. Changing any of these fails
+the decision with the same `InvalidIndicatorBackendError` a fresh computation
+raises, whether or not the series is cached. `native_v1` has no process-global
+state.
+
 ### Causality
 
 - Runs stop at the window end; the provider's schedule set still rejects
@@ -420,6 +429,8 @@ no decisions.
   - the sentinel future test;
   - three-trial series reuse with one outcome authentication;
   - series separated by parameter and backend, and never shared across scopes;
+  - TA-Lib compatibility, unstable-period and runtime-identity drift after
+    series are cached, which fails exactly as the reference path does;
   - bar/provenance bypass mutation, which fails the trial and every later trial;
   - identical rejection on the reference path;
   - shell mutation isolated to its decision;

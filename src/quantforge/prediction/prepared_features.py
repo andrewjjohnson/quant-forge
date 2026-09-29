@@ -49,8 +49,10 @@ from quantforge.indicators import (
     WilderDirectionalMovement,
     WilderRelativeStrengthIndex,
 )
+from quantforge.indicators.backends import StandardIndicatorDefinition
 from quantforge.indicators.backends.native import NativeIndicatorBackend
 from quantforge.indicators.backends.talib import TalibIndicatorBackend
+from quantforge.indicators.exceptions import InvalidIndicatorBackendError
 from quantforge.indicators.models import IndicatorFieldOutput
 from quantforge.indicators.timeframe import TimeframeIndicatorOutput, bind_indicator
 from quantforge.prediction.context import (
@@ -359,6 +361,30 @@ def _slice_output(
     return sliced
 
 
+def _validate_backend_state(indicator: object) -> None:
+    """Fail when a fresh backend computation would fail, even for cached series.
+
+    ``talib_v1`` validates TA-Lib's process-global compatibility and unstable
+    periods on every ``compute`` and reports the current library identity, which
+    the indicator compares with its captured identity. A reused series skips
+    ``compute``, so both checks run here on every use, with the same errors.
+    ``native_v1`` has no process-global state; its identity is compared too.
+    """
+    backend = getattr(indicator, "_backend")
+    definition = cast(
+        StandardIndicatorDefinition, getattr(indicator, "standard_definition")
+    )
+    identity = (
+        backend.validate_evaluation_state(definition)
+        if type(backend) is TalibIndicatorBackend
+        else cast(NativeIndicatorBackend, backend).identity_for(definition)
+    )
+    if identity != getattr(indicator, "backend_identity"):
+        raise InvalidIndicatorBackendError(
+            "indicator backend result metadata changed during calculation"
+        )
+
+
 def _exact_values(output: TimeframeIndicatorOutput) -> tuple[object, ...]:
     """Field values including Decimal representation, not only numeric equality."""
     return tuple(
@@ -610,6 +636,8 @@ class PreparedContextScope:
         run, first, last = selection
         indicator = requirement.indicator
         requirement.validate_unchanged()
+        # Reuse skips the backend's compute(); apply its per-evaluation checks.
+        _validate_backend_state(indicator)
         bound_key = (
             requirement.configuration_id,
             type(indicator),

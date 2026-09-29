@@ -427,6 +427,19 @@ class TalibIndicatorBackend:
             runtime_library_version=_talib_runtime_library_version(),
         )
 
+    def validate_evaluation_state(
+        self, definition: StandardIndicatorDefinition
+    ) -> IndicatorBackendIdentity:
+        """Apply ``compute``'s process-state check without computing.
+
+        TA-Lib compatibility and unstable periods are process-global. A caller
+        reusing an earlier result (QF-63 prepared series) must fail exactly when
+        a new computation would, and compare the identity ``compute`` would
+        report now with the identity it originally used.
+        """
+        _validate_global_state(_mapping_for(definition))
+        return self.identity_for(definition)
+
     def compute(
         self, request: IndicatorComputationRequest
     ) -> IndicatorComputationResult:

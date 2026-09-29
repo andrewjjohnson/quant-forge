@@ -55,7 +55,11 @@ that is, per plan, window, role and immutable source family.
   prefix stability with exact Decimal representation for every admitted pair.
   The first use of every series is also proven equal to the reference
   evaluation of that decision's context; a mismatch rejects the series and
-  falls back.
+  falls back. Every use, including reuse, repeats the backend's per-evaluation
+  checks that `compute()` would apply: TA-Lib's process-global default
+  compatibility and zero unstable periods, and the current backend identity.
+  Drift therefore fails exactly as a fresh computation would, regardless of
+  cache state.
 - **Validation.** QF-28 symbol/basis checks and QF-52 per-bar lineage run once
   per newly visible bar under each exact key. Family, reference and session
   checks still run every decision. A decision fails exactly when the reference
