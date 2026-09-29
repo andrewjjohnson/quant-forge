@@ -1,5 +1,12 @@
 # Research Integrity
 
+QF-63 prepared indicator series start at each decision's exact input start. The
+rolling daily start therefore produces a separate EMA seed rather than a slice of
+a full-source EMA. Rules receive only prefixes ending at their cutoff. Admitted
+formulas are proven prefix-stable and sentinel-invariant, and each series is
+checked against the reference evaluation on first use. See
+[prepared historical features](prepared-historical-features.md).
+
 QF-52 causal prediction views retain only completed session evidence permitted
 by their exact cutoff. Canonical ancestry remains an opaque reference inside the
 view; offline integrity checks use the independent parent retained by the plan.

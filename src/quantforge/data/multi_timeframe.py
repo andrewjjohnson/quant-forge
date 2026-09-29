@@ -1,5 +1,6 @@
 """Leakage-safe as-of alignment across compatible dataset timeframes."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
@@ -463,6 +464,10 @@ class TimeframeContext:
     bars: tuple[ContextBar, ...]
     latest_completed_bar_timestamp: datetime | None
     age: timedelta | None
+    # QF-63 operational evidence: IDs computed once from these exact bars.
+    _prepared_bar_ids: tuple[str, ...] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @classmethod
     def _from_aligned_series(
@@ -487,7 +492,70 @@ class TimeframeContext:
             latest_completed_bar_timestamp,
         )
         object.__setattr__(instance, "age", age)
+        object.__setattr__(instance, "_prepared_bar_ids", None)
         instance.__post_init__()
+        return instance
+
+    @classmethod
+    def _from_prepared_run(
+        cls,
+        *,
+        requirement: ContextTimeframeRequirement,
+        dataset_reference: DatasetFamilyReference | None,
+        bars: tuple[ArtifactBar, ...],
+        bar_ids: tuple[str, ...],
+        as_of: datetime,
+    ) -> "TimeframeContext":
+        """Construct from a causal slice of a run validated once by the caller.
+
+        QF-63 preparation already proved the complete run is ordered, unique,
+        non-overlapping, completed-only and bound to this timeframe, and resolved
+        the slice with an inclusive bar-end cutoff. Only O(1) boundary facts are
+        rechecked here, so a slice needs no repeated full sort or scan.
+        """
+        latest = bars[-1] if bars else None
+        age = None if latest is None else as_of - latest.end_timestamp
+        maximum_age = requirement.maximum_age
+        if latest is None:
+            availability = ContextAvailability.MISSING
+        elif maximum_age is not None and cast(timedelta, age) > maximum_age:
+            availability = ContextAvailability.STALE
+        else:
+            availability = ContextAvailability.AVAILABLE
+        if (
+            not isinstance(cast(object, requirement), ContextTimeframeRequirement)
+            or len(bar_ids) != len(bars)
+            or (
+                dataset_reference is not None
+                and dataset_reference.timeframe_configuration_id
+                != requirement.timeframe.configuration_id
+            )
+            or (
+                latest is not None
+                and (
+                    dataset_reference is None
+                    or latest.timeframe != requirement.timeframe
+                    or latest.completion is BarCompletion.DEVELOPING
+                    or latest.end_timestamp > as_of
+                    or bars[0].end_timestamp > latest.end_timestamp
+                )
+            )
+        ):
+            raise MultiTimeframeContextValidationError(
+                "prepared timeframe run does not match its causal requirement"
+            )
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "requirement", requirement)
+        object.__setattr__(instance, "dataset_reference", dataset_reference)
+        object.__setattr__(instance, "availability", availability)
+        object.__setattr__(instance, "bars", bars)
+        object.__setattr__(
+            instance,
+            "latest_completed_bar_timestamp",
+            None if latest is None else latest.end_timestamp,
+        )
+        object.__setattr__(instance, "age", age)
+        object.__setattr__(instance, "_prepared_bar_ids", bar_ids)
         return instance
 
     def __post_init__(self) -> None:
@@ -585,6 +653,13 @@ class TimeframeContext:
         latest = self.latest_bar
         return None if latest is None else latest.completion
 
+    @property
+    def visible_bar_ids(self) -> tuple[str, ...]:
+        """Return the ordered visible bar identities; prepared runs hash once."""
+        if self._prepared_bar_ids is not None:
+            return self._prepared_bar_ids
+        return tuple(bar.bar_id for bar in self.bars)
+
     def to_primitive(self) -> PrimitiveMapping:
         latest = self.latest_bar
         primitive: PrimitiveMapping = {
@@ -608,7 +683,7 @@ class TimeframeContext:
             "age_microseconds": (
                 None if self.age is None else _duration_microseconds(self.age)
             ),
-            "visible_bar_ids": [bar.bar_id for bar in self.bars],
+            "visible_bar_ids": list(self.visible_bar_ids),
         }
         if isinstance(latest, DevelopingBar):
             primitive["developing_bar"] = {
@@ -632,6 +707,8 @@ class MultiTimeframeContext:
     _dataset_family_manifest_id: str | None = field(
         default=None, repr=False, compare=False
     )
+    # QF-63 operational capability; never compared, serialized or rule-facing.
+    _prepared_evidence: object | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def _from_aligned_timeframes(
@@ -659,7 +736,106 @@ class MultiTimeframeContext:
         object.__setattr__(
             instance, "schema_version", MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION
         )
+        object.__setattr__(instance, "_prepared_evidence", None)
         instance.__post_init__()
+        return instance
+
+    @classmethod
+    def _from_prepared_runs(
+        cls,
+        *,
+        as_of: datetime,
+        primary_timeframe: Timeframe,
+        required_timeframes: tuple[ContextTimeframeRequirement, ...],
+        runs: Mapping[
+            str,
+            tuple[object, tuple[ArtifactBar, ...], tuple[str, ...], str | None],
+        ],
+        prepared_evidence: object | None,
+    ) -> "MultiTimeframeContext":
+        """Completed-only context from causal slices of runs validated once.
+
+        ``runs`` maps a timeframe ID to (dataset reference, visible bars, their
+        IDs, family manifest ID). The caller proved each run ordered, unique,
+        non-overlapping, completed-only and single-timeframe, and cut each slice
+        at the inclusive bar-end cutoff. Declarations, family consistency and the
+        manifest follow ``build_multi_timeframe_context`` exactly; only its full
+        per-bar sorts and scans, already proven for the whole run, are skipped.
+        """
+        decision_timestamp = _utc_timestamp(as_of, "context as-of")
+        ordered_requirements = _validate_declared_timeframes(
+            primary_timeframe, required_timeframes
+        )
+        declared = (
+            ContextTimeframeRequirement(primary_timeframe),
+            *ordered_requirements,
+        )
+        declared_ids = {item.timeframe.configuration_id for item in declared}
+        unexpected_ids = set(runs) - declared_ids
+        if unexpected_ids:
+            raise MultiTimeframeContextValidationError(
+                "context series contains an undeclared timeframe: "
+                f"{min(unexpected_ids)}"
+            )
+        references: list[DatasetFamilyReference] = []
+        timeframes: list[TimeframeContext] = []
+        for requirement in declared:
+            run = runs.get(requirement.timeframe.configuration_id)
+            if run is None:
+                timeframes.append(
+                    TimeframeContext._from_prepared_run(  # pyright: ignore[reportPrivateUsage]
+                        requirement=requirement,
+                        dataset_reference=None,
+                        bars=(),
+                        bar_ids=(),
+                        as_of=decision_timestamp,
+                    )
+                )
+                continue
+            reference, bars, bar_ids, _ = run
+            if not isinstance(reference, DatasetFamilyReference):
+                raise MultiTimeframeContextValidationError(
+                    "prepared timeframe dataset reference is invalid"
+                )
+            references.append(reference)
+            timeframes.append(
+                TimeframeContext._from_prepared_run(  # pyright: ignore[reportPrivateUsage]
+                    requirement=requirement,
+                    dataset_reference=reference,
+                    bars=bars,
+                    bar_ids=bar_ids,
+                    as_of=decision_timestamp,
+                )
+            )
+        if not references:
+            raise MultiTimeframeContextValidationError(
+                "context requires at least one dataset-family series"
+            )
+        try:
+            source_consistency = validate_source_consistency(references)
+        except ValueError as error:
+            raise MultiTimeframeContextValidationError(str(error)) from error
+        manifest_ids = {run[3] for run in runs.values()}
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "as_of", decision_timestamp)
+        object.__setattr__(instance, "primary_timeframe", primary_timeframe)
+        object.__setattr__(instance, "required_timeframes", ordered_requirements)
+        object.__setattr__(
+            instance, "completion_policy", ContextCompletionPolicy.COMPLETED_BARS_ONLY
+        )
+        object.__setattr__(instance, "source_consistency", source_consistency)
+        object.__setattr__(instance, "timeframes", tuple(timeframes))
+        object.__setattr__(
+            instance,
+            "_dataset_family_manifest_id",
+            next(iter(manifest_ids))
+            if len(manifest_ids) == 1 and None not in manifest_ids
+            else None,
+        )
+        object.__setattr__(
+            instance, "schema_version", MULTI_TIMEFRAME_CONTEXT_SCHEMA_VERSION
+        )
+        object.__setattr__(instance, "_prepared_evidence", prepared_evidence)
         return instance
 
     def __post_init__(self) -> None:
@@ -773,6 +949,15 @@ class MultiTimeframeContext:
     def dataset_family_manifest_id(self) -> str | None:
         """Return the exact family manifest bound by every input series, if one."""
         return self._dataset_family_manifest_id
+
+    @property
+    def prepared_evidence(self) -> object | None:
+        """Return the producer's operational QF-63 binding, if any.
+
+        It is not part of equality, identity or serialization. Consumers that
+        do not recognize it use the unchanged reference path.
+        """
+        return self._prepared_evidence
 
     def _for_timeframe(self, timeframe: Timeframe) -> TimeframeContext:
         timeframe_value = cast(object, timeframe)

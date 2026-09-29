@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from enum import StrEnum
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from quantforge.configuration import (
     Primitive,
@@ -31,6 +31,9 @@ from quantforge.indicators import (
 )
 from quantforge.timeframes import BarCompletion, IntradayInterval, Timeframe
 
+if TYPE_CHECKING:
+    from quantforge.prediction.prepared_features import PreparedDecisionContext
+
 PREDICTION_CONTEXT_CONTRACT_VERSION = "1"
 
 
@@ -48,6 +51,22 @@ class RejectedPredictionContextError(PredictionContextError):
 
 class PredictionContextAccessError(PredictionContextError):
     """A rule attempted to access an undeclared context input."""
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedOutputEvidence:
+    """Expected QF-63 output metadata, computed once from the exact causal bars."""
+
+    configuration_id: str
+    bar_ids: tuple[str, ...]
+    bar_end_timestamps: tuple[datetime, ...]
+    completion_states: tuple[BarCompletion, ...]
+
+
+class PredictionContextValuesGuard(Protocol):
+    """Prove a prepared rule context still carries its build-time values."""
+
+    def verify(self, context: "PredictionRuleContext") -> None: ...
 
 
 class PredictionContextFailurePolicy(StrEnum):
@@ -228,24 +247,41 @@ class PredictionIndicatorRequirement:
         dataset_reference: DatasetFamilyReference,
         bars: tuple[ContextBar, ...],
         verify_values: bool = False,
+        prepared: PreparedOutputEvidence | None = None,
     ) -> TimeframeIndicatorOutput:
-        """Validate cached or fresh output against the exact causal source."""
+        """Validate cached or fresh output against the exact causal source.
+
+        ``prepared`` supplies the same expected identity and per-bar tuples, derived
+        once from the identical prepared bars, so no bar is re-hashed or rescanned.
+        """
         self.validate_unchanged()
         if not isinstance(cast(object, output), TimeframeIndicatorOutput):
             raise PredictionContextError(
                 f"resolved indicator output is invalid: {self.alias}"
             )
-        expected_configuration_id = bind_indicator(
-            self.indicator,
-            context,
-            timeframe,
-            completion_policy=completion_policy,
-        ).configuration_id
+        expected_configuration_id = (
+            bind_indicator(
+                self.indicator,
+                context,
+                timeframe,
+                completion_policy=completion_policy,
+            ).configuration_id
+            if prepared is None
+            else prepared.configuration_id
+        )
         expected_fields = (
             self.evaluate(context, timeframe, completion_policy).fields
             if verify_values
             else None
         )
+        if prepared is None:
+            expected_bar_ids = tuple(bar.bar_id for bar in bars)
+            expected_ends = tuple(bar.end_timestamp for bar in bars)
+            expected_completions = tuple(bar.completion for bar in bars)
+        else:
+            expected_bar_ids = prepared.bar_ids
+            expected_ends = prepared.bar_end_timestamps
+            expected_completions = prepared.completion_states
         if (
             output.indicator_name != self._indicator_name
             or output.configuration_id != expected_configuration_id
@@ -256,9 +292,10 @@ class PredictionIndicatorRequirement:
             or output.dataset_reference != dataset_reference
             or output.feed_scope != dataset_reference.feed_scope
             or output.warm_up_bars != self._warm_up_bars
-            or output.bar_ids != tuple(bar.bar_id for bar in bars)
-            or output.bar_end_timestamps != tuple(bar.end_timestamp for bar in bars)
-            or output.completion_states != tuple(bar.completion for bar in bars)
+            or len(expected_bar_ids) != len(bars)
+            or output.bar_ids != expected_bar_ids
+            or output.bar_end_timestamps != expected_ends
+            or output.completion_states != expected_completions
             or tuple(field.name for field in output.fields) != self._output_fields
             or output.backend_identity != self._backend_identity
             or (expected_fields is not None and output.fields != expected_fields)
@@ -493,6 +530,8 @@ class PredictionTimeframeInput:
     requirement: PredictionTimeframeRequirement
     bars: tuple[ContextBar, ...]
     indicators: tuple[NamedPredictionIndicatorOutput, ...]
+    # QF-63: visible IDs computed once from these exact bars; never serialized.
+    _bar_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
     def indicator(self, alias: str) -> TimeframeIndicatorOutput:
         for item in self.indicators:
@@ -505,7 +544,11 @@ class PredictionTimeframeInput:
     def manifest_primitive(self) -> PrimitiveMapping:
         return {
             "requirement": self.requirement.to_primitive(),
-            "visible_bar_ids": [bar.bar_id for bar in self.bars],
+            "visible_bar_ids": (
+                [bar.bar_id for bar in self.bars]
+                if self._bar_ids is None
+                else list(self._bar_ids)
+            ),
             "indicators": [item.manifest_primitive() for item in self.indicators],
         }
 
@@ -526,6 +569,16 @@ class PredictionRuleContext:
     _values_snapshot: PrimitiveMappingSnapshot | None = field(
         default=None, repr=False, compare=False
     )
+    # QF-63 prepared contexts prove values by identity against pristine evidence
+    # instead of three full serializations. It holds only causally visible data.
+    _values_guard: PredictionContextValuesGuard | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    @property
+    def values_guarded(self) -> bool:
+        """Whether a prepared guard, not a full values snapshot, proves immutability."""
+        return self._values_guard is not None
 
     @property
     def as_of(self) -> datetime:
@@ -613,6 +666,9 @@ class PredictionRuleContext:
 
     def validate_values_unchanged(self) -> None:
         """Prove all current bars and indicator values match their build snapshot."""
+        if self._values_guard is not None:
+            self._values_guard.verify(self)
+            return
         if self._values_snapshot is None:
             raise PredictionContextError(
                 "prediction rule context has no immutable values snapshot"
@@ -664,15 +720,25 @@ def build_prediction_rule_context(
         raise PredictionContextError(
             "prediction context timeframes or staleness policies are incompatible"
         )
+    # QF-63: a context from a prepared completed-only run needs no repeated full
+    # scans. Its runs were validated once; each check below is incremental or
+    # O(1) on sorted evidence. Output caches keep the unchanged reference path.
+    prepared = (
+        _prepared_decision_context(context) if indicator_output_cache is None else None
+    )
 
     try:
         primary_context_bars = context.bars_for(requirements.primary.timeframe)
     except ValueError as error:
         raise PredictionContextError(str(error)) from error
-    primary_bars = tuple(
-        bar
-        for bar in primary_context_bars
-        if bar.completion is not BarCompletion.DEVELOPING
+    primary_bars = (
+        primary_context_bars
+        if prepared is not None
+        else tuple(
+            bar
+            for bar in primary_context_bars
+            if bar.completion is not BarCompletion.DEVELOPING
+        )
     )
     if not primary_bars:
         raise PredictionContextError(
@@ -680,23 +746,30 @@ def build_prediction_rule_context(
         )
     primary_decision_boundary = primary_bars[-1].end_timestamp
 
-    visible_context_bars = tuple(
-        bar for timeframe in context.timeframes for bar in timeframe.bars
-    )
-    if any(bar.symbol != symbol for bar in visible_context_bars):
-        raise PredictionContextError(
-            "prediction context symbol is incompatible with the prediction dataset"
+    if prepared is not None:
+        prepared.validate_rule_inputs(
+            context,
+            symbol=symbol,
+            adjustment_basis=prediction_adjustment_basis,
         )
-    context_adjustment_bases = {
-        bar.provenance.adjustment_basis
-        for bar in visible_context_bars
-        if isinstance(bar, IntradayBar)
-    }
-    if context_adjustment_bases != {prediction_adjustment_basis}:
-        raise PredictionContextError(
-            "prediction context adjustment basis is incompatible with the "
-            "prediction dataset"
+    else:
+        visible_context_bars = tuple(
+            bar for timeframe in context.timeframes for bar in timeframe.bars
         )
+        if any(bar.symbol != symbol for bar in visible_context_bars):
+            raise PredictionContextError(
+                "prediction context symbol is incompatible with the prediction dataset"
+            )
+        context_adjustment_bases = {
+            bar.provenance.adjustment_basis
+            for bar in visible_context_bars
+            if isinstance(bar, IntradayBar)
+        }
+        if context_adjustment_bases != {prediction_adjustment_basis}:
+            raise PredictionContextError(
+                "prediction context adjustment basis is incompatible with the "
+                "prediction dataset"
+            )
 
     resolved: list[PredictionTimeframeInput] = []
     for requirement in requirements.all_timeframes:
@@ -722,13 +795,15 @@ def build_prediction_rule_context(
             context_bars = context.bars_for(requirement.timeframe)
         except ValueError as error:
             raise PredictionContextError(str(error)) from error
+        # Prepared runs are completed-only, so no bar is filtered.
         bars = (
             tuple(
                 bar
                 for bar in context_bars
                 if bar.completion is not BarCompletion.DEVELOPING
             )
-            if requirement.completion_policy
+            if prepared is None
+            and requirement.completion_policy
             is ContextCompletionPolicy.COMPLETED_BARS_ONLY
             else context_bars
         )
@@ -736,7 +811,12 @@ def build_prediction_rule_context(
             raise PredictionContextError(
                 "prediction context has no bar under the declared completion policy"
             )
-        if any(bar.end_timestamp > primary_decision_boundary for bar in bars):
+        # Prepared bars are strictly ordered by end, so the latest bar decides.
+        if (
+            bars[-1].end_timestamp > primary_decision_boundary
+            if prepared is not None
+            else any(bar.end_timestamp > primary_decision_boundary for bar in bars)
+        ):
             raise PredictionContextError(
                 "prediction context exposes a bar after the primary decision boundary"
             )
@@ -750,8 +830,20 @@ def build_prediction_rule_context(
             )
         outputs: list[NamedPredictionIndicatorOutput] = []
         for item in requirement.indicators:
+            prepared_output = (
+                None
+                if prepared is None
+                else prepared.indicator_output(
+                    item,
+                    context,
+                    requirement.timeframe,
+                    requirement.completion_policy,
+                )
+            )
             output = (
-                item.evaluate(
+                prepared_output[0]
+                if prepared_output is not None
+                else item.evaluate(
                     context,
                     requirement.timeframe,
                     requirement.completion_policy,
@@ -775,10 +867,20 @@ def build_prediction_rule_context(
                         dataset_reference=metadata.dataset_reference,
                         bars=bars,
                         verify_values=indicator_output_cache is not None,
+                        prepared=(
+                            None if prepared_output is None else prepared_output[1]
+                        ),
                     ),
                 )
             )
-        resolved.append(PredictionTimeframeInput(requirement, bars, tuple(outputs)))
+        resolved.append(
+            PredictionTimeframeInput(
+                requirement,
+                bars,
+                tuple(outputs),
+                _bar_ids=metadata.visible_bar_ids if prepared is not None else None,
+            )
+        )
 
     source_snapshot = PrimitiveMappingSnapshot.capture(context.to_primitive())
     rule_context = PredictionRuleContext(
@@ -790,10 +892,24 @@ def build_prediction_rule_context(
         tuple(resolved),
         dataset_family_manifest_id=context.dataset_family_manifest_id,
     )
+    if prepared is not None:
+        # Pristine evidence was captured once per prepared run. The guard proves
+        # later values by identity and exposes only this decision's visible bars.
+        return replace(rule_context, _values_guard=prepared.values_guard(rule_context))
     # Retain complete build-time values so downstream consumers can prove that a
     # reconstructed context still carries the exact validated bars and outputs.
     values_snapshot = PrimitiveMappingSnapshot.capture(rule_context.values_primitive())
     return replace(rule_context, _values_snapshot=values_snapshot)
+
+
+def _prepared_decision_context(
+    context: MultiTimeframeContext,
+) -> "PreparedDecisionContext | None":
+    """Recognize only the exact QF-63 binding type; anything else is reference."""
+    from quantforge.prediction.prepared_features import PreparedDecisionContext
+
+    evidence = context.prepared_evidence
+    return evidence if type(evidence) is PreparedDecisionContext else None
 
 
 def skipped_prediction_context_manifest(

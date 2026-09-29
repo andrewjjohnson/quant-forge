@@ -1,5 +1,22 @@
 # QuantForge Architecture
 
+QF-63 gives each QF-39 permitted-context provider a `PreparedContextScope`.
+
+- **Runs.** Each scope holds validated immutable source runs ending at the
+  window's last cutoff, with bar identities hashed once.
+- **Series.** Reviewed standard indicators become prefix-stable series, keyed by
+  content identity and exact input start. QF-32 trials of the fold/role share
+  them.
+- **Per decision.** Each decision slices exact QF-59 positions: trusted QF-20
+  constructors and indicator prefixes, with incremental QF-28/QF-52 checks and an
+  identity guard over visible data only.
+- **Fallback.** Developing policies, custom indicators and unsupported graphs
+  keep the unchanged reference path.
+
+Rules never receive future-bearing state. See
+[prepared historical features](prepared-historical-features.md) and
+[ADR 0035](decisions/0035-prepare-historical-context-and-feature-series.md).
+
 QF-62 adds opt-in compact window schema `"3"`. It stores visible-bar membership
 once in append-only catalogues bound to a source and timeframe, and decisions
 reference it by exact range. Validation reconstructs the expanded membership and

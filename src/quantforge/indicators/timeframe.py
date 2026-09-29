@@ -408,6 +408,13 @@ class ConfiguredTimeframeIndicator:
             raise MisalignedIndicatorOutputError(
                 "timeframe indicator fields do not match its declared outputs"
             )
+        # When no developing bar was removed, the input is exactly the aligned
+        # view; reuse its ordered identities instead of rehashing every bar.
+        bar_ids = (
+            metadata.visible_bar_ids
+            if len(bars) == len(context_bars)
+            else tuple(bar.bar_id for bar in bars)
+        )
         return TimeframeIndicatorOutput(
             indicator_name=self._indicator_name,
             configuration_id=self.configuration_id,
@@ -418,7 +425,7 @@ class ConfiguredTimeframeIndicator:
             dataset_reference=self.dataset_reference,
             feed_scope=self.dataset_reference.feed_scope,
             warm_up_bars=self._warm_up_bars,
-            bar_ids=tuple(bar.bar_id for bar in bars),
+            bar_ids=bar_ids,
             bar_end_timestamps=tuple(bar.end_timestamp for bar in bars),
             completion_states=tuple(bar.completion for bar in bars),
             fields=fields,

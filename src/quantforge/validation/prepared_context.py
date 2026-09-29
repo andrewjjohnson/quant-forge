@@ -88,6 +88,17 @@ class PredictionSourceIndex:
             )
         return self.window_start - required, stop
 
+    def extent(self, end_timestamp: datetime) -> tuple[int, int]:
+        """Return the smallest source run containing every slice up to ``end``.
+
+        Starts are ``window_start - warm_up`` or, before the first in-window bar,
+        one preceding anchor earlier. No slice can end after the window end.
+        """
+        return (
+            max(0, self.window_start - self.warm_up_count - 1),
+            bisect_right(self.timestamps, end_timestamp),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PreparedPredictionContext:
@@ -255,6 +266,40 @@ class PreparedPredictionContext:
         as_of: TimestampBoundary,
     ) -> tuple[PredictionContextObservationSelection, TimeframeBarSeries]:
         """Resolve exact causal membership and original bars without full scanning."""
+        index, start, stop = self.bounds_for(timeframe, as_of=as_of)
+        source = index.source
+        selection = PredictionContextObservationSelection(
+            self.plan.plan_id,
+            as_of,
+            WindowObservationSelection(
+                self.window_id,
+                index.keys[start : index.window_start],
+                index.keys[index.window_start : stop],
+                source.dataset_reference.dataset_id,
+                index.timeframe_id,
+                source.dataset_family_manifest_id,
+            ),
+        )
+        selected = TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
+            source.dataset_reference,
+            source.timeframe,
+            source.bars[start:stop],
+            dataset_family_manifest_id=source.dataset_family_manifest_id,
+            developing_source_evidence=source._developing_source_evidence,  # pyright: ignore[reportPrivateUsage]
+        )
+        return selection, selected
+
+    def bounds_for(
+        self,
+        timeframe: Timeframe,
+        *,
+        as_of: TimestampBoundary,
+    ) -> tuple[PredictionSourceIndex, int, int]:
+        """Apply every ``select`` membership check; return exact source positions.
+
+        QF-63 consumes these positions directly; ``select`` materializes them as
+        the unchanged QF-59 selection and bounded series.
+        """
         if not isinstance(cast(object, as_of), TimestampBoundary):
             raise ValidationPlanError("context as_of must be a timestamp boundary")
         timestamp = as_of.timestamp
@@ -295,24 +340,4 @@ class PreparedPredictionContext:
         if index is None:
             raise ValidationPlanError("prepared context timeframe/session differs")
         start, stop = index.bounds(timestamp)
-        source = index.source
-        selection = PredictionContextObservationSelection(
-            self.plan.plan_id,
-            as_of,
-            WindowObservationSelection(
-                self.window_id,
-                index.keys[start : index.window_start],
-                index.keys[index.window_start : stop],
-                source.dataset_reference.dataset_id,
-                index.timeframe_id,
-                source.dataset_family_manifest_id,
-            ),
-        )
-        selected = TimeframeBarSeries._from_validated_artifact(  # pyright: ignore[reportPrivateUsage]
-            source.dataset_reference,
-            source.timeframe,
-            source.bars[start:stop],
-            dataset_family_manifest_id=source.dataset_family_manifest_id,
-            developing_source_evidence=source._developing_source_evidence,  # pyright: ignore[reportPrivateUsage]
-        )
-        return selection, selected
+        return index, start, stop

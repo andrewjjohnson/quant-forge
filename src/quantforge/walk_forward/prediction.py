@@ -16,6 +16,7 @@ from quantforge.data import (
     TimeframeBarSeries,
     build_multi_timeframe_context,
 )
+from quantforge.data.multi_timeframe import ContextCompletionPolicy
 from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
 from quantforge.prediction import (
     PredictionContextRequirements,
@@ -34,6 +35,7 @@ from quantforge.prediction.grid import (
     PredictionWindowAnalyzer,
     _trial_definition,  # pyright: ignore[reportPrivateUsage]
 )
+from quantforge.prediction.prepared_features import PreparedContextScope
 from quantforge.prediction.study import (
     STUDY_ENGINE_VERSION,
     _capture_study_configuration,  # pyright: ignore[reportPrivateUsage]
@@ -106,6 +108,9 @@ class _PermittedContextProvider:
     _prepared_context: PreparedPredictionContext | None = field(
         init=False, repr=False, compare=False
     )
+    _prepared_features: PreparedContextScope | None = field(
+        init=False, repr=False, compare=False
+    )
     _decision_timestamps: frozenset[datetime] = field(
         init=False, repr=False, compare=False
     )
@@ -126,6 +131,20 @@ class _PermittedContextProvider:
             # for invalid contexts. Preparation never waives those checks.
             prepared = None
         object.__setattr__(self, "_prepared_context", prepared)
+        # QF-63: one scope per provider, so all QF-32 trials of this fold/role
+        # share runs and indicator series. Runs end at the window's last cutoff.
+        object.__setattr__(
+            self,
+            "_prepared_features",
+            None
+            if prepared is None
+            else PreparedContextScope.capture(
+                tuple(
+                    (index.source, *index.extent(prepared.end_timestamp))
+                    for index in prepared.indexes
+                )
+            ),
+        )
 
     def get_context_at(
         self, requirements: PredictionContextRequirements, *, as_of: datetime
@@ -138,6 +157,26 @@ class _PermittedContextProvider:
         required_ids = {
             item.timeframe.configuration_id for item in requirements.all_timeframes
         }
+        if (
+            self._prepared_features is not None
+            and self._prepared_context is not None
+            and requirements.context_completion_policy
+            is ContextCompletionPolicy.COMPLETED_BARS_ONLY
+        ):
+            positions: list[tuple[str, int, int]] = []
+            for source in self.series:
+                if source.timeframe.configuration_id not in required_ids:
+                    continue
+                index, start, stop = self._prepared_context.bounds_for(
+                    source.timeframe, as_of=TimestampBoundary(as_of)
+                )
+                positions.append((index.timeframe_id, start, stop))
+            return self._prepared_features.context_at(
+                requirements.primary.timeframe,
+                requirements.context_timeframe_requirements(),
+                as_of=as_of,
+                positions=tuple(positions),
+            )
         for source in self.series:
             if source.timeframe.configuration_id not in required_ids:
                 continue
