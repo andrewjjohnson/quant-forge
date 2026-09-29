@@ -28,7 +28,7 @@ def compact_adapter(
     )
 
 
-@pytest.mark.parametrize("version", ["2", "3"])
+@pytest.mark.parametrize("version", ["2", "3", "4"])
 def test_timestamp_selection_test_membership_and_frozen_configuration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -59,19 +59,26 @@ def test_timestamp_selection_test_membership_and_frozen_configuration(
         assert len(paths) == 1
         reader = PredictionWindowReader.open(paths[0])
         reader.verify_integrity()
-        decisions = list(reader.iterate_decisions())
+        receipts = list(reader.iterate_decision_receipts())
         retained = mapping(mapping(frozen["membership"])["test"])[
             "evaluation_timestamps"
         ]
-        assert [d.to_primitive()["decision_timestamp"] for d in decisions] == retained
+        assert [r.decision_timestamp.isoformat() for r in receipts] == retained
         old_decisions = cast(
             list[PrimitiveMapping], old.artifact.snapshot.to_primitive()["decisions"]
         )
-        for new, embedded in zip(decisions, old_decisions, strict=True):
-            assert (
-                mapping(new.to_primitive()["prediction_study"])["rows"]
-                == mapping(embedded["prediction_study"])["rows"]
+        for new, embedded in zip(receipts, old_decisions, strict=True):
+            assert (new.status, new.prediction_study_id, new.context_id) == (
+                embedded["status"],
+                embedded["prediction_study_id"],
+                embedded["context_id"],
             )
+            rows = (
+                []
+                if new.decision is None
+                else mapping(new.decision.to_primitive()["prediction_study"])["rows"]
+            )
+            assert rows == mapping(embedded["prediction_study"])["rows"]
     selection_paths = [
         p
         for p in study.study_path.rglob("prediction-window.jsonl")
@@ -89,7 +96,7 @@ def test_timestamp_selection_test_membership_and_frozen_configuration(
     assert study.resume() == result
 
 
-@pytest.mark.parametrize("version", ["2", "3"])
+@pytest.mark.parametrize("version", ["2", "3", "4"])
 def test_interrupted_test_window_resumes_after_frozen_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

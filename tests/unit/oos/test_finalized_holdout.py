@@ -18,7 +18,7 @@ from tests.unit.walk_forward.test_incremental_prediction import compact_adapter
 from tests.unit.walk_forward.timestamp_fixtures import timestamp_fixture
 
 
-@pytest.fixture(scope="module", params=["2", "3"])
+@pytest.fixture(scope="module", params=["2", "3", "4"])
 def finalized_evaluation(
     tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
 ) -> HoldoutEvaluation:

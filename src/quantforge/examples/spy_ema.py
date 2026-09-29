@@ -384,8 +384,10 @@ class EmaWindowAnalyzer:
     ) -> PredictionTrialAnalysis:
         """Exhaust compact records; retain only available timestamp/return scalars."""
         observations: list[tuple[datetime, Decimal]] = []
-        for decision in reader.iterate_decisions():
-            record = decision.to_primitive()
+        for receipt in reader.iterate_decision_receipts():
+            if receipt.decision is None:
+                continue  # Sparse no-prediction receipts carry no rows.
+            record = receipt.decision.to_primitive()
             timestamp = datetime.fromisoformat(cast(str, record["decision_timestamp"]))
             rows = cast(
                 list[PrimitiveMapping], mapping(record["prediction_study"])["rows"]

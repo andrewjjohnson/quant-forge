@@ -40,10 +40,12 @@ class CompactWindowAnalyzer(WindowAnalyzer):
     ) -> PredictionTrialAnalysis:
         count = correct = 0
         row_ids: list[str] = []
-        for decision in reader.iterate_decisions():
+        for receipt in reader.iterate_decision_receipts():
+            if receipt.decision is None:
+                continue  # Schema 4 no-prediction receipts carry no rows.
             rows = cast(
                 list[PrimitiveMapping],
-                mapping(decision.to_primitive()["prediction_study"])["rows"],
+                mapping(receipt.decision.to_primitive()["prediction_study"])["rows"],
             )
             for row in rows:
                 count += 1
@@ -95,7 +97,7 @@ def compact_grid(
     )
 
 
-@pytest.mark.parametrize("version", ["2", "3"])
+@pytest.mark.parametrize("version", ["2", "3", "4"])
 def test_grid_resume_reuses_completed_trial_and_incomplete_prefix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -159,7 +161,7 @@ def test_grid_resume_reuses_completed_trial_and_incomplete_prefix(
     assert result.cache_statistics.indicator_misses == 0
 
 
-@pytest.mark.parametrize("version", ["2", "3"])
+@pytest.mark.parametrize("version", ["2", "3", "4"])
 def test_compact_trial_corruption_is_not_ranked(tmp_path: Path, version: str) -> None:
     study = compact_grid(tmp_path, WindowProvider(), version=version)
     study.run()

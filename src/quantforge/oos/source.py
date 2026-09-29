@@ -416,8 +416,10 @@ def _validate_prediction(
         else plan.final_holdout.window
     )
     # A test result must never include an outcome in the next protected window.
-    for compact in reader.iterate_decisions():
-        decision = compact.to_primitive()
+    for receipt in reader.iterate_decision_receipts():
+        if receipt.decision is None:
+            continue  # A sparse no-prediction receipt has no rows by construction.
+        decision = receipt.decision.to_primitive()
         for row in records(mapping(decision["prediction_study"])["rows"]):
             if plan.prediction_membership is not None:
                 assert isinstance(protected.interval.start, TimestampBoundary)

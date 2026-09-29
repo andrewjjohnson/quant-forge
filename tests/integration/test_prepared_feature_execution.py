@@ -190,7 +190,7 @@ def test_every_decision_and_rule_input_equals_reference(
     # outcome/evaluation IDs, features and every serialized byte.
     assert prepared.serialize() == reference.serialize()
     assert reference.serialize() == references["8/48"].serialize()
-    for version in ("2", "3"):
+    for version in ("2", "3", "4"):
         assert CompactPredictionWindowResult.from_window(
             prepared, schema_version=version
         ).serialize() == (

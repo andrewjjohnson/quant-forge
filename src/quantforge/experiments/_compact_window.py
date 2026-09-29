@@ -76,8 +76,8 @@ def index_compact_window(
         raise ManifestError("compact window is outside artifact root")
     fingerprint = file_sha256(path)
     safe_metadata(reader.evidence.to_primitive())
-    for record in reader.iterate_decisions():
-        safe_metadata(record.to_primitive())
+    for receipt in reader.iterate_decision_receipts():
+        safe_metadata(receipt.record.to_primitive())
     reads.expect_sha256(path, fingerprint)
     header = reader.header()
     scope = reader.evidence.identity_snapshot.to_primitive()

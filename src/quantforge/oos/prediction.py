@@ -12,7 +12,7 @@ from quantforge.configuration import (
     PrimitiveMappingSnapshot,
     configuration_identity,
 )
-from quantforge.oos._records import OOSIntegrityError, mapping, number, records, text
+from quantforge.oos._records import OOSIntegrityError, mapping, number, text
 from quantforge.oos.common import completeness, configuration_stability, provenance
 from quantforge.oos.models import (
     MetricSummary,
@@ -233,31 +233,24 @@ def prediction_window_source(
 def iter_prediction_observations(
     reader: PredictionWindowReader, artifact: PredictionOOSArtifact, fold_id: str
 ) -> Iterator[PrimitiveMappingSnapshot]:
-    for compact in reader.iterate_decisions():
-        decision = compact.to_primitive()
-        study = mapping(decision["prediction_study"])
-        rows = {
-            configuration_identity(
-                {"prediction": r["prediction"], "features": r["features"]}
-            ): r
-            for r in records(study["rows"])
-        }
-        for signal in records(decision["generated_signals"]):
-            values = mapping(mapping(signal["prediction"])["values"])
-            yield PrimitiveMappingSnapshot.capture(
-                {
-                    "fold_id": fold_id,
-                    "selection_id": artifact.selection_id,
-                    "window_result_id": artifact.window_result_id,
-                    "decision_timestamp": decision["decision_timestamp"],
-                    "context_id": decision["context_id"],
-                    "prediction_study_id": decision["prediction_study_id"],
-                    "signal": signal,
-                    "eligible": values.get("direction") in {"up", "down"}
-                    and values.get("disposition") in {None, "accepted"},
-                    "row": rows.get(configuration_identity(signal)),
-                }
-            )
+    """Stream generated-signal observations; never materialize empty decisions."""
+    for observation in reader.iterate_observations():
+        signal = observation.signal()
+        values = mapping(mapping(signal["prediction"])["values"])
+        yield PrimitiveMappingSnapshot.capture(
+            {
+                "fold_id": fold_id,
+                "selection_id": artifact.selection_id,
+                "window_result_id": artifact.window_result_id,
+                "decision_timestamp": observation.decision_timestamp.isoformat(),
+                "context_id": observation.context_id,
+                "prediction_study_id": observation.prediction_study_id,
+                "signal": signal,
+                "eligible": values.get("direction") in {"up", "down"}
+                and values.get("disposition") in {None, "accepted"},
+                "row": observation.row(),
+            }
+        )
 
 
 def prediction_observations(
