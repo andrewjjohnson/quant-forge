@@ -6,7 +6,7 @@ Nothing in this module is supplied to prediction rules or serialized results.
 """
 
 from bisect import bisect_left, bisect_right
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from hashlib import sha256
@@ -183,13 +183,40 @@ class PreparedOutcomeSources:
     Only finite sources admitted during this execution are retained. No global cache,
     persisted handles, labels or decisions. Unknown/mutable graphs return ``None``
     and retain the original validation path. Equivalent new immutable handles are
-    content-authenticated before reusing an existing scientific compatibility key.
+    content-authenticated before reusing an existing scientific compatibility key;
+    an original already normalized in this session reuses its retained backing.
     """
 
     def __init__(self) -> None:
         self._metadata: DatasetMetadata | None = None
         self._input_identity: str | None = None
         self._sources: dict[str, PreparedOutcomeSource] = {}
+        self._copy_memos: list[tuple[TimeframeBarSeries, dict[int, object]]] = []
+
+    def copy_memo(
+        self,
+        source: TimeframeBarSeries | None,
+        normalize: Callable[
+            [TimeframeBarSeries | None], dict[int, object]
+        ] = prediction_source_copy_memo,
+    ) -> dict[int, object]:
+        """Return a fresh QF-58 copy memo, reusing this session's normalized backing.
+
+        QF-42 normalizes a study's source once per iterator. Without this, every
+        later iterator in one session (QF-32 trials 2..k) obtains a new backing,
+        misses the exact-backing check below and re-authenticates the complete
+        source for every decision. The retained original is a capability, not a
+        scientific key: it was recursively verified immutable when first seen.
+        """
+        if source is None:
+            return {}
+        for original, memo in self._copy_memos:
+            if original is source:
+                return dict(memo)
+        memo = normalize(source)
+        if memo:
+            self._copy_memos.append((source, memo))
+        return dict(memo)
 
     def prepare(
         self, dataset: MarketDataset, source: TimeframeBarSeries
@@ -209,10 +236,16 @@ class PreparedOutcomeSources:
         for prepared in self._sources.values():
             if source is prepared.source:
                 return prepared
-        memo = prediction_source_copy_memo(source)
+        # An original already normalized in this session maps to its retained
+        # backing, so repeated callers (QF-7 outcomes, later QF-42 iterators)
+        # reuse the exact admitted object instead of rehashing every bar.
+        memo = self.copy_memo(source)
         if not memo:
             return None
         immutable = cast(TimeframeBarSeries, memo[id(source)])
+        for prepared in self._sources.values():
+            if immutable is prepared.source:
+                return prepared
         assert self._input_identity is not None
         identity = _source_identity(immutable, self._input_identity)
         if identity not in self._sources:

@@ -501,7 +501,10 @@ def iter_prediction_window_decisions(
     # previous decision's component state must never influence the next decision.
     # Check the immutable source graph once. Each copy gets a fresh memo so only
     # the source is shared, never a previous decision's mutable component state.
-    source_memo = prediction_source_copy_memo(study.outcome_source)
+    # The session retains one normalized backing per source for all iterators.
+    source_memo = prepared.outcome_sources.copy_memo(
+        study.outcome_source, prediction_source_copy_memo
+    )
     template = deepcopy(study, source_memo.copy())
     if (
         template.strategy is study.strategy
