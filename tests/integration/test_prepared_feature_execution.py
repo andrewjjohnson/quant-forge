@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import fields, replace
 from datetime import datetime, time
 from decimal import Decimal
+from itertools import chain, repeat
 from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -441,6 +442,57 @@ def test_talib_state_drift_after_caching_fails_exactly_like_reference(
     )
     assert restored.values_primitive() == reference.values_primitive()
     assert scope_of(provider).statistics()["series_built"] == 3
+
+
+def test_talib_state_drift_while_serving_cached_series_fails_like_reference(
+    scope: SmokeScope, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """compute() rechecks TA-Lib state in ``finally``; cached serving must too.
+
+    One prepared indicator makes the check after serving the only one that can
+    observe drift, as with ``test_talib_state_drift_during_calculation_fails_closed``.
+    """
+    feed = scope.adapter.series[0].dataset_reference.feed_scope
+    requirements = PredictionContextRequirements(
+        PredictionTimeframeRequirement(
+            TWO_MINUTES,
+            feed,
+            (
+                PredictionIndicatorRequirement(
+                    "fast",
+                    ExponentialMovingAverage(
+                        ExponentialMovingAverageParameters(8),
+                        backend_id=TALIB_INDICATOR_BACKEND,
+                    ),
+                ),
+            ),
+        ),
+        (PredictionTimeframeRequirement(DAILY, feed),),
+    )
+    provider = scope.provider()
+    stamps = scope.schedule.decision_timestamps
+    rule_context(scope, provider, requirements, stamps[10])
+    before = scope_of(provider).statistics()
+    assert before["series_built"] == before["series_verified"] == 1
+    for candidate in (provider, scope.provider(reference=True)):
+        # Default state when evaluation starts, drifted by the time it ends.
+        states = chain((0,), repeat(1))
+
+        def drifting_compatibility() -> int:
+            return next(states)
+
+        with monkeypatch.context() as drifted:
+            drifted.setattr(talib, "get_compatibility", drifting_compatibility)
+            with pytest.raises(
+                InvalidIndicatorBackendError,
+                match="default compatibility and zero unstable period",
+            ):
+                rule_context(scope, candidate, requirements, stamps[11])
+    after = scope_of(provider).statistics()
+    # The cached series passed the entry check and was served; the exit check
+    # rejected it, exactly as compute()'s finally rejects a fresh evaluation.
+    assert after["series_reused"] == before["series_reused"] + 1
+    assert after["series_built"] == before["series_built"]
 
 
 # -- mutation safety ------------------------------------------------------------

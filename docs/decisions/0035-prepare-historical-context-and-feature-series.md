@@ -57,7 +57,9 @@ that is, per plan, window, role and immutable source family.
   evaluation of that decision's context; a mismatch rejects the series and
   falls back. Every use, including reuse, repeats the backend's per-evaluation
   checks that `compute()` would apply: TA-Lib's process-global default
-  compatibility and zero unstable periods, and the current backend identity.
+  compatibility and zero unstable periods (checked before and after serving,
+  as `compute()` checks before and after evaluating), and the current backend
+  identity.
   Drift therefore fails exactly as a fresh computation would, regardless of
   cache state.
 - **Validation.** QF-28 symbol/basis checks and QF-52 per-bar lineage run once

@@ -15,7 +15,8 @@ reference evaluation on first use.
 """
 
 from bisect import bisect_left
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, time
 from operator import attrgetter, is_
@@ -49,7 +50,10 @@ from quantforge.indicators import (
     WilderDirectionalMovement,
     WilderRelativeStrengthIndex,
 )
-from quantforge.indicators.backends import StandardIndicatorDefinition
+from quantforge.indicators.backends import (
+    IndicatorBackendIdentity,
+    StandardIndicatorDefinition,
+)
 from quantforge.indicators.backends.native import NativeIndicatorBackend
 from quantforge.indicators.backends.talib import TalibIndicatorBackend
 from quantforge.indicators.exceptions import InvalidIndicatorBackendError
@@ -361,24 +365,35 @@ def _slice_output(
     return sliced
 
 
-def _validate_backend_state(indicator: object) -> None:
-    """Fail when a fresh backend computation would fail, even for cached series.
+@contextmanager
+def _backend_evaluation(indicator: object) -> Generator[None]:
+    """Serve a series only inside the backend's own per-evaluation checks.
 
-    ``talib_v1`` validates TA-Lib's process-global compatibility and unstable
-    periods on every ``compute`` and reports the current library identity, which
-    the indicator compares with its captured identity. A reused series skips
-    ``compute``, so both checks run here on every use, with the same errors.
+    A reused series skips ``compute()``. ``talib_v1``'s ``compute()`` validates
+    TA-Lib's process-global compatibility and unstable periods before and
+    after evaluating (in ``finally``); the indicator then compares the reported
+    backend identity with its captured one. Serving inside
+    ``evaluation_state`` repeats both state checks around the cache access, so
+    drift fails with the same errors whether or not the series is cached.
     ``native_v1`` has no process-global state; its identity is compared too.
     """
     backend = getattr(indicator, "_backend")
     definition = cast(
         StandardIndicatorDefinition, getattr(indicator, "standard_definition")
     )
-    identity = (
-        backend.validate_evaluation_state(definition)
-        if type(backend) is TalibIndicatorBackend
-        else cast(NativeIndicatorBackend, backend).identity_for(definition)
-    )
+    if type(backend) is TalibIndicatorBackend:
+        with backend.evaluation_state(definition) as identity:
+            _require_backend_identity(indicator, identity)
+            yield
+    else:
+        identity = cast(NativeIndicatorBackend, backend).identity_for(definition)
+        _require_backend_identity(indicator, identity)
+        yield
+
+
+def _require_backend_identity(
+    indicator: object, identity: IndicatorBackendIdentity
+) -> None:
     if identity != getattr(indicator, "backend_identity"):
         raise InvalidIndicatorBackendError(
             "indicator backend result metadata changed during calculation"
@@ -633,11 +648,22 @@ class PreparedContextScope:
         context: MultiTimeframeContext,
         timeframe: Timeframe,
     ) -> tuple[TimeframeIndicatorOutput, PreparedOutputEvidence] | None:
-        run, first, last = selection
         indicator = requirement.indicator
         requirement.validate_unchanged()
-        # Reuse skips the backend's compute(); apply its per-evaluation checks.
-        _validate_backend_state(indicator)
+        # Reuse skips the backend's compute(): serve only inside its own
+        # before/after checks, so drift fails exactly as compute() would.
+        with _backend_evaluation(indicator):
+            return self._serve_series(selection, requirement, context, timeframe)
+
+    def _serve_series(
+        self,
+        selection: _Selection,
+        requirement: PredictionIndicatorRequirement,
+        context: MultiTimeframeContext,
+        timeframe: Timeframe,
+    ) -> tuple[TimeframeIndicatorOutput, PreparedOutputEvidence] | None:
+        run, first, last = selection
+        indicator = requirement.indicator
         bound_key = (
             requirement.configuration_id,
             type(indicator),

@@ -1,6 +1,7 @@
 """TA-Lib adapter for mapped backend-neutral standard indicators."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import (
     ROUND_HALF_EVEN,
@@ -427,18 +428,24 @@ class TalibIndicatorBackend:
             runtime_library_version=_talib_runtime_library_version(),
         )
 
-    def validate_evaluation_state(
+    @contextmanager
+    def evaluation_state(
         self, definition: StandardIndicatorDefinition
-    ) -> IndicatorBackendIdentity:
-        """Apply ``compute``'s process-state check without computing.
+    ) -> Generator[IndicatorBackendIdentity]:
+        """Bracket reuse of an earlier result with ``compute``'s state checks.
 
-        TA-Lib compatibility and unstable periods are process-global. A caller
-        reusing an earlier result (QF-63 prepared series) must fail exactly when
-        a new computation would, and compare the identity ``compute`` would
-        report now with the identity it originally used.
+        TA-Lib compatibility and unstable periods are process-global. ``compute``
+        validates them before invoking TA-Lib and again in ``finally``. A caller
+        serving an earlier result instead (QF-63 prepared series) does so inside
+        this context, so it fails exactly when a new computation would. The
+        yielded identity is the one ``compute`` would report now.
         """
-        _validate_global_state(_mapping_for(definition))
-        return self.identity_for(definition)
+        mapping = _mapping_for(definition)
+        _validate_global_state(mapping)
+        try:
+            yield self.identity_for(definition)
+        finally:
+            _validate_global_state(mapping)
 
     def compute(
         self, request: IndicatorComputationRequest
