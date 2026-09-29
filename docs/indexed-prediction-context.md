@@ -18,6 +18,11 @@ validations per decision, plus the final retrieval scans.
 
 ## Prepared boundary
 
+QF-63 note: `bounds_for` applies every `select` membership check and returns
+the exact source positions; `select` materializes them unchanged.
+`PredictionSourceIndex.extent` gives the run that QF-63 prepares once per scope.
+See [prepared historical features](prepared-historical-features.md).
+
 `PreparedValidationPlan.capture(plan)` captures the existing authoritative ID.
 It is an explicit immutable value, not a cache attached to the caller's plan.
 `PreparedPredictionContext.capture(plan, window, series=..., input_identity=...)`

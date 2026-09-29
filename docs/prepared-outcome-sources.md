@@ -33,6 +33,13 @@ reuse the existing dataset session and now share its preparation registry.
 
 ## Prepared capability and lifecycle
 
+QF-63 note: the registry now retains the QF-58 normalized backing per original
+source (`copy_memo`). A later QF-42 iterator (QF-32 trial 2..k) or QF-7
+configured outcome in the same session therefore reuses the exact admitted
+backing. Previously each normalized its own copy, missed the exact-backing check
+and re-authenticated the full source on every decision. See
+[prepared historical features](prepared-historical-features.md).
+
 `prediction.prepared_outcomes.PreparedOutcomeSources` belongs to one
 `PredictionStudyDatasetSession`. It admits the finite sources used by that
 execution; there is no process-global cache. QF-42's per-decision dataset-session

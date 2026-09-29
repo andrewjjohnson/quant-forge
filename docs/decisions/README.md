@@ -107,3 +107,4 @@ How will the decision be tested or revisited?
 - [0032: Reuse bounded projections and immutable expected lineage locally](0032-reuse-bounded-projection-preparation.md)
 - [0033: Prepare immutable outcome sources within dataset execution sessions](0033-prepare-outcome-sources.md)
 - [0034: Normalize window membership into append-only catalogues](0034-normalize-window-membership-catalogues.md)
+- [0035: Prepare historical context runs and reusable indicator series](0035-prepare-historical-context-and-feature-series.md)

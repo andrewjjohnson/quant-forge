@@ -3,6 +3,19 @@
 QF-45 shortened EMA smoke configuration, offline runner, checkpoints and the
 manual holdout gate: [local smoke workflow](spy-ema-smoke-study.md).
 
+QF-63 prepared context runs and indicator series: prefix stability, exact
+equivalence, causality/sentinel, reuse, mutation, fallback, resume, export and
+large-history invocation counts (uv **0.12.1**, frozen dependencies):
+
+```bash
+uv run --frozen pytest tests/unit/prediction/test_prepared_features.py \
+  tests/integration/test_prepared_feature_execution.py \
+  tests/performance/test_prepared_features.py
+```
+
+See [prepared historical features](prepared-historical-features.md) for the
+compatibility key, EMA seeding, guard, fallback and the real QF-45 profile.
+
 QF-61 source preparation, explicit anchors, invocation counts, equivalence and resume:
 
 ```bash
