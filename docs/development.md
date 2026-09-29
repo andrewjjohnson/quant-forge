@@ -1,5 +1,9 @@
 # QuantForge Development Guide
 
+QF-66 test tiers, heavy-first xdist dispatch, file sharding and the concurrent CI
+jobs: [test tiers](#test-tiers-qf-66) and [CI layout](#ci-layout). The QF-45
+runner's invariant matrix and profile: [heavyweight acceptance test](qf45-acceptance-test.md).
+
 QF-45 shortened EMA smoke configuration, offline runner, checkpoints and the
 manual holdout gate: [local smoke workflow](spy-ema-smoke-study.md).
 
@@ -193,10 +197,10 @@ per-test timings and results using the same command as CI:
 uv run pytest --junitxml=reports/tests/junit.xml
 ```
 
-CI uploads this file as the `test-results` artifact, including test failures,
-with 14-day retention. The generated report stays ignored by Git. Use the same
-machine, worker count, and test selection when comparing timings; JUnit test
-durations sum worker time, which differs from parallel wall time.
+CI uploads one such file per test job as `test-results-<tier>`, including test
+failures, with 14-day retention. The generated report stays ignored by Git. Use
+the same machine, worker count, and test selection when comparing timings; JUnit
+test durations sum worker time, which differs from parallel wall time.
 
 Selected experiment-integrity tests generate real backtest and prediction
 studies once per module. Each corruption case copies the producer files into
@@ -429,6 +433,52 @@ uv run pytest --cov=quantforge --cov-report=term-missing
 ```
 
 If wrapper commands such as `make check` or `just check` are added, use those as the stable contributor interface.
+
+### Test tiers (QF-66)
+
+`tests/conftest.py` puts every collected test in exactly one tier. Tiers select
+and order tests; they never skip one, and every tier is required in CI.
+
+| Tier | Contents | Typical use |
+| --- | --- | --- |
+| `heavy_acceptance` | Explicitly marked end-to-end scientific acceptance: the [QF-45 runner](qf45-acceptance-test.md) | Before PRs touching QF-7/9/32/39/40/41/42/45/52 composition |
+| `regression` | Every other test under `tests/integration` and `tests/performance` | Subsystem/integration changes |
+| `fast` | Everything else, including `tests/unit` and any new directory | Constant local iteration |
+
+```bash
+uv run pytest -m fast                     # unit loop
+uv run pytest -m "not heavy_acceptance"   # everything except the QF-45 runner
+uv run pytest -m heavy_acceptance -n 0    # the QF-45 runner alone
+uv run pytest -m regression --file-shard=1/2
+```
+
+`--file-shard=INDEX/COUNT` keeps whole files together and assigns each file by a
+SHA-256 hash of its repository path, so the shards always partition the
+selection. xdist dispatches files in collection order (`--no-loadscope-reorder`)
+with `heavy_acceptance` first. The xdist default queued files by descending test
+count, which started the single-test QF-45 runner last and put it at the end of
+the critical path. xdist still pre-fetches one more file onto the worker running
+the QF-45 runner, so the local suite ends roughly one regression file after that
+test.
+
+Tests must pass in any file order: serially (`-n 0`), under xdist, and in any
+tier or shard. Restore global state such as `sys.modules` with `monkeypatch`.
+
+### CI layout
+
+`.github/workflows/ci.yml` runs these required jobs concurrently on
+`ubuntu-latest`, each with the pinned uv and frozen lockfile:
+
+| Job | Command |
+| --- | --- |
+| Format, lint and type check | `ruff format --check`, `ruff check`, `pyright`, and a check that no test falls outside a tier |
+| Tests (heavy acceptance, QF-45 runner) | `pytest -m heavy_acceptance -n 0` |
+| Tests (regression 1/2) and (regression 2/2) | `pytest -m regression --file-shard=K/2` |
+| Tests (fast) | `pytest -m fast` |
+| `quality` | Succeeds only when all jobs above succeeded |
+
+Each test job uploads `test-results-<tier>` JUnit timings, including failures,
+with 14-day retention. No job uses `continue-on-error`.
 
 ## Branch workflow
 

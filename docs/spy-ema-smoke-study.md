@@ -229,5 +229,8 @@ uv run --frozen pytest tests/unit/test_spy_ema_smoke.py tests/unit/test_spy_ema_
 ```
 
 These use synthetic offline data and the actual normalized EMA/outcome,
-compact/resume, QF-32/QF-39/QF-40/QF-9/QF-41 paths. Repository-wide checks follow
+compact/resume, QF-32/QF-39/QF-40/QF-9/QF-41 paths. The runner test is the
+required `heavy_acceptance` tier (about 18 minutes serially); its invariant
+matrix, fixture-size rationale and profile are in the
+[heavyweight acceptance test](qf45-acceptance-test.md) note. Repository-wide checks follow
 `docs/development.md`. GitHub Actions must not be polled or waited on for this PR.
