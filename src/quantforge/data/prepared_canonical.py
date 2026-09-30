@@ -366,7 +366,9 @@ class PreparedCanonicalDataset:
     manifest batch identity and each verified bar identity, by position). The
     compatibility key is ``(dataset_id, request_id)`` plus the resolved cache
     root; reuse additionally requires the presented request, metadata and bars
-    (with every nested record) to equal their pristine authenticated values.
+    (with every nested record) to strictly equal their pristine authenticated
+    values. Lookups compare against the snapshot and never recompute the key
+    from presented content.
     Coverage and session evidence are the authenticated metadata.
     ``file_digests`` are the SHA-256 digests of every artifact file the loader
     authenticated (manifest, normalized bars and raw extracts), by relative path.
@@ -553,53 +555,60 @@ class CanonicalPreparation:
 
         Every artifact file is read and hashed again, so changed cache bytes are
         never masked; only decoding and validation of identical bytes is reused.
+        Candidates are found by their admitted key and cache root alone. The
+        presented request may be the retained object itself, so none of it is
+        evaluated (not even ``request_id``) until the retained dataset is proven
+        intact; it is then only compared strictly with the pristine request,
+        because the reference load returns the presented request.
         """
-        key = (cast(object, dataset_id), cast(object, request.request_id))
-        if not _exact_text(key):
+        if type(dataset_id) is not str:
             return None  # Never hash an unreviewed key; retain_source declines it.
-        entry = self._sources.get(cast(tuple[str, str], key))
         root = cache_root.resolve()
-        if entry is None or entry.cache_root != root:
-            return None
-        # The retained dataset is proven intact before any of it is used. The
-        # reference load returns the presented request, so the retained one is
-        # returned only for a strictly equal (never merely ``==``) request.
-        if not entry.integrity.intact(entry.dataset):
-            self._evict_source(entry)
-            return None
-        if not _strict_equal(request, entry.dataset.request):
-            return None
-        for location, digest in entry.file_digests:
-            try:
-                current = sha256_hex((root / location).read_bytes())
-            except OSError:
-                current = None
-            if current != digest:
-                self.counts["source_cache_byte_mismatches"] += 1
+        candidates = [
+            entry
+            for entry in self._sources.values()
+            if entry.key[0] == dataset_id and entry.cache_root == root
+        ]
+        for entry in candidates:
+            if not entry.integrity.intact(entry.dataset):
                 self._evict_source(entry)
-                return None
-        self.counts["source_cache_reuses"] += 1
-        return entry.dataset
+                continue
+            if not _strict_equal(request, entry.dataset.request):
+                continue
+            for location, digest in entry.file_digests:
+                try:
+                    current = sha256_hex((root / location).read_bytes())
+                except OSError:
+                    current = None
+                if current != digest:
+                    self.counts["source_cache_byte_mismatches"] += 1
+                    self._evict_source(entry)
+                    return None
+            self.counts["source_cache_reuses"] += 1
+            return entry.dataset
+        return None
 
     def source(self, dataset: "IntradayDataset") -> PreparedCanonicalDataset | None:
-        """Return authenticated facts for a content-identical presented source."""
-        key = (
-            cast(object, dataset.metadata.dataset_id),
-            cast(object, dataset.request.request_id),
-        )
-        if not _exact_text(key):
-            return None  # Unreviewed key: never hashed, never retained.
-        entry = self._sources.get(cast(tuple[str, str], key))
-        if entry is None:
-            return None
-        if not entry.integrity.intact(entry.dataset):
-            self._evict_source(entry)
-            return None
-        if dataset is not entry.dataset and not entry.integrity.intact(dataset):
+        """Return authenticated facts for a content-identical presented source.
+
+        Each retained dataset is first proven intact (a corrupted one is
+        evicted); the presented dataset must then be that object or strictly
+        equal to its pristine snapshot. None of the presented content (not even
+        ``request_id``) is evaluated otherwise, since it may be, or share
+        records with, a corrupted retained dataset.
+        """
+        compared = False
+        for entry in tuple(self._sources.values()):
+            if not entry.integrity.intact(entry.dataset):
+                self._evict_source(entry)
+                continue
+            if dataset is entry.dataset or entry.integrity.intact(dataset):
+                self.counts["source_reuses"] += 1
+                return entry
+            compared = True
+        if compared:
             self.counts["source_rejections"] += 1
-            return None
-        self.counts["source_reuses"] += 1
-        return entry
+        return None
 
     def _evict_source(self, entry: PreparedCanonicalDataset) -> None:
         self.counts["source_integrity_failures"] += 1

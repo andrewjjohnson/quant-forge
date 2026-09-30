@@ -452,6 +452,37 @@ def test_cache_reload_reuses_retained_data_only_for_a_strictly_equal_request(
         assert outcome is reference
 
 
+@pytest.mark.parametrize(
+    ("operation", "expected"), [("reload", CacheError), ("aggregate", TypeError)]
+)
+def test_corrupted_retained_request_follows_the_reference_path(
+    cached: tuple[Path, IntradayBarRequest, Loaded],
+    operation: str,
+    expected: type[Exception],
+) -> None:
+    root, request, _ = cached
+    dataset_id = _source_id(root, request)
+    cache = IntradayMarketDataCache(root)
+
+    def run(source: IntradayDataset) -> None:
+        if operation == "reload":
+            cache.load(dataset_id, source.request)  # The retained request object.
+        else:
+            aggregate_intraday_dataset(source, TWO_MINUTES)
+
+    with canonical_preparation() as preparation:
+        # A private request copy: the dataset holds the presented request object.
+        source = cache.load(dataset_id, replace(request))
+        object.__setattr__(source.request, "symbol", object())  # Not serializable.
+        with pytest.raises(expected):
+            run(source)
+        statistics = preparation.statistics()
+    with pytest.raises(expected):  # Exactly the reference outcome.
+        run(source)
+    assert statistics["source_integrity_failures"] == 1
+    assert statistics["source_cache_reuses"] == statistics["source_reuses"] == 0
+
+
 def _changed_source(source: IntradayDataset, change: str) -> IntradayDataset:
     bars = source.bars
     if change == "missing_bar":
@@ -702,11 +733,9 @@ def test_class_or_enum_substitution_is_never_reused(
                     aggregate_intraday_dataset(source, TWO_MINUTES)
             finally:
                 object.__setattr__(member, "_value_", original)
-            # A changed kind already changes the request key, so the lookup
-            # misses outright; a changed completion is caught by the snapshot.
-            assert preparation.statistics()["source_integrity_failures"] == (
-                1 if target == "enum" else 0
-            )
+            # Both are caught by the retained snapshot, found by identity; no
+            # request identity is recomputed from the mutated request first.
+            assert preparation.statistics()["source_integrity_failures"] == 1
         assert preparation.statistics()["source_reuses"] == 0
 
 

@@ -157,6 +157,14 @@ Reuse of a canonical source requires all of the following:
   each source is keyed and evicted by the `(dataset_id, request_id)` it was
   admitted under. Eviction never recomputes the key from the retained dataset,
   which by then may hold corrupted (even unhashable) values.
+- Lookups never evaluate presented content, not even its `request_id`: the
+  presented dataset or request is often the retained object itself, so
+  evaluating it first could raise before the snapshot detects corruption. A
+  source is found by identity or by strict comparison with each intact
+  retained snapshot; a cache reload finds candidates by admitted dataset ID and
+  cache root, then compares the presented request strictly. A corrupted entry
+  is evicted and the reference path produces the reference outcome (for a
+  reload, its `CacheError`).
 
 Derived reuse is keyed by derived type and dataset ID, with the same
 whole-dataset snapshot (request, metadata, bars and nested records). Up to four
@@ -358,7 +366,9 @@ differently serializing timeframe leaves, and memo keys, dataset IDs and time
 zones that are unhashable, which reach the reference path instead of raising.
 Retained sources corrupted with an unhashable key field are evicted by their
 admitted key, and cache reloads with an equal but not strictly equal request
-take the full load.
+take the full load. A retained request corrupted so that its identity cannot
+even be computed is evicted, and the reload and aggregation raise exactly the
+reference exceptions.
 Mutable-graph refusal and the reference path for non-intraday datasets are
 covered too.
 

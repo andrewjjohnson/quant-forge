@@ -586,6 +586,28 @@ def test_corrupted_source_is_evicted_by_its_admitted_key(
     assert statistics["retained_derivations"] == 0
 
 
+@pytest.mark.parametrize("lookup", ["cached_source", "source"])
+def test_retained_request_is_never_evaluated_before_integrity(
+    lookup: str, tmp_path: Path
+) -> None:
+    dataset = _dataset(_provenance())
+    with canonical_preparation() as preparation:
+        _retain_source(preparation, dataset, tmp_path)
+        # The same retained objects are presented again, now corrupted so that
+        # computing the request identity itself raises.
+        object.__setattr__(dataset.request, "symbol", object())
+        with pytest.raises(TypeError, match="JSON serializable"):
+            _ = dataset.request.request_id
+        if lookup == "cached_source":
+            found = preparation.cached_source(tmp_path, "dataset", dataset.request)
+        else:
+            found = preparation.source(cast(Any, dataset))
+        assert found is None
+        statistics = preparation.statistics()
+    assert statistics["source_integrity_failures"] == 1
+    assert statistics["retained_sources"] == 0
+
+
 @pytest.mark.parametrize("leaf", ["symbol", "start_timestamp"])
 def test_cached_source_returns_retained_data_only_for_a_strict_request(
     leaf: str, tmp_path: Path
