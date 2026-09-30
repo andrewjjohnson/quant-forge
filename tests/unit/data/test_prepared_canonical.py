@@ -1,8 +1,9 @@
 """QF-65 preparation mechanics: scoped memos, content integrity and lifecycle."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,6 +25,7 @@ from quantforge.data.prepared_canonical import (
     canonical_preparation,
 )
 from quantforge.timeframes import (
+    BarCompletion,
     ExchangeSessionPolicy,
     IntradayBarWindow,
     IntradayInterval,
@@ -267,6 +269,110 @@ def test_content_integrity_rejects_equal_valued_type_or_zone_swaps(target: str) 
         )
         assert dataset.metadata.bar_count == 3
     assert not integrity.intact(dataset)
+
+
+def _shadow[T](record: object, kind: type[T]) -> T:
+    """An instance of ``kind`` holding ``record``'s exact field objects."""
+    shadow = object.__new__(kind)
+    for item in fields(cast(Any, kind)):
+        object.__setattr__(shadow, item.name, getattr(record, item.name))
+    return shadow
+
+
+@dataclass(frozen=True, slots=True)
+class _ShadowBar:  # IntradayBar's exact field layout, another class.
+    symbol: str
+    session_date: date
+    start_timestamp: datetime
+    end_timestamp: datetime
+    timeframe: Timeframe
+    completion: BarCompletion
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+    provenance: IntradayBarProvenance
+    schema_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ShadowProvenance:  # IntradayBarProvenance's field layout.
+    provider_name: str
+    provider_symbol: str
+    adapter_version: str
+    retrieved_at: datetime
+    source_request_id: str
+    source_snapshot_id: str
+    feed_scope: FeedScope
+    adjustment_basis: AdjustmentBasis
+
+
+@pytest.mark.parametrize("target", ["presented_bars", "bar_class", "record_class"])
+def test_content_integrity_checks_exact_bar_and_record_classes(target: str) -> None:
+    provenance = _provenance()
+    dataset = _dataset(provenance)
+    integrity = _ContentIntegrity.capture(dataset)
+    assert integrity is not None
+    if target == "presented_bars":
+        # Same field objects, another class: equal rows, not the same bars.
+        dataset = replace(
+            dataset, bars=tuple(_shadow(bar, _ShadowBar) for bar in dataset.bars)
+        )
+        assert integrity.intact(dataset) is False
+        return
+    record = dataset.bars[1] if target == "bar_class" else provenance
+    shadow = _ShadowBar if target == "bar_class" else _ShadowProvenance
+    object.__setattr__(record, "__class__", shadow)
+    assert type(record) is shadow
+    assert not integrity.intact(dataset)
+
+
+def test_content_integrity_detects_mutated_enum_members() -> None:
+    dataset = _dataset(_provenance())
+    integrity = _ContentIntegrity.capture(dataset)
+    assert integrity is not None
+    member = BarCompletion.COMPLETED
+    assert dataset.bars[0].completion is member
+    original = member._value_
+    try:
+        # Every snapshot still holds this singleton; only its value changed.
+        object.__setattr__(member, "_value_", "altered")
+        assert not integrity.intact(dataset)
+    finally:
+        object.__setattr__(member, "_value_", original)
+    assert integrity.intact(dataset)
+
+
+class _Text(str):
+    pass
+
+
+def test_content_integrity_refuses_scalar_subclasses() -> None:
+    dataset = _dataset(_provenance())
+    altered = replace(
+        dataset, metadata=replace(dataset.metadata, dataset_id=_Text("dataset"))
+    )
+    assert _ContentIntegrity.capture(dataset) is not None
+    assert _ContentIntegrity.capture(altered) is None
+
+
+def test_timeframe_identity_memo_rechecks_enum_state() -> None:
+    reference = configuration_identity(ONE_MINUTE.to_primitive())
+    memo = TimeframeMemo()
+    member = cast(IntradayInterval, ONE_MINUTE.interval).anchor
+    original = member._value_
+    with timeframe_memo(memo):
+        assert ONE_MINUTE.configuration_id == reference
+        try:
+            object.__setattr__(member, "_value_", "altered")
+            fresh = configuration_identity(ONE_MINUTE.to_primitive())
+            assert fresh != reference
+            assert ONE_MINUTE.configuration_id == fresh  # Never the stale identity.
+        finally:
+            object.__setattr__(member, "_value_", original)
+        assert ONE_MINUTE.configuration_id == reference
+    assert memo.identities_computed == 3
 
 
 @dataclass(frozen=True)

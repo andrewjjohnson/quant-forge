@@ -20,7 +20,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
 from itertools import chain
@@ -28,6 +28,8 @@ from operator import attrgetter, is_
 from pathlib import Path
 from sys import getsizeof
 from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from pandas import Timestamp  # pyright: ignore[reportMissingTypeStubs]
 
 from quantforge.configuration import (
     PrimitiveMapping,
@@ -49,12 +51,28 @@ if TYPE_CHECKING:
 
 type _Getter = Callable[[object], tuple[object, ...]]
 type _RecordSnapshot = tuple[
-    _Getter, tuple[object, ...], tuple[tuple[object, ...], ...]
+    type, _Getter, tuple[object, ...], tuple[tuple[object, ...], ...]
 ]
 
-# Immutable leaves compared by value. Calendar timestamps are datetime subclasses
-# whose instance dictionaries never participate in equality or identities.
-_SCALAR_TYPES = (type(None), str, int, Decimal, date, time, timedelta, Enum)
+# Exact immutable leaf types, compared by value. Subclasses are refused because
+# their class or behavior can change without replacing the field object. The
+# exchange calendar's Timestamp is admitted exactly; its instance dictionary
+# never participates in equality or identities. Enum members are process-global
+# singletons whose state is snapshotted separately.
+_SCALAR_TYPES: frozenset[type] = frozenset(
+    {
+        type(None),
+        str,
+        int,
+        bool,
+        Decimal,
+        date,
+        datetime,
+        time,
+        timedelta,
+        cast(type, Timestamp),
+    }
+)
 _MARKET_MEMO_LIMIT = 64
 _VARIANT_LIMIT = 4
 _COUNTERS = (
@@ -103,24 +121,39 @@ def _names_getter(names: tuple[str, ...]) -> _Getter:
     return cast(_Getter, attrgetter(*names))
 
 
-def _collect_records(value: object, found: dict[int, object]) -> bool:
-    """Collect frozen dataclass records below a field; False for mutable carriers."""
-    if isinstance(value, _SCALAR_TYPES):
+class _Reach:
+    """Records and enum members reachable from authenticated fields, by id."""
+
+    __slots__ = ("enums", "records")
+
+    def __init__(self) -> None:
+        self.records: dict[int, object] = {}
+        self.enums: dict[int, Enum] = {}
+
+
+def _collect(value: object, reach: _Reach) -> bool:
+    """Collect reachable frozen records and enum members; False if unadmitted."""
+    kind = type(value)
+    if kind in _SCALAR_TYPES:
         return True
-    if type(value) is tuple:
-        return all(
-            _collect_records(item, found) for item in cast(tuple[object, ...], value)
-        )
-    if not is_dataclass(value) or isinstance(value, type):
-        return False
-    if not getattr(type(value), "__dataclass_params__").frozen:
-        return False
-    if id(value) in found:
+    if isinstance(value, Enum):
+        reach.enums.setdefault(id(value), value)
         return True
-    found[id(value)] = value
+    if kind is tuple:
+        return all(_collect(item, reach) for item in cast(tuple[object, ...], value))
+    if not _frozen_dataclass(kind):
+        return False
+    if id(value) in reach.records:
+        return True
+    reach.records[id(value)] = value
     return all(
-        _collect_records(getattr(value, item.name), found) for item in fields(value)
+        _collect(getattr(value, item.name), reach) for item in fields(cast(Any, kind))
     )
+
+
+def _enum_state(member: Enum) -> tuple[object, ...]:
+    """What canonical serialization reads from a member: class, name and value."""
+    return type(member), member._name_, member._value_
 
 
 def _frozen_dataclass(kind: type) -> bool:
@@ -167,24 +200,28 @@ def _same_rows(
 
 @dataclass(frozen=True, slots=True, eq=False)
 class _ContentIntegrity:
-    """Pristine field values of one authenticated dataset and every nested record.
+    """Pristine state of one authenticated dataset and everything it reaches.
 
-    Covers the dataset's own fields (request, metadata), every bar field and
-    every record reachable from them (provenance, timeframe, coverage and
-    aggregation reports, family lineage, ...). Frozen records change only through
-    a bypass such as ``object.__setattr__``, which replaces a field value.
-    Comparing current field values with these pristine ones proves unchanged
-    content as completely as reserializing, at C-level map/compare cost (the
-    QF-63 backing-integrity technique). A presented dataset made of different
-    but equal objects compares equal by value.
+    Covers the dataset's own fields (request, metadata), every bar and every
+    record reachable from them (provenance, timeframe, coverage and aggregation
+    reports, family lineage, ...). For each it retains the exact class and the
+    field values, plus the class, name and value of every reachable enum member.
+    Frozen records change only through bypasses such as ``object.__setattr__``,
+    which replace a field value or the object's class; comparing current state
+    with this snapshot proves unchanged content as completely as reserializing,
+    at C-level map/compare cost (the QF-63 backing-integrity technique). A
+    presented dataset of different but strictly equal objects also passes.
     """
 
     dataset_type: type
     field_getter: _Getter
     field_values: tuple[object, ...]
+    bar_type: type | None
     bar_getter: _Getter
     bar_values: tuple[tuple[object, ...], ...]
     records: tuple[_RecordSnapshot, ...]
+    enums: tuple[Enum, ...]
+    enum_states: tuple[tuple[object, ...], ...]
 
     @classmethod
     def capture(cls, dataset: object) -> "_ContentIntegrity | None":
@@ -201,57 +238,66 @@ class _ContentIntegrity:
         )
         field_getter = _names_getter(names)
         field_values = field_getter(dataset)
-        found: dict[int, object] = {}
-        if not all(_collect_records(value, found) for value in field_values):
+        reach = _Reach()
+        if not all(_collect(value, reach) for value in field_values):
             return None
+        bar_type: type | None = None
         bar_getter: _Getter = lambda record: ()  # noqa: E731 - empty collection.
         bar_values: tuple[tuple[object, ...], ...] = ()
         if bars:
             bar_type = type(bars[0])
-            if not _frozen_dataclass(bar_type) or any(
-                type(bar) is not bar_type for bar in bars
-            ):
+            if not _frozen_dataclass(bar_type) or set(map(type, bars)) != {bar_type}:
                 return None
             bar_getter = _field_getter(bar_type)
             bar_values = tuple(map(bar_getter, bars))
             for column in zip(*bar_values, strict=True):
-                if all(
-                    issubclass(kind, _SCALAR_TYPES) for kind in set(map(type, column))
-                ):
+                if set(map(type, column)) <= _SCALAR_TYPES:
                     continue
                 for value in {id(value): value for value in column}.values():
-                    if not _collect_records(value, found):
+                    if not _collect(value, reach):
                         return None
         by_type: dict[type, list[object]] = {}
-        for record in found.values():
+        for record in reach.records.values():
             by_type.setdefault(type(record), []).append(record)
         records: list[_RecordSnapshot] = []
         for record_type, members in by_type.items():
             record_getter = _field_getter(record_type)
             owned = tuple(members)
-            records.append((record_getter, owned, tuple(map(record_getter, owned))))
+            records.append(
+                (record_type, record_getter, owned, tuple(map(record_getter, owned)))
+            )
+        enums = tuple(reach.enums.values())
         return cls(
             dataset_type,
             field_getter,
             field_values,
+            bar_type,
             bar_getter,
             bar_values,
             tuple(records),
+            enums,
+            tuple(map(_enum_state, enums)),
         )
 
     def intact(self, dataset: object) -> bool:
         """Whether ``dataset`` has exactly the authenticated content."""
         if type(dataset) is not self.dataset_type:
             return False
-        bars = cast(tuple[object, ...], getattr(dataset, "bars"))
+        bars = cast(object, getattr(dataset, "bars", None))
+        if type(bars) is not tuple:
+            return False
+        bars = cast(tuple[object, ...], bars)
+        if bars and set(map(type, bars)) != {self.bar_type}:
+            return False
         return (
             _same(self.field_getter(dataset), self.field_values)
-            and type(cast(object, bars)) is tuple
             and _same_rows(tuple(map(self.bar_getter, bars)), self.bar_values)
             and all(
-                _same_rows(tuple(map(getter, owned)), values)
-                for getter, owned, values in self.records
+                set(map(type, owned)) == {record_type}
+                and _same_rows(tuple(map(getter, owned)), values)
+                for record_type, getter, owned, values in self.records
             )
+            and _same_rows(tuple(map(_enum_state, self.enums)), self.enum_states)
         )
 
 
@@ -626,7 +672,7 @@ class CanonicalPreparation:
                 + sum(map(getsizeof, integrity.bar_values))
                 + sum(
                     getsizeof(owned) + getsizeof(values) + sum(map(getsizeof, values))
-                    for _, owned, values in integrity.records
+                    for _, _, owned, values in integrity.records
                 )
             )
 

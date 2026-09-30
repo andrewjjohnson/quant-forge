@@ -4,8 +4,9 @@ QF-65 canonical preparation is operational, never scientific evidence. Within on
 load session it reuses a verdict only for byte- or field-identical content: every
 artifact file is re-hashed, and every request, metadata and bar field (with
 every nested record field) is compared strictly with its authenticated value:
-same type, value and representation, never numeric or instant equality alone. A changed, rebound or mutated input is always revalidated
-independently and fails as before. The first validation of each new canonical
+same type, value and representation, never numeric or instant equality alone.
+Record classes and enum member values are checked as well. A changed, rebound
+or mutated input is always revalidated independently and fails as before. The first validation of each new canonical
 prediction input still rebuilds its QF-51 source evidence. Persisted artifacts
 never depend on preparation, and a new process authenticates again. See
 [prepared canonical loading](prepared-canonical-loading.md).

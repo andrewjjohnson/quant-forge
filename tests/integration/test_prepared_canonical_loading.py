@@ -56,12 +56,17 @@ from quantforge.data.prepared_canonical import (
     canonical_preparation,
 )
 from quantforge.timeframes import (
+    BarCompletion,
     IntradayInterval,
     SessionInterval,
     Timeframe,
     resolve_exchange_session,
 )
 from quantforge.validation import DatasetProvenance
+from tests.unit.data.test_prepared_canonical import (
+    _shadow,  # pyright: ignore[reportPrivateUsage]
+    _ShadowBar,  # pyright: ignore[reportPrivateUsage]
+)
 
 ONE_MINUTE = Timeframe.us_equity(IntradayInterval(timedelta(minutes=1)))
 TWO_MINUTES = Timeframe.us_equity(IntradayInterval(timedelta(minutes=2)))
@@ -613,6 +618,41 @@ def test_equal_valued_type_or_zone_substitution_is_never_reused(
                 validate_market_dataset(loaded.dataset)
             failures = 1
         assert failures == 1
+
+
+@pytest.mark.parametrize("target", ["presented_class", "retained_class", "enum"])
+def test_class_or_enum_substitution_is_never_reused(
+    cached: tuple[Path, IntradayBarRequest, Loaded], target: str
+) -> None:
+    root, request, _ = cached
+    with canonical_preparation() as preparation:
+        source = IntradayMarketDataCache(root).load(_source_id(root, request), request)
+        if target == "presented_class":
+            # Another class carrying the same field objects for every bar.
+            shadow = replace(
+                source, bars=tuple(_shadow(bar, _ShadowBar) for bar in source.bars)
+            )
+            with pytest.raises(ValueError, match="invalid bar"):
+                aggregate_intraday_dataset(shadow, TWO_MINUTES)
+            assert preparation.statistics()["source_rejections"] == 1
+        elif target == "retained_class":
+            object.__setattr__(source.bars[2], "__class__", _ShadowBar)
+            with pytest.raises(ValueError, match="invalid bar"):
+                aggregate_intraday_dataset(source, TWO_MINUTES)
+            assert preparation.statistics()["source_integrity_failures"] == 1
+        else:
+            member = BarCompletion.COMPLETED
+            original = member._value_
+            try:
+                # A process-global singleton: serialization changes, the field
+                # objects do not. The reference batch identity no longer matches.
+                object.__setattr__(member, "_value_", "altered")
+                with pytest.raises(MarketDataError, match="batch identity"):
+                    aggregate_intraday_dataset(source, TWO_MINUTES)
+            finally:
+                object.__setattr__(member, "_value_", original)
+            assert preparation.statistics()["source_integrity_failures"] == 1
+        assert preparation.statistics()["source_reuses"] == 0
 
 
 def test_corrupted_or_rebound_derived_artifacts_fail_closed(

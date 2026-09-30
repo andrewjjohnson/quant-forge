@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from importlib import import_module
+from operator import is_
 from typing import Protocol, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -484,6 +485,42 @@ class ExchangeTradingWeek:
         }
 
 
+def _timeframe_state(timeframe: Timeframe) -> tuple[object, ...]:
+    """Classes and enum member classes/names/values a timeframe identity reads."""
+    interval = timeframe.interval
+    policy = timeframe.session_policy
+    label = timeframe.bar_label
+    exposure = timeframe.developing_bar_exposure
+    scope = policy.scope
+    state = (
+        type(timeframe),
+        type(interval),
+        type(policy),
+        type(label),
+        label._name_,
+        label._value_,
+        type(exposure),
+        exposure._name_,
+        exposure._value_,
+        type(scope),
+        scope._name_,
+        scope._value_,
+    )
+    if type(interval) is not IntradayInterval:
+        return state
+    anchor = interval.anchor
+    crossing = interval.cross_session_policy
+    return (
+        *state,
+        type(anchor),
+        anchor._name_,
+        anchor._value_,
+        type(crossing),
+        crossing._name_,
+        crossing._value_,
+    )
+
+
 class TimeframeMemo:
     """Session resolutions and timeframe identities for one scope (QF-65).
 
@@ -505,7 +542,7 @@ class TimeframeMemo:
 
     def __init__(self) -> None:
         self._sessions: dict[tuple[date, ExchangeSessionPolicy], ExchangeSession] = {}
-        self._identities: dict[Timeframe, str] = {}
+        self._identities: dict[Timeframe, tuple[str, tuple[object, ...]]] = {}
         self.resolved = 0
         self.reused = 0
         self.identities_computed = 0
@@ -528,13 +565,20 @@ class TimeframeMemo:
         return session
 
     def configuration_id(self, timeframe: Timeframe) -> str:
-        identity = self._identities.get(timeframe)
-        if identity is None:
-            identity = configuration_identity(timeframe.to_primitive())
-            self._identities[timeframe] = identity
-            self.identities_computed += 1
-        else:
+        """Reuse an identity only while the timeframe's hidden state is unchanged.
+
+        The key compares frozen field values, but enum members hash by name and
+        records can have their class reassigned; either changes serialization
+        without changing the key. Each hit re-checks classes and enum values.
+        """
+        state = _timeframe_state(timeframe)
+        found = self._identities.get(timeframe)
+        if found is not None and all(map(is_, state, found[1])):
             self.identities_reused += 1
+            return found[0]
+        identity = configuration_identity(timeframe.to_primitive())
+        self._identities[timeframe] = (identity, state)
+        self.identities_computed += 1
         return identity
 
     def clear(self) -> None:

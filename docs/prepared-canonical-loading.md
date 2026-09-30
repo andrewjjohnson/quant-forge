@@ -125,6 +125,14 @@ Reuse of a canonical source requires all of the following:
   `Decimal("100")`, a `Decimal` count for an `int`, or the same instant in
   another time zone. Equal-but-distinct objects of the same types and
   representations pass.
+- Classes and enum members are part of the snapshot. Every bar and reachable
+  record must still have its exact captured class; replacing bars with another
+  class carrying the same fields, or reassigning an object's `__class__`,
+  fails. Enum members are process-global singletons, so the class, name and
+  value of every reachable member are captured and re-checked. Leaves are
+  admitted only with exact types (plus enum members and the calendar
+  `Timestamp`); a dataset holding a scalar subclass is never admitted and
+  always takes the reference path.
 - For cache reloads, the same resolved cache root and unchanged file digests.
 
 Derived reuse is keyed by derived type and dataset ID, with the same
@@ -251,8 +259,10 @@ full-batch primitives in every consumer. Process max RSS in the timing runs was
 
 `TimeframeMemo` maps each exact `(session date, session-policy value)` to its
 calendar-resolved `ExchangeSession`, and each timeframe value to its
-configuration identity. Invalid dates are never retained and keep failing
-through the calendar. Early closes, holidays and DST transitions resolve exactly
+configuration identity. An identity hit is reused only after re-checking the
+timeframe's record classes and each enum member's class, name and value, which
+the value-keyed lookup cannot see. Invalid dates are never retained and keep
+failing through the calendar. Early closes, holidays and DST transitions resolve exactly
 as the reference does, because the memo stores the calendar's own answer. Every
 bar still passes its full `IntradayBarWindow` validation, including
 no-cross-session and completion rules. `intraday_session_windows` is memoized per
@@ -290,6 +300,8 @@ inside an active session, on DST and early-close/holiday fixtures:
   another type or time zone (an `int` volume, a `Decimal` window count, the
   same instant in New York time, a `Decimal` bar count on the prediction input)
   are never reused either; each reaches the reference path, which rejects it.
+  So are bars of another class with the same fields, a retained bar or record
+  whose `__class__` was reassigned, and a mutated `BarCompletion` member.
   Mutating a prediction input changes its fingerprint and fails full
   validation.
 - **Derived artifacts.** A corrupted derived file on disk causes a persist
@@ -304,9 +316,11 @@ inside an active session, on DST and early-close/holiday fixtures:
 `tests/unit/data/test_prepared_canonical.py` covers memo exactness (normal,
 early close, DST, extended-hours policy), invalid sessions, value-keyed identity
 memoization, and integrity detection of bar, nested-record, metadata, request,
-report-window and container-field mutation, including equal-valued type and
-time-zone swaps. It also covers mutable-graph
-refusal and the reference path for non-intraday datasets.
+report-window and container-field mutation. That includes equal-valued type
+and time-zone swaps, shadow classes, `__class__` reassignment, mutated enum
+members (in both the snapshot and `TimeframeMemo`) and refused scalar
+subclasses. It also covers mutable-graph refusal and the reference path for
+non-intraday datasets.
 
 ## Scientific equivalence
 
