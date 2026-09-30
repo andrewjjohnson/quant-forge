@@ -1,6 +1,6 @@
 """QF-65 preparation mechanics: scoped memos, content integrity and lifecycle."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -13,6 +13,7 @@ from quantforge.data import (
     FeedScope,
     IntradayBar,
     IntradayBarProvenance,
+    IntradayBarRequest,
     MarketDataset,
     intraday_session_windows,
 )
@@ -159,26 +160,88 @@ def _provenance() -> IntradayBarProvenance:
     )
 
 
+@dataclass(frozen=True)
+class _Window:
+    output_bar_id: str
+
+
+@dataclass(frozen=True)
+class _Metadata:
+    dataset_id: str
+    bar_count: int
+    windows: tuple[_Window, ...]
+
+
+@dataclass(frozen=True)
+class _Dataset:
+    request: IntradayBarRequest
+    bars: tuple[IntradayBar, ...]
+    metadata: _Metadata
+
+
+def _request() -> IntradayBarRequest:
+    return IntradayBarRequest(
+        "SPY",
+        datetime(2024, 7, 5, 13, 30, tzinfo=UTC),
+        datetime(2024, 7, 5, 20, tzinfo=UTC),
+        ONE_MINUTE,
+        FeedScope.consolidated(),
+        _provenance().adjustment_basis,
+    )
+
+
+def _dataset(provenance: IntradayBarProvenance) -> _Dataset:
+    return _Dataset(
+        _request(),
+        tuple(_bar(minute, provenance) for minute in range(3)),
+        _Metadata("dataset", 3, (_Window("a"), _Window("b"))),
+    )
+
+
 def test_content_integrity_accepts_equal_content_and_detects_bypass() -> None:
     provenance = _provenance()
-    bars = tuple(_bar(minute, provenance) for minute in range(3))
-    integrity = _ContentIntegrity.capture(bars)
+    dataset = _dataset(provenance)
+    integrity = _ContentIntegrity.capture(dataset)
     assert integrity is not None
-    assert integrity.intact(bars)
-    copies = tuple(_bar(minute, _provenance()) for minute in range(3))
-    assert integrity.intact(copies)  # Equal values, different objects.
-    assert not integrity.intact(bars[:2])
-    assert not integrity.intact((bars[0], bars[2], bars[1]))
+    assert integrity.intact(dataset)
+    assert integrity.intact(_dataset(_provenance()))  # Equal values, new objects.
+    bars = dataset.bars
+    for presented in (
+        replace(dataset, bars=bars[:2]),
+        replace(dataset, bars=(bars[0], bars[2], bars[1])),
+        replace(dataset, metadata=replace(dataset.metadata, bar_count=4)),
+        replace(dataset, request=replace(dataset.request, symbol="QQQ")),
+    ):
+        assert not integrity.intact(presented)
     object.__setattr__(bars[1], "close", Decimal("100.5"))
-    assert not integrity.intact(bars)
+    assert not integrity.intact(dataset)
     object.__setattr__(bars[1], "close", Decimal(100))
-    assert integrity.intact(bars)
+    assert integrity.intact(dataset)
     # Nested shared records are snapshotted too: provenance and its feed scope.
     object.__setattr__(provenance, "source_snapshot_id", "other")
-    assert not integrity.intact(bars)
+    assert not integrity.intact(dataset)
     object.__setattr__(provenance, "source_snapshot_id", "snapshot")
     object.__setattr__(provenance.feed_scope, "provider_scope", "altered")
-    assert not integrity.intact(bars)
+    assert not integrity.intact(dataset)
+
+
+@pytest.mark.parametrize("target", ["metadata", "window", "request", "container"])
+def test_content_integrity_detects_metadata_and_request_bypass(target: str) -> None:
+    dataset = _dataset(_provenance())
+    integrity = _ContentIntegrity.capture(dataset)
+    assert integrity is not None
+    # The same retained object: self-comparison alone would miss all of these.
+    if target == "metadata":
+        object.__setattr__(dataset.metadata, "bar_count", 4)
+    elif target == "window":
+        object.__setattr__(dataset.metadata.windows[1], "output_bar_id", "c")
+    elif target == "request":
+        object.__setattr__(dataset.request, "symbol", "QQQ")
+    else:
+        object.__setattr__(
+            dataset, "metadata", replace(dataset.metadata, dataset_id="other")
+        )
+    assert not integrity.intact(dataset)
 
 
 @dataclass(frozen=True)
@@ -186,10 +249,23 @@ class _Mutable:
     values: list[int]
 
 
+@dataclass(frozen=True)
+class _MutableDataset:
+    bars: tuple[IntradayBar, ...]
+    metadata: _Mutable
+
+
 def test_content_integrity_refuses_mutable_or_mixed_graphs() -> None:
-    assert _ContentIntegrity.capture((_Mutable([1]),)) is None
     provenance = _provenance()
-    assert _ContentIntegrity.capture((_bar(0, provenance), provenance)) is None
+    bars = (_bar(0, provenance),)
+    assert _ContentIntegrity.capture(_MutableDataset(bars, _Mutable([1]))) is None
+    mixed = _Dataset(
+        _request(),
+        (bars[0], provenance),  # pyright: ignore[reportArgumentType]
+        _Metadata("dataset", 2, ()),
+    )
+    assert _ContentIntegrity.capture(mixed) is None
+    assert _ContentIntegrity.capture(bars) is None  # Not a dataset record.
 
 
 def test_non_intraday_datasets_always_use_the_reference_validator() -> None:

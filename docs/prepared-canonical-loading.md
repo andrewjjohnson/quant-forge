@@ -64,7 +64,7 @@ Identity cost was mostly building and encoding huge primitives:
 | Per-bar identity, batch identity | Always on first read: one `to_primitive` and one hash per bar, one batch hash |
 | Coverage, session and calendar semantics | Always on first read. Sessions and windows are resolved once per exact value |
 | Fetch-result raw/bar bindings | Always on first read, with the verified snapshot IDs |
-| Presented source equals the authenticated source | Request and metadata equal by value, plus every bar field and nested record field equal to the pristine value. Otherwise the reference re-authentication runs |
+| Presented source equals the authenticated source | Request, metadata and every bar field, with every nested record field, equal to the pristine values; the retained dataset must also still be intact. Otherwise the reference re-authentication runs |
 | Derived 2m/daily artifact validation | Full `validate()` once per session, then reused for content-identical objects |
 | Daily artifact derives from the source | Proven by performing the derivation once; reused for the identical source/target/policy relationship. Otherwise re-derived |
 | Derived cache files on disk | Unchanged `_write_once`/`load` byte comparison |
@@ -112,15 +112,18 @@ Reuse of a canonical source requires all of the following:
   data digest and coverage report. The request ID binds symbol, bounds,
   timeframe (calendar, timezone, RTH/ETH, anchor, labels), feed, adjustment
   basis and schema.
-- Presented `request` and `metadata` equal to the authenticated values.
-- Every bar field, and every field of every nested record (provenance, feed
-  scope, adjustment basis, timeframe, interval, session policy), equal to the
-  pristine value. Equal-but-distinct objects pass; replaced or bypass-mutated
-  fields fail.
+- The presented `request`, `metadata` and every bar field, and every field of
+  every nested record, equal to the pristine values. Nested records include
+  provenance, feed scope, adjustment basis, timeframe, interval, session
+  policy, the coverage report, and aggregation reports and windows.
+- The same snapshot is checked against the retained object on every reuse, so a
+  bypass-mutated retained source or derived artifact is evicted and
+  revalidated, never compared with itself. Equal-but-distinct objects pass;
+  replaced or bypass-mutated fields fail.
 - For cache reloads, the same resolved cache root and unchanged file digests.
 
-Derived reuse is keyed by derived type and dataset ID, with equal metadata and
-request and intact bars. Derivation relationships add the source key, target
+Derived reuse is keyed by derived type and dataset ID, with the same
+whole-dataset snapshot (request, metadata, bars and nested records). Derivation relationships add the source key, target
 timeframe identity and aggregation-policy identity. Session and timeframe
 memos are keyed by the complete frozen value. Object identity, paths, file
 sizes and mtimes are never a reuse key. Object identity only avoids duplicating
@@ -208,11 +211,11 @@ Each retained derived object has one integrity snapshot.
 | Prepared state (real QF-45 startup) | Bytes |
 | --- | ---: |
 | Authenticated 1m `bar_ids` (96,960) | 10.96 MB |
-| 1m content-integrity snapshot | 14.74 MB |
-| Derived 2m/daily integrity snapshots | 7.41 MB |
+| 1m content-integrity snapshot (bars, request, metadata) | 14.77 MB |
+| Derived 2m/daily integrity snapshots, including their report windows | 13.73 MB |
 | Session windows (331 session/timeframe values) | 5.78 MB |
 | Session memo (251 sessions), timeframe identities (3), market verdicts (1) | negligible |
-| **Total owned by the preparation** | **about 38.9 MB** |
+| **Total owned by the preparation** | **about 45.2 MB** |
 
 Traced Python memory (tracemalloc, after a full GC at each stage; separate
 runs from the timing runs):
@@ -225,9 +228,11 @@ runs from the timing runs):
 | Prediction input | 258.6 / 1,446.0 | 210.2 / 1,204.1 |
 | Series | 214.6 / 1,446.0 | 210.6 / 1,204.1 |
 | Plan and validation | 245.7 / 1,446.0 | 231.6 / 1,204.1 |
-| First decision | 402.5 / 1,446.0 | **392.0 / 1,204.1** |
+| First decision | 402.5 / 1,446.0 | **398.1 / 1,204.1** |
 
-Net retained memory is 10.5 MB *lower*, and peak traced memory is 242 MB
+Earlier stages were measured before the snapshot covered request and metadata.
+Covering them adds about 6 MB of retained state. Net retained memory at the
+first decision is still 4.4 MB *lower*, and peak traced memory is 242 MB
 lower. The prepared state is more than offset by shared provenance records,
 which were previously one object per 1m and 2m bar, and by no longer rebuilding
 full-batch primitives in every consumer. Process max RSS in the timing runs was
@@ -268,8 +273,12 @@ inside an active session, on DST and early-close/holiday fixtures:
   derivation.
 - **Bypass mutation.** Mutating a retained bar is detected by the integrity
   snapshot, which evicts the entry and revalidates; the batch identity mismatch
-  raises. Mutating a prediction input changes its fingerprint and fails full
-  validation.
+  raises. The same applies to a retained source's metadata (`provider_symbol`,
+  `retrieved_at`, `batch_id`): it is never reused or returned by a cache reload,
+  which re-authenticates from disk instead. A validated derived artifact whose
+  metadata, request or report window was mutated is revalidated and rejected,
+  and its derivation relationship is dropped. Mutating a prediction input
+  changes its fingerprint and fails full validation.
 - **Derived artifacts.** A corrupted derived file on disk causes a persist
   collision and a derived-cache load mismatch. A derived artifact rebound to
   another source, or with changed bars, fails validation. A daily artifact from
@@ -281,7 +290,8 @@ inside an active session, on DST and early-close/holiday fixtures:
 
 `tests/unit/data/test_prepared_canonical.py` covers memo exactness (normal,
 early close, DST, extended-hours policy), invalid sessions, value-keyed identity
-memoization, integrity detection of nested-record mutation, mutable-graph
+memoization, and integrity detection of bar, nested-record, metadata, request,
+report-window and container-field mutation. It also covers mutable-graph
 refusal and the reference path for non-intraday datasets.
 
 ## Scientific equivalence

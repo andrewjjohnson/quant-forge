@@ -499,6 +499,74 @@ def test_bypass_mutated_backing_is_revalidated_and_rejected(
         assert source.bars[0].provenance is source.bars[1].provenance
 
 
+@pytest.mark.parametrize("field", ["provider_symbol", "retrieved_at", "batch_id"])
+def test_bypass_mutated_source_metadata_is_never_reused(
+    cached: tuple[Path, IntradayBarRequest, Loaded], field: str
+) -> None:
+    root, request, _ = cached
+    dataset_id = _source_id(root, request)
+    cache = IntradayMarketDataCache(root)
+    with canonical_preparation() as preparation:
+        source = cache.load(dataset_id, request)
+        value = {
+            "provider_symbol": "QQQ",
+            "retrieved_at": source.metadata.retrieved_at + timedelta(days=1),
+            "batch_id": "0" * 64,
+        }[field]
+        # The retained object itself: comparing it with itself cannot detect this.
+        object.__setattr__(source.metadata, field, value)
+        if field == "batch_id":
+            with pytest.raises(MarketDataError, match="batch identity"):
+                aggregate_intraday_dataset(source, TWO_MINUTES)
+        else:
+            # The reference path does not check this field, so it derives from the
+            # mutated value; the session must not substitute its own proof.
+            derived = aggregate_intraday_dataset(source, TWO_MINUTES)
+            assert getattr(derived.bars[0].provenance, field) == value
+        statistics = preparation.statistics()
+        assert statistics["source_integrity_failures"] == 1
+        assert statistics["source_reuses"] == 0
+        # A later identical cache load re-authenticates from disk instead of
+        # returning the mutated retained object.
+        reloaded = cache.load(dataset_id, request)
+        assert reloaded is not source
+        assert getattr(reloaded.metadata, field) != value
+        assert preparation.statistics()["source_cache_reuses"] == 0
+
+
+@pytest.mark.parametrize(
+    "target", ["2m_bar_count", "2m_request", "daily_location", "daily_report"]
+)
+def test_bypass_mutated_derived_metadata_is_revalidated(
+    cached: tuple[Path, IntradayBarRequest, Loaded], tmp_path: Path, target: str
+) -> None:
+    root, request, _ = cached
+    with canonical_preparation() as preparation:
+        loaded = load(root, request)  # Both derived artifacts validated once.
+        if target == "2m_bar_count":
+            object.__setattr__(loaded.primary.metadata, "bar_count", 1)
+        elif target == "2m_request":
+            object.__setattr__(loaded.primary.request, "symbol", "QQQ")
+        elif target == "daily_location":
+            object.__setattr__(loaded.daily.metadata, "normalized_location", "x")
+        else:
+            window = loaded.daily.metadata.aggregation_report.windows[0]
+            object.__setattr__(window, "observed_constituent_count", 1)
+        artifact = loaded.primary if target.startswith("2m") else loaded.daily
+        # Whatever the reference validation raises: a domain or dataset error.
+        with pytest.raises((MarketDataError, ValueError)):
+            artifact.validate()
+        if not target.startswith("2m"):
+            with pytest.raises(MarketDataError):
+                prediction_dataset_from_intraday(
+                    loaded.source,
+                    loaded.daily,
+                    cache=MarketDataCache(tmp_path / "projection"),
+                    intraday_cache=IntradayMarketDataCache(root),
+                )
+        assert preparation.statistics()["derived_integrity_failures"] >= 1
+
+
 def test_corrupted_or_rebound_derived_artifacts_fail_closed(
     cached: tuple[Path, IntradayBarRequest, Loaded], tmp_path: Path
 ) -> None:

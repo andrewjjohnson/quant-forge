@@ -3,10 +3,11 @@
 A research load session authenticates each canonical intraday source once, at
 its immutable-cache trust boundary, and each derived artifact once, by the
 existing validators. Later consumers in the same session reuse that proof only
-when the object they present is proven identical in content: its request and
-metadata are equal by value and every bar field (and every nested record field)
-equals the pristine authenticated value. Otherwise they run the unchanged
-reference validation, which fails closed on corruption.
+when the object they present is proven identical in content: its request,
+metadata and every bar field, with every nested record field, equal the
+pristine authenticated values, and the retained dataset itself is still intact.
+Otherwise they run the unchanged reference validation, which fails closed on
+corruption.
 
 Nothing here is scientific identity. Authoritative dataset, batch, bar, manifest,
 report and view identities are the unchanged persisted values. Preparation is
@@ -25,7 +26,7 @@ from enum import Enum
 from operator import attrgetter
 from pathlib import Path
 from sys import getsizeof
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from quantforge.configuration import (
     PrimitiveMapping,
@@ -85,7 +86,10 @@ class _DerivedDataset(Protocol):
 
 
 def _field_getter(record_type: type) -> _Getter:
-    names = tuple(item.name for item in fields(record_type))
+    return _names_getter(tuple(item.name for item in fields(record_type)))
+
+
+def _names_getter(names: tuple[str, ...]) -> _Getter:
     if not names:
         return lambda record: ()
     if len(names) == 1:
@@ -114,42 +118,67 @@ def _collect_records(value: object, found: dict[int, object]) -> bool:
     )
 
 
+def _frozen_dataclass(kind: type) -> bool:
+    return is_dataclass(kind) and getattr(kind, "__dataclass_params__").frozen
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class _ContentIntegrity:
-    """Pristine field values of authenticated bars and every nested record.
+    """Pristine field values of one authenticated dataset and every nested record.
 
-    Frozen records change only through a bypass such as ``object.__setattr__``,
-    which replaces a field value. Comparing current field values with these
-    pristine ones proves unchanged content as completely as reserializing the
-    bars, at C-level map/compare cost (the QF-63 backing-integrity technique).
-    Presented bars that are different but equal objects compare equal by value.
+    Covers the dataset's own fields (request, metadata), every bar field and
+    every record reachable from them (provenance, timeframe, coverage and
+    aggregation reports, family lineage, ...). Frozen records change only through
+    a bypass such as ``object.__setattr__``, which replaces a field value.
+    Comparing current field values with these pristine ones proves unchanged
+    content as completely as reserializing, at C-level map/compare cost (the
+    QF-63 backing-integrity technique). A presented dataset made of different
+    but equal objects compares equal by value.
     """
 
+    dataset_type: type
+    field_getter: _Getter
+    field_values: tuple[object, ...]
     bar_getter: _Getter
     bar_values: tuple[tuple[object, ...], ...]
     records: tuple[tuple[_Getter, tuple[object, ...], tuple[object, ...]], ...]
 
     @classmethod
-    def capture(cls, bars: tuple[object, ...]) -> "_ContentIntegrity | None":
+    def capture(cls, dataset: object) -> "_ContentIntegrity | None":
         """Return ``None`` for heterogeneous or mutable graphs (reference path)."""
-        if not bars:
-            return cls(lambda record: (), (), ())
-        bar_type = type(bars[0])
-        if (
-            not is_dataclass(bar_type)
-            or not getattr(bar_type, "__dataclass_params__").frozen
-            or any(type(bar) is not bar_type for bar in bars)
-        ):
+        dataset_type = type(dataset)
+        if not _frozen_dataclass(dataset_type):
             return None
-        getter = _field_getter(bar_type)
-        values = tuple(map(getter, bars))
+        bars = cast(object, getattr(dataset, "bars", None))
+        if type(bars) is not tuple:
+            return None
+        bars = cast(tuple[object, ...], bars)
+        names = tuple(
+            item.name for item in fields(cast(Any, dataset_type)) if item.name != "bars"
+        )
+        field_getter = _names_getter(names)
+        field_values = field_getter(dataset)
         found: dict[int, object] = {}
-        for column in zip(*values, strict=True):
-            if all(issubclass(kind, _SCALAR_TYPES) for kind in set(map(type, column))):
-                continue
-            for value in {id(value): value for value in column}.values():
-                if not _collect_records(value, found):
-                    return None
+        if not all(_collect_records(value, found) for value in field_values):
+            return None
+        bar_getter: _Getter = lambda record: ()  # noqa: E731 - empty collection.
+        bar_values: tuple[tuple[object, ...], ...] = ()
+        if bars:
+            bar_type = type(bars[0])
+            if not _frozen_dataclass(bar_type) or any(
+                type(bar) is not bar_type for bar in bars
+            ):
+                return None
+            bar_getter = _field_getter(bar_type)
+            bar_values = tuple(map(bar_getter, bars))
+            for column in zip(*bar_values, strict=True):
+                if all(
+                    issubclass(kind, _SCALAR_TYPES) for kind in set(map(type, column))
+                ):
+                    continue
+                for value in {id(value): value for value in column}.values():
+                    if not _collect_records(value, found):
+                        return None
         by_type: dict[type, list[object]] = {}
         for record in found.values():
             by_type.setdefault(type(record), []).append(record)
@@ -158,11 +187,24 @@ class _ContentIntegrity:
             record_getter = _field_getter(record_type)
             owned = tuple(members)
             records.append((record_getter, owned, tuple(map(record_getter, owned))))
-        return cls(getter, values, tuple(records))
+        return cls(
+            dataset_type,
+            field_getter,
+            field_values,
+            bar_getter,
+            bar_values,
+            tuple(records),
+        )
 
-    def intact(self, bars: tuple[object, ...]) -> bool:
+    def intact(self, dataset: object) -> bool:
+        """Whether ``dataset`` has exactly the authenticated content."""
+        if type(dataset) is not self.dataset_type:
+            return False
+        bars = cast(tuple[object, ...], getattr(dataset, "bars"))
         return (
-            len(bars) == len(self.bar_values)
+            self.field_getter(dataset) == self.field_values
+            and type(cast(object, bars)) is tuple
+            and len(bars) == len(self.bar_values)
             and tuple(map(self.bar_getter, bars)) == self.bar_values
             and all(
                 tuple(map(getter, owned)) == values
@@ -178,8 +220,9 @@ class PreparedCanonicalDataset:
     ``batch_id`` and ``bar_ids`` are the authenticated persisted identities (the
     manifest batch identity and each verified bar identity, by position). The
     compatibility key is ``(dataset_id, request_id)`` plus the resolved cache
-    root; reuse additionally requires value-equal request/metadata and intact
-    bar content. Coverage and session evidence are the authenticated metadata.
+    root; reuse additionally requires the presented request, metadata and bars
+    (with every nested record) to equal their pristine authenticated values.
+    Coverage and session evidence are the authenticated metadata.
     ``file_digests`` are the SHA-256 digests of every artifact file the loader
     authenticated (manifest, normalized bars and raw extracts), by relative path.
     """
@@ -201,14 +244,13 @@ class _AuthenticatedDerived:
     dataset: _DerivedDataset
     integrity: _ContentIntegrity
 
+    def intact(self) -> bool:
+        """The retained dataset itself still has its authenticated content."""
+        return self.integrity.intact(self.dataset)
+
     def matches(self, dataset: _DerivedDataset) -> bool:
-        return (
-            type(dataset) is type(self.dataset)
-            and dataset.metadata == self.dataset.metadata
-            and getattr(dataset, "request", None)
-            == getattr(self.dataset, "request", None)
-            and self.integrity.intact(dataset.bars)
-        )
+        """Request, metadata, bars and nested records equal the pristine values."""
+        return self.integrity.intact(dataset)
 
 
 def _plain(value: object) -> object:
@@ -324,7 +366,7 @@ class CanonicalPreparation:
         file_digests: tuple[tuple[str, str], ...],
     ) -> None:
         """Record a source just authenticated from ``cache_root`` by the loader."""
-        integrity = _ContentIntegrity.capture(cast(tuple[object, ...], dataset.bars))
+        integrity = _ContentIntegrity.capture(dataset)
         if integrity is None or len(bar_ids) != len(dataset.bars):
             self.counts["source_not_admitted"] += 1
             return
@@ -355,7 +397,7 @@ class CanonicalPreparation:
             or entry.dataset.request != request
         ):
             return None
-        if not entry.integrity.intact(cast(tuple[object, ...], entry.dataset.bars)):
+        if not entry.integrity.intact(entry.dataset):
             self._evict_source(entry)
             return None
         for location, digest in entry.file_digests:
@@ -377,14 +419,10 @@ class CanonicalPreparation:
         )
         if entry is None:
             return None
-        if not entry.integrity.intact(cast(tuple[object, ...], entry.dataset.bars)):
+        if not entry.integrity.intact(entry.dataset):
             self._evict_source(entry)
             return None
-        if (
-            dataset.request != entry.dataset.request
-            or dataset.metadata != entry.dataset.metadata
-            or not entry.integrity.intact(cast(tuple[object, ...], dataset.bars))
-        ):
+        if dataset is not entry.dataset and not entry.integrity.intact(dataset):
             self.counts["source_rejections"] += 1
             return None
         self.counts["source_reuses"] += 1
@@ -414,11 +452,11 @@ class CanonicalPreparation:
         entry = self._validated.get((type(dataset), dataset_id))
         if entry is None:
             return False
-        if not entry.integrity.intact(entry.dataset.bars):
+        if not entry.intact():
             self.counts["derived_integrity_failures"] += 1
             del self._validated[(type(dataset), dataset_id)]
             return False
-        if not entry.matches(dataset):
+        if dataset is not entry.dataset and not entry.matches(dataset):
             self.counts["derived_rejections"] += 1
             return False
         self.counts["derived_validation_reuses"] += 1
@@ -442,9 +480,9 @@ class CanonicalPreparation:
     def _integrity(self, dataset: _DerivedDataset) -> _ContentIntegrity | None:
         """Share one pristine snapshot per retained derived object (memory)."""
         for entry in (*self._derivations.values(), *self._validated.values()):
-            if entry.dataset is dataset and entry.integrity.intact(dataset.bars):
+            if entry.dataset is dataset and entry.intact():
                 return entry.integrity
-        return _ContentIntegrity.capture(dataset.bars)
+        return _ContentIntegrity.capture(dataset)
 
     def derivation_matches(
         self,
@@ -459,9 +497,13 @@ class CanonicalPreparation:
             return False
         key = (*prepared.key, type(dataset).__name__, target_timeframe_id, policy_id)
         entry = self._derivations.get(key)
-        if entry is None or not entry.integrity.intact(entry.dataset.bars):
+        if entry is None:
             return False
-        if not entry.matches(dataset):
+        if not entry.intact():
+            self.counts["derived_integrity_failures"] += 1
+            del self._derivations[key]
+            return False
+        if dataset is not entry.dataset and not entry.matches(dataset):
             self.counts["derivation_rejections"] += 1
             return False
         self.counts["derivation_reuses"] += 1
@@ -517,7 +559,8 @@ class CanonicalPreparation:
 
         def integrity_bytes(integrity: _ContentIntegrity) -> int:
             return (
-                getsizeof(integrity.bar_values)
+                getsizeof(integrity.field_values)
+                + getsizeof(integrity.bar_values)
                 + sum(map(getsizeof, integrity.bar_values))
                 + sum(
                     getsizeof(owned) + getsizeof(values) + sum(map(getsizeof, values))

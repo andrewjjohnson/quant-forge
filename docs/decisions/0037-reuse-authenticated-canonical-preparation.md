@@ -33,10 +33,11 @@ join that session or open their own.
   and re-hashes every artifact file. Only if every file matches does it reuse
   the decoded, validated dataset.
 - **Content-proven reuse.** Aggregation and cache-binding consumers reuse the
-  authenticated batch and bar identities only for a presented source whose
-  request and metadata are equal by value. Every bar field and every nested
-  record field must also equal its pristine authenticated value (the QF-63
-  integrity technique). Otherwise the reference validation runs and fails closed.
+  authenticated batch and bar identities only when the presented source's
+  request, metadata and every bar field, with every nested record field, equal
+  their pristine authenticated values. The retained dataset must still be intact
+  as well (the QF-63 integrity technique, extended to request and metadata).
+  Otherwise the reference validation runs and fails closed.
 - **Derived artifacts.** Each QF-18/QF-19 artifact passes its full `validate()`
   once per session. A derivation of an authenticated source is recorded as a
   relationship, so `prediction_dataset_from_intraday` does not re-derive the
