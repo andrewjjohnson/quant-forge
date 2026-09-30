@@ -1,7 +1,7 @@
 """QF-65 preparation mechanics: scoped memos, content integrity and lifecycle."""
 
 from dataclasses import dataclass, fields, replace
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from decimal import Decimal
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -355,6 +355,33 @@ def test_content_integrity_refuses_scalar_subclasses() -> None:
     )
     assert _ContentIntegrity.capture(dataset) is not None
     assert _ContentIntegrity.capture(altered) is None
+
+
+class _ShiftingZone(tzinfo):
+    """A tzinfo whose offset rule can change behind an unchanged datetime."""
+
+    def __init__(self) -> None:
+        self.offset = timedelta(0)
+
+    def utcoffset(self, dt: datetime | None) -> timedelta:
+        return self.offset
+
+    def dst(self, dt: datetime | None) -> timedelta:
+        return timedelta(0)
+
+
+@pytest.mark.parametrize("target", ["bar", "provenance"])
+def test_content_integrity_refuses_unreviewed_time_zones(target: str) -> None:
+    provenance = _provenance()
+    dataset = _dataset(provenance)
+    assert _ContentIntegrity.capture(dataset) is not None
+    # Domain constructors normalize to UTC; a record can still hold such a zone
+    # (bypass or custom producer). Its offset could later change in place.
+    record: object = dataset.bars[0] if target == "bar" else provenance
+    name = "start_timestamp" if target == "bar" else "retrieved_at"
+    moment = cast(datetime, getattr(record, name))
+    object.__setattr__(record, name, moment.replace(tzinfo=_ShiftingZone()))
+    assert _ContentIntegrity.capture(dataset) is None
 
 
 def test_timeframe_identity_memo_rechecks_enum_state() -> None:

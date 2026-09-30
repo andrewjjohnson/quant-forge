@@ -131,8 +131,17 @@ Reuse of a canonical source requires all of the following:
   fails. Enum members are process-global singletons, so the class, name and
   value of every reachable member are captured and re-checked. Leaves are
   admitted only with exact types (plus enum members and the calendar
-  `Timestamp`); a dataset holding a scalar subclass is never admitted and
-  always takes the reference path.
+  `Timestamp`). Datetime-like leaves may carry only `timezone` or `ZoneInfo`
+  zones, the same allow-list QF-60 admits, so no offset rule can change behind
+  an unchanged datetime object. A dataset holding a scalar subclass or another
+  zone type is never admitted and always takes the reference path.
+- **Threat model.** Detected: any change reachable from an authenticated dataset
+  through its data. That covers replaced field objects (including bypass
+  `object.__setattr__`), reassigned classes, mutated enum members, and changed
+  cache bytes. Not detected: rewriting program code, such as monkeypatching
+  methods of `IntradayBar`, the validators, or the canonical encoder. That would
+  change the reference validators themselves and is outside any data-integrity
+  check.
 - For cache reloads, the same resolved cache root and unchanged file digests.
 
 Derived reuse is keyed by derived type and dataset ID, with the same

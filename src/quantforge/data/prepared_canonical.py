@@ -16,11 +16,11 @@ persisted artifact after restart; a new process authenticates again.
 """
 
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from itertools import chain
@@ -28,6 +28,7 @@ from operator import attrgetter, is_
 from pathlib import Path
 from sys import getsizeof
 from typing import TYPE_CHECKING, Any, Protocol, cast
+from zoneinfo import ZoneInfo
 
 from pandas import Timestamp  # pyright: ignore[reportMissingTypeStubs]
 
@@ -73,6 +74,9 @@ _SCALAR_TYPES: frozenset[type] = frozenset(
         cast(type, Timestamp),
     }
 )
+# A zone's offset rule must not change behind an unchanged datetime object.
+_ZONED_TYPES: frozenset[type] = frozenset({datetime, time, cast(type, Timestamp)})
+_ZONE_TYPES = (timezone, ZoneInfo)
 _MARKET_MEMO_LIMIT = 64
 _VARIANT_LIMIT = 4
 _COUNTERS = (
@@ -131,11 +135,19 @@ class _Reach:
         self.enums: dict[int, Enum] = {}
 
 
+def _admitted_zones(values: Iterable[object]) -> bool:
+    """Datetime-like leaves may carry only immutable reviewed zones (QF-60)."""
+    return all(
+        zone is None or type(zone) in _ZONE_TYPES
+        for zone in set(map(attrgetter("tzinfo"), values))
+    )
+
+
 def _collect(value: object, reach: _Reach) -> bool:
     """Collect reachable frozen records and enum members; False if unadmitted."""
     kind = type(value)
     if kind in _SCALAR_TYPES:
-        return True
+        return kind not in _ZONED_TYPES or _admitted_zones((value,))
     if isinstance(value, Enum):
         reach.enums.setdefault(id(value), value)
         return True
@@ -251,7 +263,10 @@ class _ContentIntegrity:
             bar_getter = _field_getter(bar_type)
             bar_values = tuple(map(bar_getter, bars))
             for column in zip(*bar_values, strict=True):
-                if set(map(type, column)) <= _SCALAR_TYPES:
+                kinds = set(map(type, column))
+                if kinds <= _SCALAR_TYPES:
+                    if kinds & _ZONED_TYPES and not _admitted_zones(column):
+                        return None
                     continue
                 for value in {id(value): value for value in column}.values():
                     if not _collect(value, reach):
