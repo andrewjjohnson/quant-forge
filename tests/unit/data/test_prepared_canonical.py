@@ -3,6 +3,7 @@
 from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -28,6 +29,7 @@ from quantforge.timeframes import (
     BarCompletion,
     ExchangeSessionPolicy,
     IntervalKind,
+    IntradayAnchor,
     IntradayBarWindow,
     IntradayInterval,
     SessionScope,
@@ -378,8 +380,24 @@ class _ShiftingZone(tzinfo):
         return timedelta(0)
 
 
+class _UnhashableZone(tzinfo):
+    """An equality-defining zone without ``__hash__`` (so it is unhashable)."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta:
+        return timedelta(0)
+
+    def dst(self, dt: datetime | None) -> timedelta:
+        return timedelta(0)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _UnhashableZone)
+
+
+@pytest.mark.parametrize("zone", [_ShiftingZone, _UnhashableZone])
 @pytest.mark.parametrize("target", ["bar", "provenance"])
-def test_content_integrity_refuses_unreviewed_time_zones(target: str) -> None:
+def test_content_integrity_refuses_unreviewed_time_zones(
+    target: str, zone: type[tzinfo]
+) -> None:
     provenance = _provenance()
     dataset = _dataset(provenance)
     assert _ContentIntegrity.capture(dataset) is not None
@@ -388,7 +406,8 @@ def test_content_integrity_refuses_unreviewed_time_zones(target: str) -> None:
     record: object = dataset.bars[0] if target == "bar" else provenance
     name = "start_timestamp" if target == "bar" else "retrieved_at"
     moment = cast(datetime, getattr(record, name))
-    object.__setattr__(record, name, moment.replace(tzinfo=_ShiftingZone()))
+    object.__setattr__(record, name, moment.replace(tzinfo=zone()))
+    # Rejected by type before any zone is hashed (never a TypeError).
     assert _ContentIntegrity.capture(dataset) is None
 
 
@@ -409,6 +428,113 @@ def test_timeframe_identity_memo_rechecks_enum_state(member_name: str) -> None:
             object.__setattr__(member, "_value_", original)
         assert ONE_MINUTE.configuration_id == reference
     assert memo.identities_computed == 3
+
+
+class _ShiftedTime(time):
+    """Equal and hash-identical to its value, but serializes differently."""
+
+    def isoformat(self, timespec: str = "auto") -> str:
+        return "00:00:00.000000"
+
+
+class _UnhashableText(str):
+    __hash__ = None  # pyright: ignore[reportAssignmentType]
+
+
+def _clock_timeframe() -> Timeframe:
+    return Timeframe(
+        IntradayInterval(
+            timedelta(minutes=5), IntradayAnchor.CLOCK, clock_anchor=time(9, 30)
+        ),
+        EXTENDED,
+    )
+
+
+@pytest.mark.parametrize("leaf", ["clock_anchor", "extended_hours_end"])
+def test_timeframe_identity_memo_declines_unreviewed_leaf_types(leaf: str) -> None:
+    timeframe = _clock_timeframe()
+    reference = configuration_identity(timeframe.to_primitive())
+    record = timeframe.interval if leaf == "clock_anchor" else timeframe.session_policy
+    original = cast(time, getattr(record, leaf))
+    memo = TimeframeMemo()
+    with timeframe_memo(memo):
+        assert timeframe.configuration_id == reference
+        # Equal and hash-identical: dictionary lookup alone would reuse the
+        # cached identity although serialization now differs.
+        shifted = _ShiftedTime(original.hour, original.minute)
+        assert shifted == original
+        assert hash(shifted) == hash(original)
+        object.__setattr__(record, leaf, shifted)
+        fresh = configuration_identity(timeframe.to_primitive())
+        assert fresh != reference
+        assert timeframe.configuration_id == fresh  # Never the stale identity.
+        object.__setattr__(record, leaf, original)
+        assert timeframe.configuration_id == reference
+    assert (memo.identities_computed, memo.identities_reused) == (1, 1)
+    assert memo.identities_declined == 1
+
+
+def test_timeframe_memos_never_hash_unreviewed_leaves() -> None:
+    policy = ExchangeSessionPolicy()
+    timeframe = Timeframe.us_equity(IntradayInterval(timedelta(minutes=2)))
+    reference_id = configuration_identity(timeframe.to_primitive())
+    reference_session = resolve_exchange_session(NORMAL)
+    reference_windows = intraday_session_windows(NORMAL, timeframe)
+    # Regular-hours resolution never reads the zone name, so the reference path
+    # succeeds; a memo that hashed its key first would raise TypeError instead.
+    for record in (policy, timeframe.session_policy):
+        object.__setattr__(record, "timezone_name", _UnhashableText("America/New_York"))
+    with pytest.raises(TypeError):
+        hash(timeframe)
+    assert configuration_identity(timeframe.to_primitive()) == reference_id
+    with canonical_preparation() as preparation:
+        for _ in range(2):
+            assert timeframe.configuration_id == reference_id
+            assert resolve_exchange_session(NORMAL, policy) == reference_session
+            assert intraday_session_windows(NORMAL, timeframe) == reference_windows
+        statistics = preparation.statistics()
+    assert statistics["timeframe_identity_declines"] == 2
+    assert statistics["session_resolution_declines"] >= 2
+    assert statistics["session_resolutions"] == 0
+    assert statistics["session_window_declines"] == 2
+    assert statistics["timeframe_identity_computations"] == 0
+    assert statistics["session_window_resolutions"] == 0
+
+
+def test_session_window_memo_rechecks_enum_state() -> None:
+    timeframe = Timeframe.us_equity(IntradayInterval(timedelta(minutes=2)))
+    member = cast(IntradayInterval, timeframe.interval).anchor
+    original = member._value_
+    with canonical_preparation() as preparation:
+        first = intraday_session_windows(NORMAL, timeframe)
+        assert intraday_session_windows(NORMAL, timeframe) is first
+        try:
+            object.__setattr__(member, "_value_", "altered")
+            intraday_session_windows(NORMAL, timeframe)  # Resolved again.
+        finally:
+            object.__setattr__(member, "_value_", original)
+        assert intraday_session_windows(NORMAL, timeframe) == first
+        statistics = preparation.statistics()
+    assert statistics["session_window_resolutions"] == 3
+    assert statistics["session_window_reuses"] == 1
+
+
+def test_preparation_never_hashes_unreviewed_dataset_ids(tmp_path: Path) -> None:
+    dataset = _dataset(_provenance())
+    unhashable = _UnhashableText("dataset")
+    presented = replace(
+        dataset, metadata=replace(dataset.metadata, dataset_id=unhashable)
+    )
+    derived = cast(Any, presented)
+    with canonical_preparation() as preparation:
+        assert preparation.cached_source(tmp_path, unhashable, dataset.request) is None
+        assert preparation.source(derived) is None
+        assert not preparation.validated(derived, unhashable)
+        preparation.retain_validated(derived, unhashable)
+        assert not preparation.validated(derived, unhashable)
+        statistics = preparation.statistics()
+    assert statistics["derived_not_admitted"] == 1
+    assert statistics["retained_validated_derived"] == 0
 
 
 @dataclass(frozen=True)

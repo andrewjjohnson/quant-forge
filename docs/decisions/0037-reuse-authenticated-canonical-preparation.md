@@ -53,8 +53,10 @@ join that session or open their own.
   still rebuilds its QF-51 source evidence independently.
 - **Calendar and identity memos.** Exchange sessions and timeframe configuration
   identities are resolved once per complete frozen value inside the scope, and
-  never keyed by object identity. Each identity hit re-checks the timeframe's
-  record classes and enum member values.
+  never keyed by object identity. Only exact record classes with exact reviewed
+  leaf types are memoized, and nothing is hashed before that admission; other
+  values take the reference computation. Each hit re-checks enum member names
+  and values.
 
 ## Consequences
 

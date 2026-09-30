@@ -44,7 +44,12 @@ from quantforge.data.models import (
     IntradayPredictionProvenance,
     MarketDataset,
 )
-from quantforge.timeframes import Timeframe, TimeframeMemo, timeframe_memo
+from quantforge.timeframes import (
+    Timeframe,
+    TimeframeMemo,
+    memoizable_timeframe_state,
+    timeframe_memo,
+)
 
 if TYPE_CHECKING:
     from quantforge.data.intraday import IntradayBarRequest
@@ -99,6 +104,7 @@ _COUNTERS = (
     "market_validation_reuses",
     "session_window_resolutions",
     "session_window_reuses",
+    "session_window_declines",
 )
 
 
@@ -136,11 +142,13 @@ class _Reach:
 
 
 def _admitted_zones(values: Iterable[object]) -> bool:
-    """Datetime-like leaves may carry only immutable reviewed zones (QF-60)."""
-    return all(
-        zone is None or type(zone) in _ZONE_TYPES
-        for zone in set(map(attrgetter("tzinfo"), values))
-    )
+    """Datetime-like leaves may carry only immutable reviewed zones (QF-60).
+
+    Zones are deduplicated by identity: an unreviewed zone is rejected here,
+    never hashed (it may be unhashable or hash arbitrarily).
+    """
+    zones = {id(zone): zone for zone in map(attrgetter("tzinfo"), values)}
+    return all(zone is None or type(zone) in _ZONE_TYPES for zone in zones.values())
 
 
 def _collect(value: object, reach: _Reach) -> bool:
@@ -455,7 +463,9 @@ class CanonicalPreparation:
         self._validated: dict[tuple[type, str], list[_AuthenticatedDerived]] = {}
         self._derivations: dict[tuple[str, ...], _AuthenticatedDerived] = {}
         self._markets: OrderedDict[str, tuple[date, ...]] = OrderedDict()
-        self._windows: dict[tuple[date, Timeframe], tuple[object, ...]] = {}
+        self._windows: dict[
+            tuple[date, Timeframe], tuple[tuple[object, ...], tuple[object, ...]]
+        ] = {}
         self.counts: Counter[str] = Counter()
 
     def clear(self) -> None:
@@ -473,16 +483,24 @@ class CanonicalPreparation:
         timeframe: Timeframe,
         resolve: Callable[[date, Timeframe], tuple[T, ...]],
     ) -> tuple[T, ...]:
-        """Resolve one exact (session, timeframe) value's immutable windows once."""
+        """Resolve one exact (session, timeframe) value's immutable windows once.
+
+        As for timeframe identities, only exact reviewed leaf types are keyed
+        (never hashed otherwise) and each hit rechecks the enum member state.
+        """
+        state = memoizable_timeframe_state(timeframe)
+        if type(session_date) is not date or state is None:
+            self.counts["session_window_declines"] += 1
+            return resolve(session_date, timeframe)
         key = (session_date, timeframe)
         found = self._windows.get(key)
-        if found is None:
-            windows = resolve(session_date, timeframe)
-            self._windows[key] = windows
-            self.counts["session_window_resolutions"] += 1
-            return windows
-        self.counts["session_window_reuses"] += 1
-        return cast(tuple[T, ...], found)
+        if found is not None and all(map(is_, state, found[1])):
+            self.counts["session_window_reuses"] += 1
+            return cast(tuple[T, ...], found[0])
+        windows = resolve(session_date, timeframe)
+        self._windows[key] = (windows, state)
+        self.counts["session_window_resolutions"] += 1
+        return windows
 
     # -- canonical sources -------------------------------------------------
 
@@ -519,6 +537,8 @@ class CanonicalPreparation:
         Every artifact file is read and hashed again, so changed cache bytes are
         never masked; only decoding and validation of identical bytes is reused.
         """
+        if type(dataset_id) is not str:
+            return None  # Never hash an unreviewed key; retain_source declines it.
         entry = self._sources.get((dataset_id, request.request_id))
         root = cache_root.resolve()
         if (
@@ -544,9 +564,10 @@ class CanonicalPreparation:
 
     def source(self, dataset: "IntradayDataset") -> PreparedCanonicalDataset | None:
         """Return authenticated facts for a content-identical presented source."""
-        entry = self._sources.get(
-            (dataset.metadata.dataset_id, dataset.request.request_id)
-        )
+        dataset_id = cast(object, dataset.metadata.dataset_id)
+        if type(dataset_id) is not str:
+            return None  # Unreviewed key: never hashed, never retained.
+        entry = self._sources.get((dataset_id, dataset.request.request_id))
         if entry is None:
             return None
         if not entry.integrity.intact(entry.dataset):
@@ -569,7 +590,7 @@ class CanonicalPreparation:
 
     def retain_validated(self, dataset: _DerivedDataset, dataset_id: str) -> None:
         """Record a derived dataset that just passed its reference ``validate``."""
-        integrity = self._integrity(dataset)
+        integrity = None if type(dataset_id) is not str else self._integrity(dataset)
         if integrity is None:
             self.counts["derived_not_admitted"] += 1
             return
@@ -586,6 +607,8 @@ class CanonicalPreparation:
         a changed one is dropped. Variants keep a presentation decoded from
         evidence (plain datetimes) from evicting the calendar-built original.
         """
+        if type(dataset_id) is not str:
+            return False  # Unreviewed key: never hashed, never retained.
         key = (type(dataset), dataset_id)
         variants = self._validated.get(key)
         if not variants:
@@ -689,8 +712,10 @@ class CanonicalPreparation:
             **self.counts,
             "session_resolutions": self.sessions.resolved,
             "session_reuses": self.sessions.reused,
+            "session_resolution_declines": self.sessions.sessions_declined,
             "timeframe_identity_computations": self.sessions.identities_computed,
             "timeframe_identity_reuses": self.sessions.identities_reused,
+            "timeframe_identity_declines": self.sessions.identities_declined,
             "retained_sources": len(self._sources),
             "retained_validated_derived": sum(map(len, self._validated.values())),
             "retained_derivations": len(self._derivations),
@@ -734,8 +759,8 @@ class CanonicalPreparation:
             "session_memo_entries": len(self.sessions),
             "session_window_entries": len(self._windows),
             "session_window_bytes": sum(
-                getsizeof(windows) + sum(map(getsizeof, windows))
-                for windows in self._windows.values()
+                getsizeof(windows) + sum(map(getsizeof, windows)) + getsizeof(state)
+                for windows, state in self._windows.values()
             ),
             "market_verdict_entries": len(self._markets),
         }

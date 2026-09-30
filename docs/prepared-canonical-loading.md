@@ -136,7 +136,9 @@ Reuse of a canonical source requires all of the following:
   `Timestamp`). Datetime-like leaves may carry only `timezone` or `ZoneInfo`
   zones, the same allow-list QF-60 admits, so no offset rule can change behind
   an unchanged datetime object. A dataset holding a scalar subclass or another
-  zone type is never admitted and always takes the reference path.
+  zone type is never admitted and always takes the reference path. Zones are
+  checked by type and deduplicated by identity, never hashed, so an unhashable
+  custom zone is simply not admitted.
 - **Threat model.** Detected: any change reachable from an authenticated dataset
   through its data. That covers replaced field objects (including bypass
   `object.__setattr__`), reassigned classes, mutated enum members, and changed
@@ -153,8 +155,12 @@ artifact rebuilt from QF-51 evidence has plain datetimes where the original has
 calendar `Timestamp`s, so it is validated once as its own variant instead of
 evicting the original. Derivation relationships add the source key, target
 timeframe identity and aggregation-policy identity. Session and timeframe
-memos are keyed by the complete frozen value. Object identity, paths, file
-sizes and mtimes are never a reuse key. Object identity only avoids duplicating
+memos are keyed by the complete frozen value. Every memo key is admitted by
+exact type before it is hashed: dataset IDs must be exact `str`, and
+timeframe and session-policy keys must be exact records whose serialized leaves
+are exact reviewed types. Anything else bypasses the memo and runs the
+reference computation. Object identity, paths, file sizes and mtimes are never
+a reuse key. Object identity only avoids duplicating
 an integrity snapshot, after content has been checked.
 
 ## Identity behavior
@@ -270,16 +276,22 @@ full-batch primitives in every consumer. Process max RSS in the timing runs was
 
 `TimeframeMemo` maps each exact `(session date, session-policy value)` to its
 calendar-resolved `ExchangeSession`, and each timeframe value to its
-configuration identity. An identity hit is reused only after re-checking the
-timeframe's record classes and each enum member's class, name and value,
-including the interval's property-supplied `kind`. The value-keyed lookup
-cannot see any of these. Invalid dates are never retained and keep
+configuration identity. A key equal and hash-identical to a cached one can
+still serialize differently if a leaf is a subclass (a `time` overriding
+`isoformat`, say). So memoization is limited to exact `Timeframe`, interval and
+`ExchangeSessionPolicy` classes whose leaves read by `to_primitive()` are exact
+`str`, `int`, `timedelta`, naive `time` or the reviewed enums; equal values of
+those types always serialize identically. Any other timeframe or policy is
+never hashed and always takes the reference computation. An identity hit is
+also reused only after re-checking each enum member's name and value, including
+the interval's property-supplied `kind`, because members hash by name. The
+value-keyed lookup cannot see any of these. Invalid dates are never retained and keep
 failing through the calendar. Early closes, holidays and DST transitions resolve exactly
 as the reference does, because the memo stores the calendar's own answer. Every
 bar still passes its full `IntradayBarWindow` validation, including
 no-cross-session and completion rules. `intraday_session_windows` is memoized per
 exact (session, timeframe) value for aggregation, scheduling and bounded-record
-validation.
+validation, under the same admission and enum re-check.
 
 Aggregation takes source bar identities from the authenticated source by
 position. It slices each target window's expected constituents by bisect over the
@@ -331,8 +343,11 @@ memoization, and integrity detection of bar, nested-record, metadata, request,
 report-window and container-field mutation. That includes equal-valued type
 and time-zone swaps, shadow classes, `__class__` reassignment, mutated enum
 members (in both the snapshot and `TimeframeMemo`) and refused scalar
-subclasses. It also covers mutable-graph refusal and the reference path for
-non-intraday datasets.
+subclasses. It also covers declined memoization of equal, hash-identical but
+differently serializing timeframe leaves, and memo keys, dataset IDs and time
+zones that are unhashable, which reach the reference path instead of raising.
+Mutable-graph refusal and the reference path for non-intraday datasets are
+covered too.
 
 ## Scientific equivalence
 
