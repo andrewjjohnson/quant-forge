@@ -38,7 +38,10 @@ join that session or open their own.
   their pristine authenticated values. The retained dataset must still be intact
   as well (the QF-63 integrity technique, extended to request and metadata).
   Values are compared strictly: identical objects, or the same type, value and
-  representation, never Python `==` alone. Exact record classes, and the class,
+  representation (and zone type), never Python `==` alone. A cache reload
+  returns the retained dataset only for a strictly equal request. Retained
+  content is verified before use, and entries are evicted by their admitted
+  key. Exact record classes, and the class,
   name and value of every reachable and every QuantForge enum member, are part
   of the snapshot. Otherwise the reference validation
   runs and fails closed.

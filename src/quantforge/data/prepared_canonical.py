@@ -198,6 +198,11 @@ def _enum_state(member: Enum) -> tuple[object, ...]:
     return type(member), member._name_, member._value_
 
 
+def _exact_text(values: tuple[object, ...]) -> bool:
+    """Memo key parts must be exact ``str`` before they are ever hashed."""
+    return all(type(value) is str for value in values)
+
+
 def _frozen_dataclass(kind: type) -> bool:
     return is_dataclass(kind) and getattr(kind, "__dataclass_params__").frozen
 
@@ -219,6 +224,10 @@ def _strict_equal(left: object, right: object) -> bool:
     if _frozen_dataclass(kind):
         getter = _field_getter(kind)
         return _same(getter(left), getter(right))
+    if kind in _ZONED_TYPES and type(getattr(left, "tzinfo")) is not type(
+        getattr(right, "tzinfo")
+    ):
+        return False  # A zone type the pristine value lacks (its repr may mimic).
     return bool(left == right) and repr(left) == repr(right)
 
 
@@ -361,18 +370,17 @@ class PreparedCanonicalDataset:
     Coverage and session evidence are the authenticated metadata.
     ``file_digests`` are the SHA-256 digests of every artifact file the loader
     authenticated (manifest, normalized bars and raw extracts), by relative path.
+    ``key`` is ``(dataset_id, request_id)`` as admitted: it is never recomputed
+    from the retained dataset, which may be corrupted by the time it is evicted.
     """
 
     dataset: "IntradayDataset"
+    key: tuple[str, str]
     cache_root: Path
     batch_id: str
     bar_ids: tuple[str, ...]
     integrity: _ContentIntegrity
     file_digests: tuple[tuple[str, str], ...]
-
-    @property
-    def key(self) -> tuple[str, str]:
-        return self.dataset.metadata.dataset_id, self.dataset.request.request_id
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -515,11 +523,20 @@ class CanonicalPreparation:
     ) -> None:
         """Record a source just authenticated from ``cache_root`` by the loader."""
         integrity = _ContentIntegrity.capture(dataset)
-        if integrity is None or len(bar_ids) != len(dataset.bars):
+        key = (
+            cast(object, dataset.metadata.dataset_id),
+            cast(object, dataset.request.request_id),
+        )
+        if (
+            integrity is None
+            or len(bar_ids) != len(dataset.bars)
+            or not _exact_text(key)
+        ):
             self.counts["source_not_admitted"] += 1
             return
         entry = PreparedCanonicalDataset(
             dataset,
+            cast(tuple[str, str], key),
             cache_root.resolve(),
             batch_id,
             bar_ids,
@@ -537,18 +554,20 @@ class CanonicalPreparation:
         Every artifact file is read and hashed again, so changed cache bytes are
         never masked; only decoding and validation of identical bytes is reused.
         """
-        if type(dataset_id) is not str:
+        key = (cast(object, dataset_id), cast(object, request.request_id))
+        if not _exact_text(key):
             return None  # Never hash an unreviewed key; retain_source declines it.
-        entry = self._sources.get((dataset_id, request.request_id))
+        entry = self._sources.get(cast(tuple[str, str], key))
         root = cache_root.resolve()
-        if (
-            entry is None
-            or entry.cache_root != root
-            or entry.dataset.request != request
-        ):
+        if entry is None or entry.cache_root != root:
             return None
+        # The retained dataset is proven intact before any of it is used. The
+        # reference load returns the presented request, so the retained one is
+        # returned only for a strictly equal (never merely ``==``) request.
         if not entry.integrity.intact(entry.dataset):
             self._evict_source(entry)
+            return None
+        if not _strict_equal(request, entry.dataset.request):
             return None
         for location, digest in entry.file_digests:
             try:
@@ -564,10 +583,13 @@ class CanonicalPreparation:
 
     def source(self, dataset: "IntradayDataset") -> PreparedCanonicalDataset | None:
         """Return authenticated facts for a content-identical presented source."""
-        dataset_id = cast(object, dataset.metadata.dataset_id)
-        if type(dataset_id) is not str:
+        key = (
+            cast(object, dataset.metadata.dataset_id),
+            cast(object, dataset.request.request_id),
+        )
+        if not _exact_text(key):
             return None  # Unreviewed key: never hashed, never retained.
-        entry = self._sources.get((dataset_id, dataset.request.request_id))
+        entry = self._sources.get(cast(tuple[str, str], key))
         if entry is None:
             return None
         if not entry.integrity.intact(entry.dataset):
@@ -581,9 +603,9 @@ class CanonicalPreparation:
 
     def _evict_source(self, entry: PreparedCanonicalDataset) -> None:
         self.counts["source_integrity_failures"] += 1
+        # Only the admitted key: the retained dataset is corrupted by now.
         self._sources.pop(entry.key, None)
-        source_id = entry.dataset.metadata.dataset_id
-        for key in [key for key in self._derivations if key[0] == source_id]:
+        for key in [key for key in self._derivations if key[:2] == entry.key]:
             del self._derivations[key]
 
     # -- derived artifacts -------------------------------------------------
@@ -641,10 +663,10 @@ class CanonicalPreparation:
         dataset: _DerivedDataset,
     ) -> None:
         """Record the exact output of deriving an authenticated source once."""
-        integrity = self._integrity(dataset)
+        key = (*source.key, type(dataset).__name__, target_timeframe_id, policy_id)
+        integrity = self._integrity(dataset) if _exact_text(key) else None
         if integrity is None:
             return
-        key = (*source.key, type(dataset).__name__, target_timeframe_id, policy_id)
         self._derivations[key] = _AuthenticatedDerived(dataset, integrity)
         self.counts["derivations"] += 1
 
@@ -667,7 +689,7 @@ class CanonicalPreparation:
         if prepared is None:
             return False
         key = (*prepared.key, type(dataset).__name__, target_timeframe_id, policy_id)
-        entry = self._derivations.get(key)
+        entry = self._derivations.get(key) if _exact_text(key) else None
         if entry is None:
             return False
         if not entry.intact():

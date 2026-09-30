@@ -412,6 +412,46 @@ def test_other_identity_request_or_root_is_authenticated_independently(
         assert preparation.statistics()["source_cache_reuses"] == 0
 
 
+class _Symbol(str):
+    """Equal to, and serialized exactly like, its plain-``str`` value."""
+
+
+def _reference_load(
+    cache: IntradayMarketDataCache, dataset_id: str, request: IntradayBarRequest
+) -> IntradayDataset | type[Exception]:
+    try:
+        return cache.load(dataset_id, request)
+    except (CacheError, MarketDataError, TypeError, ValueError) as error:
+        return type(error)
+
+
+def test_cache_reload_reuses_retained_data_only_for_a_strictly_equal_request(
+    cached: tuple[Path, IntradayBarRequest, Loaded],
+) -> None:
+    root, request, _ = cached
+    dataset_id = _source_id(root, request)
+    cache = IntradayMarketDataCache(root)
+    presented = replace(request)
+    object.__setattr__(presented, "symbol", _Symbol(request.symbol))
+    assert presented == request
+    assert presented.request_id == request.request_id
+    reference = _reference_load(cache, dataset_id, presented)  # No session.
+    with canonical_preparation() as preparation:
+        first = cache.load(dataset_id, request)
+        outcome = _reference_load(cache, dataset_id, presented)
+        assert preparation.statistics()["source_cache_reuses"] == 0
+        assert cache.load(dataset_id, replace(request)) is first  # Strictly equal.
+        assert preparation.statistics()["source_cache_reuses"] == 1
+    if isinstance(reference, IntradayDataset):
+        # The reference returns the presented request, never the retained one.
+        assert isinstance(outcome, IntradayDataset)
+        assert outcome is not first
+        assert outcome.request is presented
+        assert reference.request is presented
+    else:
+        assert outcome is reference
+
+
 def _changed_source(source: IntradayDataset, change: str) -> IntradayDataset:
     bars = source.bars
     if change == "missing_bar":

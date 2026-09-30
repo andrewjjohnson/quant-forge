@@ -123,8 +123,10 @@ Reuse of a canonical source requires all of the following:
   identity scan. Any other value must match in type, value and `repr`, so an
   equal-valued substitution Python's `==` would accept still fails: `100` for
   `Decimal("100")`, a `Decimal` count for an `int`, or the same instant in
-  another time zone. Equal-but-distinct objects of the same types and
-  representations pass.
+  another time zone. Datetime-like leaves must also carry the same zone type
+  as the pristine value, so a custom zone whose offset and `repr` mimic UTC
+  fails too. Equal-but-distinct objects of the same types and representations
+  pass.
 - Classes and enum members are part of the snapshot. Every bar and reachable
   record must still have its exact captured class; replacing bars with another
   class carrying the same fields, or reassigning an object's `__class__`,
@@ -146,7 +148,15 @@ Reuse of a canonical source requires all of the following:
   methods of `IntradayBar`, the validators, or the canonical encoder. That would
   change the reference validators themselves and is outside any data-integrity
   check.
-- For cache reloads, the same resolved cache root and unchanged file digests.
+- For cache reloads, the same resolved cache root, unchanged file digests and
+  a presented request strictly equal to the retained one. The reference load
+  returns the presented request, so a merely `==`-equal request (a `str`
+  subclass symbol, a mimicking zone) takes the full load instead of receiving
+  the retained dataset.
+- A retained dataset is proven intact before any of its content is used, and
+  each source is keyed and evicted by the `(dataset_id, request_id)` it was
+  admitted under. Eviction never recomputes the key from the retained dataset,
+  which by then may hold corrupted (even unhashable) values.
 
 Derived reuse is keyed by derived type and dataset ID, with the same
 whole-dataset snapshot (request, metadata, bars and nested records). Up to four
@@ -346,6 +356,9 @@ members (in both the snapshot and `TimeframeMemo`) and refused scalar
 subclasses. It also covers declined memoization of equal, hash-identical but
 differently serializing timeframe leaves, and memo keys, dataset IDs and time
 zones that are unhashable, which reach the reference path instead of raising.
+Retained sources corrupted with an unhashable key field are evicted by their
+admitted key, and cache reloads with an equal but not strictly equal request
+take the full load.
 Mutable-graph refusal and the reference path for non-intraday datasets are
 covered too.
 

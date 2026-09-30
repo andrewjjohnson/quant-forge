@@ -250,7 +250,28 @@ def test_content_integrity_detects_metadata_and_request_bypass(target: str) -> N
     assert not integrity.intact(dataset)
 
 
-@pytest.mark.parametrize("target", ["bar_price", "bar_zone", "count", "presented"])
+class _MimicUtc(tzinfo):
+    """A custom zone whose offset, name and ``repr`` all match ``UTC``."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta:
+        return timedelta(0)
+
+    def dst(self, dt: datetime | None) -> timedelta:
+        return timedelta(0)
+
+    def tzname(self, dt: datetime | None) -> str:
+        return "UTC"
+
+    def __repr__(self) -> str:
+        return repr(UTC)
+
+    def __str__(self) -> str:
+        return str(UTC)
+
+
+@pytest.mark.parametrize(
+    "target", ["bar_price", "bar_zone", "count", "presented", "presented_zone"]
+)
 def test_content_integrity_rejects_equal_valued_type_or_zone_swaps(target: str) -> None:
     dataset = _dataset(_provenance())
     integrity = _ContentIntegrity.capture(dataset)
@@ -265,6 +286,17 @@ def test_content_integrity_rejects_equal_valued_type_or_zone_swaps(target: str) 
         object.__setattr__(bar, "start_timestamp", local)  # same instant
     elif target == "count":
         object.__setattr__(dataset.metadata, "bar_count", Decimal(3))
+    elif target == "presented_zone":
+        # A presented bar is compared with the pristine one, never admitted by
+        # capture, so its zone type is checked there: equality and repr match.
+        mimic = bar.start_timestamp.replace(tzinfo=_MimicUtc())
+        assert mimic == bar.start_timestamp
+        assert repr(mimic) == repr(bar.start_timestamp)
+        presented_bar = replace(bar)  # Constructors normalize; bypass the copy.
+        object.__setattr__(presented_bar, "start_timestamp", mimic)
+        dataset = replace(
+            dataset, bars=(dataset.bars[0], presented_bar, dataset.bars[2])
+        )
     else:
         # A different presented object is compared strictly, not by ``==``.
         dataset = replace(
@@ -517,6 +549,65 @@ def test_session_window_memo_rechecks_enum_state() -> None:
         statistics = preparation.statistics()
     assert statistics["session_window_resolutions"] == 3
     assert statistics["session_window_reuses"] == 1
+
+
+def _retain_source(preparation: Any, dataset: _Dataset, root: Path) -> None:
+    preparation.retain_source(
+        dataset,
+        cache_root=root,
+        batch_id="batch",
+        bar_ids=("a", "b", "c"),
+        file_digests=(),
+    )
+
+
+@pytest.mark.parametrize("lookup", ["cached_source", "source"])
+def test_corrupted_source_is_evicted_by_its_admitted_key(
+    lookup: str, tmp_path: Path
+) -> None:
+    dataset = _dataset(_provenance())
+    with canonical_preparation() as preparation:
+        _retain_source(preparation, dataset, tmp_path)
+        prepared = preparation.source(cast(Any, dataset))
+        assert prepared is not None
+        preparation.retain_derivation(
+            prepared, "target", "policy", _dataset(_provenance())
+        )
+        # Corrupting the retained key field: eviction must not rehash it.
+        object.__setattr__(dataset.metadata, "dataset_id", _UnhashableText("dataset"))
+        if lookup == "cached_source":
+            found = preparation.cached_source(tmp_path, "dataset", _request())
+        else:
+            found = preparation.source(cast(Any, _dataset(_provenance())))
+        assert found is None
+        statistics = preparation.statistics()
+    assert statistics["source_integrity_failures"] == 1
+    assert statistics["retained_sources"] == 0
+    assert statistics["retained_derivations"] == 0
+
+
+@pytest.mark.parametrize("leaf", ["symbol", "start_timestamp"])
+def test_cached_source_returns_retained_data_only_for_a_strict_request(
+    leaf: str, tmp_path: Path
+) -> None:
+    dataset = _dataset(_provenance())
+    presented = _request()
+    original = getattr(presented, leaf)
+    substitute = (
+        _Text(original) if leaf == "symbol" else original.replace(tzinfo=_MimicUtc())
+    )
+    object.__setattr__(presented, leaf, substitute)
+    assert presented == dataset.request
+    assert presented.request_id == dataset.request.request_id
+    with canonical_preparation() as preparation:
+        _retain_source(preparation, dataset, tmp_path)
+        # The reference load returns the presented request; an equal one of
+        # another type or zone must take that path, not get the retained one.
+        assert preparation.cached_source(tmp_path, "dataset", presented) is None
+        assert preparation.cached_source(tmp_path, "dataset", _request()) is dataset
+        statistics = preparation.statistics()
+    assert statistics["source_cache_reuses"] == 1
+    assert statistics["source_integrity_failures"] == 0
 
 
 def test_preparation_never_hashes_unreviewed_dataset_ids(tmp_path: Path) -> None:
