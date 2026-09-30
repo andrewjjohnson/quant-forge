@@ -22,14 +22,18 @@ from quantforge.data.intraday import (
     IntradayBarProvenance,
     IntradayBarRequest,
     IntradayProviderCapabilities,
+    _bar_entry,  # pyright: ignore[reportPrivateUsage]
+    _batch_primitive,  # pyright: ignore[reportPrivateUsage]
 )
 from quantforge.data.intraday_coverage_evidence import validate_retained_coverage_report
 from quantforge.data.intraday_validation import (
     IntradayCoverageReport,
     IntradayValidationMode,
+    _coverage_report,  # pyright: ignore[reportPrivateUsage]
     validate_intraday_coverage,
 )
 from quantforge.data.models import JsonValue, ProviderRecord
+from quantforge.data.prepared_canonical import active_canonical_preparation
 from quantforge.timeframes import BarCompletion
 
 INTRADAY_DATASET_SCHEMA_VERSION = "2"
@@ -170,69 +174,83 @@ class IntradayFetchResult:
     capabilities_configuration_id: str
 
     def __post_init__(self) -> None:
-        if not self.raw_snapshots:
-            raise ValueError("intraday fetch result requires raw snapshots")
-        _validated_text(
+        _validate_fetch_bindings(
+            self.batch,
+            self.raw_snapshots,
+            tuple(snapshot.snapshot_id for snapshot in self.raw_snapshots),
             self.capabilities_configuration_id,
-            "intraday capabilities configuration ID",
         )
-        request = self.batch.request
-        snapshots = self.raw_snapshots
-        if snapshots[0].chunk_start_timestamp != request.start_timestamp:
-            raise ValueError("raw chunks must start at the request boundary")
-        if snapshots[-1].chunk_end_timestamp != request.end_timestamp:
-            raise ValueError("raw chunks must end at the request boundary")
-        provider_identity = (
-            snapshots[0].provider_name,
-            snapshots[0].provider_symbol,
-            snapshots[0].adapter_version,
-            snapshots[0].endpoint,
-        )
-        for index, snapshot in enumerate(snapshots):
-            if snapshot.source_request_id != request.request_id:
-                raise ValueError("raw snapshot request identity mismatch")
-            if (
-                snapshot.provider_name,
-                snapshot.provider_symbol,
-                snapshot.adapter_version,
-                snapshot.endpoint,
-            ) != provider_identity:
-                raise ValueError("raw chunks must use one provider endpoint revision")
-            if index and snapshots[index - 1].chunk_end_timestamp != (
-                snapshot.chunk_start_timestamp
-            ):
-                raise ValueError("raw chunks must be ordered and contiguous")
-        snapshots_by_id = {snapshot.snapshot_id: snapshot for snapshot in snapshots}
-        if len(snapshots_by_id) != len(snapshots):
-            raise ValueError("raw snapshot identities must be unique")
-        for bar in self.batch.bars:
-            snapshot = snapshots_by_id.get(bar.provenance.source_snapshot_id)
-            if snapshot is None:
-                raise ValueError("bar provenance names an unknown raw snapshot")
-            if not (
-                snapshot.chunk_start_timestamp
-                <= bar.start_timestamp
-                < snapshot.chunk_end_timestamp
-            ):
-                raise ValueError(
-                    "bar start falls outside its referenced raw snapshot chunk"
-                )
-            if (
-                bar.provenance.provider_name,
-                bar.provenance.provider_symbol,
-                bar.provenance.adapter_version,
-                bar.provenance.retrieved_at,
-                bar.provenance.source_request_id,
-            ) != (
-                snapshot.provider_name,
-                snapshot.provider_symbol,
-                snapshot.adapter_version,
-                snapshot.retrieved_at,
-                snapshot.source_request_id,
-            ):
-                raise ValueError(
-                    "bar provenance does not match its referenced raw snapshot"
-                )
+
+
+def _validate_fetch_bindings(
+    batch: IntradayBarBatch,
+    snapshots: tuple[IntradayRawSnapshot, ...],
+    snapshot_ids: tuple[str, ...],
+    capabilities_configuration_id: str,
+) -> None:
+    """Bind bars and raw chunks; ``snapshot_ids`` are the snapshots' identities."""
+    if not snapshots:
+        raise ValueError("intraday fetch result requires raw snapshots")
+    _validated_text(
+        capabilities_configuration_id,
+        "intraday capabilities configuration ID",
+    )
+    request = batch.request
+    if snapshots[0].chunk_start_timestamp != request.start_timestamp:
+        raise ValueError("raw chunks must start at the request boundary")
+    if snapshots[-1].chunk_end_timestamp != request.end_timestamp:
+        raise ValueError("raw chunks must end at the request boundary")
+    provider_identity = (
+        snapshots[0].provider_name,
+        snapshots[0].provider_symbol,
+        snapshots[0].adapter_version,
+        snapshots[0].endpoint,
+    )
+    for index, snapshot in enumerate(snapshots):
+        if snapshot.source_request_id != request.request_id:
+            raise ValueError("raw snapshot request identity mismatch")
+        if (
+            snapshot.provider_name,
+            snapshot.provider_symbol,
+            snapshot.adapter_version,
+            snapshot.endpoint,
+        ) != provider_identity:
+            raise ValueError("raw chunks must use one provider endpoint revision")
+        if index and snapshots[index - 1].chunk_end_timestamp != (
+            snapshot.chunk_start_timestamp
+        ):
+            raise ValueError("raw chunks must be ordered and contiguous")
+    snapshots_by_id = dict(zip(snapshot_ids, snapshots, strict=True))
+    if len(snapshots_by_id) != len(snapshots):
+        raise ValueError("raw snapshot identities must be unique")
+    for bar in batch.bars:
+        snapshot = snapshots_by_id.get(bar.provenance.source_snapshot_id)
+        if snapshot is None:
+            raise ValueError("bar provenance names an unknown raw snapshot")
+        if not (
+            snapshot.chunk_start_timestamp
+            <= bar.start_timestamp
+            < snapshot.chunk_end_timestamp
+        ):
+            raise ValueError(
+                "bar start falls outside its referenced raw snapshot chunk"
+            )
+        if (
+            bar.provenance.provider_name,
+            bar.provenance.provider_symbol,
+            bar.provenance.adapter_version,
+            bar.provenance.retrieved_at,
+            bar.provenance.source_request_id,
+        ) != (
+            snapshot.provider_name,
+            snapshot.provider_symbol,
+            snapshot.adapter_version,
+            snapshot.retrieved_at,
+            snapshot.source_request_id,
+        ):
+            raise ValueError(
+                "bar provenance does not match its referenced raw snapshot"
+            )
 
 
 class IntradayIngestionProvider(Protocol):
@@ -386,8 +404,22 @@ class IntradayMarketDataCache:
         return self.load(dataset_id, request)
 
     def load(self, dataset_id: str, request: IntradayBarRequest) -> IntradayDataset:
+        """Authenticate one cached dataset; each identity is computed exactly once.
+
+        Inside a QF-65 load session, an identical load of a dataset the session
+        already authenticated from this root re-hashes every artifact file. If
+        all bytes and the retained bars are unchanged, it returns the retained
+        dataset instead of decoding and validating the same bytes again.
+        """
+        preparation = active_canonical_preparation()
+        if preparation is not None:
+            retained = preparation.cached_source(self.root, dataset_id, request)
+            if retained is not None:
+                return retained
         directory = self.root / "intraday" / "datasets" / dataset_id
+        manifest_location = f"intraday/datasets/{dataset_id}/manifest.json"
         try:
+            manifest_digest = sha256_hex((self.root / manifest_location).read_bytes())
             manifest_value = json.loads((directory / "manifest.json").read_text())
             manifest = _string_mapping(manifest_value, "intraday manifest")
             if manifest.get("dataset_id") != dataset_id:
@@ -424,30 +456,44 @@ class IntradayMarketDataCache:
                 raw_snapshots.append(snapshot)
                 raw_snapshot_ids.append(snapshot_id)
                 raw_locations.append(raw_location)
-            if sha256_hex(normalized_bytes) != manifest.get("data_sha256"):
+            data_sha256 = sha256_hex(normalized_bytes)
+            if data_sha256 != manifest.get("data_sha256"):
                 raise CacheError("intraday normalized artifact checksum mismatch")
             identity = _manifest_identity(manifest)
             if sha256_hex(canonical_json_bytes(identity)) != dataset_id:
                 raise CacheError("intraday dataset identity mismatch")
-            batch = intraday_batch_from_primitive(normalized_value, request)
-            if batch.batch_id != manifest.get("batch_id"):
-                raise CacheError("intraday batch identity mismatch")
-            quality_report = validate_intraday_coverage(
-                batch, mode=IntradayValidationMode.DIAGNOSTIC
+            batch, entries = _decode_batch(normalized_value, request)
+            # Exactly batch.batch_id: the same entries, each already verified.
+            batch_id = configuration_identity(
+                _batch_primitive(request, entries, batch.schema_version)
             )
-            expected_quality = {
-                "report_id": quality_report.report_id,
-                "report": quality_report.to_primitive(),
-            }
+            if batch_id != manifest.get("batch_id"):
+                raise CacheError("intraday batch identity mismatch")
+            bar_ids = tuple(cast(str, entry["bar_id"]) for entry in entries)
+            del entries
+            quality_report = _coverage_report(
+                batch, batch_id, IntradayValidationMode.DIAGNOSTIC
+            )
+            expected_quality = _quality_record(quality_report)
             if manifest.get("quality_report") != expected_quality:
                 raise CacheError("intraday quality report mismatch")
-            result = IntradayFetchResult(
-                batch,
-                tuple(raw_snapshots),
-                _json_string(manifest, "capabilities_configuration_id", "manifest"),
+            snapshots = tuple(raw_snapshots)
+            snapshot_ids = tuple(raw_snapshot_ids)
+            capabilities_configuration_id = _json_string(
+                manifest, "capabilities_configuration_id", "manifest"
             )
-            expected_identity = self._identity_value(
-                result, sha256_hex(normalized_bytes), quality_report
+            _validate_fetch_bindings(
+                batch, snapshots, snapshot_ids, capabilities_configuration_id
+            )
+            expected_identity = _dataset_identity_value(
+                request,
+                snapshots,
+                snapshot_ids,
+                capabilities_configuration_id,
+                batch_id,
+                len(batch.bars),
+                data_sha256,
+                expected_quality,
             )
             if canonical_json_bytes(identity) != canonical_json_bytes(
                 expected_identity
@@ -464,12 +510,10 @@ class IntradayMarketDataCache:
                 retrieved_at=_parse_utc(
                     _json_string(manifest, "retrieved_at", "manifest")
                 ),
-                capabilities_configuration_id=_json_string(
-                    manifest, "capabilities_configuration_id", "manifest"
-                ),
-                batch_id=batch.batch_id,
+                capabilities_configuration_id=capabilities_configuration_id,
+                batch_id=batch_id,
                 bar_count=_json_integer(manifest, "bar_count", "manifest"),
-                raw_snapshot_ids=tuple(raw_snapshot_ids),
+                raw_snapshot_ids=snapshot_ids,
                 raw_locations=tuple(raw_locations),
                 normalized_location=normalized_location,
                 data_sha256=_json_string(manifest, "data_sha256", "manifest"),
@@ -483,7 +527,20 @@ class IntradayMarketDataCache:
             ) from error
         if metadata.bar_count != len(batch.bars):
             raise CacheError("intraday manifest bar count mismatch")
-        return IntradayDataset(request, batch.bars, metadata)
+        dataset = IntradayDataset(request, batch.bars, metadata)
+        if preparation is not None:
+            preparation.retain_source(
+                dataset,
+                cache_root=self.root,
+                batch_id=batch_id,
+                bar_ids=bar_ids,
+                file_digests=(
+                    (manifest_location, manifest_digest),
+                    (normalized_location, data_sha256),
+                    *zip(raw_locations, snapshot_ids, strict=True),
+                ),
+            )
+        return dataset
 
     @staticmethod
     def _identity_value(
@@ -492,46 +549,16 @@ class IntradayMarketDataCache:
         quality_report: IntradayCoverageReport,
     ) -> dict[str, object]:
         batch = result.batch
-        first = result.raw_snapshots[0]
-        return {
-            "schema_version": INTRADAY_DATASET_SCHEMA_VERSION,
-            "artifact_type": "intraday_dataset_manifest",
-            "provider_name": first.provider_name,
-            "provider_symbol": first.provider_symbol,
-            "adapter_version": first.adapter_version,
-            "retrieved_at": max(
-                snapshot.retrieved_at for snapshot in result.raw_snapshots
-            ).isoformat(),
-            "request": {
-                "request_id": batch.request.request_id,
-                "configuration": batch.request.to_primitive(),
-            },
-            "feed_scope": batch.request.feed_scope.to_primitive(),
-            "source_interval": batch.request.source_interval.to_primitive(),
-            "session_scope": batch.request.timeframe.session_policy.scope.value,
-            "capabilities_configuration_id": (result.capabilities_configuration_id),
-            "chunks": [
-                {
-                    "chunk_index": index,
-                    "chunk_start_timestamp": (
-                        snapshot.chunk_start_timestamp.isoformat()
-                    ),
-                    "chunk_end_timestamp": snapshot.chunk_end_timestamp.isoformat(),
-                    "retrieved_at": snapshot.retrieved_at.isoformat(),
-                    "endpoint": snapshot.endpoint,
-                    "raw_snapshot_id": snapshot.snapshot_id,
-                    "raw_sha256": snapshot.snapshot_id,
-                }
-                for index, snapshot in enumerate(result.raw_snapshots)
-            ],
-            "batch_id": batch.batch_id,
-            "bar_count": len(batch.bars),
-            "data_sha256": data_sha256,
-            "quality_report": {
-                "report_id": quality_report.report_id,
-                "report": quality_report.to_primitive(),
-            },
-        }
+        return _dataset_identity_value(
+            batch.request,
+            result.raw_snapshots,
+            tuple(snapshot.snapshot_id for snapshot in result.raw_snapshots),
+            result.capabilities_configuration_id,
+            batch.batch_id,
+            len(batch.bars),
+            data_sha256,
+            _quality_record(quality_report),
+        )
 
     def _request_index(self, provider_name: str, request_id: str) -> Path:
         provider = _validated_text(provider_name, "provider name")
@@ -716,6 +743,61 @@ def _manifest_identity(manifest: dict[str, object]) -> dict[str, object]:
     return identity
 
 
+def _quality_record(report: IntradayCoverageReport) -> dict[str, object]:
+    primitive = report.to_primitive()
+    return {"report_id": configuration_identity(primitive), "report": primitive}
+
+
+def _dataset_identity_value(
+    request: IntradayBarRequest,
+    snapshots: tuple[IntradayRawSnapshot, ...],
+    snapshot_ids: tuple[str, ...],
+    capabilities_configuration_id: str,
+    batch_id: str,
+    bar_count: int,
+    data_sha256: str,
+    quality_record: dict[str, object],
+) -> dict[str, object]:
+    """The QF-15 manifest identity from authenticated snapshot/batch identities."""
+    first = snapshots[0]
+    return {
+        "schema_version": INTRADAY_DATASET_SCHEMA_VERSION,
+        "artifact_type": "intraday_dataset_manifest",
+        "provider_name": first.provider_name,
+        "provider_symbol": first.provider_symbol,
+        "adapter_version": first.adapter_version,
+        "retrieved_at": max(
+            snapshot.retrieved_at for snapshot in snapshots
+        ).isoformat(),
+        "request": {
+            "request_id": request.request_id,
+            "configuration": request.to_primitive(),
+        },
+        "feed_scope": request.feed_scope.to_primitive(),
+        "source_interval": request.source_interval.to_primitive(),
+        "session_scope": request.timeframe.session_policy.scope.value,
+        "capabilities_configuration_id": capabilities_configuration_id,
+        "chunks": [
+            {
+                "chunk_index": index,
+                "chunk_start_timestamp": snapshot.chunk_start_timestamp.isoformat(),
+                "chunk_end_timestamp": snapshot.chunk_end_timestamp.isoformat(),
+                "retrieved_at": snapshot.retrieved_at.isoformat(),
+                "endpoint": snapshot.endpoint,
+                "raw_snapshot_id": snapshot_id,
+                "raw_sha256": snapshot_id,
+            }
+            for index, (snapshot, snapshot_id) in enumerate(
+                zip(snapshots, snapshot_ids, strict=True)
+            )
+        ],
+        "batch_id": batch_id,
+        "bar_count": bar_count,
+        "data_sha256": data_sha256,
+        "quality_report": quality_record,
+    }
+
+
 def validate_intraday_manifest_identity(manifest: PrimitiveMapping) -> None:
     """Verify retained source identity and request/raw-extract links without I/O."""
     if (
@@ -780,50 +862,68 @@ def intraday_batch_from_primitive(
     value: object, request: IntradayBarRequest
 ) -> IntradayBarBatch:
     """Decode canonical bars through the request, bar, and batch domain checks."""
+    return _decode_batch(value, request)[0]
+
+
+def _decode_batch(
+    value: object, request: IntradayBarRequest
+) -> tuple[IntradayBarBatch, list[PrimitiveMapping]]:
+    """Decode and verify every bar identity; also return the verified entries.
+
+    Each entry is ``{"bar_id", "bar"}`` computed once from the typed bar, so a
+    caller can derive the exact ``batch_id`` without reserializing every bar.
+    Bars decoded from identical provenance records share one immutable record.
+    """
     mapping = _string_mapping(value, "normalized batch")
     request_value = _string_mapping(mapping["request"], "normalized request")
     if request_value.get("request_id") != request.request_id or (
         request_value.get("configuration") != request.to_primitive()
     ):
         raise CacheError("normalized intraday request mismatch")
+    feed_scope = request.feed_scope.to_primitive()
+    adjustment_basis = request.adjustment_basis.to_primitive()
+    timeframe = request.timeframe.to_primitive()
+    provenances: dict[tuple[str, ...], IntradayBarProvenance] = {}
     bars: list[IntradayBar] = []
+    entries: list[PrimitiveMapping] = []
     for item in _mapping_list(mapping["bars"], "normalized bars"):
         primitive = _string_mapping(item["bar"], "normalized bar")
         provenance_value = _string_mapping(
             primitive["provenance"], "normalized provenance"
         )
-        if provenance_value.get("feed_scope") != request.feed_scope.to_primitive():
+        if provenance_value.get("feed_scope") != feed_scope:
             raise CacheError("normalized intraday feed scope mismatch")
-        if (
-            provenance_value.get("adjustment_basis")
-            != request.adjustment_basis.to_primitive()
-        ):
+        if provenance_value.get("adjustment_basis") != adjustment_basis:
             raise CacheError("normalized intraday adjustment basis mismatch")
         timeframe_value = _string_mapping(
             primitive["timeframe"], "normalized timeframe"
         )
-        if timeframe_value.get("configuration") != request.timeframe.to_primitive():
+        if timeframe_value.get("configuration") != timeframe:
             raise CacheError("normalized intraday timeframe mismatch")
-        provenance = IntradayBarProvenance(
-            provider_name=_json_string(provenance_value, "provider_name", "provenance"),
-            provider_symbol=_json_string(
-                provenance_value, "provider_symbol", "provenance"
-            ),
-            adapter_version=_json_string(
-                provenance_value, "adapter_version", "provenance"
-            ),
-            retrieved_at=_parse_utc(
-                _json_string(provenance_value, "retrieved_at", "provenance")
-            ),
-            source_request_id=_json_string(
-                provenance_value, "source_request_id", "provenance"
-            ),
-            source_snapshot_id=_json_string(
-                provenance_value, "source_snapshot_id", "provenance"
-            ),
-            feed_scope=request.feed_scope,
-            adjustment_basis=request.adjustment_basis,
+        key = tuple(
+            _json_string(provenance_value, name, "provenance")
+            for name in (
+                "provider_name",
+                "provider_symbol",
+                "adapter_version",
+                "retrieved_at",
+                "source_request_id",
+                "source_snapshot_id",
+            )
         )
+        provenance = provenances.get(key)
+        if provenance is None:
+            provenance = IntradayBarProvenance(
+                provider_name=key[0],
+                provider_symbol=key[1],
+                adapter_version=key[2],
+                retrieved_at=_parse_utc(key[3]),
+                source_request_id=key[4],
+                source_snapshot_id=key[5],
+                feed_scope=request.feed_scope,
+                adjustment_basis=request.adjustment_basis,
+            )
+            provenances[key] = provenance
         bar = IntradayBar(
             symbol=_json_string(primitive, "symbol", "bar"),
             session_date=datetime.fromisoformat(
@@ -842,10 +942,12 @@ def intraday_batch_from_primitive(
             volume=Decimal(_json_string(primitive, "volume", "bar")),
             provenance=provenance,
         )
-        if item.get("bar_id") != bar.bar_id:
+        entry = _bar_entry(bar)
+        if item.get("bar_id") != entry["bar_id"]:
             raise CacheError("normalized intraday bar identity mismatch")
         bars.append(bar)
-    return IntradayBarBatch(request, tuple(bars))
+        entries.append(entry)
+    return IntradayBarBatch(request, tuple(bars)), entries
 
 
 __all__ = [

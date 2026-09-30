@@ -59,9 +59,11 @@ from quantforge.data.prediction_session_evidence import (
     validate_session_projection_evidence,
 )
 from quantforge.data.prediction_source_bars import capture_source_bar_evidence
+from quantforge.data.prepared_canonical import active_canonical_preparation
 from quantforge.data.session_aggregation import (
     AggregatedSessionBar,
     AggregatedSessionDataset,
+    SessionAggregationPolicy,
     aggregate_session_dataset,
 )
 from quantforge.timeframes import SessionInterval, Timeframe, resolve_exchange_session
@@ -476,13 +478,25 @@ def prediction_dataset_from_intraday(
     source_manifest = PrimitiveMappingSnapshot.capture(
         intraday_cache.read_manifest(source.metadata.dataset_id)
     )
-    expected = aggregate_session_dataset(
-        source, target, policy=sessions.metadata.aggregation_policy
-    )
-    if expected != sessions:
-        raise ValidationError(
-            "prediction session dataset differs from its intraday source"
+    preparation = active_canonical_preparation()
+    policy = cast(object, sessions.metadata.aggregation_policy)
+    # QF-65: this session already derived exactly these bars from this intact
+    # authenticated source under the same target and policy; rederiving is the
+    # same deterministic computation. Otherwise derive independently.
+    if (
+        preparation is None
+        or not isinstance(policy, SessionAggregationPolicy)
+        or not preparation.derivation_matches(
+            source, target.configuration_id, policy.configuration_id, sessions
         )
+    ):
+        expected = aggregate_session_dataset(
+            source, target, policy=sessions.metadata.aggregation_policy
+        )
+        if expected != sessions:
+            raise ValidationError(
+                "prediction session dataset differs from its intraday source"
+            )
     if not sessions.aggregation_report.is_complete:
         raise ValidationError("prediction input requires complete session aggregates")
     TimeframeBarSeries.from_aggregated_session_dataset(sessions, family=family)

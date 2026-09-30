@@ -7,6 +7,7 @@ from itertools import pairwise
 from typing import cast
 
 from quantforge.configuration import (
+    Primitive,
     PrimitiveMapping,
     configuration_identity,
     decimal_to_primitive,
@@ -332,6 +333,29 @@ class IntradayBar:
         return canonical_json_bytes(self.to_primitive())
 
 
+def _bar_entry(bar: IntradayBar) -> PrimitiveMapping:
+    """One batch entry; the bar primitive is built once and hashed as ``bar_id``."""
+    primitive = bar.to_primitive()
+    return {"bar_id": configuration_identity(primitive), "bar": primitive}
+
+
+def _batch_primitive(
+    request: IntradayBarRequest,
+    entries: list[PrimitiveMapping],
+    schema_version: str = INTRADAY_CONTRACT_SCHEMA_VERSION,
+) -> PrimitiveMapping:
+    """The canonical batch record for ordered, already verified bar entries."""
+    return {
+        "schema_version": schema_version,
+        "contract_type": "intraday_bar_batch",
+        "request": {
+            "request_id": request.request_id,
+            "configuration": request.to_primitive(),
+        },
+        "bars": cast(list[Primitive], entries),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class IntradayBarBatch:
     """One request-bound, chronologically ordered canonical bar collection."""
@@ -362,11 +386,13 @@ class IntradayBarBatch:
                 f"intraday contract schema {INTRADAY_CONTRACT_SCHEMA_VERSION} "
                 "is required"
             )
+        request_id = self.request.request_id
         for bar in typed_bars:
-            self._validate_bar_matches_request(bar)
+            self._validate_bar_matches_request(bar, request_id)
+        # Every bar's timeframe equals the request's, so one identity serves all.
+        timeframe_id = self.request.timeframe.configuration_id
         bar_keys = tuple(
-            (bar.symbol, bar.timeframe.configuration_id, bar.start_timestamp)
-            for bar in typed_bars
+            (bar.symbol, timeframe_id, bar.start_timestamp) for bar in typed_bars
         )
         if len(set(bar_keys)) != len(bar_keys):
             raise IntradayContractValidationError(
@@ -385,7 +411,7 @@ class IntradayBarBatch:
                     "intraday bar batch contains overlapping timestamps"
                 )
 
-    def _validate_bar_matches_request(self, bar: IntradayBar) -> None:
+    def _validate_bar_matches_request(self, bar: IntradayBar, request_id: str) -> None:
         if bar.symbol != self.request.symbol:
             raise IntradayContractValidationError(
                 "intraday bar symbol does not match its request"
@@ -394,7 +420,7 @@ class IntradayBarBatch:
             raise IntradayContractValidationError(
                 "intraday bar timeframe does not match its request"
             )
-        if bar.provenance.source_request_id != self.request.request_id:
+        if bar.provenance.source_request_id != request_id:
             raise IntradayContractValidationError(
                 "intraday bar provenance does not match its request identity"
             )
@@ -420,17 +446,9 @@ class IntradayBarBatch:
 
     def to_primitive(self) -> PrimitiveMapping:
         """Return the request binding and ordered canonical bars."""
-        return {
-            "schema_version": self.schema_version,
-            "contract_type": "intraday_bar_batch",
-            "request": {
-                "request_id": self.request.request_id,
-                "configuration": self.request.to_primitive(),
-            },
-            "bars": [
-                {"bar_id": bar.bar_id, "bar": bar.to_primitive()} for bar in self.bars
-            ],
-        }
+        return _batch_primitive(
+            self.request, [_bar_entry(bar) for bar in self.bars], self.schema_version
+        )
 
     @property
     def batch_id(self) -> str:

@@ -29,6 +29,10 @@ from quantforge.data.lineage import (
     DatasetLineage,
     FeedScope,
 )
+from quantforge.data.prepared_canonical import (
+    PreparedCanonicalDataset,
+    active_canonical_preparation,
+)
 from quantforge.timeframes import (
     BarCompletion,
     CrossSessionPolicy,
@@ -479,7 +483,24 @@ class AggregatedSessionDataset:
         return canonical_json_bytes(self.to_manifest())
 
     def validate(self) -> None:
-        """Recompute content, identity, paths, provenance, and family invariants."""
+        """Recompute content, identity, paths, provenance, and family invariants.
+
+        Inside a QF-65 load session, a content-identical dataset that already
+        passed this validation in the session is not revalidated.
+        """
+        preparation = active_canonical_preparation()
+        metadata_id = getattr(cast(object, self.metadata), "dataset_id", None)
+        if (
+            preparation is not None
+            and isinstance(metadata_id, str)
+            and preparation.validated(self, metadata_id)
+        ):
+            return
+        self._validate()
+        if preparation is not None:
+            preparation.retain_validated(self, self.metadata.dataset_id)
+
+    def _validate(self) -> None:
         bars_value = cast(object, self.bars)
         metadata_value = cast(object, self.metadata)
         if not isinstance(bars_value, tuple):
@@ -653,9 +674,14 @@ def _serialize_bars(
                 "configuration_id": target_timeframe.configuration_id,
                 "configuration": target_timeframe.to_primitive(),
             },
-            "bars": [{"bar_id": bar.bar_id, "bar": bar.to_primitive()} for bar in bars],
+            "bars": [_bar_entry(bar) for bar in bars],
         }
     )
+
+
+def _bar_entry(bar: AggregatedSessionBar) -> PrimitiveMapping:
+    primitive = bar.to_primitive()
+    return {"bar_id": configuration_identity(primitive), "bar": primitive}
 
 
 def _validate_source_dataset(source_dataset: IntradayDataset) -> IntradayBarBatch:
@@ -682,6 +708,22 @@ def _validate_source_dataset(source_dataset: IntradayDataset) -> IntradayBarBatc
             "source dataset quality report does not match its bars"
         )
     return batch
+
+
+def _authenticated_source(
+    source_dataset: IntradayDataset,
+) -> tuple[PreparedCanonicalDataset | None, tuple[IntradayBar, ...], str]:
+    """Reuse a QF-65 authenticated source, or authenticate it independently."""
+    source_value = cast(object, source_dataset)
+    if not isinstance(source_value, IntradayDataset):
+        raise TypeError("session aggregation requires an IntradayDataset")
+    preparation = active_canonical_preparation()
+    prepared = None if preparation is None else preparation.source(source_dataset)
+    if prepared is not None:
+        return prepared, source_dataset.bars, prepared.batch_id
+    batch = _validate_source_dataset(source_dataset)
+    # _validate_source_dataset proved this recorded identity from the bars.
+    return None, batch.bars, source_dataset.metadata.batch_id
 
 
 def _validate_target(
@@ -834,19 +876,26 @@ def _aggregate_period(
     session_dates: tuple[date, ...],
     expected_by_session: dict[date, tuple[IntradayCoverageInterval, ...]],
     observed_by_key: dict[tuple[datetime, datetime, BarCompletion], IntradayBar],
+    source_bar_ids: dict[tuple[datetime, datetime, BarCompletion], str] | None,
 ) -> tuple[AggregatedSessionBar | None, SessionAggregationWindowQuality]:
     expected = tuple(
         interval
         for session_date in session_dates
         for interval in expected_by_session[session_date]
     )
-    observed = tuple(
-        observed_by_key[key]
+    observed_keys = tuple(
+        key
         for key in (
             (interval.start_timestamp, interval.end_timestamp, interval.completion)
             for interval in expected
         )
         if key in observed_by_key
+    )
+    observed = tuple(observed_by_key[key] for key in observed_keys)
+    constituent_ids = (
+        tuple(bar.bar_id for bar in observed)
+        if source_bar_ids is None
+        else tuple(source_bar_ids[key] for key in observed_keys)
     )
     missing = tuple(
         interval
@@ -891,7 +940,7 @@ def _aggregate_period(
             low=low_price,
             close=close_price,
             volume=volume,
-            source_bar_ids=tuple(bar.bar_id for bar in observed),
+            source_bar_ids=constituent_ids,
             source_dataset_id=source_dataset.metadata.dataset_id,
         )
     start_timestamp = next(
@@ -912,7 +961,7 @@ def _aggregate_period(
         expected_constituent_count=len(expected),
         observed_constituent_count=len(observed),
         missing_constituents=missing,
-        source_bar_ids=tuple(bar.bar_id for bar in observed),
+        source_bar_ids=constituent_ids,
         output_bar_id=None if output is None else output.bar_id,
     )
     return output, quality
@@ -1023,7 +1072,7 @@ def aggregate_session_dataset(
     policy: SessionAggregationPolicy | None = None,
 ) -> AggregatedSessionDataset:
     """Aggregate one immutable intraday source into completed daily or weekly bars."""
-    source_batch = _validate_source_dataset(source_dataset)
+    prepared, source_bars, source_batch_id = _authenticated_source(source_dataset)
     _validate_target(source_dataset, target_timeframe)
     aggregation_policy = policy or SessionAggregationPolicy()
     policy_value = cast(object, aggregation_policy)
@@ -1037,11 +1086,20 @@ def aggregate_session_dataset(
     }
     observed_by_key = {
         (bar.start_timestamp, bar.end_timestamp, bar.completion): bar
-        for bar in source_batch.bars
+        for bar in source_bars
         if bar.completion is not BarCompletion.DEVELOPING
         and (bar.start_timestamp, bar.end_timestamp, bar.completion)
         not in unexpected_keys
     }
+    # Authenticated bar identities by position; otherwise hashed per bar.
+    source_bar_ids = (
+        None
+        if prepared is None
+        else {
+            (bar.start_timestamp, bar.end_timestamp, bar.completion): bar_id
+            for bar, bar_id in zip(source_bars, prepared.bar_ids, strict=True)
+        }
+    )
     periods, excluded_partial_periods = _complete_target_periods(
         source_dataset, target_timeframe
     )
@@ -1055,13 +1113,14 @@ def aggregate_session_dataset(
             session_dates,
             expected_by_session,
             observed_by_key,
+            source_bar_ids,
         )
         windows.append(quality)
         if output is not None:
             output_bars.append(output)
     report = SessionAggregationReport(
         source_dataset_id=source_dataset.metadata.dataset_id,
-        source_batch_id=source_batch.batch_id,
+        source_batch_id=source_batch_id,
         source_quality_report_id=source_report.report_id,
         source_coverage_status=source_report.status,
         source_missing_interval_count=len(source_report.missing_intervals),
@@ -1096,7 +1155,7 @@ def aggregate_session_dataset(
     identity = _dataset_identity_primitive(
         source_dataset_id=source_dataset.metadata.dataset_id,
         source_request_id=source_dataset.request.request_id,
-        source_batch_id=source_batch.batch_id,
+        source_batch_id=source_batch_id,
         source_data_sha256=source_dataset.metadata.data_sha256,
         source_raw_snapshot_ids=source_dataset.metadata.raw_snapshot_ids,
         source_quality_report=source_report,
@@ -1126,7 +1185,7 @@ def aggregate_session_dataset(
         dataset_id=dataset_id,
         source_dataset_id=source_dataset.metadata.dataset_id,
         source_request_id=source_dataset.request.request_id,
-        source_batch_id=source_batch.batch_id,
+        source_batch_id=source_batch_id,
         source_data_sha256=source_dataset.metadata.data_sha256,
         source_raw_snapshot_ids=source_dataset.metadata.raw_snapshot_ids,
         source_quality_report_id=source_report.report_id,
@@ -1144,6 +1203,14 @@ def aggregate_session_dataset(
     )
     dataset = AggregatedSessionDataset(bars, metadata)
     dataset.validate()
+    preparation = active_canonical_preparation()
+    if preparation is not None and prepared is not None:
+        preparation.retain_derivation(
+            prepared,
+            target_timeframe.configuration_id,
+            aggregation_policy.configuration_id,
+            dataset,
+        )
     return dataset
 
 

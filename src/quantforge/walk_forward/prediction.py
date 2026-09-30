@@ -17,6 +17,7 @@ from quantforge.data import (
     build_multi_timeframe_context,
 )
 from quantforge.data.multi_timeframe import ContextCompletionPolicy
+from quantforge.data.prepared_canonical import canonical_preparation
 from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
 from quantforge.prediction import (
     PredictionContextRequirements,
@@ -269,14 +270,19 @@ class PredictionEvaluator:
 
     @contextmanager
     def preparation_scope(self) -> Generator[None]:
-        """Share bounded preparation only within one sequential invocation."""
+        """Share bounded preparation only within one sequential invocation.
+
+        The invocation also joins the enclosing QF-65 canonical preparation, or
+        owns one, so repeated canonical-input authentication is not repeated.
+        """
         if self._projection_registry is not None:
             yield
             return
         registry = PreparedProjectionRegistry()
         self._projection_registry = registry
         try:
-            yield
+            with canonical_preparation():
+                yield
         finally:
             registry.clear()
             self._projection_registry = None

@@ -1,6 +1,8 @@
 """Canonical provider-neutral timeframe and exchange-session semantics."""
 
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
@@ -412,6 +414,9 @@ class Timeframe:
     @property
     def configuration_id(self) -> str:
         """Return the deterministic identity of the complete semantic policy."""
+        memo = _TIMEFRAME_MEMO.get()
+        if memo is not None:
+            return memo.configuration_id(self)
         return configuration_identity(self.to_primitive())
 
 
@@ -479,6 +484,79 @@ class ExchangeTradingWeek:
         }
 
 
+class TimeframeMemo:
+    """Session resolutions and timeframe identities for one scope (QF-65).
+
+    Keys are complete frozen values, never object identities: the exact session
+    date with the complete session-policy value, or the complete timeframe value.
+    Only successful resolutions are retained; invalid dates keep failing through
+    the calendar. Instances are execution-local and released with their owner.
+    There is no process-global session or identity cache.
+    """
+
+    __slots__ = (
+        "_identities",
+        "_sessions",
+        "identities_computed",
+        "identities_reused",
+        "resolved",
+        "reused",
+    )
+
+    def __init__(self) -> None:
+        self._sessions: dict[tuple[date, ExchangeSessionPolicy], ExchangeSession] = {}
+        self._identities: dict[Timeframe, str] = {}
+        self.resolved = 0
+        self.reused = 0
+        self.identities_computed = 0
+        self.identities_reused = 0
+
+    def __len__(self) -> int:
+        return len(self._sessions)
+
+    def resolve(
+        self, session_date: date, policy: ExchangeSessionPolicy
+    ) -> ExchangeSession:
+        key = (session_date, policy)
+        session = self._sessions.get(key)
+        if session is None:
+            session = _resolve_exchange_session(session_date, policy)
+            self._sessions[key] = session
+            self.resolved += 1
+        else:
+            self.reused += 1
+        return session
+
+    def configuration_id(self, timeframe: Timeframe) -> str:
+        identity = self._identities.get(timeframe)
+        if identity is None:
+            identity = configuration_identity(timeframe.to_primitive())
+            self._identities[timeframe] = identity
+            self.identities_computed += 1
+        else:
+            self.identities_reused += 1
+        return identity
+
+    def clear(self) -> None:
+        self._sessions.clear()
+        self._identities.clear()
+
+
+_TIMEFRAME_MEMO: ContextVar[TimeframeMemo | None] = ContextVar(
+    "quantforge_timeframe_memo", default=None
+)
+
+
+@contextmanager
+def timeframe_memo(memo: TimeframeMemo) -> Generator[None]:
+    """Serve session resolution and timeframe identities from ``memo`` here."""
+    token = _TIMEFRAME_MEMO.set(memo)
+    try:
+        yield
+    finally:
+        _TIMEFRAME_MEMO.reset(token)
+
+
 def resolve_exchange_session(
     session_date: date,
     policy: ExchangeSessionPolicy = DEFAULT_US_EQUITY_SESSION_POLICY,
@@ -489,6 +567,15 @@ def resolve_exchange_session(
     policy_value = cast(object, policy)
     if not isinstance(policy_value, ExchangeSessionPolicy):
         raise TimeframeValidationError("exchange session policy is invalid")
+    memo = _TIMEFRAME_MEMO.get()
+    if memo is not None:
+        return memo.resolve(session_date, policy)
+    return _resolve_exchange_session(session_date, policy)
+
+
+def _resolve_exchange_session(
+    session_date: date, policy: ExchangeSessionPolicy
+) -> ExchangeSession:
     calendar = _load_calendar(policy.calendar_name)
     if not calendar.is_session(session_date):
         raise TimeframeValidationError(
@@ -754,9 +841,11 @@ __all__ = [
     "SessionInterval",
     "SessionScope",
     "Timeframe",
+    "TimeframeMemo",
     "TimeframeValidationError",
     "TradingWeekInterval",
     "resolve_exchange_session",
     "resolve_exchange_timezone_name",
     "resolve_trading_week",
+    "timeframe_memo",
 ]

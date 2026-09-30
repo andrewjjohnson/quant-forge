@@ -3,6 +3,7 @@
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from typing import cast
 
 from quantforge.configuration import (
     Primitive,
@@ -17,12 +18,14 @@ from quantforge.data.intraday_aggregation import MissingConstituentPolicy
 from quantforge.data.intraday_coverage_evidence import validate_retained_coverage_report
 from quantforge.data.intraday_validation import (
     IntradayValidationMode,
-    validate_intraday_coverage,
+    _coverage_report,  # pyright: ignore[reportPrivateUsage]
 )
 from quantforge.data.lineage import DatasetFamily
 from quantforge.data.models import DailyBar, IntradayPredictionProvenance
 from quantforge.data.multi_timeframe import TimeframeBarSeries
-from quantforge.data.prediction_source_bars import validate_source_bar_evidence
+from quantforge.data.prediction_source_bars import (
+    _validate_source_bar_evidence,  # pyright: ignore[reportPrivateUsage]
+)
 from quantforge.data.session_aggregation import (
     AggregatedSessionBar,
     AggregatedSessionDataset,
@@ -114,16 +117,19 @@ def validate_session_projection_evidence(
         if not isinstance(entries, list):
             raise ValueError("session bars must be an array")
         source = provenance.source_manifest.to_primitive()
-        source_batch = validate_source_bar_evidence(
+        source_batch, source_bar_ids = _validate_source_bar_evidence(
             provenance.source_bar_evidence.to_primitive(), source
         )
         bars = tuple(session_bar_from_evidence(entry) for entry in entries)
         by_session: defaultdict[date, list[IntradayBar]] = defaultdict(list)
-        for source_bar in source_batch.bars:
+        ids_by_session: defaultdict[date, list[str]] = defaultdict(list)
+        for source_bar, source_bar_id in zip(
+            source_batch.bars, source_bar_ids, strict=True
+        ):
             by_session[source_bar.session_date].append(source_bar)
+            ids_by_session[source_bar.session_date].append(source_bar_id)
         if any(
-            bar.source_bar_ids
-            != tuple(item.bar_id for item in by_session[bar.session_dates[0]])
+            bar.source_bar_ids != tuple(ids_by_session[bar.session_dates[0]])
             for bar in bars
         ):
             raise ValueError(
@@ -136,8 +142,11 @@ def validate_session_projection_evidence(
         ):
             raise ValueError("session OHLCV differs from its source constituents")
         coverage = validate_retained_coverage_report(source)
-        if coverage != validate_intraday_coverage(
-            source_batch, mode=IntradayValidationMode.DIAGNOSTIC
+        # The restored batch reproduced the verified source digest above.
+        if coverage != _coverage_report(
+            source_batch,
+            cast(str, source["batch_id"]),
+            IntradayValidationMode.DIAGNOSTIC,
         ):
             raise ValueError("source coverage report differs from retained source bars")
         full_sessions = tuple(
