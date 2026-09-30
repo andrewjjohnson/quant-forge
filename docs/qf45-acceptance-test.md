@@ -140,6 +140,18 @@ The suite now ends about one regression file after the QF-45 runner (see
 [tiers](development.md#test-tiers-qf-66)). Further reduction needs the production
 follow-up above, not test changes.
 
+## QF-65 follow-up
+
+QF-65 implemented the production fix recommended above. `run_pre_holdout` joins
+or owns one execution-local [canonical preparation](prepared-canonical-loading.md).
+Each invocation, including the test's completed resume, therefore
+authenticates the canonical inputs afresh from persisted bytes. It does not
+reuse first-run in-memory state. Within an invocation, the retained QF-51
+evidence of the same canonical input is rebuilt once instead of on every
+`validate_market_dataset`. The test body, fixture and every assertion are
+unchanged. The QF-45 runner alone (`pytest -m heavy_acceptance -n 0`) went from
+1,063.6-1,079.2 s to **316.5 s** (call 284.5 s) on the same machine.
+
 ## Benchmark methodology
 
 - Same machine for before/after (Apple Silicon, 14 cores), uv 0.12.1, frozen

@@ -1,5 +1,17 @@
 # QuantForge Architecture
 
+QF-65 authenticates canonical inputs once per research load session. An
+explicit `canonical_preparation()` scope (`data.prepared_canonical`) owns the
+execution-local state and clears it on exit. The first cache read keeps every
+trust-boundary check, but computes each identity once. Aggregation, cache
+binding, derived validation and QF-3 prediction-input validation reuse that
+proof only for content-identical objects; anything else takes the unchanged
+reference path. Exchange sessions and timeframe identities are resolved once
+per value within the scope. No persisted format, scientific identity or
+downstream contract changes. See
+[prepared canonical loading](prepared-canonical-loading.md) and
+[ADR 0037](decisions/0037-reuse-authenticated-canonical-preparation.md).
+
 QF-64 adds opt-in compact window schema `"4"` for event studies. Every
 scheduled decision has one small coverage receipt with its QF-42 status and
 original QF-20/QF-11 identities. Only evaluated and skipped decisions nest their

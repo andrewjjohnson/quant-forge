@@ -109,3 +109,4 @@ How will the decision be tested or revisited?
 - [0034: Normalize window membership into append-only catalogues](0034-normalize-window-membership-catalogues.md)
 - [0035: Prepare historical context runs and reusable indicator series](0035-prepare-historical-context-and-feature-series.md)
 - [0036: Separate decision coverage receipts from rich observations](0036-separate-decision-coverage-from-observations.md)
+- [0037: Reuse authenticated canonical preparation within a load session](0037-reuse-authenticated-canonical-preparation.md)

@@ -172,6 +172,10 @@ QF-61 sample rate (~0.106 seconds/decision), decision work alone is approximatel
 35 minutes. Cache validation, projections, candidate exports, integrity checks
 and report publication add substantial startup/stage time. This is an estimate,
 not a measured complete-run duration; expect tens of minutes or longer.
+Since QF-65 the script authenticates the cached inputs once for the whole run
+(one [canonical preparation](prepared-canonical-loading.md) session). Startup
+from the cache to the first scheduled decision takes about 43 s instead of
+about 356 s. A `--resume` process authenticates again from the persisted caches.
 
 The log is `reports/qf45-smoke-2025.log`. Stage lines describe progress; during a
 window its small checkpoint shows durable completed count. Use Ctrl-C to stop,
