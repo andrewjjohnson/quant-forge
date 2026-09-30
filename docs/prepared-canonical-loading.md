@@ -129,7 +129,9 @@ Reuse of a canonical source requires all of the following:
   record must still have its exact captured class; replacing bars with another
   class carrying the same fields, or reassigning an object's `__class__`,
   fails. Enum members are process-global singletons, so the class, name and
-  value of every reachable member are captured and re-checked. Leaves are
+  value of every reachable member are captured and re-checked. So are those of
+  every QuantForge enum member, because some reach serialization only through
+  computed properties (an interval's `kind`, a report's `status`). Leaves are
   admitted only with exact types (plus enum members and the calendar
   `Timestamp`). Datetime-like leaves may carry only `timezone` or `ZoneInfo`
   zones, the same allow-list QF-60 admits, so no offset rule can change behind
@@ -269,8 +271,9 @@ full-batch primitives in every consumer. Process max RSS in the timing runs was
 `TimeframeMemo` maps each exact `(session date, session-policy value)` to its
 calendar-resolved `ExchangeSession`, and each timeframe value to its
 configuration identity. An identity hit is reused only after re-checking the
-timeframe's record classes and each enum member's class, name and value, which
-the value-keyed lookup cannot see. Invalid dates are never retained and keep
+timeframe's record classes and each enum member's class, name and value,
+including the interval's property-supplied `kind`. The value-keyed lookup
+cannot see any of these. Invalid dates are never retained and keep
 failing through the calendar. Early closes, holidays and DST transitions resolve exactly
 as the reference does, because the memo stores the calendar's own answer. Every
 bar still passes its full `IntradayBarWindow` validation, including

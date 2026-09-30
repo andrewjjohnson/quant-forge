@@ -163,6 +163,28 @@ def _collect(value: object, reach: _Reach) -> bool:
     )
 
 
+def _quantforge_enum_members() -> tuple[Enum, ...]:
+    """Every member of every QuantForge enum class.
+
+    Serialization also reads members that no field reaches, through computed
+    properties (an interval's ``kind``, a report's ``status``). Mutating such a
+    process-global member changes canonical bytes, so all are snapshotted.
+    """
+    members: dict[int, Enum] = {}
+    pending: list[type[Enum]] = [Enum]
+    seen: set[type[Enum]] = set()
+    while pending:
+        enum_type = pending.pop()
+        if enum_type in seen:
+            continue
+        seen.add(enum_type)
+        pending.extend(enum_type.__subclasses__())
+        if enum_type.__module__.partition(".")[0] == "quantforge":
+            for member in enum_type.__members__.values():
+                members.setdefault(id(member), member)
+    return tuple(members.values())
+
+
 def _enum_state(member: Enum) -> tuple[object, ...]:
     """What canonical serialization reads from a member: class, name and value."""
     return type(member), member._name_, member._value_
@@ -217,7 +239,8 @@ class _ContentIntegrity:
     Covers the dataset's own fields (request, metadata), every bar and every
     record reachable from them (provenance, timeframe, coverage and aggregation
     reports, family lineage, ...). For each it retains the exact class and the
-    field values, plus the class, name and value of every reachable enum member.
+    field values, plus the class, name and value of every reachable enum member
+    and of every QuantForge enum member (some reach serialization via properties).
     Frozen records change only through bypasses such as ``object.__setattr__``,
     which replace a field value or the object's class; comparing current state
     with this snapshot proves unchanged content as completely as reserializing,
@@ -281,6 +304,8 @@ class _ContentIntegrity:
             records.append(
                 (record_type, record_getter, owned, tuple(map(record_getter, owned)))
             )
+        for member in _quantforge_enum_members():
+            reach.enums.setdefault(id(member), member)
         enums = tuple(reach.enums.values())
         return cls(
             dataset_type,

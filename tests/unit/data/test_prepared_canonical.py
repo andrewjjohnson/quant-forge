@@ -27,6 +27,7 @@ from quantforge.data.prepared_canonical import (
 from quantforge.timeframes import (
     BarCompletion,
     ExchangeSessionPolicy,
+    IntervalKind,
     IntradayBarWindow,
     IntradayInterval,
     SessionScope,
@@ -328,12 +329,19 @@ def test_content_integrity_checks_exact_bar_and_record_classes(target: str) -> N
     assert not integrity.intact(dataset)
 
 
-def test_content_integrity_detects_mutated_enum_members() -> None:
+@pytest.mark.parametrize("reached_by", ["field", "property"])
+def test_content_integrity_detects_mutated_enum_members(reached_by: str) -> None:
     dataset = _dataset(_provenance())
     integrity = _ContentIntegrity.capture(dataset)
     assert integrity is not None
-    member = BarCompletion.COMPLETED
-    assert dataset.bars[0].completion is member
+    # BarCompletion is a bar field; IntervalKind reaches serialization only via
+    # the interval's ``kind`` property, never through a field.
+    member = (
+        dataset.bars[0].completion
+        if reached_by == "field"
+        else ONE_MINUTE.interval.kind
+    )
+    assert member in (BarCompletion.COMPLETED, IntervalKind.INTRADAY)
     original = member._value_
     try:
         # Every snapshot still holds this singleton; only its value changed.
@@ -384,10 +392,11 @@ def test_content_integrity_refuses_unreviewed_time_zones(target: str) -> None:
     assert _ContentIntegrity.capture(dataset) is None
 
 
-def test_timeframe_identity_memo_rechecks_enum_state() -> None:
+@pytest.mark.parametrize("member_name", ["anchor", "kind"])
+def test_timeframe_identity_memo_rechecks_enum_state(member_name: str) -> None:
     reference = configuration_identity(ONE_MINUTE.to_primitive())
     memo = TimeframeMemo()
-    member = cast(IntradayInterval, ONE_MINUTE.interval).anchor
+    member = getattr(cast(IntradayInterval, ONE_MINUTE.interval), member_name)
     original = member._value_
     with timeframe_memo(memo):
         assert ONE_MINUTE.configuration_id == reference

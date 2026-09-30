@@ -38,8 +38,9 @@ join that session or open their own.
   their pristine authenticated values. The retained dataset must still be intact
   as well (the QF-63 integrity technique, extended to request and metadata).
   Values are compared strictly: identical objects, or the same type, value and
-  representation, never Python `==` alone. Exact record classes and the class,
-  name and value of every reachable enum member are part of the snapshot. Otherwise the reference validation
+  representation, never Python `==` alone. Exact record classes, and the class,
+  name and value of every reachable and every QuantForge enum member, are part
+  of the snapshot. Otherwise the reference validation
   runs and fails closed.
 - **Derived artifacts.** Each QF-18/QF-19 artifact passes its full `validate()`
   once per session. A derivation of an authenticated source is recorded as a

@@ -489,6 +489,7 @@ def _timeframe_state(timeframe: Timeframe) -> tuple[object, ...]:
     """Classes and enum member classes/names/values a timeframe identity reads."""
     interval = timeframe.interval
     policy = timeframe.session_policy
+    kind = interval.kind  # A property constant serialized by to_primitive().
     label = timeframe.bar_label
     exposure = timeframe.developing_bar_exposure
     scope = policy.scope
@@ -496,6 +497,9 @@ def _timeframe_state(timeframe: Timeframe) -> tuple[object, ...]:
         type(timeframe),
         type(interval),
         type(policy),
+        type(kind),
+        kind._name_,
+        kind._value_,
         type(label),
         label._name_,
         label._value_,

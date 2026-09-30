@@ -620,7 +620,9 @@ def test_equal_valued_type_or_zone_substitution_is_never_reused(
         assert failures == 1
 
 
-@pytest.mark.parametrize("target", ["presented_class", "retained_class", "enum"])
+@pytest.mark.parametrize(
+    "target", ["presented_class", "retained_class", "enum", "property_enum"]
+)
 def test_class_or_enum_substitution_is_never_reused(
     cached: tuple[Path, IntradayBarRequest, Loaded], target: str
 ) -> None:
@@ -641,17 +643,30 @@ def test_class_or_enum_substitution_is_never_reused(
                 aggregate_intraday_dataset(source, TWO_MINUTES)
             assert preparation.statistics()["source_integrity_failures"] == 1
         else:
-            member = BarCompletion.COMPLETED
+            # A field-reached member, or one serialized only through a property.
+            member = (
+                BarCompletion.COMPLETED
+                if target == "enum"
+                else source.request.timeframe.interval.kind
+            )
             original = member._value_
             try:
                 # A process-global singleton: serialization changes, the field
                 # objects do not. The reference batch identity no longer matches.
                 object.__setattr__(member, "_value_", "altered")
-                with pytest.raises(MarketDataError, match="batch identity"):
+                # The reference path fails closed: a changed bar serialization
+                # breaks the batch identity; a changed timeframe kind already
+                # breaks the request identity the bars' provenance records.
+                expected = "batch identity" if target == "enum" else "request identity"
+                with pytest.raises((MarketDataError, ValueError), match=expected):
                     aggregate_intraday_dataset(source, TWO_MINUTES)
             finally:
                 object.__setattr__(member, "_value_", original)
-            assert preparation.statistics()["source_integrity_failures"] == 1
+            # A changed kind already changes the request key, so the lookup
+            # misses outright; a changed completion is caught by the snapshot.
+            assert preparation.statistics()["source_integrity_failures"] == (
+                1 if target == "enum" else 0
+            )
         assert preparation.statistics()["source_reuses"] == 0
 
 
