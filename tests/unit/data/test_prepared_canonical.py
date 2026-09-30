@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -241,6 +242,30 @@ def test_content_integrity_detects_metadata_and_request_bypass(target: str) -> N
         object.__setattr__(
             dataset, "metadata", replace(dataset.metadata, dataset_id="other")
         )
+    assert not integrity.intact(dataset)
+
+
+@pytest.mark.parametrize("target", ["bar_price", "bar_zone", "count", "presented"])
+def test_content_integrity_rejects_equal_valued_type_or_zone_swaps(target: str) -> None:
+    dataset = _dataset(_provenance())
+    integrity = _ContentIntegrity.capture(dataset)
+    assert integrity is not None
+    bar = dataset.bars[1]
+    if target == "bar_price":
+        assert bar.close == 100
+        object.__setattr__(bar, "close", 100)  # int, equal to Decimal(100)
+    elif target == "bar_zone":
+        local = bar.start_timestamp.astimezone(ZoneInfo("America/New_York"))
+        assert local == bar.start_timestamp
+        object.__setattr__(bar, "start_timestamp", local)  # same instant
+    elif target == "count":
+        object.__setattr__(dataset.metadata, "bar_count", Decimal(3))
+    else:
+        # A different presented object is compared strictly, not by ``==``.
+        dataset = replace(
+            dataset, metadata=replace(dataset.metadata, bar_count=Decimal(3))
+        )
+        assert dataset.metadata.bar_count == 3
     assert not integrity.intact(dataset)
 
 

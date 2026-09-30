@@ -20,10 +20,11 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from operator import attrgetter
+from itertools import chain
+from operator import attrgetter, is_
 from pathlib import Path
 from sys import getsizeof
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -47,11 +48,15 @@ if TYPE_CHECKING:
     from quantforge.data.intraday_ingestion import IntradayDataset
 
 type _Getter = Callable[[object], tuple[object, ...]]
+type _RecordSnapshot = tuple[
+    _Getter, tuple[object, ...], tuple[tuple[object, ...], ...]
+]
 
 # Immutable leaves compared by value. Calendar timestamps are datetime subclasses
 # whose instance dictionaries never participate in equality or identities.
 _SCALAR_TYPES = (type(None), str, int, Decimal, date, time, timedelta, Enum)
 _MARKET_MEMO_LIMIT = 64
+_VARIANT_LIMIT = 4
 _COUNTERS = (
     "source_authentications",
     "source_not_admitted",
@@ -122,6 +127,44 @@ def _frozen_dataclass(kind: type) -> bool:
     return is_dataclass(kind) and getattr(kind, "__dataclass_params__").frozen
 
 
+def _strict_equal(left: object, right: object) -> bool:
+    """Equal content with equal types and exact representation.
+
+    Python numeric and datetime equality ignore type and timezone representation
+    (``100 == Decimal(100)``, equal instants in different zones), but canonical
+    serialization and validation do not. Such a substitution is never equal here.
+    """
+    if left is right:
+        return True
+    kind = type(left)
+    if kind is not type(right):
+        return False
+    if kind is tuple:
+        return _same(cast(tuple[object, ...], left), cast(tuple[object, ...], right))
+    if _frozen_dataclass(kind):
+        getter = _field_getter(kind)
+        return _same(getter(left), getter(right))
+    return bool(left == right) and repr(left) == repr(right)
+
+
+def _same(current: tuple[object, ...], pristine: tuple[object, ...]) -> bool:
+    """Identical field objects (the normal case), else strictly equal ones."""
+    return len(current) == len(pristine) and (
+        all(map(is_, current, pristine)) or all(map(_strict_equal, current, pristine))
+    )
+
+
+def _same_rows(
+    current: tuple[tuple[object, ...], ...], pristine: tuple[tuple[object, ...], ...]
+) -> bool:
+    """Row-wise ``_same``; unchanged backings pass one C-level identity scan."""
+    if len(current) != len(pristine):
+        return False
+    if all(map(is_, chain.from_iterable(current), chain.from_iterable(pristine))):
+        return True
+    return all(map(_same, current, pristine))
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class _ContentIntegrity:
     """Pristine field values of one authenticated dataset and every nested record.
@@ -141,7 +184,7 @@ class _ContentIntegrity:
     field_values: tuple[object, ...]
     bar_getter: _Getter
     bar_values: tuple[tuple[object, ...], ...]
-    records: tuple[tuple[_Getter, tuple[object, ...], tuple[object, ...]], ...]
+    records: tuple[_RecordSnapshot, ...]
 
     @classmethod
     def capture(cls, dataset: object) -> "_ContentIntegrity | None":
@@ -182,7 +225,7 @@ class _ContentIntegrity:
         by_type: dict[type, list[object]] = {}
         for record in found.values():
             by_type.setdefault(type(record), []).append(record)
-        records: list[tuple[_Getter, tuple[object, ...], tuple[object, ...]]] = []
+        records: list[_RecordSnapshot] = []
         for record_type, members in by_type.items():
             record_getter = _field_getter(record_type)
             owned = tuple(members)
@@ -202,12 +245,11 @@ class _ContentIntegrity:
             return False
         bars = cast(tuple[object, ...], getattr(dataset, "bars"))
         return (
-            self.field_getter(dataset) == self.field_values
+            _same(self.field_getter(dataset), self.field_values)
             and type(cast(object, bars)) is tuple
-            and len(bars) == len(self.bar_values)
-            and tuple(map(self.bar_getter, bars)) == self.bar_values
+            and _same_rows(tuple(map(self.bar_getter, bars)), self.bar_values)
             and all(
-                tuple(map(getter, owned)) == values
+                _same_rows(tuple(map(getter, owned)), values)
                 for getter, owned, values in self.records
             )
         )
@@ -254,18 +296,19 @@ class _AuthenticatedDerived:
 
 
 def _plain(value: object) -> object:
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, tuple):
+    """Type- and representation-exact fingerprint input for one field value."""
+    kind = type(value)
+    if value is None or kind in (str, int, bool):
+        return value
+    if kind is tuple:
         return [_plain(item) for item in cast(tuple[object, ...], value)]
-    if isinstance(value, PrimitiveMappingSnapshot):
+    if kind is PrimitiveMappingSnapshot:
         # Immutable evidence bytes are hashed without decoding (QF-60 technique).
-        return {"sha256": sha256_hex(value.canonical_json.encode())}
-    return value
+        snapshot = cast(PrimitiveMappingSnapshot, value)
+        return {"sha256": sha256_hex(snapshot.canonical_json.encode())}
+    # Decimal, dates, datetimes (with their zone), enums: equal values with
+    # another type or representation must not share a verdict.
+    return {"type": f"{kind.__module__}.{kind.__qualname__}", "repr": repr(value)}
 
 
 def _market_fingerprint(dataset: MarketDataset) -> str | None:
@@ -322,7 +365,8 @@ class CanonicalPreparation:
     def __init__(self) -> None:
         self.sessions = TimeframeMemo()
         self._sources: dict[tuple[str, str], PreparedCanonicalDataset] = {}
-        self._validated: dict[tuple[type, str], _AuthenticatedDerived] = {}
+        # Strictly distinct authenticated presentations of one derived dataset.
+        self._validated: dict[tuple[type, str], list[_AuthenticatedDerived]] = {}
         self._derivations: dict[tuple[str, ...], _AuthenticatedDerived] = {}
         self._markets: OrderedDict[str, tuple[date, ...]] = OrderedDict()
         self._windows: dict[tuple[date, Timeframe], tuple[object, ...]] = {}
@@ -443,24 +487,42 @@ class CanonicalPreparation:
         if integrity is None:
             self.counts["derived_not_admitted"] += 1
             return
-        self._validated[(type(dataset), dataset_id)] = _AuthenticatedDerived(
-            dataset, integrity
-        )
+        variants = self._validated.setdefault((type(dataset), dataset_id), [])
+        variants[:] = [entry for entry in variants if entry.dataset is not dataset]
+        variants.append(_AuthenticatedDerived(dataset, integrity))
+        del variants[:-_VARIANT_LIMIT]
         self.counts["derived_validations"] += 1
 
     def validated(self, dataset: _DerivedDataset, dataset_id: str) -> bool:
-        entry = self._validated.get((type(dataset), dataset_id))
-        if entry is None:
+        """Whether a strictly identical presentation already passed ``validate``.
+
+        Each retained variant is checked against its own pristine snapshot first;
+        a changed one is dropped. Variants keep a presentation decoded from
+        evidence (plain datetimes) from evicting the calendar-built original.
+        """
+        key = (type(dataset), dataset_id)
+        variants = self._validated.get(key)
+        if not variants:
             return False
-        if not entry.intact():
-            self.counts["derived_integrity_failures"] += 1
-            del self._validated[(type(dataset), dataset_id)]
-            return False
-        if dataset is not entry.dataset and not entry.matches(dataset):
+        intact = [entry for entry in variants if entry.intact()]
+        if len(intact) != len(variants):
+            self.counts["derived_integrity_failures"] += len(variants) - len(intact)
+            if intact:
+                self._validated[key] = intact
+            else:
+                del self._validated[key]
+        for entry in intact:
+            if dataset is entry.dataset or entry.matches(dataset):
+                self.counts["derived_validation_reuses"] += 1
+                return True
+        if intact:
             self.counts["derived_rejections"] += 1
-            return False
-        self.counts["derived_validation_reuses"] += 1
-        return True
+        return False
+
+    def _validated_entries(self) -> tuple[_AuthenticatedDerived, ...]:
+        return tuple(
+            entry for variants in self._validated.values() for entry in variants
+        )
 
     def retain_derivation(
         self,
@@ -479,7 +541,7 @@ class CanonicalPreparation:
 
     def _integrity(self, dataset: _DerivedDataset) -> _ContentIntegrity | None:
         """Share one pristine snapshot per retained derived object (memory)."""
-        for entry in (*self._derivations.values(), *self._validated.values()):
+        for entry in (*self._derivations.values(), *self._validated_entries()):
             if entry.dataset is dataset and entry.intact():
                 return entry.integrity
         return _ContentIntegrity.capture(dataset)
@@ -544,7 +606,7 @@ class CanonicalPreparation:
             "timeframe_identity_computations": self.sessions.identities_computed,
             "timeframe_identity_reuses": self.sessions.identities_reused,
             "retained_sources": len(self._sources),
-            "retained_validated_derived": len(self._validated),
+            "retained_validated_derived": sum(map(len, self._validated.values())),
             "retained_derivations": len(self._derivations),
             "retained_market_verdicts": len(self._markets),
         }
@@ -570,7 +632,7 @@ class CanonicalPreparation:
 
         derived = {
             id(entry.integrity): entry
-            for entry in (*self._validated.values(), *self._derivations.values())
+            for entry in (*self._validated_entries(), *self._derivations.values())
         }.values()
         return {
             "source_bar_ids_bytes": sum(

@@ -37,7 +37,9 @@ join that session or open their own.
   request, metadata and every bar field, with every nested record field, equal
   their pristine authenticated values. The retained dataset must still be intact
   as well (the QF-63 integrity technique, extended to request and metadata).
-  Otherwise the reference validation runs and fails closed.
+  Values are compared strictly: identical objects, or the same type, value and
+  representation, never Python `==` alone. Otherwise the reference validation
+  runs and fails closed.
 - **Derived artifacts.** Each QF-18/QF-19 artifact passes its full `validate()`
   once per session. A derivation of an authenticated source is recorded as a
   relationship, so `prediction_dataset_from_intraday` does not re-derive the

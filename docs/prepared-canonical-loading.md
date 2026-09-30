@@ -118,12 +118,21 @@ Reuse of a canonical source requires all of the following:
   policy, the coverage report, and aggregation reports and windows.
 - The same snapshot is checked against the retained object on every reuse, so a
   bypass-mutated retained source or derived artifact is evicted and
-  revalidated, never compared with itself. Equal-but-distinct objects pass;
-  replaced or bypass-mutated fields fail.
+  revalidated, never compared with itself.
+- Comparison is strict. Unchanged field objects pass through one C-level
+  identity scan. Any other value must match in type, value and `repr`, so an
+  equal-valued substitution Python's `==` would accept still fails: `100` for
+  `Decimal("100")`, a `Decimal` count for an `int`, or the same instant in
+  another time zone. Equal-but-distinct objects of the same types and
+  representations pass.
 - For cache reloads, the same resolved cache root and unchanged file digests.
 
 Derived reuse is keyed by derived type and dataset ID, with the same
-whole-dataset snapshot (request, metadata, bars and nested records). Derivation relationships add the source key, target
+whole-dataset snapshot (request, metadata, bars and nested records). Up to four
+strictly distinct validated presentations are kept per key. Example: the daily
+artifact rebuilt from QF-51 evidence has plain datetimes where the original has
+calendar `Timestamp`s, so it is validated once as its own variant instead of
+evicting the original. Derivation relationships add the source key, target
 timeframe identity and aggregation-policy identity. Session and timeframe
 memos are keyed by the complete frozen value. Object identity, paths, file
 sizes and mtimes are never a reuse key. Object identity only avoids duplicating
@@ -188,7 +197,7 @@ Invocation counts for one full startup (cProfile; nested rows overlap):
 | Coverage reports | 24 | 5 |
 | Canonical source authentications | 2 loads + 3 re-authentications | **1** (+1 byte-verified reuse, 3 content-verified reuses) |
 | Daily derivations | 2 | **1** (+1 derivation-relationship reuse) |
-| Derived artifact validations (2m / daily) | 2 / 11 | **1 / 1** (+5 reuses) |
+| Derived artifact validations (2m / daily) | 2 / 11 | **1 / 2** (+4 reuses; the second daily is the strictly distinct QF-51 evidence rebuild) |
 | QF-51 source-evidence rebuilds | 6 | **1** (+5 verdict reuses) |
 | Full `validate_market_dataset` runs | 8 | 3 (1 canonical + 2 bounded views) |
 | Source-evidence captures | 7 | 2 |
@@ -277,8 +286,12 @@ inside an active session, on DST and early-close/holiday fixtures:
   `retrieved_at`, `batch_id`): it is never reused or returned by a cache reload,
   which re-authenticates from disk instead. A validated derived artifact whose
   metadata, request or report window was mutated is revalidated and rejected,
-  and its derivation relationship is dropped. Mutating a prediction input
-  changes its fingerprint and fails full validation.
+  and its derivation relationship is dropped. Equal-valued substitutions of
+  another type or time zone (an `int` volume, a `Decimal` window count, the
+  same instant in New York time, a `Decimal` bar count on the prediction input)
+  are never reused either; each reaches the reference path, which rejects it.
+  Mutating a prediction input changes its fingerprint and fails full
+  validation.
 - **Derived artifacts.** A corrupted derived file on disk causes a persist
   collision and a derived-cache load mismatch. A derived artifact rebound to
   another source, or with changed bars, fails validation. A daily artifact from
@@ -291,7 +304,8 @@ inside an active session, on DST and early-close/holiday fixtures:
 `tests/unit/data/test_prepared_canonical.py` covers memo exactness (normal,
 early close, DST, extended-hours policy), invalid sessions, value-keyed identity
 memoization, and integrity detection of bar, nested-record, metadata, request,
-report-window and container-field mutation. It also covers mutable-graph
+report-window and container-field mutation, including equal-valued type and
+time-zone swaps. It also covers mutable-graph
 refusal and the reference path for non-intraday datasets.
 
 ## Scientific equivalence

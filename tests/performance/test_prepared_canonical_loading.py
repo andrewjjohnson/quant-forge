@@ -132,7 +132,8 @@ def test_session_collapses_repeated_canonical_work(
     assert prepared_counts["daily_derivations"] == 1
     assert reference_counts["daily_derivations"] >= 2
     assert prepared_counts["two_minute_validations"] == 1
-    assert prepared_counts["daily_validations"] == 1
+    # The calendar-built daily and its strictly distinct QF-51 evidence rebuild.
+    assert prepared_counts["daily_validations"] == 2
     assert reference_counts["daily_validations"] > 1
     # Exchange sessions resolve once per session; timeframe identities once each.
     assert prepared_counts["calendar_resolutions"] == len(FIVE_SESSIONS)

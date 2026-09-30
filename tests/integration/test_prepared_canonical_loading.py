@@ -12,6 +12,7 @@ from decimal import Decimal
 from functools import partial
 from pathlib import Path
 from typing import cast
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -308,8 +309,12 @@ def test_session_authenticates_source_once_and_reuses_its_proof(
     assert statistics["source_reuses"] == 3
     assert statistics["derivations"] == 2
     assert statistics["derivation_reuses"] == 1
-    assert statistics["derived_validations"] == 2
-    assert statistics["derived_validation_reuses"] >= 3
+    # 2m, daily, and the daily rebuilt from QF-51 evidence: its timestamps are
+    # plain datetimes, not calendar Timestamps, so it is strictly distinct and
+    # validated once as its own variant (never evicting the original).
+    assert statistics["derived_validations"] == 3
+    assert statistics["derived_rejections"] == 1
+    assert statistics["derived_validation_reuses"] >= 4
     # QF-51 source evidence rebuilt once; later provenance captures reuse it.
     assert statistics["market_validations"] >= 1
     assert statistics["market_validation_reuses"] >= 3
@@ -565,6 +570,49 @@ def test_bypass_mutated_derived_metadata_is_revalidated(
                     intraday_cache=IntradayMarketDataCache(root),
                 )
         assert preparation.statistics()["derived_integrity_failures"] >= 1
+
+
+@pytest.mark.parametrize(
+    "target", ["source_volume", "source_zone", "daily_count", "prediction_count"]
+)
+def test_equal_valued_type_or_zone_substitution_is_never_reused(
+    cached: tuple[Path, IntradayBarRequest, Loaded], target: str
+) -> None:
+    root, request, _ = cached
+    with canonical_preparation() as preparation:
+        loaded = load(root, request)
+        bar = loaded.source.bars[1]
+        # Each replacement equals the original under ``==``; only its type or
+        # time-zone representation changes, which canonical serialization and
+        # the reference validation reject.
+        if target == "source_volume":
+            assert int(bar.volume) == bar.volume
+            object.__setattr__(bar, "volume", int(bar.volume))
+            with pytest.raises(AttributeError):
+                aggregate_intraday_dataset(loaded.source, TWO_MINUTES)
+            failures = preparation.statistics()["source_integrity_failures"]
+        elif target == "source_zone":
+            zone = ZoneInfo("America/New_York")
+            object.__setattr__(
+                bar, "start_timestamp", bar.start_timestamp.astimezone(zone)
+            )
+            with pytest.raises(MarketDataError, match="batch identity"):
+                aggregate_intraday_dataset(loaded.source, TWO_MINUTES)
+            failures = preparation.statistics()["source_integrity_failures"]
+        elif target == "daily_count":
+            window = loaded.daily.metadata.aggregation_report.windows[0]
+            count = window.observed_constituent_count
+            object.__setattr__(window, "observed_constituent_count", Decimal(count))
+            with pytest.raises(TypeError, match="JSON serializable"):
+                loaded.daily.validate()
+            failures = preparation.statistics()["derived_integrity_failures"]
+        else:
+            metadata = loaded.dataset.metadata
+            object.__setattr__(metadata, "bar_count", Decimal(metadata.bar_count))
+            with pytest.raises(ValidationError, match="bar count"):
+                validate_market_dataset(loaded.dataset)
+            failures = 1
+        assert failures == 1
 
 
 def test_corrupted_or_rebound_derived_artifacts_fail_closed(
