@@ -320,9 +320,20 @@ def validate_intraday_coverage(
     strict mode attaches to ``IntradayCoverageValidationError``.
     """
     batch_value = cast(object, batch)
-    mode_value = cast(object, mode)
     if not isinstance(batch_value, IntradayBarBatch):
         raise TypeError("intraday coverage validation requires an IntradayBarBatch")
+    if not isinstance(cast(object, mode), IntradayValidationMode):
+        raise TypeError("intraday validation mode is invalid")
+    return _coverage_report(batch, batch.batch_id, mode)
+
+
+def _coverage_report(
+    batch: IntradayBarBatch,
+    batch_id: str,
+    mode: IntradayValidationMode,
+) -> IntradayCoverageReport:
+    """Coverage of ``batch``; ``batch_id`` must be its verified batch identity."""
+    mode_value = cast(object, mode)
     if not isinstance(mode_value, IntradayValidationMode):
         raise TypeError("intraday validation mode is invalid")
 
@@ -401,7 +412,7 @@ def validate_intraday_coverage(
 
     report = IntradayCoverageReport(
         request_id=request.request_id,
-        batch_id=batch.batch_id,
+        batch_id=batch_id,
         validation_mode=mode,
         timeframe_configuration_id=request.timeframe.configuration_id,
         source_interval=request.source_interval,

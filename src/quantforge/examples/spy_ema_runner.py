@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast
 
 from quantforge.configuration import PrimitiveMapping
+from quantforge.data.prepared_canonical import canonical_preparation
 from quantforge.examples.spy_ema_events import export_candidate_features
 from quantforge.examples.spy_ema_inputs import SmokeInputs
 from quantforge.examples.spy_ema_plan import prepare_walk_forward
@@ -225,7 +226,21 @@ def run_pre_holdout(
     ledger: HoldoutLedger,
     execution: ExecutionProvenance,
 ) -> PrimitiveMapping:
-    """Always stop for manual audit/review; no holdout evaluator is imported."""
+    """Always stop for manual audit/review; no holdout evaluator is imported.
+
+    The run joins the caller's QF-65 canonical preparation session or owns one,
+    so a completed resume in a new invocation authenticates everything afresh.
+    """
+    with canonical_preparation():
+        return _run_pre_holdout(inputs, output_root, ledger, execution)
+
+
+def _run_pre_holdout(
+    inputs: SmokeInputs,
+    output_root: Path,
+    ledger: HoldoutLedger,
+    execution: ExecutionProvenance,
+) -> PrimitiveMapping:
     config, adapter = prepare_walk_forward(inputs, output_root / "walk-forward")
     study = WalkForwardStudy(config, adapter, output_root / "walk-forward")
     # Persist QF-39's exact producer definition before research so the permanent

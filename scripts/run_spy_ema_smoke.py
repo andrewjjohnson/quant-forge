@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from quantforge.data.prepared_canonical import canonical_preparation
 from quantforge.examples.spy_ema_inputs import load_inputs
 from quantforge.examples.spy_ema_plan import verify_configuration
 from quantforge.examples.spy_ema_runner import execution_for_run, run_pre_holdout
@@ -53,19 +54,22 @@ def main() -> None:
             else HoldoutLedger.create(ledger_path)
         )
     execution = None if arguments.preflight else execution_for_run(root, Path.cwd())
-    inputs = load_inputs(arguments.cache_root)
-    print(
-        json.dumps(verify_configuration(inputs, root), indent=2, sort_keys=True),
-        flush=True,
-    )
-    if arguments.preflight:
-        return
-    assert ledger is not None
-    assert execution is not None
-    print(
-        json.dumps(run_pre_holdout(inputs, root, ledger, execution), indent=2),
-        flush=True,
-    )
+    # QF-65: one execution-local session authenticates the canonical inputs once
+    # for loading, configuration checks and research; it ends with this process.
+    with canonical_preparation():
+        inputs = load_inputs(arguments.cache_root)
+        print(
+            json.dumps(verify_configuration(inputs, root), indent=2, sort_keys=True),
+            flush=True,
+        )
+        if arguments.preflight:
+            return
+        assert ledger is not None
+        assert execution is not None
+        print(
+            json.dumps(run_pre_holdout(inputs, root, ledger, execution), indent=2),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

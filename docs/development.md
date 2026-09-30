@@ -7,6 +7,20 @@ runner's invariant matrix and profile: [heavyweight acceptance test](qf45-accept
 QF-45 shortened EMA smoke configuration, offline runner, checkpoints and the
 manual holdout gate: [local smoke workflow](spy-ema-smoke-study.md).
 
+QF-65 authenticated canonical loading: reference/prepared equivalence across
+DST, early-close and holiday fixtures, one-time authentication, fail-closed
+corruption of cache bytes, presented sources and derived artifacts, lifecycle,
+and invocation counts:
+
+```bash
+uv run --frozen pytest tests/unit/data/test_prepared_canonical.py \
+  tests/integration/test_prepared_canonical_loading.py \
+  tests/performance/test_prepared_canonical_loading.py
+```
+
+See [prepared canonical loading](prepared-canonical-loading.md) for the startup
+profile, compatibility key, trust boundaries and memory.
+
 QF-64 sparse event windows (schema `"4"`): receipts, dispositions, zero-to-many
 observations, corruption, fresh-runtime resume and the 0/25/100/4,095-observation
 storage shape:

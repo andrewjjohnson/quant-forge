@@ -26,6 +26,7 @@ from quantforge.data import (
     aggregate_session_dataset,
 )
 from quantforge.data.prediction_inputs import prediction_dataset_from_intraday
+from quantforge.data.prepared_canonical import canonical_preparation
 from quantforge.examples.spy_ema import DAILY, ONE_MINUTE, TWO_MINUTES
 
 SOURCE_ID = "7e396b640d4387c324ab9a25194a5b046d8dcaf1bc7a345783f993f6a2477972"
@@ -62,7 +63,17 @@ class SmokeInputs:
 
 
 def load_inputs(cache_root: Path) -> SmokeInputs:
-    """Revalidate the immutable source and derive through generic QF-18/QF-19."""
+    """Revalidate the immutable source and derive through generic QF-18/QF-19.
+
+    Loading runs in a QF-65 canonical preparation session: the source is
+    authenticated once and later derivation/validation reuses that proof. An
+    enclosing session (the runner's) keeps it for plan and partition checks.
+    """
+    with canonical_preparation():
+        return _load_inputs(cache_root)
+
+
+def _load_inputs(cache_root: Path) -> SmokeInputs:
     cache = IntradayMarketDataCache(cache_root)
     source = IntradayMarketDataService(
         cache, provider_name="massive"

@@ -21,6 +21,7 @@ from quantforge.data.models import (
     StockSplit,
 )
 from quantforge.data.prediction_inputs import validate_prediction_provenance
+from quantforge.data.prepared_canonical import active_canonical_preparation
 
 
 def _calendar_sessions(start: date, end: date, calendar: str) -> tuple[date, ...]:
@@ -90,8 +91,18 @@ def validate_market_dataset(dataset: MarketDataset) -> tuple[date, ...]:
 
     This verifies every invariant derivable from the in-memory bars and metadata.
     Raw-provider bytes remain an immutable-cache responsibility because they are
-    not carried by ``MarketDataset``.
+    not carried by ``MarketDataset``. Inside a QF-65 load session, an intraday-
+    derived dataset whose complete content (every field, evidence bytes and bars)
+    already passed in the session reuses that verdict instead of rebuilding its
+    canonical source evidence again.
     """
+    preparation = active_canonical_preparation()
+    if preparation is not None:
+        return preparation.validated_market_dataset(dataset, _validate_market_dataset)
+    return _validate_market_dataset(dataset)
+
+
+def _validate_market_dataset(dataset: MarketDataset) -> tuple[date, ...]:
     dataset_value = cast(object, dataset)
     if not isinstance(dataset_value, MarketDataset):
         raise ValidationError("a QF-3 MarketDataset is required")

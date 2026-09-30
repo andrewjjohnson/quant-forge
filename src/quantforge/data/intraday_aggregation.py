@@ -1,5 +1,6 @@
 """Deterministic exchange-session-aware intraday OHLCV aggregation."""
 
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from enum import StrEnum
@@ -14,6 +15,8 @@ from quantforge.data.intraday import (
     IntradayBarBatch,
     IntradayBarProvenance,
     IntradayBarRequest,
+    _bar_entry,  # pyright: ignore[reportPrivateUsage]
+    _batch_primitive,  # pyright: ignore[reportPrivateUsage]
 )
 from quantforge.data.intraday_ingestion import IntradayDataset
 from quantforge.data.intraday_validation import (
@@ -27,6 +30,10 @@ from quantforge.data.lineage import (
     AggregationPolicy,
     DatasetFamily,
     DatasetLineage,
+)
+from quantforge.data.prepared_canonical import (
+    PreparedCanonicalDataset,
+    active_canonical_preparation,
 )
 from quantforge.timeframes import (
     BarCompletion,
@@ -317,7 +324,24 @@ class AggregatedIntradayDataset:
         return IntradayBarBatch(self.request, self.bars).serialize()
 
     def validate(self) -> None:
-        """Recompute every derived identity and canonical persistence invariant."""
+        """Recompute every derived identity and canonical persistence invariant.
+
+        Inside a QF-65 load session, a content-identical dataset that already
+        passed this validation in the session is not revalidated.
+        """
+        preparation = active_canonical_preparation()
+        metadata_id = getattr(cast(object, self.metadata), "dataset_id", None)
+        if (
+            preparation is not None
+            and isinstance(metadata_id, str)
+            and preparation.validated(self, metadata_id)
+        ):
+            return
+        self._validate()
+        if preparation is not None:
+            preparation.retain_validated(self, self.metadata.dataset_id)
+
+    def _validate(self) -> None:
         request_value = cast(object, self.request)
         bars_value = cast(object, self.bars)
         metadata_value = cast(object, self.metadata)
@@ -362,7 +386,8 @@ class AggregatedIntradayDataset:
         batch = IntradayBarBatch(self.request, self.bars)
         normalized_bytes = batch.serialize()
         data_sha256 = sha256_hex(normalized_bytes)
-        if metadata.batch_id != batch.batch_id:
+        batch_id = batch.batch_id
+        if metadata.batch_id != batch_id:
             raise IntradayAggregationValidationError(
                 "derived intraday batch identity does not match its bars"
             )
@@ -394,7 +419,7 @@ class AggregatedIntradayDataset:
             aggregation_policy=metadata.aggregation_policy,
             family_id=metadata.family.family_id,
             aggregation_report=metadata.aggregation_report,
-            batch_id=batch.batch_id,
+            batch_id=batch_id,
             bar_count=len(batch.bars),
             data_sha256=data_sha256,
         )
@@ -584,8 +609,21 @@ def intraday_session_windows(
     """Resolve completed exchange-session windows without consulting observations.
 
     Shared by aggregation and historical prediction scheduling. Cross-session
-    continuation is unsupported, matching the aggregation contract.
+    continuation is unsupported, matching the aggregation contract. A QF-65 load
+    session resolves each exact (session, timeframe) value once.
     """
+    preparation = active_canonical_preparation()
+    if preparation is not None:
+        return preparation.session_windows(
+            session_date, timeframe, _intraday_session_windows
+        )
+    return _intraday_session_windows(session_date, timeframe)
+
+
+def _intraday_session_windows(
+    session_date: date,
+    timeframe: Timeframe,
+) -> tuple[IntradayCoverageInterval, ...]:
     interval = timeframe.interval
     if (
         not isinstance(interval, IntradayInterval)
@@ -667,6 +705,22 @@ def _validate_source_dataset(source_dataset: IntradayDataset) -> IntradayBarBatc
     return batch
 
 
+def _authenticated_source(
+    source_dataset: IntradayDataset,
+) -> tuple[PreparedCanonicalDataset | None, tuple[IntradayBar, ...], str]:
+    """Reuse a QF-65 authenticated source, or authenticate it independently."""
+    source_value = cast(object, source_dataset)
+    if not isinstance(source_value, IntradayDataset):
+        raise TypeError("intraday aggregation requires an IntradayDataset")
+    preparation = active_canonical_preparation()
+    prepared = None if preparation is None else preparation.source(source_dataset)
+    if prepared is not None:
+        return prepared, source_dataset.bars, prepared.batch_id
+    batch = _validate_source_dataset(source_dataset)
+    # _validate_source_dataset proved this recorded identity from the bars.
+    return None, batch.bars, source_dataset.metadata.batch_id
+
+
 def _validate_target_timeframe(
     source_timeframe: Timeframe,
     target_timeframe: Timeframe,
@@ -746,24 +800,41 @@ def _expected_source_intervals(
     return expected
 
 
+def _contained_intervals(
+    intervals: tuple[IntradayCoverageInterval, ...],
+    starts: tuple[datetime, ...],
+    target_window: IntradayCoverageInterval,
+) -> tuple[IntradayCoverageInterval, ...]:
+    """Intervals inside ``target_window``, in order; ``intervals`` sorted by start.
+
+    Equal to filtering every interval: only positions from the first start at or
+    after the window start, up to the first start at or after its end, qualify.
+    """
+    stop = len(intervals)
+    position = bisect_left(starts, target_window.start_timestamp)
+    contained: list[IntradayCoverageInterval] = []
+    while position < stop and starts[position] < target_window.end_timestamp:
+        interval = intervals[position]
+        if interval.end_timestamp <= target_window.end_timestamp:
+            contained.append(interval)
+        position += 1
+    return tuple(contained)
+
+
 def _aggregate_window(
-    source_dataset: IntradayDataset,
     target_request: IntradayBarRequest,
     target_window: IntradayCoverageInterval,
-    expected_intervals: tuple[IntradayCoverageInterval, ...],
+    expected: tuple[IntradayCoverageInterval, ...],
     observed_by_key: dict[tuple[datetime, datetime, BarCompletion], IntradayBar],
-) -> tuple[IntradayBar | None, AggregatedWindowQuality]:
-    expected = tuple(
-        interval
-        for interval in expected_intervals
-        if target_window.start_timestamp <= interval.start_timestamp
-        and interval.end_timestamp <= target_window.end_timestamp
-    )
-    observed = tuple(
-        observed_by_key[key]
+    source_bar_ids: dict[tuple[datetime, datetime, BarCompletion], str] | None,
+    provenance: IntradayBarProvenance,
+) -> tuple[IntradayBar | None, PrimitiveMapping | None, AggregatedWindowQuality]:
+    observed_keys = tuple(
+        key
         for key in (_interval_key(interval) for interval in expected)
         if key in observed_by_key
     )
+    observed = tuple(observed_by_key[key] for key in observed_keys)
     missing = tuple(
         interval
         for interval in expected
@@ -775,18 +846,6 @@ def _aggregate_window(
         )
     output_bar: IntradayBar | None = None
     if observed:
-        provenance = IntradayBarProvenance(
-            provider_name=_AGGREGATION_PRODUCER_NAME,
-            provider_symbol=source_dataset.metadata.provider_symbol,
-            adapter_version=(
-                f"intraday-aggregation-{INTRADAY_AGGREGATION_POLICY_VERSION}"
-            ),
-            retrieved_at=source_dataset.metadata.retrieved_at,
-            source_request_id=target_request.request_id,
-            source_snapshot_id=source_dataset.metadata.dataset_id,
-            feed_scope=target_request.feed_scope,
-            adjustment_basis=target_request.adjustment_basis,
-        )
         output_bar = IntradayBar(
             symbol=target_request.symbol,
             session_date=target_window.session_date,
@@ -801,6 +860,7 @@ def _aggregate_window(
             volume=sum((bar.volume for bar in observed), start=observed[0].volume * 0),
             provenance=provenance,
         )
+    entry = None if output_bar is None else _bar_entry(output_bar)
     quality = AggregatedWindowQuality(
         session_date=target_window.session_date,
         start_timestamp=target_window.start_timestamp,
@@ -809,10 +869,14 @@ def _aggregate_window(
         expected_constituent_count=len(expected),
         observed_constituent_count=len(observed),
         missing_constituents=missing,
-        source_bar_ids=tuple(bar.bar_id for bar in observed),
-        output_bar_id=None if output_bar is None else output_bar.bar_id,
+        source_bar_ids=(
+            tuple(bar.bar_id for bar in observed)
+            if source_bar_ids is None
+            else tuple(source_bar_ids[key] for key in observed_keys)
+        ),
+        output_bar_id=None if entry is None else cast(str, entry["bar_id"]),
     )
-    return output_bar, quality
+    return output_bar, entry, quality
 
 
 def _source_only_family(
@@ -905,7 +969,7 @@ def aggregate_intraday_dataset(
     intervals, aggregates available expected constituents, and binds every gap
     into per-window quality evidence.
     """
-    source_batch = _validate_source_dataset(source_dataset)
+    prepared, source_bars, source_batch_id = _authenticated_source(source_dataset)
     _validate_target_timeframe(source_dataset.request.timeframe, target_timeframe)
     aggregation_policy = policy or IntradayAggregationPolicy()
     policy_value = cast(object, aggregation_policy)
@@ -926,13 +990,38 @@ def aggregate_intraday_dataset(
     }
     observed_by_key = {
         _bar_key(bar): bar
-        for bar in source_batch.bars
+        for bar in source_bars
         if bar.completion is not BarCompletion.DEVELOPING
         and _bar_key(bar) not in unexpected_keys
     }
+    # Authenticated bar identities by position; otherwise hashed per bar below.
+    source_bar_ids = (
+        None
+        if prepared is None
+        else {
+            _bar_key(bar): bar_id
+            for bar, bar_id in zip(source_bars, prepared.bar_ids, strict=True)
+        }
+    )
+    # Every emitted bar carries the same derived provenance record.
+    provenance = IntradayBarProvenance(
+        provider_name=_AGGREGATION_PRODUCER_NAME,
+        provider_symbol=source_dataset.metadata.provider_symbol,
+        adapter_version=f"intraday-aggregation-{INTRADAY_AGGREGATION_POLICY_VERSION}",
+        retrieved_at=source_dataset.metadata.retrieved_at,
+        source_request_id=target_request.request_id,
+        source_snapshot_id=source_dataset.metadata.dataset_id,
+        feed_scope=target_request.feed_scope,
+        adjustment_basis=target_request.adjustment_basis,
+    )
     output_bars: list[IntradayBar] = []
+    output_entries: list[PrimitiveMapping] = []
     window_quality: list[AggregatedWindowQuality] = []
     for session_report in source_report.sessions:
+        session_expected = expected_by_session[session_report.session_date]
+        session_starts = tuple(
+            interval.start_timestamp for interval in session_expected
+        )
         for target_window in intraday_session_windows(
             session_report.session_date, target_timeframe
         ):
@@ -941,19 +1030,21 @@ def aggregate_intraday_dataset(
                 and target_window.end_timestamp <= target_request.end_timestamp
             ):
                 continue
-            output_bar, quality = _aggregate_window(
-                source_dataset,
+            output_bar, entry, quality = _aggregate_window(
                 target_request,
                 target_window,
-                expected_by_session[session_report.session_date],
+                _contained_intervals(session_expected, session_starts, target_window),
                 observed_by_key,
+                source_bar_ids,
+                provenance,
             )
             window_quality.append(quality)
-            if output_bar is not None:
+            if output_bar is not None and entry is not None:
                 output_bars.append(output_bar)
+                output_entries.append(entry)
     report = IntradayAggregationReport(
         source_dataset_id=source_dataset.metadata.dataset_id,
-        source_batch_id=source_batch.batch_id,
+        source_batch_id=source_batch_id,
         source_quality_report_id=source_report.report_id,
         source_coverage_status=source_report.status,
         source_missing_interval_count=len(source_report.missing_intervals),
@@ -972,13 +1063,18 @@ def aggregate_intraday_dataset(
     ):
         raise IntradayAggregationQualityError(report)
     batch = IntradayBarBatch(target_request, tuple(output_bars))
-    normalized_bytes = batch.serialize()
-    data_sha256 = sha256_hex(normalized_bytes)
+    # Exactly batch.batch_id. Its canonical bytes are the persisted content, so
+    # the QF-15 content digest equals it for these NaN-free JSON primitives.
+    batch_id = configuration_identity(
+        _batch_primitive(target_request, output_entries, batch.schema_version)
+    )
+    del output_entries
+    data_sha256 = batch_id
     source_family = _source_only_family(source_dataset, aggregation_policy)
     identity = _dataset_identity_primitive(
         source_dataset_id=source_dataset.metadata.dataset_id,
         source_request_id=source_dataset.request.request_id,
-        source_batch_id=source_batch.batch_id,
+        source_batch_id=source_batch_id,
         source_data_sha256=source_dataset.metadata.data_sha256,
         source_raw_snapshot_ids=source_dataset.metadata.raw_snapshot_ids,
         source_quality_report=source_report,
@@ -988,7 +1084,7 @@ def aggregate_intraday_dataset(
         aggregation_policy=aggregation_policy,
         family_id=source_family.family_id,
         aggregation_report=report,
-        batch_id=batch.batch_id,
+        batch_id=batch_id,
         bar_count=len(batch.bars),
         data_sha256=data_sha256,
     )
@@ -1022,7 +1118,7 @@ def aggregate_intraday_dataset(
         dataset_id=dataset_id,
         source_dataset_id=source_id,
         source_request_id=source_dataset.request.request_id,
-        source_batch_id=source_batch.batch_id,
+        source_batch_id=source_batch_id,
         source_data_sha256=source_dataset.metadata.data_sha256,
         source_raw_snapshot_ids=source_dataset.metadata.raw_snapshot_ids,
         source_quality_report_id=source_report.report_id,
@@ -1033,13 +1129,22 @@ def aggregate_intraday_dataset(
         aggregation_policy=aggregation_policy,
         family=family,
         aggregation_report=report,
-        batch_id=batch.batch_id,
+        batch_id=batch_id,
         bar_count=len(batch.bars),
         data_sha256=data_sha256,
         normalized_location=f"{directory}/bars.json",
         manifest_location=f"{directory}/manifest.json",
     )
-    return AggregatedIntradayDataset(target_request, batch.bars, metadata)
+    dataset = AggregatedIntradayDataset(target_request, batch.bars, metadata)
+    preparation = active_canonical_preparation()
+    if preparation is not None and prepared is not None:
+        preparation.retain_derivation(
+            prepared,
+            target_timeframe.configuration_id,
+            aggregation_policy.configuration_id,
+            dataset,
+        )
+    return dataset
 
 
 __all__ = [

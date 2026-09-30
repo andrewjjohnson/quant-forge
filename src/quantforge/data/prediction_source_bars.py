@@ -1,5 +1,6 @@
 """Lossless source-bar evidence authenticated by the existing canonical batch hash."""
 
+from collections.abc import Iterable
 from datetime import datetime
 from decimal import InvalidOperation
 from typing import cast
@@ -10,9 +11,12 @@ from quantforge.data.intraday import (
     INTRADAY_CONTRACT_SCHEMA_VERSION,
     IntradayBar,
     IntradayBarBatch,
+    _batch_primitive,  # pyright: ignore[reportPrivateUsage]
 )
 from quantforge.data.intraday_coverage_evidence import intraday_request_from_primitive
-from quantforge.data.intraday_ingestion import intraday_batch_from_primitive
+from quantforge.data.intraday_ingestion import (
+    _decode_batch,  # pyright: ignore[reportPrivateUsage]
+)
 
 # Only repeated metadata is shared. All observation fields remain exact primitives.
 _OBSERVATION_FIELDS = frozenset(
@@ -33,11 +37,14 @@ _OBSERVATION_FIELDS = frozenset(
 
 def capture_source_bar_evidence(bars: tuple[IntradayBar, ...]) -> PrimitiveMapping:
     """Deduplicate repeated timeframe/provenance metadata without altering bars."""
+    return _capture_records(bar.to_primitive() for bar in bars)
+
+
+def _capture_records(records: Iterable[PrimitiveMapping]) -> PrimitiveMapping:
     templates: list[Primitive] = []
     indexes: dict[str, int] = {}
     observations: list[Primitive] = []
-    for bar in bars:
-        record = bar.to_primitive()
+    for record in records:
         template = {
             key: value
             for key, value in record.items()
@@ -71,6 +78,7 @@ def _validate_raw_chunk_bindings(
         if not isinstance(snapshot_id, str) or snapshot_id in by_snapshot:
             raise ValueError("source raw snapshot identities must be unique strings")
         by_snapshot[snapshot_id] = chunk
+    request_id = batch.request.request_id
     for bar in batch.bars:
         chunk = by_snapshot.get(bar.provenance.source_snapshot_id)
         if chunk is None:
@@ -94,7 +102,7 @@ def _validate_raw_chunk_bindings(
             source["provider_symbol"],
             source["adapter_version"],
             datetime.fromisoformat(cast(str, chunk["retrieved_at"])),
-            batch.request.request_id,
+            request_id,
         ):
             raise ValueError("bar provenance differs from its retained raw snapshot")
 
@@ -103,6 +111,13 @@ def validate_source_bar_evidence(
     evidence: PrimitiveMapping, source: PrimitiveMapping
 ) -> IntradayBarBatch:
     """Reproduce the source digest and validate its canonical typed bar batch."""
+    return _validate_source_bar_evidence(evidence, source)[0]
+
+
+def _validate_source_bar_evidence(
+    evidence: PrimitiveMapping, source: PrimitiveMapping
+) -> tuple[IntradayBarBatch, tuple[str, ...]]:
+    """Also return each restored bar's verified identity, computed once."""
     templates = evidence.get("templates")
     observations = evidence.get("observations")
     if (
@@ -146,12 +161,20 @@ def validate_source_bar_evidence(
         if not isinstance(configuration, dict):
             raise ValueError("source request configuration must be a record")
         request = intraday_request_from_primitive(configuration)
-        restored = intraday_batch_from_primitive(batch, request)
-        if restored.batch_id != digest:
+        restored, restored_entries = _decode_batch(batch, request)
+        # Exactly restored.batch_id, from each typed bar's own verified entry.
+        if (
+            configuration_identity(
+                _batch_primitive(request, restored_entries, restored.schema_version)
+            )
+            != digest
+        ):
             raise ValueError("source batch serialization is not canonical")
         _validate_raw_chunk_bindings(restored, source)
         if configuration_identity(evidence) != configuration_identity(
-            capture_source_bar_evidence(restored.bars)
+            _capture_records(
+                cast(PrimitiveMapping, entry["bar"]) for entry in restored_entries
+            )
         ):
             raise ValueError(
                 "source bar evidence must use the canonical template table"
@@ -165,4 +188,4 @@ def validate_source_bar_evidence(
         CacheError,
     ) as error:
         raise ValueError(f"source bar evidence is invalid: {error}") from error
-    return restored
+    return restored, tuple(cast(str, entry["bar_id"]) for entry in restored_entries)

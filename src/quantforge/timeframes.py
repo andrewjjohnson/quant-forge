@@ -1,10 +1,13 @@
 """Canonical provider-neutral timeframe and exchange-session semantics."""
 
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from importlib import import_module
+from operator import is_
 from typing import Protocol, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -412,6 +415,9 @@ class Timeframe:
     @property
     def configuration_id(self) -> str:
         """Return the deterministic identity of the complete semantic policy."""
+        memo = _TIMEFRAME_MEMO.get()
+        if memo is not None:
+            return memo.configuration_id(self)
         return configuration_identity(self.to_primitive())
 
 
@@ -479,6 +485,177 @@ class ExchangeTradingWeek:
         }
 
 
+# Memo keys compare and hash frozen values, which is sound only when every leaf
+# serialization reads has an exact reviewed type: equal values of these types
+# always serialize identically (``_time_primitive`` calls ``isoformat``).
+# Unreviewed classes, subclasses and aware times decline memoization before any
+# key is hashed, so they take the unmemoized path and fail or succeed there.
+def _plain_time(value: object) -> bool:
+    return value is None or (type(value) is time and value.tzinfo is None)
+
+
+def _policy_memoizable(policy: ExchangeSessionPolicy) -> bool:
+    return (
+        type(policy) is ExchangeSessionPolicy
+        and type(policy.calendar_name) is str
+        and type(policy.timezone_name) is str
+        and type(policy.scope) is SessionScope
+        and _plain_time(policy.extended_hours_start)
+        and _plain_time(policy.extended_hours_end)
+    )
+
+
+def memoizable_timeframe_state(timeframe: Timeframe) -> tuple[object, ...] | None:
+    """Enum member names/values a reviewed timeframe identity reads.
+
+    Enum member classes are exact (members cannot be subclassed), but members
+    hash by name, so names and values are rechecked on every hit. ``None``
+    means an unreviewed class or leaf type: compute the identity directly.
+    """
+    interval = timeframe.interval
+    policy = timeframe.session_policy
+    label = timeframe.bar_label
+    exposure = timeframe.developing_bar_exposure
+    if (
+        type(timeframe) is not Timeframe
+        or type(label) is not BarLabel
+        or type(exposure) is not DevelopingBarExposure
+        or type(timeframe.schema_version) is not str
+        or not _policy_memoizable(policy)
+    ):
+        return None
+    scope = policy.scope
+    if type(interval) is SessionInterval:
+        if type(interval.session_count) is not int:
+            return None
+    elif type(interval) is TradingWeekInterval:
+        if type(interval.week_count) is not int:
+            return None
+    elif type(interval) is not IntradayInterval:
+        return None
+    kind = interval.kind  # A property constant serialized by to_primitive().
+    state = (
+        type(interval),
+        type(kind),
+        kind._name_,
+        kind._value_,
+        label._name_,
+        label._value_,
+        exposure._name_,
+        exposure._value_,
+        scope._name_,
+        scope._value_,
+    )
+    if type(interval) is not IntradayInterval:
+        return state
+    anchor = interval.anchor
+    crossing = interval.cross_session_policy
+    if (
+        type(interval.nominal_duration) is not timedelta
+        or type(anchor) is not IntradayAnchor
+        or type(crossing) is not CrossSessionPolicy
+        or not _plain_time(interval.clock_anchor)
+    ):
+        return None
+    return (
+        *state,
+        anchor._name_,
+        anchor._value_,
+        crossing._name_,
+        crossing._value_,
+    )
+
+
+class TimeframeMemo:
+    """Session resolutions and timeframe identities for one scope (QF-65).
+
+    Keys are complete frozen values, never object identities: the exact session
+    date with the complete session-policy value, or the complete timeframe value.
+    Only successful resolutions are retained; invalid dates keep failing through
+    the calendar. Instances are execution-local and released with their owner.
+    There is no process-global session or identity cache.
+    """
+
+    __slots__ = (
+        "_identities",
+        "_sessions",
+        "identities_computed",
+        "identities_declined",
+        "identities_reused",
+        "resolved",
+        "reused",
+        "sessions_declined",
+    )
+
+    def __init__(self) -> None:
+        self._sessions: dict[tuple[date, ExchangeSessionPolicy], ExchangeSession] = {}
+        self._identities: dict[Timeframe, tuple[str, tuple[object, ...]]] = {}
+        self.resolved = 0
+        self.reused = 0
+        self.identities_computed = 0
+        self.identities_reused = 0
+        self.identities_declined = 0
+        self.sessions_declined = 0
+
+    def __len__(self) -> int:
+        return len(self._sessions)
+
+    def resolve(
+        self, session_date: date, policy: ExchangeSessionPolicy
+    ) -> ExchangeSession:
+        if not _policy_memoizable(policy):
+            self.sessions_declined += 1
+            return _resolve_exchange_session(session_date, policy)
+        key = (session_date, policy)
+        session = self._sessions.get(key)
+        if session is None:
+            session = _resolve_exchange_session(session_date, policy)
+            self._sessions[key] = session
+            self.resolved += 1
+        else:
+            self.reused += 1
+        return session
+
+    def configuration_id(self, timeframe: Timeframe) -> str:
+        """Reuse an identity only while the timeframe's hidden state is unchanged.
+
+        The key compares frozen field values. Only exact reviewed record classes
+        and leaf types are memoized, and because enum members hash by name, each
+        hit re-checks every member's class, name and value.
+        """
+        state = memoizable_timeframe_state(timeframe)
+        if state is None:
+            self.identities_declined += 1
+            return configuration_identity(timeframe.to_primitive())
+        found = self._identities.get(timeframe)
+        if found is not None and all(map(is_, state, found[1])):
+            self.identities_reused += 1
+            return found[0]
+        identity = configuration_identity(timeframe.to_primitive())
+        self._identities[timeframe] = (identity, state)
+        self.identities_computed += 1
+        return identity
+
+    def clear(self) -> None:
+        self._sessions.clear()
+        self._identities.clear()
+
+
+_TIMEFRAME_MEMO: ContextVar[TimeframeMemo | None] = ContextVar(
+    "quantforge_timeframe_memo", default=None
+)
+
+
+@contextmanager
+def timeframe_memo(memo: TimeframeMemo) -> Generator[None]:
+    """Serve session resolution and timeframe identities from ``memo`` here."""
+    token = _TIMEFRAME_MEMO.set(memo)
+    try:
+        yield
+    finally:
+        _TIMEFRAME_MEMO.reset(token)
+
+
 def resolve_exchange_session(
     session_date: date,
     policy: ExchangeSessionPolicy = DEFAULT_US_EQUITY_SESSION_POLICY,
@@ -489,6 +666,15 @@ def resolve_exchange_session(
     policy_value = cast(object, policy)
     if not isinstance(policy_value, ExchangeSessionPolicy):
         raise TimeframeValidationError("exchange session policy is invalid")
+    memo = _TIMEFRAME_MEMO.get()
+    if memo is not None:
+        return memo.resolve(session_date, policy)
+    return _resolve_exchange_session(session_date, policy)
+
+
+def _resolve_exchange_session(
+    session_date: date, policy: ExchangeSessionPolicy
+) -> ExchangeSession:
     calendar = _load_calendar(policy.calendar_name)
     if not calendar.is_session(session_date):
         raise TimeframeValidationError(
@@ -754,9 +940,12 @@ __all__ = [
     "SessionInterval",
     "SessionScope",
     "Timeframe",
+    "TimeframeMemo",
     "TimeframeValidationError",
     "TradingWeekInterval",
+    "memoizable_timeframe_state",
     "resolve_exchange_session",
     "resolve_exchange_timezone_name",
     "resolve_trading_week",
+    "timeframe_memo",
 ]

@@ -1,5 +1,16 @@
 # Research Integrity
 
+QF-65 canonical preparation is operational, never scientific evidence. Within one
+load session it reuses a verdict only for byte- or field-identical content: every
+artifact file is re-hashed, and every request, metadata and bar field (with
+every nested record field) is compared strictly with its authenticated value:
+same type, value and representation, never numeric or instant equality alone.
+Record classes and enum member values are checked as well. A changed, rebound
+or mutated input is always revalidated independently and fails as before. The first validation of each new canonical
+prediction input still rebuilds its QF-51 source evidence. Persisted artifacts
+never depend on preparation, and a new process authenticates again. See
+[prepared canonical loading](prepared-canonical-loading.md).
+
 QF-64 sparse event windows (schema `"4"`) persist every generated signal as a
 rich observation. That includes accepted and rejected candidates and signals
 whose outcome was unavailable. A decision that produced no signal keeps only a
