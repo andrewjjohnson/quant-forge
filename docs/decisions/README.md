@@ -111,3 +111,4 @@ How will the decision be tested or revisited?
 - [0036: Separate decision coverage receipts from rich observations](0036-separate-decision-coverage-from-observations.md)
 - [0037: Reuse authenticated canonical preparation within a load session](0037-reuse-authenticated-canonical-preparation.md)
 - [0038: Separate non-authoritative rapid exploratory scans](0038-separate-rapid-exploratory-scans.md)
+- [0039: Assemble conditional event ML datasets from verified observations](0039-assemble-conditional-event-ml-datasets.md)

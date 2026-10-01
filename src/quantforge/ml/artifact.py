@@ -274,10 +274,10 @@ def export_event_dataset(
 
     Files are written and fsynced in a private staging directory and fully
     validated there; only then is it renamed to ``<output-root>/<dataset-id>``
-    and the parent fsynced. An
-    existing directory with the same scientific identity is validated and
-    reused; a conflicting one is an error. Output is refused inside the
-    permanent holdout ledger.
+    and the parent fsynced. An existing directory with the same scientific
+    identity is validated and reused as is (its optional CSV is not added); a
+    conflicting one is an error. Output is refused inside the permanent
+    holdout ledger.
     """
     if type(cast(object, dataset)) is not EventDataset:
         raise EventDatasetError("only verified event datasets can be exported")

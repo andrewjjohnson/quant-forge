@@ -1,5 +1,25 @@
 # Research Integrity
 
+QF-67 event ML datasets are **conditional**. Rows exist only where one frozen
+strategy configuration emitted a generated signal, so a model trained on them
+says nothing about timestamps where the rule did not trigger. No-trigger
+decisions are coverage, never negatives.
+
+- **Features.** Model inputs come only from an explicit allowlist of persisted
+  causal values. Outcome, availability, identifier, provenance and partition
+  names are refused.
+- **Targets.** The target reuses the existing QF-49 return. An available zero
+  is a negative and an unavailable outcome stays null.
+- **Partitions and holdout.** Partition membership comes from verified QF-39
+  and QF-40 artifacts and is never a feature. Holdout rows appear only after
+  explicit ledger consumption, and building never consumes a holdout.
+- **Rapid results.** QF-72 rapid results cannot enter; reproduce them through
+  QF-32/QF-39/QF-40 first.
+- **Scope of QF-45 data.** QF-45's handful of events is plumbing only, not
+  evidence of an edge.
+
+See [event ML datasets](event-ml-datasets.md).
+
 QF-72 rapid scans are **exploratory and non-authoritative**. They reuse the
 authoritative canonical data, calendar, warm-up, prepared causal features, the
 rule's own predicate and the configured outcome definitions, and they skip only

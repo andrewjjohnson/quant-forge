@@ -183,6 +183,7 @@ Interrupted and uninterrupted runs produce byte-identical finals, and match
 | QF-45 candidate export | Replays only retained decisions with signals |
 | QF-9 `index_compact_window` | Checks metadata safety of every persisted record |
 | QF-9 inspection, QF-41 reports, holdout, grid, walk-forward references | Accept `"4"` through the existing version tuple; QF-41 still never walks decisions |
+| QF-67 event ML datasets | Counts every receipt, expands only retained decisions into rows; bare receipts are never negatives |
 
 All other semantics are unchanged: eligibility, ordering, metrics, ranking,
 ties, selection, protected reach, manifests and reports.
