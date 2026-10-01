@@ -49,11 +49,16 @@ SELECTION_START = time(15, 30)
 SELECTION_END = time(11, 6)
 
 
-def smoke_inputs(root: Path, session_count: int = SESSION_COUNT) -> SmokeInputs:
+def smoke_inputs(
+    root: Path,
+    session_count: int = SESSION_COUNT,
+    *,
+    first_session: date = date(2025, 1, 2),
+) -> SmokeInputs:
     """Validated cache-backed inputs; 51+ completed daily bars precede selection."""
     policy = spy_ema_plan.TWO_MINUTES.session_policy
     sessions: list[date] = []
-    current = date(2025, 1, 2)
+    current = first_session
     while len(sessions) < session_count:
         try:
             resolve_exchange_session(current, policy)
