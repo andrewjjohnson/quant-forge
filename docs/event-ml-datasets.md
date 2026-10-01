@@ -427,9 +427,10 @@ The population is the QF-45 frozen 12/60 configuration. Its sources are the
 fold-0 selection trial window (2025-05-01 to 05-30) and the June OOS window
 (2025-06-02 to 06-27). Both are completed schema-2 windows of about 2.3 GB and
 1.9 GB. The study was cloned with APFS `cp -c` and its Finder `.DS_Store`
-files removed (see Limitations). The real permanent ledger was read under its
-shared lock. Its reserved QF-45 holdout (2025-06-30 to 07-31) was neither read
-nor consumed.
+files removed, which QF-73 no longer requires (see Limitations). QF-73 rebuilt
+the same dataset ID from a clone that kept them. The real permanent ledger was
+read under its shared lock. Its reserved QF-45 holdout (2025-06-30 to 07-31)
+was neither read nor consumed.
 
 | Item | Value |
 | --- | ---: |
@@ -502,8 +503,10 @@ What the figures show:
   consumed holdout scope are refused (session granularity).
 - **Trials checked.** Only the population's trial is verified per fold; other
   trials are left to QF-9.
-- **Finder metadata.** `load_oos_source` treats any unexpected entry under
-  `folds/` as corruption, including Finder `.DS_Store` files. Remove such
-  files, or copy the study, before building.
+- **Finder metadata.** Since QF-73, `load_oos_source` tolerates a regular
+  Finder `.DS_Store` file in `folds/`, and nested Finder files are never
+  listed, so the dataset is unchanged. Any other unexpected `folds/` entry,
+  including a `.DS_Store` directory or symlink, is still rejected. See
+  [Finder metadata](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73).
 - **Out of scope:** dense or all-bars datasets (QF-70), training and
   evaluation (QF-68), studies (QF-69), live inference and execution.

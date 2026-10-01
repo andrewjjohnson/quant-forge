@@ -7,6 +7,21 @@ runner's invariant matrix and profile: [heavyweight acceptance test](qf45-accept
 QF-45 shortened EMA smoke configuration, offline runner, checkpoints and the
 manual holdout gate: [local smoke workflow](spy-ema-smoke-study.md).
 
+QF-73 Finder metadata in QF-39 `folds/`: identical loads, aggregates and
+QF-40/QF-9/QF-41 publication with a regular `.DS_Store`, named and sorted
+diagnostics, rejected `.DS_Store` directories/symlinks/special files, evidence
+corruption with Finder metadata present, unchanged backtest-export and ledger
+listings, and the QF-67 consumer:
+
+```bash
+uv run --frozen pytest tests/unit/oos/test_finder_metadata.py \
+  tests/unit/oos/test_source.py \
+  tests/integration/test_event_ml_dataset_boundaries.py
+```
+
+See [Finder metadata](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73)
+for the policy and the directory-listing audit.
+
 QF-67 conditional event ML datasets. The command covers:
 
 - feature-schema, target and ordering unit tests;

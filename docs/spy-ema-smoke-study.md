@@ -198,6 +198,59 @@ permanent holdout evidence.
 Never delete the ledger to restore an unseen status. There is no
 holdout-consumption CLI flag.
 
+### Finder metadata (QF-73)
+
+The 2025 run stopped at `STAGE publish` on 2026-09-27. `publish_pre_holdout`
+called `load_oos_source`, which rejected the study's `folds/` listing with
+`duplicate or unexpected fold artifact directory`. The cause was most likely a
+macOS Finder `.DS_Store` file there. Finder writes one into every folder a person
+browses.
+
+QF-73 tolerates exactly that case. An entry named exactly `.DS_Store` is ignored
+only when it is a regular file and not a symlink, and only at the `folds/`
+membership check. It is never read, hashed or indexed. It does not change
+observations, aggregates, scientific identities, artifact bytes, or the holdout
+reservation. A `.DS_Store` directory, symlink, dangling symlink or special file
+still fails closed. So do other names and unknown files or directories, and the
+error names each offending entry. The exact policy, its limits, and an audit of
+the other strict listings are in
+[Finder metadata in `folds/`](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73).
+
+Finder files elsewhere in this run root do not reach a listing on the prediction
+load path. The study root and the fold, selection and artifact directories are
+read by exact file name. Strict listings remain in QF-5 backtest exports, other
+immutable exports and the holdout ledger. Avoid browsing those directories, and
+never remove Finder files from preserved evidence.
+
+Verification used APFS clones of the completed study and the ledger outside
+`reports/`, with readers only. Nothing under `reports/` was modified, no
+holdout data was read, and nothing was reserved or consumed:
+
+- On 2026-10-01 the original `folds/` held only the planned fold directory.
+  Its modification time (2026-09-27 21:13) is after the failed publish
+  (20:52), so its contents changed after the failure. Nested Finder files
+  remain at the study root and in the fold, `selection/`, grid and `artifacts/`
+  directories. The study as-is loads on clones with both the pre-QF-73 and
+  QF-73 code.
+- A real Finder file copied into a clone's `folds/` reproduces the failure on
+  the pre-QF-73 code (`b49d603`). With QF-73 it loads an identical `OOSSource`:
+  same study and lineage (`ff2b356a…`), same fold references. The QF-40
+  aggregate (`61f08a4e…`, complete 1/1 window) and its exported bytes are
+  identical. A `.DS_Store` directory, symlink or dangling symlink, and an
+  unknown file, are rejected and named.
+- With that file present, existing readers consume the study without strategy
+  recomputation. QF-9 `inspect_validation` (13 entries, none for Finder files)
+  reads the cloned ledger as `reserved_unconsumed`. The QF-67 builder
+  reproduces the 12/60 event dataset `69babfca…` (30 rows, identical summaries)
+  that was first built from a clone with every Finder file removed.
+
+The original run is still incomplete. `execution.json` pins its producing commit
+(`9174cd9`) and dependency lock. `--resume` requires that exact clean code and
+rejects mixed-code resume by design, so this fix cannot complete the original
+run. QF-73 neither rewrites that provenance nor attempts the resume. Completing
+the publish stage is an owner decision, for example a resume at the producing
+commit or a new run root on current code.
+
 The historical 76-decision checkpoint is under `reports/qf45-compact/`, with
 three folds, older dates, another candidate universe and different validation/
 window/schedule identities. Its June 27 selection decisions cannot belong to
