@@ -10,8 +10,12 @@ from quantforge.configuration import (
     decimal_to_primitive,
 )
 from quantforge.prediction.window_reader import PredictionWindowReader
-from quantforge.validation import ValidationPlan
-from quantforge.walk_forward.models import FoldResult
+from quantforge.validation import PartitionRole, ValidationPlan
+from quantforge.walk_forward.models import (
+    CandidateConfiguration,
+    FoldResult,
+    FrozenSelection,
+)
 
 
 def optional_decimal(value: Decimal | None) -> str | None:
@@ -98,6 +102,25 @@ class OOSSource:
     @property
     def lineage_id(self) -> str:
         return configuration_identity(self.lineage.to_primitive())
+
+
+@dataclass(frozen=True, slots=True)
+class PredictionTrialWindow:
+    """One verified in-sample QF-32 trial window of a frozen QF-39 fold.
+
+    ``role`` is the plan role the trial executed on: selection when the fold
+    declares one, otherwise development. It is never OOS evidence.
+    """
+
+    fold_id: str
+    fold_index: int
+    role: PartitionRole
+    selection: FrozenSelection
+    candidate: CandidateConfiguration
+    grid_study_id: str
+    trial_id: str
+    window_result_id: str
+    reader: PredictionWindowReader = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)

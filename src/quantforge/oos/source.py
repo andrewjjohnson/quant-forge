@@ -24,26 +24,36 @@ from quantforge.oos._records import (
     texts,
     verify_identity,
 )
-from quantforge.oos.models import OOSSource
+from quantforge.oos.models import OOSSource, PredictionTrialWindow
+from quantforge.optimization.models import TrialStatus
 from quantforge.prediction import PredictionDecisionSchedule
+from quantforge.prediction.errors import InvalidPredictionOutputError
+from quantforge.prediction.grid import (
+    PredictionGridPersistenceError,
+    PredictionGridTrialRecord,
+)
 from quantforge.prediction.window_compact_validation import (
     validate_prediction_window_reader,
 )
+from quantforge.prediction.window_encoding import decode
 from quantforge.prediction.window_reader import PredictionWindowReader
 from quantforge.prediction.window_validation import validate_prediction_window_snapshot
 from quantforge.timeframes import resolve_exchange_session
 from quantforge.validation import (
     ExchangeSessionBoundary,
+    PartitionRole,
     TimestampBoundary,
     ValidationPlan,
     ValidationWindow,
 )
 from quantforge.walk_forward.models import (
     BacktestOOSArtifact,
+    CandidateConfiguration,
     FoldResult,
     FoldStatus,
     FrozenSelection,
     PredictionOOSArtifact,
+    WalkForwardPersistenceError,
 )
 from quantforge.walk_forward.persistence import read_record
 from quantforge.walk_forward.study import (
@@ -103,6 +113,36 @@ def validation_lineage(definition: PrimitiveMapping) -> PrimitiveMappingSnapshot
     )
 
 
+def _role_window(plan: ValidationPlan, index: int, role: str) -> ValidationWindow:
+    fold = plan.folds[index]
+    window = (
+        fold.development
+        if role == "development"
+        else fold.selection
+        if role == "selection"
+        else fold.test
+        if role == "test"
+        else None
+    )
+    if window is None:
+        raise OOSIntegrityError("fold has no window for the requested role")
+    return window
+
+
+def _protected_window(plan: ValidationPlan, index: int, role: str) -> ValidationWindow:
+    """The QF-8 window a role's outcomes must not reach (its purge boundary)."""
+    fold = plan.folds[index]
+    if role == "development":
+        return fold.next_protected_window
+    if role == "selection":
+        return fold.test
+    return (
+        plan.folds[index + 1].test
+        if index + 1 < len(plan.folds)
+        else plan.final_holdout.window
+    )
+
+
 def _selection(
     record: PrimitiveMapping,
     definition: PrimitiveMapping,
@@ -137,16 +177,7 @@ def _selection(
         if part["window"] != window.to_primitive():
             raise OOSIntegrityError("artifact membership has the wrong window/role")
         member, purge = mapping(part["membership"]), mapping(part["purge"])
-        fold = plan.folds[index]
-        protected = (
-            fold.next_protected_window
-            if role == "development"
-            else fold.test
-            if role == "selection"
-            else plan.folds[index + 1].test
-            if index + 1 < len(plan.folds)
-            else plan.final_holdout.window
-        )
+        protected = _protected_window(plan, index, role)
         verify_identity(member, "selection_id")
         verify_identity(purge, "result_id")
         if (
@@ -307,10 +338,42 @@ def _validate_prediction(
     root: Path,
 ) -> PredictionWindowReader:
     frozen = selection.snapshot.to_primitive()
-    part = mapping(mapping(frozen["membership"])["test"])
-    candidate = mapping(mapping(frozen["candidate"])["definition"])
     payload = artifact.snapshot.to_primitive()
     reader = PredictionWindowReader.from_reference(payload, root=root / "test")
+    _validate_prediction_partition(
+        plan,
+        selection,
+        "test",
+        mapping(mapping(frozen["candidate"])["definition"]),
+        reader,
+        payload,
+        artifact.window_result_id,
+    )
+    return reader
+
+
+def _validate_prediction_partition(
+    plan: ValidationPlan,
+    selection: FrozenSelection,
+    role: str,
+    candidate: PrimitiveMapping,
+    reader: PredictionWindowReader,
+    payload: PrimitiveMapping,
+    window_result_id: Primitive,
+) -> None:
+    """Bind one QF-39 window to its frozen QF-8 role membership, offline.
+
+    ``role`` is the persisted membership key (``development``, ``selection`` or
+    ``test``) and ``candidate`` the executable definition the window must
+    reproduce. The test path passes the frozen candidate; QF-32 trial windows
+    pass their own universe candidate under the same frozen membership.
+    """
+    frozen = selection.snapshot.to_primitive()
+    index = next(
+        i for i, fold in enumerate(plan.folds) if fold.fold_id == frozen["fold_id"]
+    )
+    window = _role_window(plan, index, role)
+    part = mapping(mapping(frozen["membership"])[role])
     adapter = mapping(mapping(frozen["study_definition"])["adapter"])
     if reader.schema_version != adapter.get("window_schema_version", "1"):
         raise OOSIntegrityError("window representation differs from frozen adapter")
@@ -332,7 +395,7 @@ def _validate_prediction(
         raise OOSIntegrityError("prediction feature/backend provenance differs")
     context = mapping(mapping(manifest["context_environment"])["configuration"])
     if context["plan_id"] != plan.plan_id or context["partition"] != part:
-        raise OOSIntegrityError("prediction artifact is not from the test partition")
+        raise OOSIntegrityError(f"prediction artifact is not from the {role} partition")
     grid = mapping(mapping(mapping(frozen["study_definition"])["adapter"])["universe"])
     primary_config = mapping(grid["grid_definition"])["primary_timeframe"]
     primary = next(
@@ -359,9 +422,6 @@ def _validate_prediction(
         and canonical_metadata.intraday_provenance is not None
     ):
         try:
-            window = next(
-                fold.test for fold in plan.folds if fold.fold_id == frozen["fold_id"]
-            )
             cutoff, start = prediction_view_bounds(
                 plan, window, part, schedule.decision_timestamps[0]
             )
@@ -405,17 +465,10 @@ def _validate_prediction(
             strategy_parameters=mapping(candidate["prediction_rule_parameters"]),
             canonical_metadata=canonical_metadata,
         )
-    if artifact.window_result_id != manifest["window_result_id"]:
+    if window_result_id != manifest["window_result_id"]:
         raise OOSIntegrityError("prediction result ID differs")
-    index = next(
-        i for i, fold in enumerate(plan.folds) if fold.fold_id == frozen["fold_id"]
-    )
-    protected = (
-        plan.folds[index + 1].test
-        if index + 1 < len(plan.folds)
-        else plan.final_holdout.window
-    )
-    # A test result must never include an outcome in the next protected window.
+    protected = _protected_window(plan, index, role)
+    # A result must never include an outcome in the next protected window.
     for receipt in reader.iterate_decision_receipts():
         if receipt.decision is None:
             continue  # A sparse no-prediction receipt has no rows by construction.
@@ -433,16 +486,18 @@ def _validate_prediction(
                     + embargo
                     >= protected.interval.start.timestamp
                 ):
-                    raise OOSIntegrityError("test outcome reaches a protected window")
+                    raise OOSIntegrityError(
+                        f"{role} outcome reaches a protected window"
+                    )
             else:
                 assert isinstance(protected.interval.start, ExchangeSessionBoundary)
                 if (
                     date.fromisoformat(text(mapping(row["outcome"])["outcome_session"]))
                     >= protected.interval.start.session_date
                 ):
-                    raise OOSIntegrityError("test outcome reaches a protected window")
-
-    return reader
+                    raise OOSIntegrityError(
+                        f"{role} outcome reaches a protected window"
+                    )
 
 
 def _validate_backtest(
@@ -658,4 +713,161 @@ def load_oos_source(plan: ValidationPlan, study_path: Path) -> OOSSource:
         tuple(folds),
         tuple(references),
         tuple(prediction_windows),
+    )
+
+
+# Operational QF-32 manifest fields outside the grid's scientific identity.
+_GRID_MANIFEST_RUNTIME_FIELDS = frozenset(
+    {"study_id", "execution", "cache_policy", "interpretation"}
+)
+_TRIAL_WRAPPER_FIELDS = frozenset(
+    {
+        "schema_version",
+        "grid_study_id",
+        "trial_id",
+        "prediction_window_id",
+        "prediction_window",
+        "analysis",
+        "artifact_fingerprint",
+    }
+)
+
+
+def _strict_json(path: Path) -> PrimitiveMapping:
+    try:
+        return decode(path.read_bytes())
+    except (OSError, InvalidPredictionOutputError) as error:
+        raise OOSIntegrityError(f"invalid QF-32 trial artifact: {path.name}") from error
+
+
+def load_prediction_trial_window(
+    source: OOSSource, study_path: Path, *, fold_id: str, combination_id: str
+) -> PredictionTrialWindow:
+    """Verify one persisted QF-32 trial window of a frozen QF-39 fold, offline.
+
+    QF-39 runs every universe candidate on the fold's selection window, or on
+    development when the plan declares no selection window. The trial is bound
+    through the fold's immutable frozen selection (grid study and trial status),
+    the QF-32 grid identity, trial record and wrapper fingerprints, and then the
+    same plan membership, configuration, schedule, canonical lineage and
+    protected-reach checks as a test window. No factory, market data or
+    execution is needed. A trial window is in-sample evidence, never OOS.
+    """
+    plan = source.plan
+    definition = source.definition.to_primitive()
+    try:
+        persisted = read_record(study_path / "manifest.json")
+    except WalkForwardPersistenceError as error:
+        raise OOSIntegrityError("trial window study manifest is invalid") from error
+    if study_path.name != source.study_id or persisted != definition:
+        raise OOSIntegrityError("trial window study differs from the verified source")
+    index = next(
+        (i for i, fold in enumerate(plan.folds) if fold.fold_id == fold_id), None
+    )
+    if index is None:
+        raise OOSIntegrityError("trial window fold is not in the validation plan")
+    selection = source.folds[index].selection
+    if selection is None:
+        raise OOSIntegrityError("trial windows require the fold's frozen selection")
+    frozen = selection.snapshot.to_primitive()
+    role = "selection" if plan.folds[index].selection is not None else "development"
+    universe = mapping(mapping(definition["adapter"])["universe"])
+    candidate = next(
+        (
+            item
+            for item in records(universe["candidates"])
+            if item.get("combination_id") == combination_id
+        ),
+        None,
+    )
+    if candidate is None:
+        raise OOSIntegrityError("combination is outside the candidate universe")
+    statuses = [
+        item
+        for item in records(mapping(frozen["selection_evidence"])["trial_statuses"])
+        if item.get("combination_id") == combination_id
+    ]
+    if len(statuses) != 1 or statuses[0].get("status") != TrialStatus.SUCCEEDED.value:
+        raise OOSIntegrityError(
+            "frozen selection has no succeeded trial for the combination"
+        )
+    trial_id = text(statuses[0]["trial_id"])
+    if candidate == frozen["candidate"] and frozen["selected_trial_id"] != trial_id:
+        raise OOSIntegrityError("selected trial differs from the frozen selection")
+    grid_id = text(frozen["selection_grid_study_id"])
+    grid_root = study_path / "folds" / fold_id / "selection" / grid_id
+    location = f"artifacts/{trial_id}/prediction-window.json"
+    grid = _strict_json(grid_root / "manifest.json")
+    wrapper = _strict_json(grid_root / location)
+    try:
+        record = PredictionGridTrialRecord.from_primitive(
+            _strict_json(grid_root / "trials" / f"{trial_id}.json")
+        )
+    except PredictionGridPersistenceError as error:
+        raise OOSIntegrityError("invalid QF-32 trial record") from error
+    trial_definition = (
+        None
+        if record.trial_definition_snapshot is None
+        else record.trial_definition_snapshot.to_primitive()
+    )
+    content = {k: v for k, v in wrapper.items() if k != "artifact_fingerprint"}
+    if (
+        grid.get("study_id") != grid_id
+        or configuration_identity(
+            {k: v for k, v in grid.items() if k not in _GRID_MANIFEST_RUNTIME_FIELDS}
+        )
+        != grid_id
+        or record.study_id != grid_id
+        or record.trial_id != trial_id
+        or record.combination_id != combination_id
+        or record.status is not TrialStatus.SUCCEEDED
+        or record.parameters != candidate["parameters"]
+        or record.artifact_location != location
+        or record.analysis is None
+        or trial_definition is None
+        or {k: v for k, v in trial_definition.items() if k != "decision_schedule"}
+        != candidate["definition"]
+        or trial_definition.get("decision_schedule") != grid.get("decision_schedule")
+        or frozenset(wrapper) != _TRIAL_WRAPPER_FIELDS
+        or wrapper["grid_study_id"] != grid_id
+        or wrapper["trial_id"] != trial_id
+        or wrapper["analysis"] != record.analysis.to_primitive()
+        or wrapper["artifact_fingerprint"] != configuration_identity(content)
+        or wrapper["artifact_fingerprint"] != record.artifact_fingerprint
+    ):
+        raise OOSIntegrityError("QF-32 trial evidence differs from its frozen fold")
+    payload = mapping(wrapper["prediction_window"])
+    try:
+        reader = PredictionWindowReader.from_reference(
+            payload, root=(grid_root / location).parent
+        )
+    except InvalidPredictionOutputError as error:
+        raise OOSIntegrityError("invalid QF-32 trial window reference") from error
+    if reader.evidence.schedule.to_primitive() != grid.get("decision_schedule"):
+        raise OOSIntegrityError("trial window schedule differs from its grid")
+    _validate_prediction_partition(
+        plan,
+        selection,
+        role,
+        mapping(candidate["definition"]),
+        reader,
+        payload,
+        wrapper["prediction_window_id"],
+    )
+    return PredictionTrialWindow(
+        fold_id=fold_id,
+        fold_index=index,
+        role=PartitionRole.SELECTION
+        if role == "selection"
+        else PartitionRole.DEVELOPMENT,
+        selection=selection,
+        candidate=CandidateConfiguration(
+            combination_id,
+            PrimitiveMappingSnapshot.capture(mapping(candidate["parameters"])),
+            PrimitiveMappingSnapshot.capture(mapping(candidate["definition"])),
+        ),
+        grid_study_id=grid_id,
+        trial_id=trial_id,
+        window_result_id=text(wrapper["prediction_window_id"]),
+        reader=reader,
     )

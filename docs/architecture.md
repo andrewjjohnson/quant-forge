@@ -1,5 +1,28 @@
 # QuantForge Architecture
 
+QF-67 adds `quantforge.ml`, one conditional event-dataset boundary above
+verified authoritative evidence. It turns one frozen strategy population's
+persisted generated signals into deterministic rows:
+
+- **Sources.** QF-40 `load_oos_source` supplies test windows. The new
+  `load_prediction_trial_window` supplies selection and development windows,
+  using the same plan-bound checks generalized by role. Final-holdout rows come
+  only from a consumed `HoldoutLedger.result`.
+- **Row unit.** Rows come from QF-64 coverage receipts. No-trigger decisions
+  are counted but never expanded and never become negatives.
+- **Model inputs.** An explicit versioned feature schema reads only the causal
+  signal mapping. A versioned target over the existing QF-49 return keeps
+  unavailable labels null.
+- **Membership and protection.** Verified role and fold membership stays
+  outside the features. The workspace ledger's shared lock and protected
+  scopes are enforced, and QF-72 rapid results are refused.
+- **Artifact.** A Parquet artifact plus manifest has a scientific ID
+  independent of the physical schema, and validates offline.
+
+No training, tuning or execution belongs here. See
+[event ML datasets](event-ml-datasets.md) and
+[ADR 0039](decisions/0039-assemble-conditional-event-ml-datasets.md).
+
 QF-72 adds `quantforge.rapid`, a separate **non-authoritative** exploratory
 execution boundary. A `RapidResearchSession` prepares one QF-8 development or
 selection window once with the unchanged QF-8/QF-39 partition, QF-59 positions,

@@ -57,6 +57,29 @@ returns or successful predictions. Ordinary aggregation neither consults nor
 modifies the holdout ledger and never claims that the holdout is pristine. Later
 consumers must obtain current holdout state explicitly from the ledger.
 
+### Selection and development trial windows (QF-67)
+
+`load_prediction_trial_window(source, study_path, fold_id=..., combination_id=...)`
+verifies one persisted QF-32 trial window of a fold whose selection is frozen,
+offline. QF-39 runs every candidate on the selection window, or on development
+when the fold has none. The verifier binds the trial through:
+
+- the frozen selection's grid study and `succeeded` trial status;
+- the QF-32 grid identity, trial record and wrapper fingerprints;
+- the decision schedule.
+
+It then applies the test-window checks generalized by role:
+
+- candidate components;
+- context partition equal to the frozen QF-8 membership of that role;
+- schedule and bounded lineage;
+- `validate_prediction_window_reader`;
+- outcome reach before the role's protected window.
+
+Test-window verification is unchanged. A trial window is in-sample evidence
+and never enters OOS aggregation. QF-67 event datasets use it; see
+[event ML datasets](event-ml-datasets.md).
+
 ## Prediction semantics
 
 `PredictionOOSAggregate` contains the summary, per-window summaries, stability,

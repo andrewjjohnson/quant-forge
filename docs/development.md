@@ -7,6 +7,25 @@ runner's invariant matrix and profile: [heavyweight acceptance test](qf45-accept
 QF-45 shortened EMA smoke configuration, offline runner, checkpoints and the
 manual holdout gate: [local smoke workflow](spy-ema-smoke-study.md).
 
+QF-67 conditional event ML datasets. The command covers:
+
+- feature-schema, target and ordering unit tests;
+- real QF-39 schema-4 studies of the QF-45 composition (synthetic prices):
+  rows only for triggers, exact features, positive, zero and unavailable
+  labels, membership, determinism and physical-schema independence;
+- input boundaries: rapid refusal, ledger and holdout lifecycle, corrupted
+  source evidence and artifacts;
+- the synthetic scale benchmark (about 2,500 rows):
+
+```bash
+uv run --frozen pytest tests/unit/ml tests/integration/test_event_ml_dataset.py \
+  tests/integration/test_event_ml_dataset_boundaries.py \
+  tests/performance/test_event_ml_dataset_scale.py
+```
+
+See [event ML datasets](event-ml-datasets.md) for the API, artifact layout and
+the real-QF-45 and synthetic measurements.
+
 QF-72 non-authoritative rapid exploratory scans: kernel-input, trigger, feature
 and outcome equivalence with the authoritative QF-39/QF-42/QF-7 paths (normal,
 early-close, holiday, warm-up and daily-shift cases), sentinel future bars,

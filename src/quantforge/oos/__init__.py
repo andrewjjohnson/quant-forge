@@ -15,9 +15,10 @@ from quantforge.oos.models import (
     MetricSummary,
     OOSSource,
     PredictionOOSAggregate,
+    PredictionTrialWindow,
 )
 from quantforge.oos.prediction import PredictionMetricFields, aggregate_prediction
-from quantforge.oos.source import load_oos_source
+from quantforge.oos.source import load_oos_source, load_prediction_trial_window
 
 __all__ = [
     "BacktestOOSAggregate",
@@ -31,10 +32,12 @@ __all__ = [
     "OOSSource",
     "PredictionMetricFields",
     "PredictionOOSAggregate",
+    "PredictionTrialWindow",
     "aggregate_backtest",
     "aggregate_prediction",
     "configuration_stability",
     "export_oos_aggregate",
     "load_oos_aggregate",
     "load_oos_source",
+    "load_prediction_trial_window",
 ]
