@@ -20,6 +20,28 @@ decisions are coverage, never negatives.
 
 See [event ML datasets](event-ml-datasets.md).
 
+QF-68 event models train on **one fold's development rows only**:
+
+- **Leakage.** Preprocessing and estimator state never see selection, test or
+  holdout rows. Training labels must satisfy
+  `decision + label_horizon + embargo < protected_start`.
+- **Labels and features.** Unavailable labels are excluded, never negatives,
+  and null features are never zero-filled.
+- **No search.** There is no random split, role reassignment, hyperparameter
+  or threshold search.
+- **Freeze before evaluation.** Out-of-sample inference requires the
+  persisted, re-validated frozen envelope.
+- **Holdout.** Holdout inference requires an explicitly consumed ledger
+  holdout and only reads the ledger. Freeze before consuming, and never
+  retrain after inspecting holdout predictions.
+- **Interpretation.** Classification metrics and the training-prevalence
+  baseline are descriptive. They say nothing about returns after costs, and
+  nothing requires a model to beat the baseline.
+- **QF-45 data.** The real QF-45 dataset has no development rows; it is never
+  relabeled to manufacture training data.
+
+See [event ML models](event-ml-models.md).
+
 QF-72 rapid scans are **exploratory and non-authoritative**. They reuse the
 authoritative canonical data, calendar, warm-up, prepared causal features, the
 rule's own predicate and the configured outcome definitions, and they skip only
