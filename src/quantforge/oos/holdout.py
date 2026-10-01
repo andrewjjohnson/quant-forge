@@ -251,6 +251,30 @@ class HoldoutLedger:
             self._guard(source)
             return self._state(source)
 
+    def exposure_scopes(self) -> tuple[PrimitiveMapping, ...]:
+        """Every reserved or consumed holdout exposure scope, read-only.
+
+        The store is audited under the ledger lock first. QF-72 exploratory scans
+        use these session/symbol scopes to refuse any reserved holdout; nothing is
+        written and no reservation or consumption state changes.
+        """
+        with self._locked():
+            scopes = [
+                mapping(read_record(path / "reservation.json")["exposure_scope"])
+                for path in sorted((self.root / "lineages").glob("*"))
+            ]
+            scopes.extend(
+                mapping(read_record(path)["exposure_scope"])
+                for path in sorted((self.root / "exposures").glob("*.json"))
+            )
+        for scope in scopes:
+            if scope.get("date_basis") != "exchange_session_labels_v1":
+                raise OOSIntegrityError("incompatible holdout exposure scope")
+            text(scope["symbol"])
+            text(scope["start"])
+            text(scope["end"])
+        return tuple(scopes)
+
     def _state(self, source: OOSSource) -> HoldoutConsumptionRecord:
         root = self.root / "lineages" / source.lineage_id
         reservation = read_record(root / "reservation.json")

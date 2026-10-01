@@ -72,6 +72,10 @@ class RelationshipType(StrEnum):
     CONSUMES = "consumes"
 
 
+# File suffix reserved for QF-72 rapid exploratory exports; never indexable.
+NON_AUTHORITATIVE_SUFFIX = ".rapid.json"
+
+
 def file_sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -273,6 +277,10 @@ def verify_artifacts(index: ArtifactIndex, root: Path) -> IntegrityReport:
                     code = "missing_artifact"
                 else:
                     absent.append(entry.artifact_id)
+            elif path.name.lower().endswith(NON_AUTHORITATIVE_SUFFIX):
+                # QF-72 rapid exploratory exports are never research evidence,
+                # whatever format an index entry declares for them.
+                code = "non_authoritative_artifact"
             elif entry.file_format is ArtifactFormat.JSON:
                 content = path.read_bytes()
                 if entry.sha256 != hashlib.sha256(content).hexdigest():
@@ -280,7 +288,10 @@ def verify_artifacts(index: ArtifactIndex, root: Path) -> IntegrityReport:
                 else:
                     document = parse_json(content)
                     pointer(document, entry.json_pointer)
-                    if any(
+                    if document.get("authoritative") is False:
+                        # Self-declared non-authoritative documents (QF-72).
+                        code = "non_authoritative_artifact"
+                    elif any(
                         pointer(document, key) != value
                         for key, value in entry.bindings.to_primitive().items()
                     ):

@@ -467,3 +467,47 @@ def test_credential_values_and_authenticated_urls_rejected(
 def test_nonfinite_configuration_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="JSON"):
         manifest(tmp_path, {"threshold": cast(Primitive, float("nan"))})
+
+
+@pytest.mark.parametrize(
+    ("filename", "document", "file_format"),
+    [
+        ("scan.rapid.json", {"authoritative": False}, None),
+        ("scan.json", {"authoritative": False, "mode": "exploratory"}, None),
+        ("scan.rapid.json", {"notice": "renamed"}, ArtifactFormat.BINARY),
+        ("SCAN.RAPID.JSON", {"authoritative": True}, ArtifactFormat.JSON),
+    ],
+)
+def test_non_authoritative_rapid_documents_are_never_indexed(
+    tmp_path: Path,
+    filename: str,
+    document: PrimitiveMapping,
+    file_format: ArtifactFormat | None,
+) -> None:
+    """QF-72: rapid exploratory exports cannot become research evidence."""
+    (tmp_path / filename).write_text(json.dumps(document))
+    with pytest.raises(ManifestError, match="non_authoritative_artifact"):
+        index_artifact(
+            tmp_path,
+            path=filename,
+            artifact_type=ArtifactType.PREDICTION_RESULT,
+            schema_version="1",
+            producer_study_id="rapid",
+            producer_artifact_id="scan",
+            file_format=file_format,
+        )
+
+
+def test_authoritative_json_without_the_rapid_marker_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "result.json").write_text(json.dumps({"authoritative": True}))
+    entry = index_artifact(
+        tmp_path,
+        path="result.json",
+        artifact_type=ArtifactType.PREDICTION_RESULT,
+        schema_version="1",
+        producer_study_id="study",
+        producer_artifact_id="result",
+    )
+    assert verify_artifacts(ArtifactIndex((entry,)), tmp_path).valid
