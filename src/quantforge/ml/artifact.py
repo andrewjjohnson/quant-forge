@@ -23,7 +23,6 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from decimal import Decimal
 from importlib import import_module
 from itertools import pairwise
 from pathlib import Path
@@ -41,6 +40,7 @@ from quantforge.ml.dataset import (
     EventDataset,
     EventRow,
     column_layout,
+    has_duplicate_events,
     label_summary,
     logical_rows_sha256,
 )
@@ -51,7 +51,7 @@ from quantforge.ml.errors import (
 )
 from quantforge.ml.features import EventFeatureSchema, FeatureValue
 from quantforge.ml.sources import WORKSPACE_HOLDOUT_LEDGER
-from quantforge.ml.targets import ForwardReturnBinaryTarget, TargetLabel
+from quantforge.ml.targets import ForwardReturnBinaryTarget, TargetLabel, require_label
 from quantforge.prediction.errors import InvalidPredictionOutputError
 from quantforge.prediction.window_encoding import canonical, decode
 from quantforge.validation import PartitionRole
@@ -380,18 +380,13 @@ def _parse_rows(
                 )
                 for definition, name in zip(schema.features, names, strict=True)
             )
-            value, status = record["target"], record["target_status"]
-            source_value = record["target_source_value"]
-            available = status == "available"
-            _require(
-                (value is None) is (not available)
-                and (source_value is None) is (not available)
-                and (
-                    source_value is None
-                    or value == (Decimal(cast(str, source_value)) > target.threshold)
-                ),
-                "target label is inconsistent with its outcome value",
+            label = TargetLabel(
+                cast(bool | None, record["target"]),
+                cast(str, record["target_status"]),
+                cast(str | None, record["target_source_value"]),
+                cast(str, record["target_outcome_id"]),
             )
+            require_label(label, target.threshold)
             fold_index = record["fold_index"]
             rows.append(
                 EventRow(
@@ -409,12 +404,7 @@ def _parse_rows(
                     fold_id=cast(str | None, record["fold_id"]),
                     fold_index=cast(int | None, fold_index),
                     features=features,
-                    label=TargetLabel(
-                        cast(bool | None, value),
-                        cast(str, status),
-                        cast(str | None, source_value),
-                        cast(str, record["target_outcome_id"]),
-                    ),
+                    label=label,
                 )
             )
         except (KeyError, TypeError, ValueError, ArithmeticError) as error:
@@ -504,6 +494,10 @@ def _read(path: Path, name: str) -> EventDataset:
     _require(
         len({row.source_observation_id for row in rows}) == len(rows),
         "duplicate source observation IDs",
+    )
+    _require(
+        not has_duplicate_events(rows),
+        "one fold holds the same decision event in more than one role",
     )
     for row in rows:
         _require(0 <= row.source_index < len(sources), "row references no source")

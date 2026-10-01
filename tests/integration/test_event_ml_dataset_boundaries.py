@@ -36,6 +36,7 @@ from quantforge.ml import (
     EventHoldoutError,
     EventPopulation,
     EventPopulationError,
+    EventRow,
     ForwardReturnBinaryTarget,
     NonAuthoritativeSourceError,
     assemble_event_dataset,
@@ -480,27 +481,74 @@ def test_corrupted_artifacts_fail_closed(
         read_event_dataset(target)
 
 
-def test_fully_rehashed_label_forgery_is_still_detected(
-    dataset: EventDataset, tmp_path: Path
-) -> None:
-    """Rewriting identities consistently cannot turn unavailable into negative."""
-    rows = list(dataset.rows)
-    forged_label = replace(rows[1].label, value=False)
-    rows[1] = replace(rows[1], label=forged_label)
-
+def forge(dataset: EventDataset, rows: list[EventRow]) -> EventDataset:
+    """Rehash every identity consistently around edited rows (a full forgery)."""
+    rows = sorted(rows, key=EventRow.sort_key)
     scientific = dataset.scientific.to_primitive()
-    cast(dict[str, Any], scientific["rows"])["logical_rows_sha256"] = (
-        logical_rows_sha256(rows)
-    )
-    forged = replace(
+    declared = cast(dict[str, Any], scientific["rows"])
+    declared["row_count"] = len(rows)
+    declared["logical_rows_sha256"] = logical_rows_sha256(rows)
+    return replace(
         dataset,
         dataset_id=configuration_identity(scientific),
         scientific=PrimitiveMappingSnapshot.capture(scientific),
         summaries=PrimitiveMappingSnapshot.capture(label_summary(rows)),
         rows=tuple(rows),
     )
-    with pytest.raises(EventDatasetIntegrityError, match="target label"):
-        export_event_dataset(forged, tmp_path)
+
+
+def _unavailable_as_negative_forgery(rows: list[EventRow]) -> None:
+    rows[1] = replace(rows[1], label=replace(rows[1].label, value=False))
+
+
+def _cross_role_duplicate_event(rows: list[EventRow]) -> None:
+    # The selection event of 2024-12-26 also offered as test evidence (source
+    # 1 is the fold's test window) under a new observation ID.
+    rows.append(
+        replace(
+            rows[2],
+            partition_role=PartitionRole.WALK_FORWARD_TEST,
+            source_index=1,
+            source_observation_id="f" * 64,
+        )
+    )
+
+
+def _unknown_status(rows: list[EventRow]) -> None:
+    rows[1] = replace(rows[1], label=replace(rows[1].label, status="unknown"))
+
+
+def _infinite_return(rows: list[EventRow]) -> None:
+    rows[0] = replace(rows[0], label=replace(rows[0].label, source_value="Infinity"))
+
+
+def _non_canonical_return(rows: list[EventRow]) -> None:
+    rows[2] = replace(rows[2], label=replace(rows[2].label, source_value="0E-3"))
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (_unavailable_as_negative_forgery, "target label"),
+        (_cross_role_duplicate_event, "same decision event"),
+        (_unknown_status, "unknown target status"),
+        (_infinite_return, "canonical finite decimal"),
+        (_non_canonical_return, "canonical finite decimal"),
+    ],
+    ids=["unavailable-as-negative", "cross-role-event", "status", "infinity", "0E-3"],
+)
+def test_fully_rehashed_forgeries_are_still_detected(
+    dataset: EventDataset,
+    tmp_path: Path,
+    edit: Callable[[list[EventRow]], None],
+    message: str,
+) -> None:
+    """Consistently recomputed identities cannot hide overlapping partitions
+    or labels outside the stable target schema; nothing is published."""
+    rows = list(dataset.rows)
+    edit(rows)
+    with pytest.raises(EventDatasetIntegrityError, match=message):
+        export_event_dataset(forge(dataset, rows), tmp_path)
     assert not any(tmp_path.iterdir())
 
 

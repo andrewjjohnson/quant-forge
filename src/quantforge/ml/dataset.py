@@ -132,6 +132,16 @@ class EventRow:
         }
 
 
+def has_duplicate_events(rows: Sequence[EventRow]) -> bool:
+    """Whether one fold (or the holdout) holds the same event more than once.
+
+    QF-8 roles of one fold never overlap, so the same decision event in two
+    roles (or twice in one) is overlapping partition evidence.
+    """
+    events = {(row.fold_id, row.decision_timestamp, row.signal_index) for row in rows}
+    return len(events) != len(rows)
+
+
 def logical_rows_sha256(rows: Sequence[EventRow]) -> str:
     """SHA-256 of the canonical JSON lines of the ordered logical rows."""
     digest = hashlib.sha256()
@@ -560,8 +570,7 @@ def assemble_event_dataset(
     identities = [row.source_observation_id for row in rows]
     if len(set(identities)) != len(identities):
         raise EventPartitionError("duplicate source observation IDs")
-    events = [(row.fold_id, row.decision_timestamp, row.signal_index) for row in rows]
-    if len(set(events)) != len(events):
+    if has_duplicate_events(rows):
         raise EventPartitionError(
             "one fold holds the same decision event in more than one role"
         )
@@ -682,6 +691,7 @@ __all__ = [
     "assemble_event_dataset",
     "build_event_dataset",
     "column_layout",
+    "has_duplicate_events",
     "label_summary",
     "logical_rows_sha256",
 ]

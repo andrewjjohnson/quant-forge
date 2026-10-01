@@ -369,16 +369,25 @@ refused.
 - file hashes and sizes, and no unlisted `rows.csv`;
 - the Arrow schema with metadata;
 - per-row types and null policies;
-- label consistency: `target` must equal `target_source_value > threshold`,
-  and unavailable must be null;
+- label consistency, using the same rules as building:
+  - `target_status` must be a QF-46 status;
+  - an available `target_source_value` must be a canonical finite decimal
+    and `target` must equal `target_source_value > threshold`;
+  - unavailable labels must be null without a return;
 - the logical-row hash, ordering and unique observation IDs;
+- no fold or holdout holding the same `(decision_timestamp, signal_index)`
+  event more than once, for example in both selection and test;
 - membership against the source table;
 - the summaries;
 - the CSV.
 
 A fully and consistently rehashed forgery of feature values is detectable only
-by rebuilding from the source evidence. Label forgeries that contradict their
-stored return are detected even then.
+by rebuilding from the source evidence. Even under a full rehash, these are
+still detected:
+
+- label forgeries that contradict their stored return;
+- statuses or returns outside the target schema;
+- one event offered in two roles of a fold.
 
 ## Example artifact (synthetic fixture)
 

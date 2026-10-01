@@ -47,7 +47,8 @@ from quantforge.prediction.outcome_temporal import (
 from quantforge.validation import ValidationPlan
 
 EVENT_TARGET_CONTRACT_VERSION = "1"
-_STATUSES = frozenset(status.value for status in OutcomeResolutionStatus)
+# QF-46 availability statuses; only "available" carries a return.
+TARGET_STATUSES = frozenset(status.value for status in OutcomeResolutionStatus)
 
 
 class TargetKind(StrEnum):
@@ -254,7 +255,7 @@ class BoundEventTarget:
             raise EventDatasetIntegrityError(
                 "persisted outcome differs from the bound target configuration"
             )
-        if status not in _STATUSES or type(available) is not bool:
+        if status not in TARGET_STATUSES or type(available) is not bool:
             raise EventDatasetIntegrityError("unknown outcome availability status")
         if (available is (status == OutcomeResolutionStatus.AVAILABLE.value)) is False:
             raise EventDatasetIntegrityError("outcome availability is contradictory")
@@ -264,21 +265,63 @@ class BoundEventTarget:
                     "an unavailable outcome cannot carry a return"
                 )
             return TargetLabel(None, status, None, outcome_id)
-        if not isinstance(raw, str):
-            raise EventDatasetIntegrityError("an available outcome requires a return")
-        try:
-            value = Decimal(raw)
-        except InvalidOperation as error:
-            raise EventDatasetIntegrityError("outcome return is not decimal") from error
-        if not value.is_finite():
-            raise EventDatasetIntegrityError("outcome return is not finite")
-        return TargetLabel(value > self.target.threshold, status, raw, outcome_id)
+        value = available_return(raw)
+        return TargetLabel(
+            value > self.target.threshold, status, cast(str, raw), outcome_id
+        )
+
+
+def available_return(raw: object) -> Decimal:
+    """The exact finite canonical return of an available QF-49 outcome.
+
+    QF-49 renders returns with ``decimal_to_primitive``; any other text
+    (exponent, padding, ``Infinity``, ``NaN``) is not persisted evidence.
+    """
+    if not isinstance(raw, str):
+        raise EventDatasetIntegrityError("an available outcome requires a return")
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as error:
+        raise EventDatasetIntegrityError("outcome return is not decimal") from error
+    if not value.is_finite() or decimal_to_primitive(value) != raw:
+        raise EventDatasetIntegrityError(
+            "outcome return is not a canonical finite decimal"
+        )
+    return value
+
+
+def require_label(label: TargetLabel, threshold: Decimal) -> None:
+    """Offline re-check of a stored label against its stored outcome value.
+
+    The status must be a QF-46 status; unavailable labels are null without a
+    return; available labels carry a canonical finite return and equal
+    ``return > threshold``. Building enforces the same rules in ``label``.
+    """
+    if label.status not in TARGET_STATUSES:
+        raise EventDatasetIntegrityError("unknown target status")
+    if not isinstance(cast(object, label.outcome_id), str) or not label.outcome_id:
+        raise EventDatasetIntegrityError("target label has no outcome identity")
+    if label.status != OutcomeResolutionStatus.AVAILABLE.value:
+        if label.value is not None or label.source_value is not None:
+            raise EventDatasetIntegrityError(
+                "target label is inconsistent with its outcome value"
+            )
+        return
+    if type(label.value) is not bool or label.value != (
+        available_return(label.source_value) > threshold
+    ):
+        raise EventDatasetIntegrityError(
+            "target label is inconsistent with its outcome value"
+        )
 
 
 __all__ = [
     "EVENT_TARGET_CONTRACT_VERSION",
+    "TARGET_STATUSES",
     "BoundEventTarget",
     "ForwardReturnBinaryTarget",
     "TargetKind",
     "TargetLabel",
+    "available_return",
+    "require_label",
 ]

@@ -13,7 +13,9 @@ from quantforge.ml import (
     EventDatasetIntegrityError,
     EventTargetError,
     ForwardReturnBinaryTarget,
+    TargetLabel,
 )
+from quantforge.ml.targets import require_label
 from quantforge.prediction import (
     IntradayForwardReturnEvaluator,
     IntradayForwardReturnOutcomeLabeler,
@@ -110,6 +112,9 @@ def test_threshold_is_explicit_and_part_of_identity() -> None:
         {"available": "true"},
         {"raw_return": "not-a-number"},
         {"raw_return": "NaN"},
+        {"raw_return": "Infinity"},
+        {"raw_return": "0.00160"},
+        {"raw_return": "1.6E-3"},
         {"raw_return": 0.0016},
         {"decision_timestamp": "2024-12-23T16:02:00+00:00"},
         {"elapsed_duration_microseconds": 600_000_000},
@@ -142,6 +147,28 @@ def test_rows_must_belong_to_the_bound_outcome_and_evaluator() -> None:
         BOUND.label(divergent, DECISION)
     with pytest.raises(EventDatasetIntegrityError, match="incomplete"):
         BOUND.label({"outcome": {}}, DECISION)
+
+
+def test_stored_labels_are_rechecked_against_their_outcome_values() -> None:
+    threshold = Decimal(0)
+    for valid in (
+        TargetLabel(True, "available", "0.0016", "o"),
+        TargetLabel(False, "available", "0", "o"),
+        TargetLabel(None, "session_overflow", None, "o"),
+    ):
+        require_label(valid, threshold)
+    for invalid, message in (
+        (TargetLabel(None, "unknown", None, "o"), "unknown target status"),
+        (TargetLabel(False, "session_overflow", None, "o"), "inconsistent"),
+        (TargetLabel(None, "dataset_end", "0", "o"), "inconsistent"),
+        (TargetLabel(True, "available", "Infinity", "o"), "canonical"),
+        (TargetLabel(True, "available", "0.00160", "o"), "canonical"),
+        (TargetLabel(True, "available", "0", "o"), "inconsistent"),
+        (TargetLabel(None, "available", "0.1", "o"), "inconsistent"),
+        (TargetLabel(True, "available", "0.1", ""), "outcome identity"),
+    ):
+        with pytest.raises(EventDatasetIntegrityError, match=message):
+            require_label(invalid, threshold)
 
 
 def test_target_configuration_round_trips_and_rejects_tampering() -> None:
