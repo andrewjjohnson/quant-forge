@@ -174,11 +174,16 @@ At session entry, before any market value is read:
 There is no override flag. The session takes the workspace root, not a ledger
 object, so a fresh empty ledger cannot be substituted for the permanent one; a
 workspace without that ledger is refused and rapid scans never create one.
-Refused exports likewise create no directories. The ledger is audited and read
-once, read-only, when the session opens (its records can be large); each scan
-re-checks its own maximum outcome reach. The research interval itself is checked before any
-market data is prepared, and the warm-up footprint right after the QF-59/QF-63
-positions are known.
+Refused exports likewise create no directories. The session audits the ledger
+and takes its **shared lock before any market data is prepared**, and holds it
+until the session closes. Every reservation or consumption needs the exclusive
+lock, so none can be granted while a session prepares or scans; such
+operations fail closed with "conflicting holdout operation is already active"
+and succeed once the session closes. Concurrent rapid sessions share the lock.
+Each scan therefore checks current scopes without re-reading the ledger (its
+records can be large) and re-checks its own maximum outcome reach. The research
+interval itself is checked before any market data is prepared, and the warm-up
+footprint right after the QF-59/QF-63 positions are known.
 
 ## Result contract
 

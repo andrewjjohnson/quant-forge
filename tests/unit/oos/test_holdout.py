@@ -558,3 +558,24 @@ def test_exposure_scopes_fail_closed_on_incompatible_scope(
     write_record(path / "reservation.json", reservation)
     with pytest.raises(OOSIntegrityError, match="exposure scope"):
         ledger.exposure_scopes()
+
+
+def test_held_exposure_scopes_keep_reservations_and_consumption_out(
+    prediction_study: CompletedStudy, tmp_path: Path
+) -> None:
+    """QF-72 sessions hold a shared lock; writers fail closed until release."""
+    ledger = HoldoutLedger.create(tmp_path / "ledger")
+    with ledger.held_exposure_scopes() as scopes:
+        assert scopes == ()
+        # Readers share the lock; reservation needs the exclusive lock.
+        assert HoldoutLedger(ledger.root).exposure_scopes() == ()
+        with pytest.raises(OOSIntegrityError, match="conflicting"):
+            ledger.reserve(prediction_study.source)
+    reserved = ledger.reserve(prediction_study.source)
+    with ledger.held_exposure_scopes() as scopes:
+        assert scopes == (
+            mapping(reserved.reservation.to_primitive()["exposure_scope"]),
+        )
+        with pytest.raises(OOSIntegrityError, match="conflicting"):
+            ledger.consume(prepared(prediction_study), run_id="during-session")
+    assert ledger.state(prediction_study.source).state is HoldoutState.RESERVED

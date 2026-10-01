@@ -10,6 +10,7 @@ import inspect
 import json
 import os
 from collections.abc import Generator
+from contextlib import AbstractContextManager
 from dataclasses import replace
 from datetime import date, time, timedelta
 from decimal import Decimal
@@ -36,7 +37,7 @@ from quantforge.indicators import (
     ExponentialMovingAverage,
     ExponentialMovingAverageParameters,
 )
-from quantforge.oos import HoldoutLedger
+from quantforge.oos import HoldoutLedger, OOSIntegrityError
 from quantforge.prediction import (
     PredictionDirection,
     PredictionIndicatorRequirement,
@@ -193,6 +194,32 @@ def test_scans_bind_to_the_workspace_ledger_and_never_create_one(
     }
     scan = set(inspect.signature(rapid_session.RapidResearchSession.scan).parameters)
     assert scan == {"self", "rule", "outcomes", "record_values"}
+
+
+def test_open_sessions_hold_the_workspace_ledger_against_new_reservations(
+    case: RapidCase,
+) -> None:
+    """No reservation or consumption can be granted while a session scans."""
+    workspace = case.workspace("workspace-locked")
+    ledger = case.ledger(workspace)
+
+    def writer_lock() -> AbstractContextManager[None]:
+        return ledger._locked()  # pyright: ignore[reportPrivateUsage]
+
+    with case.session(workspace=workspace) as session:
+        # Writers take the exclusive lock and fail closed during the session.
+        with pytest.raises(OOSIntegrityError, match="conflicting"):
+            with writer_lock():
+                pass
+        # Another exploratory session over the same workspace may share it.
+        with case.session(PartitionRole.DEVELOPMENT, workspace=workspace) as other:
+            assert other.scan(EmaSmokeRule(EmaParameters(8, 48))).trigger_count
+        assert session.scan(EmaSmokeRule(EmaParameters(8, 48))).trigger_count == 3
+        with pytest.raises(OOSIntegrityError, match="conflicting"):
+            with writer_lock():
+                pass
+    with writer_lock():
+        pass
 
 
 # -- admission ---------------------------------------------------------------

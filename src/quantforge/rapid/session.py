@@ -202,7 +202,7 @@ class RapidResearchSession:
         role: PartitionRole,
         dataset: MarketDataset,
         series: tuple[TimeframeBarSeries, ...],
-        workspace: Path,
+        ledger_scopes: tuple[PrimitiveMapping, ...],
         projection_registry: PreparedProjectionRegistry,
     ) -> "RapidResearchSession":
         clock = _Clock()
@@ -213,9 +213,7 @@ class RapidResearchSession:
         if not isinstance(cast(object, dataset), MarketDataset):
             raise RapidAdmissionError("rapid sessions require a canonical QF-3 input")
         symbol = dataset.metadata.canonical_symbol
-        isolation = HoldoutIsolation.capture(
-            plan, workspace_holdout_ledger(workspace), symbol=symbol
-        )
+        isolation = HoldoutIsolation.capture(plan, ledger_scopes, symbol=symbol)
         membership = plan.prediction_membership
         assert membership is not None
         timezone = ZoneInfo(
@@ -428,8 +426,8 @@ class RapidResearchSession:
             outcomes, primary=self._primary, maximum_reach=horizon
         )
         reach = max((item.future_reach for item in configured), default=None)
-        # The ledger was audited and read at session open (its records can be
-        # large); every scan re-checks its own maximum outcome reach.
+        # The workspace ledger was audited at open and its shared lock is held
+        # until close, so these scopes are current; re-check this scan's reach.
         self._isolation.require_isolated(
             first_timestamp=self._footprint_start,
             last_timestamp=self._schedule.decision_timestamps[-1]
@@ -924,20 +922,24 @@ def rapid_research_session(
     """Open one bounded exploratory session; state is released on exit.
 
     ``workspace`` is the research workspace root; its permanent holdout ledger
-    (``reports/holdout-ledger``) must exist and is read once, read-only. The
-    session joins the enclosing QF-65 canonical preparation, or owns one, and
-    owns a QF-60 projection registry for its bounded input view.
+    (``reports/holdout-ledger``) must exist. Its shared lock is held from before
+    any market-data preparation until the session closes, so the reserved scopes
+    every scan refuses cannot change underneath it; ledger reservations and
+    consumptions fail closed meanwhile. The session joins the enclosing QF-65
+    canonical preparation, or owns one, and owns a QF-60 projection registry for
+    its bounded input view.
     """
+    ledger = workspace_holdout_ledger(workspace)
     registry = PreparedProjectionRegistry()
     try:
-        with canonical_preparation():
+        with ledger.held_exposure_scopes() as scopes, canonical_preparation():
             session = RapidResearchSession._open(  # pyright: ignore[reportPrivateUsage]
                 plan=plan,
                 fold_index=fold_index,
                 role=role,
                 dataset=dataset,
                 series=series,
-                workspace=workspace,
+                ledger_scopes=scopes,
                 projection_registry=registry,
             )
             try:

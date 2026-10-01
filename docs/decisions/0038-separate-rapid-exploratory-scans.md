@@ -53,8 +53,11 @@ the authoritative scientific components and skips the audit machinery:
   plus maximum outcome reach) must avoid the plan's final holdout and every
   reserved or consumed exposure scope for the symbol in the research
   workspace's permanent `HoldoutLedger` at `reports/holdout-ledger` (read
-  through a new read-only `exposure_scopes()`). Sessions take the workspace
-  root, never a ledger object, and never create a ledger.
+  through a new read-only `held_exposure_scopes()`). Sessions take the
+  workspace root, never a ledger object, and never create a ledger. They hold
+  the ledger's shared lock from before market-data preparation until close, so
+  reservations and consumptions (exclusive) fail closed while any session is
+  open and the checked scopes cannot go stale.
 - **Unmistakable results.** `RapidScanResult` is unrelated to any authoritative
   type. `authoritative` is a constant `False`, `mode` is `"exploratory"` and
   every serialization carries the notice. It has no result, study, context,

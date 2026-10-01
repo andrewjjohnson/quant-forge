@@ -259,6 +259,10 @@ temporary-file replacement, with file **and directory** fsync. A POSIX advisory
 lock covers validation, the permanent exposure marker, execution, and result
 persistence. A concurrent operation fails explicitly; process exit releases the
 OS lock. This is a local POSIX filesystem store, not a distributed/network store.
+Read-only `held_exposure_scopes()` takes the same lock shared: QF-72 rapid
+exploratory sessions hold it while open, so reservations and consumptions fail
+closed until every such session closes (see
+[rapid strategy scans](rapid-strategy-scan.md)).
 
 The immutable consumed marker includes the full request/provenance, exact freeze
 and parameter snapshot, validation plan/study/lineage and holdout identities,

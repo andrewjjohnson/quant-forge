@@ -6,7 +6,9 @@ holdout is authoritative-only. Before any market value is read, the complete
 data footprint (first warm-up bar through the last decision plus maximum
 outcome reach) must avoid the plan's final holdout and every holdout exposure
 scope, reserved or consumed, recorded for the symbol in the research
-workspace's permanent ledger (``reports/holdout-ledger``). There is
+workspace's permanent ledger (``reports/holdout-ledger``). A session holds
+that ledger's shared lock from before market-data preparation until it closes,
+so no reservation or consumption can be granted while it scans. There is
 deliberately no override, and no other ledger can be substituted.
 """
 
@@ -15,6 +17,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import cast
 
+from quantforge.configuration import PrimitiveMapping
 from quantforge.data import AggregatedSessionBar, IntradayBar
 from quantforge.data.multi_timeframe import ArtifactBar
 from quantforge.oos import HoldoutLedger, OOSIntegrityError
@@ -107,13 +110,13 @@ class HoldoutIsolation:
 
     @classmethod
     def capture(
-        cls, plan: ValidationPlan, ledger: HoldoutLedger, *, symbol: str
+        cls,
+        plan: ValidationPlan,
+        ledger_scopes: tuple[PrimitiveMapping, ...],
+        *,
+        symbol: str,
     ) -> "HoldoutIsolation":
-        if not isinstance(cast(object, ledger), HoldoutLedger):
-            raise RapidScopeError(
-                "rapid scans require the permanent holdout ledger to exclude every "
-                "reserved holdout"
-            )
+        """Bind the plan holdout and the scopes of a *held* workspace ledger."""
         interval = plan.final_holdout.window.interval
         if not isinstance(interval.start, TimestampBoundary) or not isinstance(
             interval.end, TimestampBoundary
@@ -124,7 +127,7 @@ class HoldoutIsolation:
                 date.fromisoformat(cast(str, scope["start"])),
                 date.fromisoformat(cast(str, scope["end"])),
             )
-            for scope in ledger.exposure_scopes()
+            for scope in ledger_scopes
             if scope["symbol"] == symbol
         )
         return cls(symbol, interval.start.timestamp, interval.end.timestamp, scopes)
