@@ -46,8 +46,11 @@ def export_rapid_scan(result: RapidScanResult, path: Path) -> Path:
         raise RapidScanError(
             f"rapid exports must use the {RAPID_EXPORT_SUFFIX!r} suffix"
         )
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Refuse before creating anything: a rejected export must never leave
+    # directories inside a holdout ledger or study (an orphan lineage directory
+    # would make the permanent ledger fail its audit).
     _refuse_authoritative_location(destination.parent)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(result.to_primitive(), indent=2, sort_keys=True) + "\n"
     temporary = destination.with_name(f".{destination.name}.tmp")
     temporary.write_text(payload, encoding="utf-8")

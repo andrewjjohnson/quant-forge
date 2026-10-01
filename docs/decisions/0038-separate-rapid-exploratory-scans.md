@@ -51,8 +51,10 @@ the authoritative scientific components and skips the audit machinery:
 - **Holdout isolation, no override.** Only DEVELOPMENT and SELECTION windows are
   accepted. The full footprint (first warm-up bar through the last decision
   plus maximum outcome reach) must avoid the plan's final holdout and every
-  reserved or consumed exposure scope for the symbol in the permanent
-  `HoldoutLedger` (read through a new read-only `exposure_scopes()`).
+  reserved or consumed exposure scope for the symbol in the research
+  workspace's permanent `HoldoutLedger` at `reports/holdout-ledger` (read
+  through a new read-only `exposure_scopes()`). Sessions take the workspace
+  root, never a ledger object, and never create a ledger.
 - **Unmistakable results.** `RapidScanResult` is unrelated to any authoritative
   type. `authoritative` is a constant `False`, `mode` is `"exploratory"` and
   every serialization carries the notice. It has no result, study, context,

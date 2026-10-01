@@ -30,6 +30,7 @@ from quantforge.examples import spy_ema_plan
 from quantforge.examples.spy_ema_inputs import SmokeInputs
 from quantforge.oos import HoldoutLedger
 from quantforge.rapid import RapidResearchSession, rapid_research_session
+from quantforge.rapid.scope import WORKSPACE_HOLDOUT_LEDGER
 from quantforge.validation import (
     PartitionRole,
     TimestampBoundary,
@@ -138,16 +139,23 @@ class RapidCase:
     adapter: PredictionEvaluator
     root: Path
 
-    def ledger(self, name: str = "holdout-ledger") -> HoldoutLedger:
-        path = self.root / name
-        return HoldoutLedger(path) if path.exists() else HoldoutLedger.create(path)
+    def workspace(self, name: str = "workspace") -> Path:
+        """A research workspace whose permanent ledger exists (created once)."""
+        workspace = self.root / name
+        ledger = workspace / WORKSPACE_HOLDOUT_LEDGER
+        if not ledger.exists():
+            HoldoutLedger.create(ledger)
+        return workspace
+
+    def ledger(self, workspace: Path) -> HoldoutLedger:
+        return HoldoutLedger(workspace / WORKSPACE_HOLDOUT_LEDGER)
 
     @contextmanager
     def session(
         self,
         role: PartitionRole = PartitionRole.SELECTION,
         *,
-        ledger: HoldoutLedger | None = None,
+        workspace: Path | None = None,
         series: tuple[TimeframeBarSeries, ...] | None = None,
     ) -> Generator[RapidResearchSession]:
         with rapid_research_session(
@@ -158,7 +166,7 @@ class RapidCase:
             series=(self.inputs.primary, self.inputs.daily)
             if series is None
             else series,
-            holdout_ledger=self.ledger() if ledger is None else ledger,
+            workspace=self.workspace() if workspace is None else workspace,
         ) as session:
             yield session
 

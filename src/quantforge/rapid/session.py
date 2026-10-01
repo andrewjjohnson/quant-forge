@@ -23,6 +23,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from itertools import pairwise
+from pathlib import Path
 from time import perf_counter
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -33,7 +34,6 @@ from quantforge.data.exceptions import ValidationError as MarketDataValidationEr
 from quantforge.data.lineage import AdjustmentBasis
 from quantforge.data.prepared_canonical import canonical_preparation
 from quantforge.data.prepared_prediction_views import PreparedProjectionRegistry
-from quantforge.oos import HoldoutLedger
 from quantforge.prediction.context import (
     PredictionContextError,
     build_prediction_rule_context,
@@ -82,7 +82,12 @@ from quantforge.rapid.models import (
     RapidValue,
     summarize_outcomes,
 )
-from quantforge.rapid.scope import HoldoutIsolation, bar_sessions, exploratory_window
+from quantforge.rapid.scope import (
+    HoldoutIsolation,
+    bar_sessions,
+    exploratory_window,
+    workspace_holdout_ledger,
+)
 from quantforge.timeframes import Timeframe
 from quantforge.validation import (
     PartitionRole,
@@ -197,7 +202,7 @@ class RapidResearchSession:
         role: PartitionRole,
         dataset: MarketDataset,
         series: tuple[TimeframeBarSeries, ...],
-        holdout_ledger: HoldoutLedger,
+        workspace: Path,
         projection_registry: PreparedProjectionRegistry,
     ) -> "RapidResearchSession":
         clock = _Clock()
@@ -208,7 +213,9 @@ class RapidResearchSession:
         if not isinstance(cast(object, dataset), MarketDataset):
             raise RapidAdmissionError("rapid sessions require a canonical QF-3 input")
         symbol = dataset.metadata.canonical_symbol
-        isolation = HoldoutIsolation.capture(plan, holdout_ledger, symbol=symbol)
+        isolation = HoldoutIsolation.capture(
+            plan, workspace_holdout_ledger(workspace), symbol=symbol
+        )
         membership = plan.prediction_membership
         assert membership is not None
         timezone = ZoneInfo(
@@ -912,12 +919,14 @@ def rapid_research_session(
     role: PartitionRole,
     dataset: MarketDataset,
     series: tuple[TimeframeBarSeries, ...],
-    holdout_ledger: HoldoutLedger,
+    workspace: Path,
 ) -> Generator[RapidResearchSession]:
     """Open one bounded exploratory session; state is released on exit.
 
-    The session joins the enclosing QF-65 canonical preparation, or owns one,
-    and owns a QF-60 projection registry for its bounded input view.
+    ``workspace`` is the research workspace root; its permanent holdout ledger
+    (``reports/holdout-ledger``) must exist and is read once, read-only. The
+    session joins the enclosing QF-65 canonical preparation, or owns one, and
+    owns a QF-60 projection registry for its bounded input view.
     """
     registry = PreparedProjectionRegistry()
     try:
@@ -928,7 +937,7 @@ def rapid_research_session(
                 role=role,
                 dataset=dataset,
                 series=series,
-                holdout_ledger=holdout_ledger,
+                workspace=workspace,
                 projection_registry=registry,
             )
             try:

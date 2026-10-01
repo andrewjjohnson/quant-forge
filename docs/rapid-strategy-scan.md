@@ -85,7 +85,6 @@ encoding (`iterencode`, 42 s of 150 s profiled) as the dominant primitive.
 A `RapidResearchSession` is opened for exactly one QF-8 plan window:
 
 ```python
-from quantforge.oos import HoldoutLedger
 from quantforge.rapid import rapid_research_session
 from quantforge.validation import PartitionRole
 
@@ -95,7 +94,7 @@ with rapid_research_session(
     role=PartitionRole.DEVELOPMENT,
     dataset=inputs.dataset,  # QF-65 authenticated canonical input
     series=(inputs.primary, inputs.daily),
-    holdout_ledger=HoldoutLedger(Path("reports/holdout-ledger")),
+    workspace=Path("."),  # research workspace: reports/holdout-ledger must exist
 ) as session:
     for fast, slow in ((8, 40), (8, 48), (12, 60)):
         result = session.scan(
@@ -169,12 +168,15 @@ At session entry, before any market value is read:
   plus the maximum configured outcome reach) must not intersect the plan's final
   holdout;
 - the footprint's exchange sessions must not overlap **any** holdout exposure
-  scope (reserved or consumed, same symbol) in the permanent
-  `HoldoutLedger` supplied by the caller.
+  scope (reserved or consumed, same symbol) in the research workspace's
+  permanent ledger at `reports/holdout-ledger`.
 
-There is no override flag. The ledger is audited and read once, read-only, when
-the session opens (its records can be large); each scan re-checks its own
-maximum outcome reach. The research interval itself is checked before any
+There is no override flag. The session takes the workspace root, not a ledger
+object, so a fresh empty ledger cannot be substituted for the permanent one; a
+workspace without that ledger is refused and rapid scans never create one.
+Refused exports likewise create no directories. The ledger is audited and read
+once, read-only, when the session opens (its records can be large); each scan
+re-checks its own maximum outcome reach. The research interval itself is checked before any
 market data is prepared, and the warm-up footprint right after the QF-59/QF-63
 positions are known.
 

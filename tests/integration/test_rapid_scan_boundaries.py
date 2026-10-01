@@ -61,6 +61,7 @@ from quantforge.rapid import (
     rapid_research_session,
 )
 from quantforge.rapid.models import RapidValue
+from quantforge.rapid.scope import WORKSPACE_HOLDOUT_LEDGER
 from quantforge.validation import PartitionRole, TimestampBoundary
 from tests.integration.rapid_scan_fixtures import RapidCase, rapid_case, reserve_scope
 from tests.integration.test_prepared_feature_execution import sentinel_series
@@ -142,15 +143,16 @@ def test_reserved_ledger_holdouts_are_never_scanned(
     symbol: str,
     refused: bool,
 ) -> None:
-    ledger = case.ledger(f"ledger-{name}")
+    workspace = case.workspace(f"workspace-{name}")
+    ledger = case.ledger(workspace)
     reserve_scope(ledger, "a" * 64, start=start, end=end, symbol=symbol)
     before = files(ledger.root)
     if refused:
         with pytest.raises(RapidHoldoutError, match="reserved"):
-            with case.session(ledger=ledger):
+            with case.session(workspace=workspace):
                 pass
     else:
-        with case.session(ledger=ledger) as session:
+        with case.session(workspace=workspace) as session:
             assert session.scan(EmaSmokeRule(EmaParameters(8, 48))).trigger_count == 3
             assert session.research_window.ledger_exposure_scopes_checked == (
                 1 if symbol == "SPY" else 0
@@ -158,19 +160,28 @@ def test_reserved_ledger_holdouts_are_never_scanned(
     assert files(ledger.root) == before
 
 
-def test_a_permanent_ledger_is_required_and_there_is_no_override(
-    case: RapidCase,
+def test_scans_bind_to_the_workspace_ledger_and_never_create_one(
+    case: RapidCase, tmp_path: Path
 ) -> None:
-    with pytest.raises(RapidScopeError, match="holdout ledger"):
-        with rapid_research_session(
-            plan=case.config.plan,
-            fold_index=0,
-            role=PartitionRole.SELECTION,
-            dataset=case.inputs.dataset,
-            series=(case.inputs.primary, case.inputs.daily),
-            holdout_ledger=cast(HoldoutLedger, None),
-        ):
+    """A fresh empty ledger cannot be substituted for the workspace authority."""
+    reserved = case.workspace("workspace-bound")
+    reserve_scope(
+        case.ledger(reserved),
+        "b" * 64,
+        start=date(2024, 12, 23),
+        end=date(2024, 12, 26),
+    )
+    # An unrelated, empty ledger elsewhere has no way into the session.
+    HoldoutLedger.create(tmp_path / "empty-ledger")
+    with pytest.raises(RapidHoldoutError, match="reserved"):
+        with case.session(workspace=reserved):
             pass
+    missing = tmp_path / "no-ledger-workspace"
+    for workspace in (missing, cast(Path, str(reserved))):
+        with pytest.raises(RapidScopeError, match="workspace"):
+            with case.session(workspace=workspace):
+                pass
+    assert not (missing / WORKSPACE_HOLDOUT_LEDGER).exists()
     parameters = set(inspect.signature(rapid_research_session).parameters)
     assert parameters == {
         "plan",
@@ -178,7 +189,7 @@ def test_a_permanent_ledger_is_required_and_there_is_no_override(
         "role",
         "dataset",
         "series",
-        "holdout_ledger",
+        "workspace",
     }
     scan = set(inspect.signature(rapid_session.RapidResearchSession.scan).parameters)
     assert scan == {"self", "rule", "outcomes", "record_values"}
@@ -466,12 +477,19 @@ def test_exports_are_unmistakable_and_rejected_by_authoritative_paths(
     study = tmp_path / "study"
     study.mkdir()
     (study / "manifest.json").write_text("{}")
+    before = files(tmp_path)
     for destination in (
         ledger.root / "scan.rapid.json",
+        ledger.root / "lineages" / "junk" / "scan.rapid.json",
         study / "x" / "scan.rapid.json",
     ):
         with pytest.raises(RapidScanError, match="authoritative study directory"):
             export_rapid_scan(result, destination)
+    # Refused exports create nothing: no orphan lineage breaks the ledger audit.
+    assert files(tmp_path) == before
+    assert not (ledger.root / "lineages" / "junk").exists()
+    assert not (study / "x").exists()
+    assert ledger.exposure_scopes() == ()
 
 
 def test_promotion_freezes_configuration_for_authoritative_reproduction(

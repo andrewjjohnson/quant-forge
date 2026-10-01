@@ -5,17 +5,19 @@ windows are authoritative OOS (AGENTS.md forbids tuning on them) and the final
 holdout is authoritative-only. Before any market value is read, the complete
 data footprint (first warm-up bar through the last decision plus maximum
 outcome reach) must avoid the plan's final holdout and every holdout exposure
-scope, reserved or consumed, recorded for the symbol in the permanent ledger.
-There is deliberately no override.
+scope, reserved or consumed, recorded for the symbol in the research
+workspace's permanent ledger (``reports/holdout-ledger``). There is
+deliberately no override, and no other ledger can be substituted.
 """
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from pathlib import Path
 from typing import cast
 
 from quantforge.data import AggregatedSessionBar, IntradayBar
 from quantforge.data.multi_timeframe import ArtifactBar
-from quantforge.oos import HoldoutLedger
+from quantforge.oos import HoldoutLedger, OOSIntegrityError
 from quantforge.rapid.models import RapidHoldoutError, RapidScopeError
 from quantforge.validation import (
     PartitionRole,
@@ -23,8 +25,29 @@ from quantforge.validation import (
     ValidationPlan,
     ValidationWindow,
 )
+from quantforge.walk_forward.models import WalkForwardPersistenceError
 
 PERMITTED_RAPID_ROLES = (PartitionRole.DEVELOPMENT, PartitionRole.SELECTION)
+# The research workspace's one permanent holdout authority (the QF-45 CLI's
+# location). Rapid scans bind to it; they never accept another ledger object.
+WORKSPACE_HOLDOUT_LEDGER = Path("reports", "holdout-ledger")
+
+
+def workspace_holdout_ledger(workspace: Path) -> HoldoutLedger:
+    """Open the workspace's permanent ledger read-only; never create one.
+
+    Binding to the workspace location means a caller cannot substitute a fresh,
+    empty ledger and thereby scan dates another study has reserved.
+    """
+    if not isinstance(cast(object, workspace), Path):
+        raise RapidScopeError("rapid scans require the research workspace root path")
+    try:
+        return HoldoutLedger(workspace.resolve() / WORKSPACE_HOLDOUT_LEDGER)
+    except (OOSIntegrityError, WalkForwardPersistenceError) as error:
+        raise RapidScopeError(
+            "rapid scans require the research workspace's permanent holdout ledger "
+            f"at {WORKSPACE_HOLDOUT_LEDGER.as_posix()}; rapid scans never create one"
+        ) from error
 
 
 def exploratory_window(
