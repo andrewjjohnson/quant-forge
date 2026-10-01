@@ -167,10 +167,20 @@ class PredictionRecord:
                 raise
             raise PredictionIntegrityError("prediction record is malformed") from error
         scored = record.score_status is ScoreStatus.SCORED
+        # Exact JSON types: equality alone accepts 1/0 for true/false.
+        exact = (
+            ("row_index", (int,)),
+            ("imputed_features", (int,)),
+            ("source_observation_id", (str,)),
+            ("fold_id", (str, type(None))),
+            ("predicted_class", (bool, type(None))),
+            ("target", (bool, type(None))),
+        )
         if (
             record.to_primitive() != value
-            or type(value["row_index"]) is not int
-            or type(value["imputed_features"]) is not int
+            or any(type(value[name]) not in kinds for name, kinds in exact)
+            or record.row_index < 0
+            or record.imputed_features < 0
             or (scored and not 0.0 <= cast(float, record.probability) <= 1.0)
             or (not scored and record.probability is not None)
             or (not scored and record.predicted_class is not None)

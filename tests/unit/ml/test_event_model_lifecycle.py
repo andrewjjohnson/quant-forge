@@ -250,6 +250,13 @@ def test_prediction_corruption_duplicates_and_missing_rows_fail_closed(
     rewrite_predictions(duplicate, [lines[0], *lines])
     with pytest.raises(PredictionIntegrityError, match="duplicate"):
         read_prediction_set(duplicate)
+    numeric_target = copy("numeric-target")
+    rewrite_predictions(
+        numeric_target,
+        [{**lines[0], "target": int(cast(bool, lines[0]["target"]))}, *lines[1:]],
+    )
+    with pytest.raises(PredictionIntegrityError, match="inconsistent"):
+        read_prediction_set(numeric_target)
     wrong_role = copy("role")
     rewrite_predictions(
         wrong_role, [{**lines[0], "partition_role": "validation_selection"}, *lines[1:]]
@@ -494,6 +501,27 @@ def test_unscored_rows_and_thresholds_are_explicit(
     rewrite_predictions(edited, lines)
     with pytest.raises(PredictionIntegrityError, match="predicted classes"):
         read_prediction_set(edited)
+    # A numeric class with the same truth value violates the bool schema.
+    numeric = replace(
+        oos,
+        records=tuple(
+            replace(r, predicted_class=cast(bool, int(cast(bool, r.predicted_class))))
+            if index == flip
+            else r
+            for index, r in enumerate(oos.records)
+        ),
+    )
+    with pytest.raises(PredictionIntegrityError, match="inconsistent"):
+        export_prediction_set(numeric, tmp_path / "numeric-export")
+    numeric_file = export_prediction_set(oos, tmp_path / "numeric-file")
+    lines = records(numeric_file)
+    lines[flip] = {
+        **lines[flip],
+        "predicted_class": int(cast(bool, lines[flip]["predicted_class"])),
+    }
+    rewrite_predictions(numeric_file, lines)
+    with pytest.raises(PredictionIntegrityError, match="inconsistent"):
+        read_prediction_set(numeric_file)
     imputing = PreprocessingConfiguration(MissingFeaturePolicy.IMPUTE_TRAINING_MEAN)
     imputed = read_event_model(
         freeze_event_model(
