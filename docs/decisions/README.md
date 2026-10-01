@@ -112,3 +112,4 @@ How will the decision be tested or revisited?
 - [0037: Reuse authenticated canonical preparation within a load session](0037-reuse-authenticated-canonical-preparation.md)
 - [0038: Separate non-authoritative rapid exploratory scans](0038-separate-rapid-exploratory-scans.md)
 - [0039: Assemble conditional event ML datasets from verified observations](0039-assemble-conditional-event-ml-datasets.md)
+- [0040: Train event models chronologically behind a persisted freeze](0040-train-event-models-chronologically.md)

@@ -22,6 +22,30 @@ uv run --frozen pytest tests/unit/oos/test_finder_metadata.py \
 See [Finder metadata](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73)
 for the policy and the directory-listing audit.
 
+QF-68 chronological event ML models. The command covers:
+
+- configuration identity, metrics and numerical conventions;
+- training contracts: development rows only, the QF-8 purge and embargo rule,
+  plan/fold/window/schema/target bindings, missing labels and features,
+  constant columns, degenerate partitions, determinism and agreement with
+  scikit-learn;
+- the lifecycle: freezing, out-of-sample refusal before freezing, prediction
+  artifacts, corruption, reproduction tolerance and holdout refusal;
+- a real QF-39 study with development rows: training, freezing, out-of-sample
+  scoring and consumed-ledger holdout inference.
+
+```bash
+uv run --frozen pytest tests/unit/ml/test_event_model_metrics.py \
+  tests/unit/ml/test_event_model_training.py \
+  tests/unit/ml/test_event_model_lifecycle.py \
+  tests/integration/test_event_model_lifecycle.py
+```
+
+QF-68 adds `scikit-learn` (fitting only; scoring is pure Python) and
+`threadpoolctl` (one BLAS thread during fits) as explicit dependencies. See
+[event ML models](event-ml-models.md) for the API, the freeze contract, the
+numerical contract and the real QF-45 training-role limitation.
+
 QF-67 conditional event ML datasets. The command covers:
 
 - feature-schema, target and ordering unit tests;

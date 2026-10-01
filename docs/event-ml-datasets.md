@@ -16,6 +16,8 @@ persisted observations into a deterministic, versioned dataset. It contains:
 It does not train models, fit imputers, scalers or encoders, select features,
 tune strategies or claim profitability. See
 [ADR 0039](decisions/0039-assemble-conditional-event-ml-datasets.md).
+Training and evaluation on these datasets are QF-68
+[event ML models](event-ml-models.md).
 
 ```text
 QF-39 study store                      permanent ledger (reports/holdout-ledger)
@@ -509,4 +511,5 @@ What the figures show:
   including a `.DS_Store` directory or symlink, is still rejected. See
   [Finder metadata](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73).
 - **Out of scope:** dense or all-bars datasets (QF-70), training and
-  evaluation (QF-68), studies (QF-69), live inference and execution.
+  evaluation ([QF-68](event-ml-models.md)), studies (QF-69), live inference
+  and execution.

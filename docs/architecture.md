@@ -1,5 +1,26 @@
 # QuantForge Architecture
 
+QF-68 adds `quantforge.ml.modeling`, the chronological training and evaluation
+layer above QF-67 datasets. It reads persisted datasets only through the public
+QF-67 reader and interface:
+
+- **Membership.** One model binds one QF-8 fold of the dataset's exact plan.
+  Development rows fit it, selection rows describe it and test rows evaluate
+  it after freezing. Training labels must satisfy the QF-8 purge rule before
+  the fold's protected window.
+- **Model.** Training-only, transparent preprocessing and one fixed L2
+  logistic regression. scikit-learn fits it; scoring is pure Python from
+  persisted coefficients.
+- **Freeze.** An inspectable JSON envelope (`<model-id>/model.json`), the only
+  source of `FrozenEventModel`, is re-validated at every out-of-sample or
+  holdout call. Prediction sets are separate immutable artifacts.
+- **Holdout.** Holdout inference needs a consumed `HoldoutLedger.result`; the
+  ledger is only read.
+
+It does not tune, search, trade, size positions or run studies (QF-69). See
+[event ML models](event-ml-models.md) and
+[ADR 0040](decisions/0040-train-event-models-chronologically.md).
+
 QF-67 adds `quantforge.ml`, one conditional event-dataset boundary above
 verified authoritative evidence. It turns one frozen strategy population's
 persisted generated signals into deterministic rows:
