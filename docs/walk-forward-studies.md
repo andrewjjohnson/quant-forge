@@ -205,6 +205,10 @@ fold membership, configurations and results.
     oos.json
 ```
 
+`folds/` holds only planned fold directories. QF-40 readers reject anything
+else there, except one regular macOS Finder `.DS_Store` file (QF-73, see
+[Finder metadata](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73)).
+
 QF-39 JSON records are canonical payloads with SHA-256 envelopes. Writes use a
 same-directory temporary file, flush/fsync and atomic replacement. Selection and
 OOS payloads are immutable. This is a local, single-writer study store, not the

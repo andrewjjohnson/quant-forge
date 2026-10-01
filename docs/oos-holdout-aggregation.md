@@ -39,6 +39,8 @@ verifies the QF-39 study envelope, exact plan, candidate universe, fold state,
 frozen selection, role-specific membership/purge identities, eligible sessions,
 and OOS fingerprint. Unexpected/duplicate fold directories, incompatible plans,
 wrong families, training artifacts, and corrupted completed records fail closed.
+The only tolerated non-fold entry in `folds/` is a regular macOS Finder
+`.DS_Store` file; see [Finder metadata](#finder-metadata-in-folds-qf-73).
 Only completed folds contribute observations. Missing, pending, interrupted, and
 failed folds retain their status and failure history; an old `oos.json` does not
 override a failed state. Corruption is an error, not a missing-window fallback.
@@ -79,6 +81,71 @@ It then applies the test-window checks generalized by role:
 Test-window verification is unchanged. A trial window is in-sample evidence
 and never enters OOS aggregation. QF-67 event datasets use it; see
 [event ML datasets](event-ml-datasets.md).
+
+### Finder metadata in `folds/` (QF-73)
+
+macOS Finder writes a `.DS_Store` view-metadata file into any folder a person
+browses. Before QF-73 one in `<study>/folds/` made `load_oos_source` reject an
+otherwise valid study. The exception is deliberately narrow:
+
+- **Where:** only the `folds/` membership listing in `load_oos_source`.
+- **What:** only an entry named exactly `.DS_Store` (case-sensitive) that is a
+  regular file and not a symlink, checked without following links.
+- **Use:** the file is never opened, read, hashed or indexed. It never becomes
+  an observation, summary, scientific identity input, QF-9 artifact, or holdout
+  reservation/consumption evidence. It is not removed either.
+- **Everything else still fails closed.** A `.DS_Store` directory, symlink,
+  dangling symlink or special file, case variants (`.ds_store`), AppleDouble
+  `._*` files, other dotfiles, other OS files (`Thumbs.db`, `desktop.ini`) and
+  any unknown file or directory are rejected. There is no hidden-file filter,
+  OS-metadata allowlist or caller-controlled bypass.
+
+The error names every offending entry by relative path and kind, sorted by name,
+so the message is identical however the filesystem orders the listing:
+
+```text
+duplicate or unexpected fold artifact directory entries: 'folds/.DS_Store'
+(symlink), 'folds/copy' (directory); only planned fold IDs and a regular Finder
+.DS_Store file are permitted
+```
+
+(The message is one line; it is wrapped here.) The first ten entries are named,
+followed by `and N more`. A tolerated `.DS_Store` is never named.
+
+All other verification is unchanged: planned folds, fold and study identities,
+state and orphaned-state checks, frozen selections, OOS fingerprints, window and
+export validation, and corruption checks. `OOSSource`, its references, lineage,
+aggregates and exported bytes are identical with or without the file
+(`tests/unit/oos/test_finder_metadata.py`). Fold contents are read by exact
+path, so Finder files nested inside fold, selection or window directories never
+reach a listing on the prediction load path.
+
+A fold directory without `state.json` stays orphaned even if it holds only
+`.DS_Store`. QF-39 writes `state.json` before anything else in a fold
+directory, so Finder can only add metadata after state exists. A stateless
+directory means the state was removed.
+
+#### Directory-listing audit
+
+These strict listings were audited for Finder metadata. Only the first row
+changed; the others keep their behavior and limitations.
+
+| Listing | Behavior with a Finder `.DS_Store` |
+| --- | --- |
+| QF-40 `load_oos_source`, `folds/` membership | Tolerated (QF-73 policy above); every other entry is named and rejected |
+| QF-40 orphaned-fold check, stateless `folds/<fold>/` | Rejected as orphaned (unchanged, see above) |
+| QF-39/QF-40 fold files, QF-32 trial windows, QF-42 windows | Read by exact path; no listing, so nested Finder files are ignored |
+| QF-5 immutable backtest export (`validate_backtest_result_artifact`), reached by QF-40 for backtest folds' `test/<run>/` and by QF-9 | Rejected: exact file set (`invalid immutable backtest artifact`). Limitation: browsing a backtest export blocks loading |
+| Other immutable exports (`prediction/export.py`, `prediction/comparison_export.py`, `prediction/backend_comparison.py`, `indicators/comparison.py`, QF-34 `reporting/study_inspection.py`, QF-30 `scripts/export_spy_multi_timeframe_context.py`) | Rejected when an existing export is revalidated or reused: exact file set |
+| QF-7/29 feature dataset without a manifest | Rejected as non-restartable staging state (only before the manifest exists) |
+| QF-32 prediction grid / QF-6 optimization stores | A non-empty store without a manifest is rejected, including one holding only `.DS_Store`. `trials/*.json` ignores Finder files. Unknown non-JSON files in `trials/` or `artifacts/` were already not detected |
+| QF-9 `inspect_validation` / `inspect_study` indexing | Fold files are read by exact path; producer roots index only known file names. `.DS_Store` is never indexed |
+| QF-45 runner phase discovery (`rglob` for windows/manifests) | Exact-name matching; Finder files are ignored |
+| Holdout ledger audit | Rejected in `lineages/` (`invalid holdout lineage directory`). In `lineages/<id>/` before consumption it reads as an unledgered attempt. Ignored at the root and in `exposures/` (`*.json`). `create` requires an empty directory. **Unchanged:** reservation, exposure, locking and consumption checks are out of scope |
+
+Avoid browsing these directories in Finder. If a Finder file blocks a reader,
+work on a copy and remove it there; never edit preserved evidence. Extending
+the tolerance to another listing needs its own decision and tests.
 
 ## Prediction semantics
 
