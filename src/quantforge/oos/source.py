@@ -2,6 +2,7 @@
 
 import csv
 import json
+import os
 from datetime import date, datetime
 from pathlib import Path
 
@@ -592,6 +593,47 @@ def _validate_backtest(
             raise OOSIntegrityError("backtest tabular export differs from OOS snapshot")
 
 
+# QF-73: macOS Finder writes view metadata into any folder a person browses. At
+# the `folds/` membership listing only, that exact name is ignored when it is a
+# regular, non-symlink file. It is never opened, hashed, indexed or identified.
+FINDER_METADATA_FILENAME = ".DS_Store"
+_REPORTED_FOLD_ENTRIES = 10
+
+
+def _entry_kind(entry: os.DirEntry[str]) -> str:
+    if entry.is_symlink():
+        return "symlink"
+    if entry.is_dir(follow_symlinks=False):
+        return "directory"
+    return "file" if entry.is_file(follow_symlinks=False) else "special file"
+
+
+def _check_fold_membership(folds_path: Path, fold_ids: set[str]) -> None:
+    """Reject every `folds/` entry that is not a planned fold, naming each one."""
+    with os.scandir(folds_path) as entries:
+        unexpected = sorted(
+            (entry.name, _entry_kind(entry))
+            for entry in entries
+            if entry.name not in fold_ids
+            and not (
+                entry.name == FINDER_METADATA_FILENAME
+                and entry.is_file(follow_symlinks=False)
+            )
+        )
+    if unexpected:
+        reported = ", ".join(
+            f"{'folds/' + name!r} ({kind})"
+            for name, kind in unexpected[:_REPORTED_FOLD_ENTRIES]
+        )
+        omitted = len(unexpected) - _REPORTED_FOLD_ENTRIES
+        raise OOSIntegrityError(
+            f"duplicate or unexpected fold artifact directory entries: {reported}"
+            + (f" and {omitted} more" if omitted > 0 else "")
+            + "; only planned fold IDs and a regular Finder .DS_Store file are "
+            "permitted"
+        )
+
+
 def load_oos_source(plan: ValidationPlan, study_path: Path) -> OOSSource:
     """Load all planned folds; no selection/evaluation/resume execution occurs."""
     definition = read_record(study_path / "manifest.json")
@@ -608,11 +650,10 @@ def load_oos_source(plan: ValidationPlan, study_path: Path) -> OOSSource:
         "candidate_universe_id"
     ] != configuration_identity(universe):
         raise OOSIntegrityError("incompatible candidate universe")
-    expected_ids = {fold.fold_id for fold in plan.folds}
-    if (study_path / "folds").exists() and any(
-        path.name not in expected_ids for path in (study_path / "folds").iterdir()
-    ):
-        raise OOSIntegrityError("duplicate or unexpected fold artifact directory")
+    if (study_path / "folds").exists():
+        _check_fold_membership(
+            study_path / "folds", {fold.fold_id for fold in plan.folds}
+        )
     folds: list[FoldResult] = []
     references: list[PrimitiveMappingSnapshot] = []
     artifact_ids: set[str] = set()
