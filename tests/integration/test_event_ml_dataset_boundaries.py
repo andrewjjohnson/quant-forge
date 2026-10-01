@@ -62,6 +62,7 @@ from tests.integration.event_dataset_fixtures import (
     run_event_study,
 )
 from tests.integration.rapid_scan_fixtures import reserve_scope
+from tests.unit.experiments.test_adapters import block_research
 
 pa: Any = import_module("pyarrow")
 pq: Any = import_module("pyarrow.parquet")
@@ -282,9 +283,21 @@ def _test_truncation(copy: Path, trial_id: str) -> None:
     window.write_bytes(b"".join(window.read_bytes().splitlines(keepends=True)[:-1]))
 
 
-def _finder_metadata(copy: Path, trial_id: str) -> None:
+def _stray_entry(copy: Path, trial_id: str) -> None:
     del trial_id
-    (copy / "folds" / ".DS_Store").write_bytes(b"\x00")
+    (copy / "folds" / "stray.json").write_bytes(b"\x00")
+
+
+def _finder_directory(copy: Path, trial_id: str) -> None:
+    del trial_id
+    (copy / "folds" / ".DS_Store").mkdir()
+
+
+def _finder_metadata(copy: Path, trial_id: str) -> None:
+    """Finder view metadata in every folder of the copy (QF-73 tolerates it)."""
+    del trial_id
+    for directory in (copy, *(path for path in copy.rglob("*") if path.is_dir())):
+        (directory / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1")
 
 
 @pytest.mark.parametrize(
@@ -294,9 +307,17 @@ def _finder_metadata(copy: Path, trial_id: str) -> None:
         _wrapper_edit,
         _trial_status_edit,
         _test_truncation,
-        _finder_metadata,
+        _stray_entry,
+        _finder_directory,
     ],
-    ids=["window-feature", "trial-wrapper", "trial-status", "test-truncated", "stray"],
+    ids=[
+        "window-feature",
+        "trial-wrapper",
+        "trial-status",
+        "test-truncated",
+        "stray",
+        "finder-directory",
+    ],
 )
 def test_corrupted_source_evidence_fails_closed(
     study: EventStudy, tmp_path: Path, mutate: Callable[[Path, str], None]
@@ -304,6 +325,17 @@ def test_corrupted_source_evidence_fails_closed(
     copy = corrupt_copy(study, tmp_path, mutate)
     with pytest.raises(EventDatasetIntegrityError):
         study.build(study_path=copy)
+
+
+def test_finder_metadata_does_not_change_the_dataset(
+    study: EventStudy,
+    dataset: EventDataset,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copy = corrupt_copy(study, tmp_path, _finder_metadata)
+    block_research(monkeypatch)  # Reads stored windows; never reruns the rule.
+    assert study.build(study_path=copy) == dataset
 
 
 def consume_rows(dataset: EventDataset) -> dict[str, object]:
