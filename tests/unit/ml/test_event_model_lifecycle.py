@@ -472,6 +472,28 @@ def test_unscored_rows_and_thresholds_are_explicit(
         "status": "undefined",
         "reason": "no_labeled_observations",
     }
+    # A class contradicting its probability and the frozen threshold is refused,
+    # both when exported and when read after a fully rehashed file edit.
+    flip = next(
+        index
+        for index, r in enumerate(oos.records)
+        if r.score_status is ScoreStatus.SCORED
+    )
+    flipped = replace(
+        oos,
+        records=tuple(
+            replace(r, predicted_class=not r.predicted_class) if index == flip else r
+            for index, r in enumerate(oos.records)
+        ),
+    )
+    with pytest.raises(PredictionIntegrityError, match="predicted classes"):
+        export_prediction_set(flipped, tmp_path / "flipped-export")
+    edited = export_prediction_set(oos, tmp_path / "flipped-file")
+    lines = records(edited)
+    lines[flip] = {**lines[flip], "predicted_class": not lines[flip]["predicted_class"]}
+    rewrite_predictions(edited, lines)
+    with pytest.raises(PredictionIntegrityError, match="predicted classes"):
+        read_prediction_set(edited)
     imputing = PreprocessingConfiguration(MissingFeaturePolicy.IMPUTE_TRAINING_MEAN)
     imputed = read_event_model(
         freeze_event_model(

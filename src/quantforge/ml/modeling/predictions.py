@@ -586,9 +586,14 @@ def _read(path: Path, name: str) -> PredictionSet:
         raise PredictionIntegrityError("prediction roles differ from their set")
     if (role is PartitionRole.FINAL_HOLDOUT) is (predictions.authorization is None):
         raise PredictionIntegrityError("holdout predictions lack authorization")
+    threshold = predictions.threshold
     if any(
-        (record.predicted_class is None)
-        is (predictions.threshold is not None and record.probability is not None)
+        record.predicted_class
+        != (
+            None
+            if threshold is None or record.probability is None
+            else record.probability >= threshold
+        )
         for record in records
     ):
         raise PredictionIntegrityError("predicted classes differ from the threshold")
