@@ -7,6 +7,9 @@ outcomes, and verified chronological partition membership. Only generated
 signals become rows; no-trigger decisions are never negatives. Final-holdout
 rows require an explicitly consumed holdout in the permanent ledger. Nothing
 here trains, tunes or selects features. See ``docs/event-ml-datasets.md``.
+
+Chronological training, freezing and evaluation on these datasets live in
+``quantforge.ml.modeling`` (QF-68); see ``docs/event-ml-models.md``.
 """
 
 from quantforge.ml.artifact import (
