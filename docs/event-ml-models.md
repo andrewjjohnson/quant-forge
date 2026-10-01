@@ -64,7 +64,9 @@ result = fit_event_model(
 if not result.fitted:  # an explicit TrainingStatus and detail, never a fallback
     raise SystemExit(f"{result.status}: {result.detail}")
 selection = predict_selection(result.model, dataset)
-model_path = freeze_event_model(result.model, dataset=dataset, output_root=root / "models")
+model_path = freeze_event_model(
+    result.model, dataset=dataset, output_root=root / "models"
+)
 model = read_event_model(model_path)  # the only way to obtain a FrozenEventModel
 oos = predict_out_of_sample(model, dataset)
 path = export_prediction_set(oos, root / "predictions")
