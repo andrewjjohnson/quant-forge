@@ -7,6 +7,22 @@ runner's invariant matrix and profile: [heavyweight acceptance test](qf45-accept
 QF-45 shortened EMA smoke configuration, offline runner, checkpoints and the
 manual holdout gate: [local smoke workflow](spy-ema-smoke-study.md).
 
+QF-72 non-authoritative rapid exploratory scans: kernel-input, trigger, feature
+and outcome equivalence with the authoritative QF-39/QF-42/QF-7 paths (normal,
+early-close, holiday, warm-up and daily-shift cases), sentinel future bars,
+holdout/ledger refusal, admission, sweep reuse, no persistence and the
+non-authoritative result/export boundary:
+
+```bash
+uv run --frozen pytest tests/unit/rapid tests/unit/test_spy_ema_kernel.py \
+  tests/integration/test_rapid_strategy_scan.py \
+  tests/integration/test_rapid_scan_boundaries.py \
+  tests/performance/test_rapid_strategy_scan.py
+```
+
+See [rapid strategy scans](rapid-strategy-scan.md) for the session API, the
+promotion workflow and the real-data equivalence and multi-year benchmark.
+
 QF-65 authenticated canonical loading: reference/prepared equivalence across
 DST, early-close and holiday fixtures, one-time authentication, fail-closed
 corruption of cache bytes, presented sources and derived artifacts, lifecycle,

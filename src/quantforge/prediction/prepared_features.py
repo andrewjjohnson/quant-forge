@@ -98,6 +98,20 @@ _PREFIX_STABLE_BACKENDS: frozenset[type] = frozenset(
 _BAR_TYPES: frozenset[type] = frozenset({IntradayBar, AggregatedSessionBar})
 _UNSUPPORTED = object()
 
+
+def prefix_stable_indicator(indicator: object) -> bool:
+    """Whether an indicator is a reviewed exact prefix-stable type and backend.
+
+    The same admission ``indicator_output`` applies before serving a prepared
+    series. Consumers that read prepared prefixes (QF-72 rapid scans) use it to
+    refuse anything else instead of approximating it.
+    """
+    return (
+        type(indicator) in _PREFIX_STABLE_INDICATORS
+        and type(getattr(indicator, "_backend", None)) in _PREFIX_STABLE_BACKENDS
+    )
+
+
 type _Getter = Callable[[object], tuple[object, ...]]
 
 
@@ -913,8 +927,7 @@ class PreparedDecisionContext:
             selection is None
             or selection[2] <= selection[1]
             or completion_policy is not ContextCompletionPolicy.COMPLETED_BARS_ONLY
-            or type(indicator) not in _PREFIX_STABLE_INDICATORS
-            or type(getattr(indicator, "_backend", None)) not in _PREFIX_STABLE_BACKENDS
+            or not prefix_stable_indicator(indicator)
         ):
             self.scope.count("reference_indicator_fallbacks")
             return None
@@ -1074,5 +1087,6 @@ __all__ = [
     "PreparedFeatureIntegrityError",
     "PreparedTimeframeRun",
     "PreparedValuesGuard",
+    "prefix_stable_indicator",
     "validate_prepared_context_sources",
 ]

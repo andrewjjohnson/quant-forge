@@ -1,5 +1,18 @@
 # QuantForge Architecture
 
+QF-72 adds `quantforge.rapid`, a separate **non-authoritative** exploratory
+execution boundary. A `RapidResearchSession` prepares one QF-8 development or
+selection window once with the unchanged QF-8/QF-39 partition, QF-59 positions,
+QF-63 prepared series and QF-61 outcome sources, then scans rules that declare a
+reviewed `rapid_specification()`: the same predicate and candidate builder the
+authoritative rule calls, evaluated on prepared causal scalars. Only triggers
+are labeled. It builds no study identities, receipts, journals, checkpoints or
+QF-9 artifacts, and fails closed on test windows, the final holdout and any
+ledger-reserved holdout. Results are `RapidScanResult` (always
+`authoritative=False`) and must be reproduced authoritatively. Nothing in the
+authoritative path depends on it. See [rapid strategy scans](rapid-strategy-scan.md)
+and [ADR 0038](decisions/0038-separate-rapid-exploratory-scans.md).
+
 QF-65 authenticates canonical inputs once per research load session. An
 explicit `canonical_preparation()` scope (`data.prepared_canonical`) owns the
 execution-local state and clears it on exit. The first cache read keeps every

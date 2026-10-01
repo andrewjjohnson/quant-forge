@@ -1,5 +1,17 @@
 # Research Integrity
 
+QF-72 rapid scans are **exploratory and non-authoritative**. They reuse the
+authoritative canonical data, calendar, warm-up, prepared causal features, the
+rule's own predicate and the configured outcome definitions, and they skip only
+identity, persistence, resume and audit work. They run only on QF-8 development
+or selection windows; test windows (authoritative OOS) and the final holdout are
+refused, and so is any footprint (warm-up through maximum outcome reach) that
+touches a holdout reserved or consumed in the permanent ledger. Rapid sweeps add
+selection bias: treat every rapid finding as a hypothesis and reproduce the
+frozen configuration through QF-32/QF-39/QF-40 before any conclusion. Rapid
+exports can never be indexed by QF-9. See
+[rapid strategy scans](rapid-strategy-scan.md).
+
 QF-65 canonical preparation is operational, never scientific evidence. Within one
 load session it reuses a verdict only for byte- or field-identical content: every
 artifact file is re-hashed, and every request, metadata and bar field (with

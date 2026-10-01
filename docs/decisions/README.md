@@ -110,3 +110,4 @@ How will the decision be tested or revisited?
 - [0035: Prepare historical context runs and reusable indicator series](0035-prepare-historical-context-and-feature-series.md)
 - [0036: Separate decision coverage receipts from rich observations](0036-separate-decision-coverage-from-observations.md)
 - [0037: Reuse authenticated canonical preparation within a load session](0037-reuse-authenticated-canonical-preparation.md)
+- [0038: Separate non-authoritative rapid exploratory scans](0038-separate-rapid-exploratory-scans.md)

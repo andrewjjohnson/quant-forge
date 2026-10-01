@@ -161,11 +161,14 @@ class HoldoutLedger:
             raise OOSIntegrityError("missing or incompatible holdout store")
 
     @contextmanager
-    def _locked(self) -> Generator[None]:
+    def _locked(self, *, exclusive: bool = True) -> Generator[None]:
         self._verify_store()
         with (self.root / ".lock").open("a") as stream:
             try:
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(
+                    stream,
+                    (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB,
+                )
             except BlockingIOError as error:
                 raise OOSIntegrityError(
                     "conflicting holdout operation is already active"
@@ -250,6 +253,38 @@ class HoldoutLedger:
         with self._locked():
             self._guard(source)
             return self._state(source)
+
+    def exposure_scopes(self) -> tuple[PrimitiveMapping, ...]:
+        """Every reserved or consumed holdout exposure scope, read-only."""
+        with self.held_exposure_scopes() as scopes:
+            return scopes
+
+    @contextmanager
+    def held_exposure_scopes(self) -> Generator[tuple[PrimitiveMapping, ...]]:
+        """Audit under a shared lock and keep it while the caller uses the scopes.
+
+        QF-72 exploratory sessions hold this for their whole lifetime, so the
+        scopes they refuse stay current: reservations and consumptions take the
+        exclusive lock and fail closed (as for any conflicting operation) until
+        every shared holder exits. Shared holders do not exclude one another.
+        Nothing is written and no reservation or consumption state changes.
+        """
+        with self._locked(exclusive=False):
+            scopes = [
+                mapping(read_record(path / "reservation.json")["exposure_scope"])
+                for path in sorted((self.root / "lineages").glob("*"))
+            ]
+            scopes.extend(
+                mapping(read_record(path)["exposure_scope"])
+                for path in sorted((self.root / "exposures").glob("*.json"))
+            )
+            for scope in scopes:
+                if scope.get("date_basis") != "exchange_session_labels_v1":
+                    raise OOSIntegrityError("incompatible holdout exposure scope")
+                text(scope["symbol"])
+                text(scope["start"])
+                text(scope["end"])
+            yield tuple(scopes)
 
     def _state(self, source: OOSSource) -> HoldoutConsumptionRecord:
         root = self.root / "lineages" / source.lineage_id

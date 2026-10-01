@@ -1,7 +1,7 @@
 """QF-45 fixed bullish EMA hypothesis; no acquisition or outcome mathematics."""
 
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -49,6 +49,13 @@ from quantforge.prediction.grid import PredictionTrialAnalysis
 from quantforge.prediction.window import PredictionWindowResult
 from quantforge.prediction.window_encoding import mapping
 from quantforge.prediction.window_reader import PredictionWindowReader
+from quantforge.rapid.models import (
+    RapidBarInput,
+    RapidDecisionWindow,
+    RapidIndicatorInput,
+    RapidRuleSpecification,
+    RapidValue,
+)
 from quantforge.timeframes import IntradayInterval, SessionInterval, Timeframe
 
 ONE_MINUTE = Timeframe.us_equity(IntradayInterval(timedelta(minutes=1)))
@@ -56,6 +63,56 @@ TWO_MINUTES = Timeframe.us_equity(IntradayInterval(timedelta(minutes=2)))
 DAILY = Timeframe.us_equity(SessionInterval(1))
 FORWARD_MINUTES = (10, 30, 60, 120)
 EMA_PAIRS = (("8/40", (8, 40)), ("8/48", (8, 48)), ("12/60", (12, 60)))
+DECISION_TIMEZONE = "America/New_York"
+DECISION_START = time(11)
+DECISION_END = time(14)
+
+
+def midday_bullish_cross(
+    decision_clock: time,
+    previous_fast: Decimal | None,
+    previous_slow: Decimal | None,
+    current_fast: Decimal | None,
+    current_slow: Decimal | None,
+    daily_close: Decimal | None,
+    daily_ema50: Decimal | None,
+) -> bool:
+    """The complete QF-45 rule on causal scalars; both execution paths call it.
+
+    ``decision_clock`` is the decision bar end in New York time. EMA values are
+    the previous and current completed 2m values and the latest completed daily
+    close/EMA50; ``None`` means unavailable and never triggers.
+    """
+    return (
+        DECISION_START <= decision_clock <= DECISION_END
+        and previous_fast is not None
+        and previous_slow is not None
+        and current_fast is not None
+        and current_slow is not None
+        and daily_close is not None
+        and daily_ema50 is not None
+        and previous_fast <= previous_slow
+        and current_fast > current_slow
+        and daily_close > daily_ema50
+    )
+
+
+def _rapid_decision(
+    decision_clock: time, values: tuple[RapidValue, ...]
+) -> PredictionDirection | None:
+    """QF-72 rapid kernel: the unchanged predicate on declared input order."""
+    previous_fast, previous_slow, current_fast, current_slow, close, ema50 = values
+    if midday_bullish_cross(
+        decision_clock,
+        previous_fast,
+        previous_slow,
+        current_fast,
+        current_slow,
+        close,
+        ema50,
+    ):
+        return PredictionDirection.UP
+    return None
 
 
 @dataclass(frozen=True)
@@ -73,6 +130,13 @@ class EmaParameters:
 
     def to_primitive(self) -> PrimitiveMapping:
         return {"fast": self.fast, "slow": self.slow, "daily": 50}
+
+    @classmethod
+    def from_primitive(cls, value: PrimitiveMapping) -> "EmaParameters":
+        """Rebuild promoted parameters exactly; the daily period is fixed at 50."""
+        if set(value) != {"fast", "slow", "daily"} or value["daily"] != 50:
+            raise ValueError("EMA parameters require fast, slow and daily=50")
+        return cls(cast(int, value["fast"]), cast(int, value["slow"]))
 
 
 class EmaSmokeRule:
@@ -190,7 +254,7 @@ class EmaSmokeRule:
         self, context: PredictionRuleContext
     ) -> SignalFeatureCandidateOutput:
         signals: tuple[SignalFeatureCandidate, ...] = ()
-        clock = context.as_of.astimezone(ZoneInfo("America/New_York")).time()
+        clock = context.as_of.astimezone(ZoneInfo(DECISION_TIMEZONE)).time()
         fast = context.indicator_for(TWO_MINUTES, "fast").values_for(
             EXPONENTIAL_MOVING_AVERAGE_OUTPUT
         )
@@ -202,59 +266,86 @@ class EmaSmokeRule:
         )
         daily = context.latest_bar_for(DAILY)
         if (
-            time(11) <= clock <= time(14)
-            and len(fast) >= 2
+            len(fast) >= 2
             and len(slow) >= 2
             and trend
-            and fast[-2] is not None
-            and slow[-2] is not None
-            and fast[-1] is not None
-            and slow[-1] is not None
-            and trend[-1] is not None
-            and fast[-2] <= slow[-2]
-            and fast[-1] > slow[-1]
-            and daily.close > trend[-1]
+            and midday_bullish_cross(
+                clock, fast[-2], slow[-2], fast[-1], slow[-1], daily.close, trend[-1]
+            )
         ):
             signals = (
-                SignalFeatureCandidate(
-                    symbol=context.symbol,
-                    signal_session=context.decision_session,
-                    strategy_id=self.name,
-                    strategy_implementation_version=self.implementation_version,
-                    strategy_configuration_id=self.configuration_id,
-                    source_rule_id=self.name,
-                    source_rule_implementation_version=self.implementation_version,
-                    source_rule_configuration_id=self.configuration_id,
-                    strategy_parameters=PrimitiveMappingSnapshot.capture(
-                        self.parameters.to_primitive()
-                    ),
-                    disposition=SignalDisposition.ACCEPTED,
-                    reason_codes=("midday_bullish_cross",),
-                    explanation=(
-                        "Completed two-minute bullish cross above "
-                        "completed daily EMA50 trend"
-                    ),
-                    direction=PredictionDirection.UP,
-                    selected_rule_reason="midday_bullish_cross",
-                    matched_rule_reasons=("midday_bullish_cross",),
-                    strategy_features=tuple(
-                        SignalFeatureValue(name, value)
-                        for name, value in sorted(
-                            (
-                                ("previous_fast", fast[-2]),
-                                ("previous_slow", slow[-2]),
-                                ("current_fast", fast[-1]),
-                                ("current_slow", slow[-1]),
-                                ("daily_close", daily.close),
-                                ("daily_ema50", trend[-1]),
-                            )
-                        )
-                    ),
-                    decision_timestamp=context.as_of,
+                self.candidate(
+                    context.symbol,
+                    context.decision_session,
+                    context.as_of,
+                    (fast[-2], slow[-2], fast[-1], slow[-1], daily.close, trend[-1]),
                 ),
             )
         return SignalFeatureCandidateOutput(
             self.name, self.configuration_id, context.prediction_dataset_id, signals
+        )
+
+    def candidate(
+        self,
+        symbol: str,
+        signal_session: date,
+        decision_timestamp: datetime,
+        values: tuple[RapidValue, ...],
+    ) -> SignalFeatureCandidate:
+        """The accepted UP candidate for causal values in rapid input order."""
+        previous_fast, previous_slow, current_fast, current_slow, close, ema50 = values
+        return SignalFeatureCandidate(
+            symbol=symbol,
+            signal_session=signal_session,
+            strategy_id=self.name,
+            strategy_implementation_version=self.implementation_version,
+            strategy_configuration_id=self.configuration_id,
+            source_rule_id=self.name,
+            source_rule_implementation_version=self.implementation_version,
+            source_rule_configuration_id=self.configuration_id,
+            strategy_parameters=PrimitiveMappingSnapshot.capture(
+                self.parameters.to_primitive()
+            ),
+            disposition=SignalDisposition.ACCEPTED,
+            reason_codes=("midday_bullish_cross",),
+            explanation=(
+                "Completed two-minute bullish cross above completed daily EMA50 trend"
+            ),
+            direction=PredictionDirection.UP,
+            selected_rule_reason="midday_bullish_cross",
+            matched_rule_reasons=("midday_bullish_cross",),
+            strategy_features=tuple(
+                SignalFeatureValue(name, value)
+                for name, value in sorted(
+                    (
+                        ("previous_fast", previous_fast),
+                        ("previous_slow", previous_slow),
+                        ("current_fast", current_fast),
+                        ("current_slow", current_slow),
+                        ("daily_close", close),
+                        ("daily_ema50", ema50),
+                    )
+                )
+            ),
+            decision_timestamp=decision_timestamp,
+        )
+
+    def rapid_specification(self) -> RapidRuleSpecification:
+        """QF-72 capability: the same kernel and candidate on prepared values."""
+        ema = EXPONENTIAL_MOVING_AVERAGE_OUTPUT
+        return RapidRuleSpecification(
+            inputs=(
+                RapidIndicatorInput("previous_fast", TWO_MINUTES, "fast", ema, lag=1),
+                RapidIndicatorInput("previous_slow", TWO_MINUTES, "slow", ema, lag=1),
+                RapidIndicatorInput("current_fast", TWO_MINUTES, "fast", ema),
+                RapidIndicatorInput("current_slow", TWO_MINUTES, "slow", ema),
+                RapidBarInput("daily_close", DAILY, "close"),
+                RapidIndicatorInput("daily_ema50", DAILY, "trend", ema),
+            ),
+            decide=_rapid_decision,
+            candidate=self.candidate,
+            clock_timezone=DECISION_TIMEZONE,
+            decision_window=RapidDecisionWindow(DECISION_START, DECISION_END),
         )
 
 

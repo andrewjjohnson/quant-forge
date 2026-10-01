@@ -519,3 +519,63 @@ def test_frozen_and_provenance_drift_rejected_before_exposure(
         HoldoutEvaluation.prepare(
             source, prediction_study.evaluator, selection_fold_id="holdout-selected"
         )
+
+
+def test_exposure_scopes_list_reserved_and_consumed_scopes_read_only(
+    prediction_study: CompletedStudy, tmp_path: Path
+) -> None:
+    """QF-72 reads every reserved/consumed scope without changing the ledger."""
+    ledger = HoldoutLedger.create(tmp_path / "ledger")
+    assert ledger.exposure_scopes() == ()
+    reserved = ledger.reserve(prediction_study.source)
+    scope = mapping(reserved.reservation.to_primitive()["exposure_scope"])
+
+    def contents() -> list[tuple[str, bytes]]:
+        return sorted(
+            (str(path.relative_to(ledger.root)), path.read_bytes())
+            for path in ledger.root.rglob("*")
+            if path.is_file()
+        )
+
+    before = contents()
+    assert ledger.exposure_scopes() == (scope,)
+    assert contents() == before
+    assert ledger.state(prediction_study.source).state is HoldoutState.RESERVED
+    consumed = ledger.consume(prepared(prediction_study), run_id="consume")
+    assert consumed.consumption is not None
+    marker = mapping(consumed.consumption.to_primitive()["exposure_scope"])
+    assert ledger.exposure_scopes() == (scope, marker)
+
+
+def test_exposure_scopes_fail_closed_on_incompatible_scope(
+    prediction_study: CompletedStudy, tmp_path: Path
+) -> None:
+    ledger = HoldoutLedger.create(tmp_path / "ledger")
+    ledger.reserve(prediction_study.source)
+    path = ledger.root / "lineages" / prediction_study.source.lineage_id
+    reservation = read_record(path / "reservation.json")
+    reservation["exposure_scope"] = {"symbol": "SPY", "start": "x", "end": "y"}
+    write_record(path / "reservation.json", reservation)
+    with pytest.raises(OOSIntegrityError, match="exposure scope"):
+        ledger.exposure_scopes()
+
+
+def test_held_exposure_scopes_keep_reservations_and_consumption_out(
+    prediction_study: CompletedStudy, tmp_path: Path
+) -> None:
+    """QF-72 sessions hold a shared lock; writers fail closed until release."""
+    ledger = HoldoutLedger.create(tmp_path / "ledger")
+    with ledger.held_exposure_scopes() as scopes:
+        assert scopes == ()
+        # Readers share the lock; reservation needs the exclusive lock.
+        assert HoldoutLedger(ledger.root).exposure_scopes() == ()
+        with pytest.raises(OOSIntegrityError, match="conflicting"):
+            ledger.reserve(prediction_study.source)
+    reserved = ledger.reserve(prediction_study.source)
+    with ledger.held_exposure_scopes() as scopes:
+        assert scopes == (
+            mapping(reserved.reservation.to_primitive()["exposure_scope"]),
+        )
+        with pytest.raises(OOSIntegrityError, match="conflicting"):
+            ledger.consume(prepared(prediction_study), run_id="during-session")
+    assert ledger.state(prediction_study.source).state is HoldoutState.RESERVED
