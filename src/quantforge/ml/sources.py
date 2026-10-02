@@ -8,6 +8,10 @@ Sources come only from existing verifiers; callers cannot assert a role:
 - selection/development windows: QF-40 ``load_prediction_trial_window``, the
   same checks under the fold's frozen QF-8 membership for that role plus the
   QF-32 trial evidence;
+- development windows of folds whose trials ran on selection: QF-40
+  ``load_prediction_development_window``, the frozen candidate's recorded
+  QF-69 development evidence under the frozen development membership (only
+  when the study recorded it; otherwise the role stays an exclusion);
 - final holdout: only ``HoldoutLedger.result`` of an **already consumed**
   holdout in the workspace's permanent ledger. Building never consumes.
 
@@ -48,7 +52,9 @@ from quantforge.oos import (
     HoldoutLedger,
     OOSIntegrityError,
     OOSSource,
+    has_development_evidence,
     load_oos_source,
+    load_prediction_development_window,
     load_prediction_trial_window,
 )
 from quantforge.prediction.errors import InvalidPredictionOutputError
@@ -473,6 +479,54 @@ def load_study_event_sources(
         unrequested = {PartitionRole.DEVELOPMENT, PartitionRole.SELECTION} - {
             trial_role
         }
+        if (
+            PartitionRole.DEVELOPMENT in unrequested & roles
+            and fold.selection is not None
+            and has_development_evidence(study_path, fold.fold_id)
+        ):
+            # QF-69: the frozen candidate's verified development evidence.
+            unrequested.discard(PartitionRole.DEVELOPMENT)
+            frozen = fold.selection.snapshot.to_primitive()
+            if cast(PrimitiveMapping, frozen["candidate"])["combination_id"] != (
+                combination_id
+            ):
+                exclude(
+                    fold.fold_id,
+                    PartitionRole.DEVELOPMENT,
+                    "frozen_selection_is_another_candidate",
+                )
+            else:
+                try:
+                    development = load_prediction_development_window(
+                        source, study_path, fold_id=fold.fold_id
+                    )
+                except (
+                    OOSIntegrityError,
+                    WalkForwardError,
+                    InvalidPredictionOutputError,
+                ) as error:
+                    raise EventDatasetIntegrityError(
+                        f"QF-39 development evidence failed verification: {error}"
+                    ) from error
+                windows.append(
+                    EventSourceWindow(
+                        PartitionRole.DEVELOPMENT,
+                        fold.fold_id,
+                        index,
+                        plan_fold.development,
+                        _membership(_part(fold.selection, "development")),
+                        development.candidate,
+                        fold.selection.selection_id,
+                        _physical(
+                            development.reader,
+                            study_id=source.study_id,
+                            selection_id=fold.selection.selection_id,
+                            path=f"folds/{fold.fold_id}/development/prediction-window",
+                        ),
+                        development.reader,
+                        _VERIFIED,
+                    )
+                )
         for role in sorted(unrequested & roles, key=ROLE_ORDER.__getitem__):
             exclude(fold.fold_id, role, "role_not_executed_by_qf39_selection")
         if PartitionRole.WALK_FORWARD_TEST not in roles:

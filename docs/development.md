@@ -22,6 +22,41 @@ uv run --frozen pytest tests/unit/oos/test_finder_metadata.py \
 See [Finder metadata](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73)
 for the policy and the directory-listing audit.
 
+QF-69 conditional ML smoke study. The command covers:
+
+- the study lifecycle on synthetic QF-67 datasets: frozen specification
+  enforcement, stage order, freeze before OOS, development-only fitting,
+  class and row floors, missing labels and null features, tampered records
+  and envelopes, deterministic reruns, report statistics and the gate;
+- CLI guards: the existing permanent ledger is required, and the output stays
+  under `reports/`;
+- the real QF-39 path with synthetic prices: frozen-candidate development
+  evidence and its QF-40 verifier, QF-67 membership, rebound or corrupt
+  records, another candidate's exclusion, and the whole runner up to the gate
+  with the holdout reserved, including an idempotent rerun.
+
+```bash
+uv run --frozen pytest tests/unit/ml/test_conditional_study.py \
+  tests/unit/ml/test_conditional_study_report.py \
+  tests/unit/test_conditional_ml_cli.py \
+  tests/integration/test_conditional_ml_study.py
+```
+
+To run the real study (offline from the authenticated 2025 cache; stops at
+the pre-holdout gate):
+
+```bash
+uv run --frozen python scripts/run_conditional_ml_study.py --preflight
+```
+
+```bash
+uv run --frozen python scripts/run_conditional_ml_study.py \
+  > reports/qf69-conditional-ml.log 2>&1
+```
+
+It needs a clean committed checkout and the existing permanent ledger. See
+the [conditional ML smoke study](conditional-ml-smoke-study.md).
+
 QF-68 chronological event ML models. The command covers:
 
 - configuration identity, metrics and numerical conventions;

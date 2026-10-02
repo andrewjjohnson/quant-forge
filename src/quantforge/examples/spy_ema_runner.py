@@ -336,7 +336,9 @@ def _run_pre_holdout(
     return result_paths
 
 
-def execution_for_run(output_root: Path, repository: Path) -> ExecutionProvenance:
+def execution_for_run(
+    output_root: Path, repository: Path, *, prefix: str = "qf45"
+) -> ExecutionProvenance:
     """Capture clean code once and reject mixed-code resume, using QF-9 provenance."""
     from quantforge.experiments import capture_code_provenance
 
@@ -355,6 +357,6 @@ def execution_for_run(output_root: Path, repository: Path) -> ExecutionProvenanc
             datetime.fromisoformat(cast(str, saved["execution_started_at"])),
         )
     now = datetime.now(UTC)
-    execution = ExecutionProvenance(f"qf45-{now.isoformat()}", now, code, now)
+    execution = ExecutionProvenance(f"{prefix}-{now.isoformat()}", now, code, now)
     write_record(path, execution.to_primitive(), immutable=True)
     return execution

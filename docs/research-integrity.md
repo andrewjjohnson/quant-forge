@@ -42,6 +42,29 @@ QF-68 event models train on **one fold's development rows only**:
 
 See [event ML models](event-ml-models.md).
 
+QF-69 conditional ML studies freeze **every choice before research**:
+
+- **Specification first.** Population, windows, feature schema, target,
+  model configuration, minimum event and class counts, score buckets,
+  evaluation and holdout policy are persisted first. Every later stage refuses
+  a changed specification.
+- **Windows.** Chosen from data coverage and existing protected scopes. A
+  development-only, outcome-free trigger count may confirm that the floors are
+  reachable. Selection and OOS outcomes never choose windows.
+- **Development rows.** They come only from the frozen candidate's verified
+  development evidence, never from relabeled selection or test rows or from
+  another fold.
+- **Insufficient data** is recorded with its status. Rules, dates, minimums
+  and the model are never changed afterwards.
+- **After the freeze.** OOS inference and OOS reporting (including the base
+  strategy's QF-40 aggregate) happen only after the persisted model freeze.
+- **Holdout.** The pre-holdout gate stops with the holdout reserved and
+  unconsumed. Any consumption is a separate, explicitly authorized step.
+- **Prior exposure.** Periods inspected in earlier studies are recorded as
+  such and never described as untouched.
+
+See the [conditional ML smoke study](conditional-ml-smoke-study.md).
+
 QF-72 rapid scans are **exploratory and non-authoritative**. They reuse the
 authoritative canonical data, calendar, warm-up, prepared causal features, the
 rule's own predicate and the configured outcome definitions, and they skip only

@@ -209,6 +209,36 @@ fold membership, configurations and results.
 else there, except one regular macOS Finder `.DS_Store` file (QF-73, see
 [Finder metadata](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73)).
 
+### Frozen-candidate development evidence (QF-69)
+
+A fold with a selection window runs its QF-32 trials on selection, so its
+development window is never executed. `WalkForwardStudy.evaluate_development
+(fold_id)` adds that evidence for the **frozen** candidate only, after the
+selection is durable:
+
+```text
+<output-root>/<study-id>/folds/<qf8-fold-id>/
+    development.json                 # DevelopmentEvidence (immutable)
+    development/prediction-window.jsonl
+```
+
+- **Execution.** The frozen candidate runs on the exact development
+  membership frozen in `selection.json`, through the ordinary
+  `evaluate_partition` path. An empty in-sample window is valid evidence.
+- **Validation.** The window is checked with `validate_partition_artifact`.
+  The record binds the study, plan, fold, selection, candidate and QF-8
+  development membership identities.
+- **Repeated calls** verify the record and never recalculate it.
+- **Unchanged.** Fold state, selection, test evaluation, study identity and
+  `oos.json` are untouched.
+- **Refused:** a fold without a selection window (its trial already executed
+  development), a fold without a frozen selection, and non-prediction studies.
+
+QF-40 `load_prediction_development_window` verifies the record offline. QF-67
+admits it as development rows. See
+[ADR 0041](decisions/0041-record-frozen-candidate-development-evidence.md)
+and the [conditional ML smoke study](conditional-ml-smoke-study.md).
+
 QF-39 JSON records are canonical payloads with SHA-256 envelopes. Writes use a
 same-directory temporary file, flush/fsync and atomic replacement. Selection and
 OOS payloads are immutable. This is a local, single-writer study store, not the

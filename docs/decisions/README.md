@@ -113,3 +113,4 @@ How will the decision be tested or revisited?
 - [0038: Separate non-authoritative rapid exploratory scans](0038-separate-rapid-exploratory-scans.md)
 - [0039: Assemble conditional event ML datasets from verified observations](0039-assemble-conditional-event-ml-datasets.md)
 - [0040: Train event models chronologically behind a persisted freeze](0040-train-event-models-chronologically.md)
+- [0041: Record frozen-candidate development evidence for ML studies](0041-record-frozen-candidate-development-evidence.md)

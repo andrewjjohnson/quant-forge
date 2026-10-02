@@ -14,11 +14,17 @@ from quantforge.oos.models import (
     ConfigurationStabilitySummary,
     MetricSummary,
     OOSSource,
+    PredictionDevelopmentWindow,
     PredictionOOSAggregate,
     PredictionTrialWindow,
 )
 from quantforge.oos.prediction import PredictionMetricFields, aggregate_prediction
-from quantforge.oos.source import load_oos_source, load_prediction_trial_window
+from quantforge.oos.source import (
+    has_development_evidence,
+    load_oos_source,
+    load_prediction_development_window,
+    load_prediction_trial_window,
+)
 
 __all__ = [
     "BacktestOOSAggregate",
@@ -30,6 +36,7 @@ __all__ = [
     "MetricSummary",
     "OOSIntegrityError",
     "OOSSource",
+    "PredictionDevelopmentWindow",
     "PredictionMetricFields",
     "PredictionOOSAggregate",
     "PredictionTrialWindow",
@@ -37,7 +44,9 @@ __all__ = [
     "aggregate_prediction",
     "configuration_stability",
     "export_oos_aggregate",
+    "has_development_evidence",
     "load_oos_aggregate",
     "load_oos_source",
+    "load_prediction_development_window",
     "load_prediction_trial_window",
 ]
