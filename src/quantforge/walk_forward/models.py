@@ -192,6 +192,108 @@ class BacktestOOSArtifact:
 
 type OOSArtifact = PredictionOOSArtifact | BacktestOOSArtifact
 
+# QF-69: the frozen candidate's development window, beside its fold's state.
+DEVELOPMENT_EVIDENCE_FILE = "development.json"
+DEVELOPMENT_EVIDENCE_DIRECTORY = "development"
+
+
+def partition_membership_identity(part: PrimitiveMapping) -> PrimitiveMapping:
+    """Scientific QF-8 identities of one persisted role membership."""
+    member = cast(PrimitiveMapping, part["membership"])
+    purge = part.get("purge")
+    timestamps = part.get("evaluation_timestamps")
+    return {
+        "qf8_window_id": cast(PrimitiveMapping, part["window"])["window_id"],
+        "membership_selection_id": member["selection_id"],
+        "purge_result_id": None
+        if purge is None
+        else cast(PrimitiveMapping, purge)["result_id"],
+        "retained_decision_count": len(cast(list[object], timestamps))
+        if isinstance(timestamps, list)
+        else None,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentEvidence:
+    """The frozen candidate's in-sample window on its fold's development role.
+
+    QF-39 executes its QF-32 trials on the selection window when a fold has
+    one, so development is otherwise never executed. This record binds one
+    additional execution of the **frozen** candidate on the exact development
+    membership frozen in ``selection.json``. It never influences selection or
+    test evaluation and is never OOS evidence.
+    """
+
+    study_id: str
+    plan_id: str
+    fold_id: str
+    selection_id: str
+    candidate: CandidateConfiguration
+    membership: PrimitiveMappingSnapshot
+    window_result_id: str
+    window: PrimitiveMappingSnapshot
+
+    def artifact(self) -> PredictionOOSArtifact:
+        """The window reference in QF-39's existing prediction-artifact shape."""
+        return PredictionOOSArtifact(
+            self.selection_id, self.window_result_id, self.window
+        )
+
+    def to_primitive(self) -> PrimitiveMapping:
+        return {
+            "schema_version": "1",
+            "component": "quantforge_walk_forward_development_evidence",
+            "study_id": self.study_id,
+            "plan_id": self.plan_id,
+            "fold_id": self.fold_id,
+            "selection_id": self.selection_id,
+            "role": "development_training",
+            "candidate": self.candidate.to_primitive(),
+            "membership": self.membership.to_primitive(),
+            "window_result_id": self.window_result_id,
+            "window": self.window.to_primitive(),
+            "interpretation": (
+                "in-sample evidence of the frozen candidate on the frozen "
+                "development membership; executed after selection was frozen, "
+                "never used for selection and never out-of-sample"
+            ),
+        }
+
+    @classmethod
+    def from_primitive(cls, value: PrimitiveMapping) -> "DevelopmentEvidence":
+        try:
+            candidate = cast(PrimitiveMapping, value["candidate"])
+            evidence = cls(
+                cast(str, value["study_id"]),
+                cast(str, value["plan_id"]),
+                cast(str, value["fold_id"]),
+                cast(str, value["selection_id"]),
+                CandidateConfiguration(
+                    cast(str, candidate["combination_id"]),
+                    PrimitiveMappingSnapshot.capture(
+                        cast(PrimitiveMapping, candidate["parameters"])
+                    ),
+                    PrimitiveMappingSnapshot.capture(
+                        cast(PrimitiveMapping, candidate["definition"])
+                    ),
+                ),
+                PrimitiveMappingSnapshot.capture(
+                    cast(PrimitiveMapping, value["membership"])
+                ),
+                cast(str, value["window_result_id"]),
+                PrimitiveMappingSnapshot.capture(
+                    cast(PrimitiveMapping, value["window"])
+                ),
+            )
+        except (KeyError, TypeError) as error:
+            raise WalkForwardPersistenceError(
+                "invalid development evidence record"
+            ) from error
+        if evidence.to_primitive() != value:
+            raise WalkForwardPersistenceError("unsupported development evidence record")
+        return evidence
+
 
 @dataclass(frozen=True, slots=True)
 class FoldResult:

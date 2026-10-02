@@ -25,7 +25,11 @@ from quantforge.oos._records import (
     texts,
     verify_identity,
 )
-from quantforge.oos.models import OOSSource, PredictionTrialWindow
+from quantforge.oos.models import (
+    OOSSource,
+    PredictionDevelopmentWindow,
+    PredictionTrialWindow,
+)
 from quantforge.optimization.models import TrialStatus
 from quantforge.prediction import PredictionDecisionSchedule
 from quantforge.prediction.errors import InvalidPredictionOutputError
@@ -48,13 +52,17 @@ from quantforge.validation import (
     ValidationWindow,
 )
 from quantforge.walk_forward.models import (
+    DEVELOPMENT_EVIDENCE_DIRECTORY,
+    DEVELOPMENT_EVIDENCE_FILE,
     BacktestOOSArtifact,
     CandidateConfiguration,
+    DevelopmentEvidence,
     FoldResult,
     FoldStatus,
     FrozenSelection,
     PredictionOOSArtifact,
     WalkForwardPersistenceError,
+    partition_membership_identity,
 )
 from quantforge.walk_forward.persistence import read_record
 from quantforge.walk_forward.study import (
@@ -910,5 +918,93 @@ def load_prediction_trial_window(
         grid_study_id=grid_id,
         trial_id=trial_id,
         window_result_id=text(wrapper["prediction_window_id"]),
+        reader=reader,
+    )
+
+
+def has_development_evidence(study_path: Path, fold_id: str) -> bool:
+    """Whether a fold holds QF-69 development evidence, complete or not."""
+    root = study_path / "folds" / fold_id
+    return (root / DEVELOPMENT_EVIDENCE_FILE).exists() or (
+        root / DEVELOPMENT_EVIDENCE_DIRECTORY
+    ).exists()
+
+
+def load_prediction_development_window(
+    source: OOSSource, study_path: Path, *, fold_id: str
+) -> PredictionDevelopmentWindow:
+    """Verify one fold's QF-69 development evidence offline.
+
+    The record must bind this study, plan, fold, frozen selection, frozen
+    candidate and the QF-8 development membership frozen in ``selection.json``.
+    The window then passes the same configuration, membership, schedule,
+    canonical lineage, scientific window and protected-reach checks as a test
+    window, with development's protected window (the fold's selection). No
+    factory, market data or execution is needed. It is never OOS evidence.
+    """
+    plan = source.plan
+    try:
+        persisted = read_record(study_path / "manifest.json")
+    except WalkForwardPersistenceError as error:
+        raise OOSIntegrityError("development study manifest is invalid") from error
+    if study_path.name != source.study_id or persisted != (
+        source.definition.to_primitive()
+    ):
+        raise OOSIntegrityError("development study differs from the verified source")
+    index = next(
+        (i for i, fold in enumerate(plan.folds) if fold.fold_id == fold_id), None
+    )
+    if index is None:
+        raise OOSIntegrityError("development fold is not in the validation plan")
+    if plan.folds[index].selection is None:
+        raise OOSIntegrityError(
+            "the fold's QF-32 trials executed development; use "
+            "load_prediction_trial_window"
+        )
+    selection = source.folds[index].selection
+    if selection is None:
+        raise OOSIntegrityError("development evidence requires a frozen selection")
+    root = study_path / "folds" / fold_id
+    try:
+        evidence = DevelopmentEvidence.from_primitive(
+            read_record(root / DEVELOPMENT_EVIDENCE_FILE)
+        )
+    except WalkForwardPersistenceError as error:
+        raise OOSIntegrityError(
+            "development evidence record is missing or invalid"
+        ) from error
+    frozen = selection.snapshot.to_primitive()
+    part = mapping(mapping(frozen["membership"])["development"])
+    if (
+        evidence.study_id != source.study_id
+        or evidence.plan_id != plan.plan_id
+        or evidence.fold_id != fold_id
+        or evidence.selection_id != selection.selection_id
+        or evidence.candidate.to_primitive() != frozen["candidate"]
+        or evidence.membership.to_primitive() != partition_membership_identity(part)
+    ):
+        raise OOSIntegrityError("development evidence differs from its frozen fold")
+    payload = evidence.window.to_primitive()
+    try:
+        reader = PredictionWindowReader.from_reference(
+            payload, root=root / DEVELOPMENT_EVIDENCE_DIRECTORY
+        )
+    except InvalidPredictionOutputError as error:
+        raise OOSIntegrityError("invalid development window reference") from error
+    _validate_prediction_partition(
+        plan,
+        selection,
+        "development",
+        evidence.candidate.definition.to_primitive(),
+        reader,
+        payload,
+        evidence.window_result_id,
+    )
+    return PredictionDevelopmentWindow(
+        fold_id=fold_id,
+        fold_index=index,
+        selection=selection,
+        candidate=evidence.candidate,
+        window_result_id=evidence.window_result_id,
         reader=reader,
     )

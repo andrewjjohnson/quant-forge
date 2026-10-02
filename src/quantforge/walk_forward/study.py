@@ -11,7 +11,10 @@ from quantforge.configuration import (
 )
 from quantforge.walk_forward._adapters import frozen_candidate
 from quantforge.walk_forward.models import (
+    DEVELOPMENT_EVIDENCE_DIRECTORY,
+    DEVELOPMENT_EVIDENCE_FILE,
     BacktestOOSArtifact,
+    DevelopmentEvidence,
     FoldResult,
     FoldStatus,
     FrozenSelection,
@@ -22,6 +25,7 @@ from quantforge.walk_forward.models import (
     WalkForwardEvaluator,
     WalkForwardPersistenceError,
     WalkForwardResult,
+    partition_membership_identity,
 )
 from quantforge.walk_forward.persistence import read_record, write_record
 from quantforge.walk_forward.prediction import PredictionEvaluator
@@ -141,6 +145,104 @@ class WalkForwardStudy:
             raise WalkForwardPersistenceError("frozen selection identity mismatch")
         frozen_candidate(self._universe, selection)
         return selection
+
+    def evaluate_development(self, fold_id: str) -> DevelopmentEvidence:
+        """Execute (or re-verify) the frozen candidate on development (QF-69).
+
+        The fold must declare a selection window, so its QF-32 trials ran on
+        selection, and must already hold its durable frozen selection. The
+        frozen candidate is executed on the exact development membership frozen
+        in ``selection.json`` through the ordinary partition execution, then
+        validated and recorded immutably in ``development.json``. Selection,
+        test and fold state are never changed; an existing record is verified,
+        never recalculated.
+        """
+        if not isinstance(self.evaluator, PredictionEvaluator):
+            raise WalkForwardError("development evidence requires prediction studies")
+        index = next(
+            (
+                i
+                for i, fold in enumerate(self.config.plan.folds)
+                if fold.fold_id == fold_id
+            ),
+            None,
+        )
+        if index is None:
+            raise WalkForwardError("fold is not in the validation plan")
+        if self.config.plan.folds[index].selection is None:
+            raise WalkForwardError(
+                "the fold's QF-32 trials already executed its development window"
+            )
+        evaluator = self.evaluator
+        with evaluator.preparation_scope():
+            self._unchanged()
+            if read_record(self.study_path / "manifest.json") != (
+                self._identity.to_primitive()
+            ):
+                raise WalkForwardPersistenceError("study manifest differs")
+            root = self.study_path / "folds" / fold_id
+            state = read_record(root / "state.json")
+            permitted = evaluator.membership(self.config, index)
+            selection = self._load_selection(
+                root / "selection.json", fold_id, permitted
+            )
+            if (
+                state.get("study_id") != self.study_id
+                or state.get("fold_id") != fold_id
+                or selection is None
+                or state.get("selection_id") != selection.selection_id
+            ):
+                raise WalkForwardPersistenceError(
+                    "development evidence requires the fold's durable frozen selection"
+                )
+            frozen = selection.snapshot.to_primitive()
+            development = cast(
+                PrimitiveMapping,
+                cast(PrimitiveMapping, frozen["membership"])["development"],
+            )
+            output = root / DEVELOPMENT_EVIDENCE_DIRECTORY
+            path = root / DEVELOPMENT_EVIDENCE_FILE
+            if path.exists():
+                evidence = DevelopmentEvidence.from_primitive(read_record(path))
+            else:
+                artifact = evaluator.evaluate_development(
+                    self.config, index, selection, output
+                )
+                self._unchanged()
+                evidence = DevelopmentEvidence(
+                    self.study_id,
+                    self.config.plan.plan_id,
+                    fold_id,
+                    selection.selection_id,
+                    frozen_candidate(self._universe, selection),
+                    PrimitiveMappingSnapshot.capture(
+                        partition_membership_identity(development)
+                    ),
+                    artifact.window_result_id,
+                    artifact.snapshot,
+                )
+            if (
+                evidence.study_id != self.study_id
+                or evidence.plan_id != self.config.plan.plan_id
+                or evidence.fold_id != fold_id
+                or evidence.selection_id != selection.selection_id
+                or evidence.candidate != frozen_candidate(self._universe, selection)
+                or evidence.membership.to_primitive()
+                != partition_membership_identity(development)
+            ):
+                raise WalkForwardPersistenceError(
+                    "development evidence differs from its frozen fold"
+                )
+            evaluator.validate_development(
+                self.config, index, selection, evidence.artifact(), output
+            )
+            if self._load_selection(root / "selection.json", fold_id, permitted) != (
+                selection
+            ):
+                raise WalkForwardError("development execution changed the selection")
+            self._unchanged()
+            write_record(path, evidence.to_primitive(), immutable=True)
+            return evidence
 
     def _fold(self, index: int, fold_id: str) -> FoldResult:
         root = self.study_path / "folds" / fold_id

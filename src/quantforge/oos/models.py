@@ -124,6 +124,26 @@ class PredictionTrialWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class PredictionDevelopmentWindow:
+    """The verified QF-69 development window of a fold's frozen candidate.
+
+    Recorded by ``WalkForwardStudy.evaluate_development`` for folds whose
+    trials ran on selection. It is in-sample evidence, never OOS.
+    """
+
+    fold_id: str
+    fold_index: int
+    selection: FrozenSelection
+    candidate: CandidateConfiguration
+    window_result_id: str
+    reader: PredictionWindowReader = field(compare=False, repr=False)
+
+    @property
+    def role(self) -> PartitionRole:
+        return PartitionRole.DEVELOPMENT
+
+
+@dataclass(frozen=True, slots=True)
 class PredictionOOSAggregate:
     summary: PrimitiveMappingSnapshot
     stability: ConfigurationStabilitySummary

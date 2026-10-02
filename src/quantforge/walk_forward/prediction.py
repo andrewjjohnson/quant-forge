@@ -588,6 +588,61 @@ class PredictionEvaluator:
             output_root,
         )
 
+    def _development_partition(
+        self, config: WalkForwardConfig, fold_index: int
+    ) -> PermittedPartition:
+        if config.plan.folds[fold_index].selection is None:
+            raise WalkForwardError(
+                "the fold's QF-32 trials already executed its development window"
+            )
+        return partition(
+            self.dataset,
+            config.plan,
+            fold_index,
+            PartitionRole.DEVELOPMENT,
+            minimum_observations=config.minimum_training_observations,
+            projection_registry=self._projection_registry,
+        )
+
+    @_with_projection_preparation
+    def evaluate_development(
+        self,
+        config: WalkForwardConfig,
+        fold_index: int,
+        selection: FrozenSelection,
+        output_root: Path,
+    ) -> PredictionOOSArtifact:
+        """Execute the frozen candidate on the frozen development membership.
+
+        QF-69 additive evidence for folds whose trials ran on selection. It
+        reuses the ordinary partition execution; an empty development window
+        is valid in-sample evidence, so no prediction is required.
+        """
+        return self.evaluate_partition(
+            config.plan,
+            self._development_partition(config, fold_index),
+            selection,
+            output_root,
+            require_prediction=False,
+        )
+
+    @_with_projection_preparation
+    def validate_development(
+        self,
+        config: WalkForwardConfig,
+        fold_index: int,
+        selection: FrozenSelection,
+        artifact: PredictionOOSArtifact,
+        output_root: Path,
+    ) -> None:
+        self.validate_partition_artifact(
+            config.plan,
+            self._development_partition(config, fold_index),
+            selection,
+            artifact,
+            output_root,
+        )
+
     @_with_projection_preparation
     def evaluate_partition(
         self,
@@ -595,8 +650,14 @@ class PredictionEvaluator:
         permitted: EvaluationPartition,
         selection: FrozenSelection,
         output_root: Path,
+        *,
+        require_prediction: bool = True,
     ) -> PredictionOOSArtifact:
-        """Evaluate a prevalidated boundary with the existing frozen candidate."""
+        """Evaluate a prevalidated boundary with the existing frozen candidate.
+
+        Test and holdout windows must contain a valid prediction;
+        ``require_prediction=False`` is only for in-sample development evidence.
+        """
         candidate = frozen_candidate(self.universe, selection)
         schedule = self._schedule(permitted)
         study = deepcopy(self.factory).build(candidate.parameters.to_primitive())
@@ -642,7 +703,7 @@ class PredictionEvaluator:
                     values = mapping(mapping(row["prediction"])["values"])
                     if values.get("disposition") != "rejected":
                         has_prediction = True
-            if not has_prediction:
+            if require_prediction and not has_prediction:
                 raise WalkForwardError(
                     "prediction test window contains no valid predictions"
                 )
@@ -668,7 +729,7 @@ class PredictionEvaluator:
             context_environment=self._environment(plan, permitted).to_primitive(),
             indicator_backend_environment=self.backend.to_primitive(),
         )
-        if not any(
+        if require_prediction and not any(
             getattr(row.signal, "disposition", None) != "rejected"
             for decision in result.decisions
             for row in decision.result.rows
