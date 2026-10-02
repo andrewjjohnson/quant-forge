@@ -46,6 +46,12 @@ def main() -> None:
             "the workspace's permanent holdout ledger is missing; QF-69 uses the "
             "existing ledger and never creates one"
         )
+    # Capture clean code provenance before any work; resume requires it.
+    execution = (
+        None
+        if arguments.preflight
+        else execution_for_run(root, workspace, prefix="qf69")
+    )
     with canonical_preparation():
         inputs = load_inputs(arguments.cache_root)
         if arguments.preflight:
@@ -68,7 +74,7 @@ def main() -> None:
                 flush=True,
             )
             return
-        execution = execution_for_run(root, workspace, prefix="qf69")
+        assert execution is not None
         gate = run_pre_holdout(
             inputs,
             root,
