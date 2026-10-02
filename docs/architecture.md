@@ -1,5 +1,25 @@
 # QuantForge Architecture
 
+QF-69 adds the first conditional ML study, composed only of existing layers:
+
+- **Development evidence.** `WalkForwardStudy.evaluate_development` executes
+  the frozen candidate on a fold's frozen development membership, when the
+  fold's QF-32 trials ran on selection. QF-40
+  `load_prediction_development_window` verifies the record offline, and QF-67
+  admits it as development rows.
+- **Lifecycle.** `quantforge.ml.study` freezes a study specification before
+  research. It records each stage immutably, bound to that specification:
+  dataset, development-only fit, selection predictions, freeze, frozen OOS
+  inference and deterministic reproduction. The report and pre-holdout gate
+  read persisted artifacts only.
+- **Example.** `quantforge.examples.spy_ema_ml_study`/`spy_ema_ml_runner`
+  declare the frozen SPY EMA 8/48 study and run it to the gate. The holdout
+  stays reserved.
+
+The study adds no estimator, feature, search, threshold or holdout
+consumption. See the [conditional ML smoke study](conditional-ml-smoke-study.md)
+and [ADR 0041](decisions/0041-record-frozen-candidate-development-evidence.md).
+
 QF-68 adds `quantforge.ml.modeling`, the chronological training and evaluation
 layer above QF-67 datasets. It reads persisted datasets only through the public
 QF-67 reader and interface:
@@ -17,8 +37,8 @@ QF-67 reader and interface:
 - **Holdout.** Holdout inference needs a consumed `HoldoutLedger.result`; the
   ledger is only read.
 
-It does not tune, search, trade, size positions or run studies (QF-69). See
-[event ML models](event-ml-models.md) and
+It does not tune, search, trade or size positions; studies compose it (QF-69).
+See [event ML models](event-ml-models.md) and
 [ADR 0040](decisions/0040-train-event-models-chronologically.md).
 
 QF-67 adds `quantforge.ml`, one conditional event-dataset boundary above

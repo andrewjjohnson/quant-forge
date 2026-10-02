@@ -423,7 +423,11 @@ loads the QF-45 plan from cached inputs, without network, and attempts
 
 QF-68 does not relabel selection rows as training rows, train on test rows or
 change the frozen QF-45 study to create training data. A real ML study, with a
-study design that produces training rows, belongs to QF-69.
+study design that produces training rows, belongs to QF-69. QF-69 adds the
+frozen candidate's verified development evidence to a separate study
+([ADR 0041](decisions/0041-record-frozen-candidate-development-evidence.md)).
+It fits this layer on real development rows in the
+[conditional ML smoke study](conditional-ml-smoke-study.md).
 
 ## Measurements
 
@@ -472,6 +476,7 @@ QF-67's offline dataset read, which every entry point repeats.
   [Final holdout](#final-holdout)).
 - **Cross-platform fits.** Coefficients may differ in the last bits across
   BLAS or CPU platforms.
-- **Out of scope:** QF-69 studies, QF-70 dense datasets, QF-71 discovery, broad
+- **Out of scope:** QF-70 dense datasets, QF-71 discovery, broad
   hyperparameter search, AutoML, neural networks, live inference, execution,
-  position sizing, options and brokers.
+  position sizing, options and brokers. Studies compose this layer; see the
+  [QF-69 conditional ML smoke study](conditional-ml-smoke-study.md).

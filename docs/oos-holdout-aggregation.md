@@ -82,6 +82,25 @@ Test-window verification is unchanged. A trial window is in-sample evidence
 and never enters OOS aggregation. QF-67 event datasets use it; see
 [event ML datasets](event-ml-datasets.md).
 
+### Frozen-candidate development windows (QF-69)
+
+`load_prediction_development_window(source, study_path, fold_id=...)` verifies
+a fold's `development.json`, written by `WalkForwardStudy.evaluate_development`
+for a fold whose trials ran on selection. The record must equal the verified
+source's:
+
+- study, plan and fold;
+- frozen selection ID and frozen candidate;
+- QF-8 development membership identities (window, membership selection,
+  purge result, retained count).
+
+The window then passes the same partition checks as a trial window, using the
+fold's selection as development's protected window. `has_development_evidence`
+reports whether a record or window directory exists. QF-67 refuses a directory
+without its record. Development evidence is in-sample, never OOS, and does not
+change `load_oos_source`, aggregation or holdout state. See
+[ADR 0041](decisions/0041-record-frozen-candidate-development-evidence.md).
+
 ### Finder metadata in `folds/` (QF-73)
 
 macOS Finder writes a `.DS_Store` view-metadata file into any folder a person

@@ -103,6 +103,7 @@ Sources are verified by existing readers. Callers cannot assert a role.
 | Role | Verifier | Notes |
 | --- | --- | --- |
 | Development/selection (QF-8 `DEVELOPMENT`/`SELECTION`) | `quantforge.oos.load_prediction_trial_window` (new) | The candidate's QF-32 trial in a fold with a frozen selection. QF-39 executes trials on the selection window, or on development when the fold declares no selection window. The role it did not execute is recorded as an exclusion. |
+| Development, QF-69 evidence | `quantforge.oos.load_prediction_development_window` (QF-69) | A fold whose trials ran on selection, when the study recorded `WalkForwardStudy.evaluate_development` for its frozen candidate. Without that record, development stays excluded as above. A fold that froze another candidate records `frozen_selection_is_another_candidate`. A `development/` directory without its record fails. |
 | Walk-forward test | `quantforge.oos.load_oos_source` (unchanged) | Only when the fold froze this candidate. Otherwise the exclusion `frozen_selection_is_another_candidate` is recorded. |
 | Final holdout | `HoldoutLedger.result(evaluation)` | Only an explicitly consumed holdout of this candidate; see below. |
 
@@ -511,5 +512,6 @@ What the figures show:
   including a `.DS_Store` directory or symlink, is still rejected. See
   [Finder metadata](oos-holdout-aggregation.md#finder-metadata-in-folds-qf-73).
 - **Out of scope:** dense or all-bars datasets (QF-70), training and
-  evaluation ([QF-68](event-ml-models.md)), studies (QF-69), live inference
-  and execution.
+  evaluation ([QF-68](event-ml-models.md)), live inference and execution.
+  The first study on real development rows is the
+  [QF-69 conditional ML smoke study](conditional-ml-smoke-study.md).
